@@ -177,7 +177,8 @@ class NotebookProcessTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "diagnostic before early exit"):
             self.execute('IO.puts("diagnostic before early exit"); System.halt(0)')
         with self.assertRaisesRegex(TimeoutError, "diagnostic before deadline"):
-            self.execute('IO.puts("diagnostic before deadline"); Process.sleep(:infinity)', timeout=2)
+            # Allow VM boot under CPU load to finish and print before the deadline.
+            self.execute('IO.puts("diagnostic before deadline"); Process.sleep(:infinity)', timeout=20)
 
     def test_actual_child_failure_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "failed"):
