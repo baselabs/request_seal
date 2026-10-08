@@ -4,6 +4,11 @@
 
 - JOSE protected headers now use compact JSON with top-level members in caller order.
 - Feature-adaptive public-key encoding supports Elixir 1.18 or newer on OTP 27 or newer, tested in CI on Elixir/OTP pairs 1.18.4/27, 1.19.5/28, and 1.20.4/29. PKCS #8 v2 (OneAsymmetricKey) containers reject. CI validates all three pairs and optional client floors on the floor toolchain.
+- Added fixed-seed parser, signature, and replay properties with 300 runs per property, real cryptography, and caller-provisioned PostgreSQL storm checks.
+- Compact and nested JOSE parsing stops at the first excess segment instead of allocating all attacker-supplied segments.
+- Discovery rejects trailing non-JSON whitespace according to [RFC 8259 Section 2](https://www.rfc-editor.org/rfc/rfc8259.html#section-2).
+- Added reproducible input-ceiling and RSA-OAEP failure-timing measurements; the threat model records the observed distributions.
+
 - Added a package-namespaced extension surface for named application profiles.
 - Added explicit directory-assigned discovery key IDs while retaining computed thumbprints for identity, revocation, and removal.
 - Added `RequestSeal.JOSE.JWS.sign_protected/4` for caller-serialized protected JSON bytes with the same bounds and header rejections as `Header.json/1`.

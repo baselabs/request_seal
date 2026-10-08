@@ -32,7 +32,7 @@ defmodule RequestSeal.JOSE.Nested do
           ensure(jwe.header["cty"] in types, :content_type_mismatch, :nesting)
 
           ensure(
-            length(:binary.split(jwe.plaintext, ".", [:global])) == 3,
+            Support.segment_count?(jwe.plaintext, 3),
             :nesting_depth,
             :nesting
           )

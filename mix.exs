@@ -50,20 +50,7 @@ defmodule RequestSeal.MixProject do
       source_url: "https://github.com/baselabs/request_seal",
       description: "HTTP message signatures and agent authentication for Elixir.",
       elixirc_paths: elixirc_paths(Mix.env()),
-      deps: [
-        {:ex_doc, "~> 0.40.4", only: [:dev, :test], runtime: false},
-        # Floor is the Ash minor series the real-action tests ran against (lock: 3.34.5); Ash.Scope itself dates from 3.5.13.
-        {:ash, "~> 3.34", optional: true},
-        {:simple_sat, "~> 0.1", only: :test},
-        # Use stable Req; 0.8.0-rc.0 is a release candidate.
-        # Consumers own client startup; importing this library starts no pool.
-        {:req, "~> 0.7.4", optional: true, runtime: false},
-        {:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false},
-        {:plug, "~> 1.20.3", optional: true, runtime: false},
-        {:bandit, "~> 1.12.5", only: :test},
-        {:phoenix, "~> 1.8.15", only: :test},
-        {:postgrex, "~> 0.22.4", optional: true, runtime: false}
-      ],
+      deps: dependencies(),
       package: [
         licenses: ["Apache-2.0", "BSD-3-Clause"],
         files: ["lib/**/*.ex", "mix.exs" | @public_documents],
@@ -86,6 +73,28 @@ defmodule RequestSeal.MixProject do
         ]
       ]
     ]
+  end
+
+  defp dependencies do
+    test_dependencies =
+      if Mix.env() == :test,
+        do: [{:stream_data, "~> 1.1", only: :test, override: true}],
+        else: []
+
+    [
+      {:ex_doc, "~> 0.40.4", only: [:dev, :test], runtime: false},
+      # Floor is the Ash minor series the real-action tests ran against (lock: 3.34.5); Ash.Scope itself dates from 3.5.13.
+      {:ash, "~> 3.34", optional: true},
+      {:simple_sat, "~> 0.1", only: :test},
+      # Use stable Req; 0.8.0-rc.0 is a release candidate.
+      # Consumers own client startup; importing this library starts no pool.
+      {:req, "~> 0.7.4", optional: true, runtime: false},
+      {:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false},
+      {:plug, "~> 1.20.3", optional: true, runtime: false},
+      {:bandit, "~> 1.12.5", only: :test},
+      {:phoenix, "~> 1.8.15", only: :test},
+      {:postgrex, "~> 0.22.4", optional: true, runtime: false}
+    ] ++ test_dependencies
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

@@ -147,6 +147,32 @@ defmodule RequestSeal.Discovery do
     end
   end
 
+  @doc false
+  def parse_body(bytes, source, now) do
+    Support.safe(fn ->
+      Source.validate!(source)
+      ensure(source.type in [:directory, :jwks_uri], :invalid_source)
+      ensure(is_binary(bytes), :invalid_response)
+      ensure(byte_size(bytes) <= source.max_bytes, :limit)
+      ensure(is_integer(now) and now in 0..999_999_999_999_999, :invalid_options)
+      document = body_document(bytes, source)
+      origin = Source.origin(URI.parse(source.location))
+      {:ok, keys(document, source, origin, source.location, now)}
+    end)
+  end
+
+  defp body_document(bytes, source) do
+    ensure(is_binary(bytes), :invalid_response)
+
+    ceiling =
+      if source.type == :cimd,
+        do: min(source.max_decoded_bytes, 5120),
+        else: source.max_decoded_bytes
+
+    ensure(byte_size(bytes) <= ceiling, :limit)
+    json(bytes)
+  end
+
   defp fetch_source(source, clock, deadline) do
     uri = Source.url!(source.location)
     {fields, message, location, decoded} = resource(uri, source, deadline, 0)
@@ -156,7 +182,7 @@ defmodule RequestSeal.Discovery do
     {document, key_message, key_fields, location, expires, key_bytes} =
       case source.type do
         :cimd ->
-          doc = json(decoded)
+          doc = body_document(decoded, source)
           ensure(is_map(doc) and doc["client_id"] == source.location, :client_id_mismatch)
 
           ensure(
@@ -176,15 +202,15 @@ defmodule RequestSeal.Discovery do
               {nested_fields, nested_message, nested_location, nested_bytes} =
                 resource(nested, nested_source, deadline, 0)
 
-              {json(nested_bytes), nested_message, nested_fields, nested_location,
-               min(expires, expiry(nested_fields, source, now)), nested_bytes}
+              {body_document(nested_bytes, nested_source), nested_message, nested_fields,
+               nested_location, min(expires, expiry(nested_fields, source, now)), nested_bytes}
 
             true ->
               ensure(false, :invalid_key_set)
           end
 
         _ ->
-          {json(decoded), message, fields, location, expires, decoded}
+          {body_document(decoded, source), message, fields, location, expires, decoded}
       end
 
     origin = Source.origin(URI.parse(location))
@@ -284,11 +310,19 @@ defmodule RequestSeal.Discovery do
     }
 
     {value, _, rest} = :json.decode(bytes, nil, decoders)
-    ensure(String.trim(rest) == "", :invalid_response)
+    ensure(json_whitespace?(rest), :invalid_response)
     value
   rescue
     _ -> ensure(false, :invalid_response)
   end
+
+  # RFC 8259 Section 2 permits only SP, HTAB, LF, and CR outside a value.
+  defp json_whitespace?(<<>>), do: true
+
+  defp json_whitespace?(<<byte, rest::binary>>) when byte in [32, 9, 10, 13],
+    do: json_whitespace?(rest)
+
+  defp json_whitespace?(_), do: false
 
   defp json_depth(<<>>, depth, string, _),
     do: ensure(depth == 0 and not string, :invalid_response)

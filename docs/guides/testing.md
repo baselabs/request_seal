@@ -37,6 +37,37 @@ checker rejects unapproved documents, missing metadata, private targets, machine
 paths, and known internal-process prose. This is a bounded disclosure check;
 maintainers still review the actual content before approving an inclusion.
 
+## Input properties and measurements
+
+The declared gate includes `test/property/`. Each property executes 300 successful
+generated cases with an explicit fixed seed and no elapsed-time cutoff:
+
+| Suite | Properties | Seed |
+| --- | ---: | ---: |
+| Structured Fields | 5 | 9651 |
+| Signature base | 3 | 9421 |
+| JOSE | 5 | 7516 |
+| Discovery | 6 | 7638 |
+| ETS replay | 1 | 6401 |
+| PostgreSQL replay | 1 | 6402 |
+
+```sh
+mix test test/property --warnings-as-errors
+ASDF_ELIXIR_VERSION=1.18.4-otp-27 ASDF_ERLANG_VERSION=27.3.4 MIX_BUILD_ROOT=_build/floor mix test test/property --warnings-as-errors
+MIX_ENV=test mix run bench/ceilings.exs
+```
+
+The benchmark is an explicit command, outside the default gate. It reports
+nearest-rank p50/p99 time and reductions at input ceilings, plus 1,000 decrypt
+samples per OAEP outcome. Measurement method, environment, distributions, and
+interpretation appear in the [threat model](../design/threat-model.md).
+Generated local keys establish implementation behavior; published vectors remain
+separate conformance evidence. Replay properties release 64 tasks together for
+both shared and distinct nonce storms. They check every stored claim, exclusive
+expiry, and bounded ETS memory or PostgreSQL storage after reclamation. The
+PostgreSQL property is included whenever `REQUESTSEAL_REPLAY_PG_URL` is set;
+connection, SQL, or contention failures fail the property without a skip fallback.
+
 ## Replay stores
 
 The default gate excludes database tests and starts no database. ETS tests exercise

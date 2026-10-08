@@ -169,9 +169,23 @@ defmodule RequestSeal.JOSE.Support do
       :unsupported_serialization
     )
 
-    segments = :binary.split(bytes, ".", [:global])
-    ensure(length(segments) == count, :invalid_serialization)
-    segments
+    segments(bytes, count, [])
+  end
+
+  def segment_count?(bytes, count) do
+    match?({:ok, _}, safe(fn -> {:ok, segments(bytes, count, [])} end))
+  end
+
+  defp segments(bytes, remaining, acc) do
+    case :binary.split(bytes, ".") do
+      [segment, rest] ->
+        ensure(remaining > 1, :invalid_serialization)
+        segments(rest, remaining - 1, [segment | acc])
+
+      [segment] ->
+        ensure(remaining == 1, :invalid_serialization)
+        Enum.reverse([segment | acc])
+    end
   end
 
   def b64(bytes), do: Base.url_encode64(bytes, padding: false)
