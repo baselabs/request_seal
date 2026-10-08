@@ -11,16 +11,34 @@ defmodule RequestSeal.Ceilings do
     {machine, 0} = System.cmd("uname", ["-sm"])
 
     cpu =
-      if :os.type() == {:unix, :darwin} do
-        case System.cmd("sysctl", ["-n", "machdep.cpu.brand_string"], stderr_to_stdout: true) do
-          {cpu, 0} -> String.trim(cpu)
-          {_, _} -> "not exposed by sandbox"
-        end
-      else
-        File.read!("/proc/cpuinfo")
-        |> String.split("\n")
-        |> Enum.find(&String.starts_with?(&1, "model name"))
+      case :os.type() do
+        {:unix, :darwin} ->
+          try do
+            case System.cmd("sysctl", ["-n", "machdep.cpu.brand_string"], stderr_to_stdout: true) do
+              {cpu, 0} -> String.trim(cpu)
+              {_, _} -> ""
+            end
+          rescue
+            ErlangError -> ""
+          end
+
+        {:unix, :linux} ->
+          case File.read("/proc/cpuinfo") do
+            {:ok, info} ->
+              case Regex.run(~r/^model name[ \t]*:[ \t]*(.*)$/m, info, capture: :all_but_first) do
+                [cpu] -> String.trim(cpu)
+                nil -> ""
+              end
+
+            {:error, _} ->
+              ""
+          end
+
+        _ ->
+          ""
       end
+
+    cpu = if cpu == "", do: "not recorded", else: cpu
 
     otp_version =
       File.read!(

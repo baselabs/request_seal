@@ -44,10 +44,10 @@ generated cases with an explicit fixed seed and no elapsed-time cutoff:
 
 | Suite | Properties | Seed |
 | --- | ---: | ---: |
-| Structured Fields | 5 | 9651 |
-| Signature base | 3 | 9421 |
+| Structured Fields | 4 | 9651 |
+| Signature base | 4 | 9421 |
 | JOSE | 5 | 7516 |
-| Discovery | 6 | 7638 |
+| Discovery | 3 | 7638 |
 | ETS replay | 1 | 6401 |
 | PostgreSQL replay | 1 | 6402 |
 

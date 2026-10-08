@@ -83,7 +83,7 @@ RequestSeal cannot establish that a caller's trust anchors, proxy configuration,
 
 OBSERVED on October 8, 2026 by `MIX_ENV=test mix run bench/ceilings.exs`:
 Darwin arm64, 64-bit words, Erlang/OTP 29.1.1 (ERTS 17.1), Elixir 1.20.4
-(compiled for OTP 29). The sandbox denied the CPU-model query; the machine
+(compiled for OTP 29). CPU model not recorded; the machine
 identity recorded by `uname -sm` is Darwin arm64. The runtime OTP patch version
 was read from its `OTP_VERSION` file.
 

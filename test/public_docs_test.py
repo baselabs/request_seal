@@ -1,6 +1,7 @@
 """Disclosure checks against actual repository content and real filesystem/Git inputs."""
 from pathlib import Path
 import importlib.util
+import re
 import subprocess
 import tempfile
 import unittest
@@ -25,6 +26,34 @@ class PublicDocsTest(unittest.TestCase):
 
     def test_current_readme_is_public(self):
         self.assertEqual([], self.errors())
+
+    def test_testing_guide_property_counts_match_sources(self):
+        suites = {
+            "Structured Fields": "RequestSeal.StructuredFieldsPropertyTest",
+            "Signature base": "RequestSeal.SignatureBasePropertyTest",
+            "JOSE": "RequestSeal.JOSEPropertyTest",
+            "Discovery": "RequestSeal.DiscoveryPropertyTest",
+            "ETS replay": "RequestSeal.ReplayETSPropertyTest",
+            "PostgreSQL replay": "RequestSeal.ReplayPostgresPropertyTest",
+        }
+        counts = {}
+        files = sorted((ROOT / "test/property").glob("*.exs"))
+        self.assertTrue(files, "property source inventory must not be empty")
+        for path in files:
+            modules = re.split(r"^defmodule (\S+) do\s*$", path.read_text(), flags=re.MULTILINE)
+            for name, source in zip(modules[1::2], modules[2::2]):
+                count = source.count('property "')
+                if count:
+                    self.assertNotIn(name, counts)
+                    counts[name] = count
+        self.assertEqual(set(suites.values()), set(counts))
+        guide = (ROOT / "docs/guides/testing.md").read_text()
+        rows = re.findall(r"^\| ([^|]+) \| (\d+) \| \d+ \|$", guide, re.MULTILINE)
+        self.assertEqual(len(suites), len(rows))
+        self.assertEqual(
+            {suite: counts[module] for suite, module in suites.items()},
+            {suite: int(count) for suite, count in rows},
+        )
 
     def test_private_inline_target(self):
         self.assertTrue(any("private" in e for e in self.errors("\n[notes](.private/record.md)\n")))
