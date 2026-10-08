@@ -76,6 +76,7 @@ defmodule RequestSeal.MixProject do
   end
 
   defp dependencies do
+    # Ash needs StreamData in dev/prod; scope the test override here to keep it out of Hex requirements.
     test_dependencies =
       if Mix.env() == :test,
         do: [{:stream_data, "~> 1.1", only: :test, override: true}],

@@ -4,14 +4,19 @@ defmodule RequestSeal.ReplayStormSupport do
   alias RequestSeal.Replay.Claim
 
   def storm(store, namespace, nonce, distinct?) do
-    gate = :atomics.new(1, [])
+    parent = self()
+    gate = make_ref()
 
     tasks =
       for i <- 1..64 do
         key = if distinct?, do: nonce <> <<i>>, else: nonce
 
         Task.async(fn ->
-          await(gate)
+          send(parent, {:ready, gate, self()})
+
+          receive do
+            {:go, ^gate} -> :ok
+          end
 
           {key,
            Replay.claim(store, %Claim{namespace: namespace, key: key, retain_until: 101},
@@ -20,7 +25,13 @@ defmodule RequestSeal.ReplayStormSupport do
         end)
       end
 
-    :atomics.put(gate, 1, 1)
+    for task <- tasks do
+      pid = task.pid
+      assert_receive {:ready, ^gate, ^pid}, 10_000
+    end
+
+    # Every task has reached the rendezvous before any claim is released.
+    Enum.each(tasks, &send(&1.pid, {:go, gate}))
     results = Enum.map(tasks, &Task.await(&1, 15_000))
     grouped = Enum.group_by(results, &elem(&1, 0), &elem(&1, 1))
     assert map_size(grouped) == if(distinct?, do: 64, else: 1)
@@ -31,13 +42,6 @@ defmodule RequestSeal.ReplayStormSupport do
     end
 
     Map.keys(grouped)
-  end
-
-  defp await(gate) do
-    if :atomics.get(gate, 1) == 0 do
-      Process.sleep(1)
-      await(gate)
-    end
   end
 end
 
@@ -109,15 +113,16 @@ defmodule RequestSeal.ReplayPostgresPropertyTest do
       username: username,
       password: password,
       database: String.trim_leading(uri.path, "/"),
-      pool_size: 4
+      pool_size: 64
     ]
 
     {:ok, pool} = Postgrex.start_link(options)
     table = "replay_property_" <> Integer.to_string(System.unique_integer([:positive]))
-    Postgrex.query!(pool, Postgres.ddl(table), [])
-    store = Postgres.store(pool, table: table)
 
     try do
+      Postgrex.query!(pool, Postgres.ddl(table), [])
+      store = Postgres.store(pool, table: table)
+
       check all(
               nonce <- binary(min_length: 1, max_length: 32),
               max_runs: @runs,
@@ -147,8 +152,11 @@ defmodule RequestSeal.ReplayPostgresPropertyTest do
         assert bytes <= 1_048_576
       end
     after
-      Postgrex.query!(pool, "DROP TABLE #{table}", [])
-      GenServer.stop(pool)
+      try do
+        Postgrex.query!(pool, "DROP TABLE IF EXISTS #{table}", [])
+      after
+        GenServer.stop(pool)
+      end
     end
   end
 end

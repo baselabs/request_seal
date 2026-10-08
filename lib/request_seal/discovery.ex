@@ -147,11 +147,19 @@ defmodule RequestSeal.Discovery do
     end
   end
 
+  # Returns unproven body keys for bounded-body tests and measurements.
+  # Directory possession proof requires fetch/2 and its signed response.
   @doc false
   def parse_body(bytes, source, now) do
     Support.safe(fn ->
       Source.validate!(source)
       ensure(source.type in [:directory, :jwks_uri], :invalid_source)
+
+      ensure(
+        not (source.type == :directory and source.require_signed_directory),
+        :directory_unsigned
+      )
+
       ensure(is_binary(bytes), :invalid_response)
       ensure(byte_size(bytes) <= source.max_bytes, :limit)
       ensure(is_integer(now) and now in 0..999_999_999_999_999, :invalid_options)

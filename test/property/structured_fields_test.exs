@@ -23,6 +23,30 @@ defmodule RequestSeal.StructuredFieldsPropertyTest do
     end
   end
 
+  property "generated key grammar, OWS and duplicate names preserve last values" do
+    check all(
+            {bytes, expected} <- P.parsing_dictionary(),
+            max_runs: @runs,
+            max_run_time: :infinity,
+            initial_seed: @seed
+          ) do
+      assert SF.parse(bytes, P.schema(:dictionary)) == {:ok, expected}
+
+      assert {:error, %SF.Error{reason: :duplicate_key}} =
+               SF.parse_unique(bytes, P.schema(:dictionary), [])
+
+      [{key, member}] = expected.value
+      [{parameter, _}] = member.parameters
+      assert Regex.match?(~r/^[a-z*][a-z0-9_.*-]*$/, key)
+      assert Regex.match?(~r/^[a-z*][a-z0-9_.*-]*$/, parameter)
+      [{parameter, {:integer, last}}] = member.parameters
+      repeated = key <> "=1;" <> parameter <> "=2;" <> parameter <> "=" <> Integer.to_string(last)
+
+      assert {:error, %SF.Error{reason: :duplicate_parameter}} =
+               SF.parse_unique(repeated, P.schema(:dictionary), [])
+    end
+  end
+
   property "random bytes and mutations return only typed results" do
     check all(
             bytes <- binary(max_length: 2048),

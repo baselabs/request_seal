@@ -97,13 +97,13 @@ resource measurements for this run, rather than universal latency bounds.
 
 | Parser | Time candidate / input ceilings | Time p50 / p99 / max (µs) | Reduction candidate | Reductions p50 / p99 / max |
 | --- | --- | ---: | --- | ---: |
-| Structured Fields | dictionary / bytes:65536,members:1024 | 9589 / 117935 / 158393 | dictionary | 360030 / 363107 / 363290 |
-| Signature base | base / bytes:1048576,components:256 | 78890 / 227746 / 294329 | base | 3929071 / 4077568 / 4077579 |
-| Compact JWS | compact / compact_bytes:1048576,header_bytes:16384,depth:4 | 6131 / 53434 / 93134 | compact | 2397568 / 2397632 / 2397632 |
-| Compact JWE | whitespace_storm / compact_bytes:1048576,segments:under-limit | 4354 / 28525 / 50651 | compact | 2400026 / 2400087 / 2400088 |
-| JOSE protected JSON | bytes_depth / bytes:16384,depth:4 | 55 / 494 / 1745 | bytes_depth | 33023 / 33089 / 33090 |
-| JWKS body | json_shape / bytes:65536,keys:32,members:256,array:256,depth:32 | 1441 / 22945 / 82612 | body_keys | 148490 / 148510 / 148512 |
-| Key directory body | json_shape / bytes:65536,keys:32,members:256,array:256,depth:32 | 1144 / 14132 / 17729 | body_keys | 148739 / 148907 / 148908 |
+| Structured Fields | dictionary / bytes:65536,members:1024 | 4896 / 11065 / 22136 | dictionary | 360088 / 363107 / 363290 |
+| Signature base | base / bytes:1048576,components:256 | 20107 / 34829 / 43177 | base | 3928094 / 4077568 / 4077579 |
+| Compact JWS | compact / compact_bytes:1048576,header_bytes:16384,depth:4 | 2620 / 6138 / 10671 | compact | 2397568 / 2397632 / 2397632 |
+| Compact JWE | compact / compact_bytes:1048576,header_bytes:16384,depth:4 | 2649 / 7787 / 9971 | compact | 2400029 / 2400090 / 2400091 |
+| JOSE protected JSON | bytes_depth / bytes:16384,depth:4 | 131 / 714 / 1154 | bytes_depth | 33023 / 33089 / 33090 |
+| JWKS body | json_shape / bytes:65536,keys:32,members:256,array:256,depth:32 | 723 / 1224 / 1269 | body_keys | 148493 / 148512 / 148513 |
+| Key directory body | body_keys / bytes:65536,keys:32 | 337 / 1218 / 1431 | body_keys | 148741 / 148908 / 148909 |
 
 Structured Fields also measures the byte, parameter, inner-item, value-byte, and
 node ceilings. Its fixed grammar depth accepts container → inner list → item
@@ -129,46 +129,63 @@ SP, HTAB, LF, and CR; vertical tab, form feed, and Unicode spaces reject.
 ## RSA-OAEP decryption timing
 
 OBSERVED in the same benchmark run: one locally generated 2,048-bit RSA key,
-A256GCM, 30 warmups per outcome, and 1,000 samples each for valid, corrupted OAEP
-padding, and corrupted GCM tag ciphertexts, for both RSA-OAEP and RSA-OAEP-256.
-The timer measures the complete `JWE.decrypt/2` call, including its sensitive
-worker. Sample order rotates to reduce order bias. To corrupt padding, the
-script decrypts the real OAEP encoded message using raw RSA, changes a masked
-data-block byte, then applies raw public RSA. Actual unwrap rejection is asserted
-before timing. Tag corruption changes a decoded tag byte and re-encodes it
-canonically; other token bytes remain identical.
+A256GCM, 30 warmups per outcome, and 1,000 samples each for valid ciphertext,
+corrupted encoded-message leading zero (byte 0), corrupted masked seed (byte 1),
+corrupted masked data block (byte 200), and corrupted GCM tag, for both RSA-OAEP
+and RSA-OAEP-256. The timer measures the complete `JWE.decrypt/2` call, including
+its sensitive worker. Sample order rotates to reduce order bias. The script
+recovers the real OAEP encoded message with raw private RSA, asserts its leading
+zero, corrupts each selected byte, and applies raw public RSA. Actual unwrap
+rejection is asserted before timing. Tag corruption changes a decoded tag byte
+and re-encodes it canonically; other token bytes remain identical.
 
 | Algorithm | Outcome | Samples | Time p50 / p99 (µs) | Min / max (µs) |
 | --- | --- | ---: | ---: | ---: |
-| RSA-OAEP | valid | 1,000 | 695 / 4771 | 590 / 13435 |
-| RSA-OAEP | padding | 1,000 | 721 / 4659 | 587 / 16851 |
-| RSA-OAEP | tag | 1,000 | 739 / 6236 | 589 / 18088 |
-| RSA-OAEP-256 | valid | 1,000 | 775 / 7538 | 590 / 73746 |
-| RSA-OAEP-256 | padding | 1,000 | 799 / 7019 | 589 / 21045 |
-| RSA-OAEP-256 | tag | 1,000 | 841 / 7418 | 590 / 26035 |
+| RSA-OAEP | valid | 1,000 | 611 / 1830 | 585 / 2800 |
+| RSA-OAEP | leading_zero | 1,000 | 612 / 1743 | 585 / 5251 |
+| RSA-OAEP | masked_seed | 1,000 | 611 / 1948 | 587 / 3349 |
+| RSA-OAEP | padding | 1,000 | 611 / 1866 | 587 / 4131 |
+| RSA-OAEP | tag | 1,000 | 612 / 1961 | 585 / 9605 |
+| RSA-OAEP-256 | valid | 1,000 | 618 / 2659 | 585 / 16538 |
+| RSA-OAEP-256 | leading_zero | 1,000 | 619 / 2426 | 583 / 4855 |
+| RSA-OAEP-256 | masked_seed | 1,000 | 619 / 2911 | 585 / 7508 |
+| RSA-OAEP-256 | padding | 1,000 | 617 / 2803 | 581 / 8893 |
+| RSA-OAEP-256 | tag | 1,000 | 618 / 2720 | 583 / 11821 |
 
-A paired bootstrap with 1,000 resamples reports the 99% interval for the
-padding-minus-comparison mean. The two-sample Kolmogorov–Smirnov distance uses
+A paired bootstrap with 1,000 resamples reports the 99% interval for each
+corruption-minus-comparison mean. The two-sample Kolmogorov–Smirnov distance uses
 the approximate 99% critical distance 0.0729; rank probability reports the
-empirical probability that the padding path is slower (ties count as one-half).
+empirical probability that the corruption path is slower (ties count as one-half).
+The combined decision flags separation if either unadjusted criterion triggers;
+it has no joint 99% confidence or multiple-comparison error control.
 
-| Algorithm | Padding versus | Rank probability | KS distance | Mean delta 99% interval (µs) |
+| Algorithm | Corruption versus | Rank probability | KS distance | Mean delta 99% interval (µs) |
 | --- | --- | ---: | ---: | ---: |
-| RSA-OAEP | valid | 0.5112 | 0.032 | [-103.05,136.795] |
-| RSA-OAEP | tag | 0.5008 | 0.039 | [-177.184,68.334] |
-| RSA-OAEP-256 | valid | 0.5114 | 0.037 | [-370.759,129.753] |
-| RSA-OAEP-256 | tag | 0.5045 | 0.029 | [-172.469,163.642] |
+| RSA-OAEP | leading_zero vs. valid | 0.509 | 0.034 | [-15.16,23.649] |
+| RSA-OAEP | leading_zero vs. tag | 0.5116 | 0.039 | [-41.939,23.825] |
+| RSA-OAEP | masked_seed vs. valid | 0.5066 | 0.054 | [-8.533,29.728] |
+| RSA-OAEP | masked_seed vs. tag | 0.5089 | 0.039 | [-31.286,28.25] |
+| RSA-OAEP | padding vs. valid | 0.4939 | 0.047 | [-21.847,20.286] |
+| RSA-OAEP | padding vs. tag | 0.4966 | 0.03 | [-42.929,13.476] |
+| RSA-OAEP-256 | leading_zero vs. valid | 0.5019 | 0.025 | [-118.583,1.585] |
+| RSA-OAEP-256 | leading_zero vs. tag | 0.5112 | 0.031 | [-78.756,9.779] |
+| RSA-OAEP-256 | masked_seed vs. valid | 0.4967 | 0.022 | [-93.473,17.276] |
+| RSA-OAEP-256 | masked_seed vs. tag | 0.506 | 0.026 | [-74.027,37.994] |
+| RSA-OAEP-256 | padding vs. valid | 0.4904 | 0.028 | [-103.127,28.032] |
+| RSA-OAEP-256 | padding vs. tag | 0.4993 | 0.023 | [-70.725,31.83] |
 
-OBSERVED: neither padding-versus-valid nor padding-versus-tag timing separation
-was detected by these comparisons at this microsecond resolution and sample
-count. Each mean interval includes zero; each KS distance is below 0.0729.
-This measurement does not establish constant-time behavior on other machines,
-loads, keys, ciphertext lengths, or repeated remote observations.
+OBSERVED: no timing separation was detected for leading-zero, masked-seed, or
+masked-data-block corruption versus valid ciphertext or tag failure in this run
+at this microsecond resolution and sample count. All 12 mean intervals include
+zero; all KS distances are below 0.0729. Timing figures vary per run; the timing
+and caller-result conclusions were rechecked in this run. This measurement does
+not establish constant-time behavior on other machines, loads, keys, ciphertext
+lengths, or repeated remote observations.
 
-OBSERVED: valid ciphertext returns `{:ok, Result}`. Both corrupted padding and
-corrupted tag return the identical complete error:
+OBSERVED: valid ciphertext returns `{:ok, Result}`. All four corrupted ciphertext
+cases return the identical complete error:
 `%RequestSeal.JOSE.Error{reason: :decryption_failed, layer: :crypto, correlation: nil, retryable: false}`.
-Thus the two failure paths expose the same caller error; all three outcomes are
-not identical because valid ciphertext succeeds. No error unification change was
-needed. The regular OAEP regression uses real RSA and GCM and compares the
-complete error struct for multiple padding-byte corruptions.
+Computed flags are `errors_equal=true`, `failure_results_equal=true`, and
+`all_results_equal=false` for both algorithms; valid ciphertext succeeds.
+The regular OAEP regression uses real RSA and GCM and compares complete error
+structs for leading-zero, masked-seed, and multiple masked-data-block corruptions.

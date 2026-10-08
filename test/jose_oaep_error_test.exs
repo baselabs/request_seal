@@ -33,7 +33,10 @@ defmodule RequestSeal.JOSEOAEPErrorTest do
       encoded =
         :public_key.decrypt_private(Support.decode(ek), private, rsa_padding: :rsa_no_padding)
 
-      for index <- [1, 32, 128, 200] do
+      # Index 0 is the leading zero; index 1 is inside the masked seed for both hashes.
+      <<0, _::binary>> = encoded
+
+      for index <- [0, 1, 32, 128, 200] do
         corrupt =
           :public_key.encrypt_public(P.change(encoded, index), rsa_public,
             rsa_padding: :rsa_no_padding

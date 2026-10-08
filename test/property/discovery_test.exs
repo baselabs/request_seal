@@ -7,7 +7,7 @@ defmodule RequestSeal.DiscoveryPropertyTest do
   @seed 7638
   @runs 300
 
-  setup_all do: %{body: P.jwks(33)}
+  setup_all do: %{body: P.jwks(33, @seed)}
 
   for type <- [:jwks_uri, :directory] do
     property "#{type} random and mutated JSON never raises", %{body: body} do
@@ -72,6 +72,19 @@ defmodule RequestSeal.DiscoveryPropertyTest do
         assert {:ok, _} = Discovery.parse_body(good, source, 100)
         assert {:error, %Error{reason: :limit}} = Discovery.parse_body(good <> " ", source, 100)
       end
+    end
+  end
+
+  test "body parsing refuses required directory proof and permits explicit unproven keys" do
+    body = P.jwks(1)
+    required = P.source(:directory, %{require_signed_directory: true})
+
+    assert {:error, %Error{reason: :directory_unsigned}} =
+             Discovery.parse_body(body, required, 100)
+
+    for source <- [P.source(:directory), P.source(:jwks_uri, %{require_signed_directory: true})] do
+      assert {:ok, keys} = Discovery.parse_body(body, source, 100)
+      assert map_size(keys) == 1
     end
   end
 

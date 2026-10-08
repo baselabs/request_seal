@@ -271,40 +271,53 @@ defmodule RequestSeal.Ceilings do
       }
 
       [protected, ek, iv, ct, tag] = String.split(valid, ".")
-      # Recover the actual OAEP encoded message, corrupt masked DB, and perform
-      # raw public RSA again. This preserves full-width random-looking ciphertext.
+      # Recover the real encoded message and re-encrypt each corrupted byte
+      # with raw RSA, preserving modulus-width ciphertext for every failure.
       encoded = :public_key.decrypt_private(Support.decode(ek), key, rsa_padding: :rsa_no_padding)
 
-      corrupted =
-        :public_key.encrypt_public(
-          P.change(encoded, 200),
-          {:RSAPublicKey, elem(key, 2), elem(key, 3)},
-          rsa_padding: :rsa_no_padding
-        )
+      <<0, _::binary>> = encoded
 
-      {:error, _} = KeyManagement.unwrap(algorithm, corrupted, %{}, {:rsa, key})
+      corruptions =
+        Map.new([leading_zero: 0, masked_seed: 1, padding: 200], fn {name, index} ->
+          corrupted =
+            :public_key.encrypt_public(
+              P.change(encoded, index),
+              {:RSAPublicKey, elem(key, 2), elem(key, 3)},
+              rsa_padding: :rsa_no_padding
+            )
 
-      bad_padding =
-        Enum.join([protected, Support.b64(corrupted), iv, ct, tag], ".")
+          {:error, _} = KeyManagement.unwrap(algorithm, corrupted, %{}, {:rsa, key})
+          {name, Enum.join([protected, Support.b64(corrupted), iv, ct, tag], ".")}
+        end)
 
       bad_tag =
         Enum.join([protected, ek, iv, ct, Support.b64(P.change(Support.decode(tag), 0))], ".")
 
-      tokens = %{valid: valid, padding: bad_padding, tag: bad_tag}
+      tokens = Map.merge(corruptions, %{valid: valid, tag: bad_tag})
+      names = [:valid, :leading_zero, :masked_seed, :padding, :tag]
+      failures = [:leading_zero, :masked_seed, :padding, :tag]
       results = Map.new(tokens, fn {name, token} -> {name, JWE.decrypt(token, policy)} end)
       {:ok, _} = results.valid
       {:error, padding_error} = results.padding
-      {:error, tag_error} = results.tag
-      true = padding_error == tag_error
+
+      errors =
+        Enum.map(failures, fn name ->
+          {:error, error} = results[name]
+          error
+        end)
+
+      errors_equal = length(Enum.uniq(errors)) == 1
+      failure_results_equal = failures |> Enum.map(&results[&1]) |> Enum.uniq() |> length() == 1
+      all_results_equal = results |> Map.values() |> Enum.uniq() |> length() == 1
+      true = errors_equal and failure_results_equal
       for _ <- 1..30, {_name, token} <- tokens, do: JWE.decrypt(token, policy)
       # Rotate order every sample to avoid measuring order/thermal drift as an oracle.
       samples =
-        Enum.reduce(0..999, %{valid: [], padding: [], tag: []}, fn i, acc ->
-          names =
-            Enum.drop([:valid, :padding, :tag], rem(i, 3)) ++
-              Enum.take([:valid, :padding, :tag], rem(i, 3))
+        Enum.reduce(0..999, Map.new(names, &{&1, []}), fn i, acc ->
+          order =
+            Enum.drop(names, rem(i, length(names))) ++ Enum.take(names, rem(i, length(names)))
 
-          Enum.reduce(names, acc, fn name, acc ->
+          Enum.reduce(order, acc, fn name, acc ->
             {us, result} = :timer.tc(fn -> JWE.decrypt(tokens[name], policy) end)
 
             case {name, result} do
@@ -316,7 +329,7 @@ defmodule RequestSeal.Ceilings do
           end)
         end)
 
-      for name <- [:valid, :padding, :tag] do
+      for name <- names do
         times = samples[name]
 
         IO.puts(
@@ -326,8 +339,9 @@ defmodule RequestSeal.Ceilings do
 
       # Pairwise rank probability is an empirical effect size. A deterministic
       # paired bootstrap yields a 99% interval without altering crypto RNG.
-      for comparison <- [:valid, :tag] do
-        a = samples.padding |> Enum.reverse()
+      # The OR of the two unadjusted criteria has no joint 99% confidence claim.
+      for corruption <- [:leading_zero, :masked_seed, :padding], comparison <- [:valid, :tag] do
+        a = samples[corruption] |> Enum.reverse()
         b = samples[comparison] |> Enum.reverse()
         effect = rank_probability(a, b)
         :rand.seed(:exsss, {7516, 1000, 29})
@@ -349,16 +363,16 @@ defmodule RequestSeal.Ceilings do
 
         conclusion =
           if lo > 0 or hi < 0 or ks > critical,
-            do: "timing_separation_detected_at_99_percent",
-            else: "no_timing_separation_detected_at_99_percent"
+            do: "timing_separation_detected_by_unadjusted_criteria",
+            else: "no_timing_separation_detected_by_unadjusted_criteria"
 
         IO.puts(
-          "OAEP algorithm=#{algorithm} padding_vs=#{comparison} rank_probability=#{Float.round(effect, 4)} ks=#{Float.round(ks, 4)} ks_99critical=#{Float.round(critical, 4)} paired_mean_delta_us_99ci=[#{Float.round(lo, 3)},#{Float.round(hi, 3)}] conclusion=#{conclusion}"
+          "OAEP algorithm=#{algorithm} case=#{corruption} versus=#{comparison} rank_probability=#{Float.round(effect, 4)} ks=#{Float.round(ks, 4)} ks_99critical=#{Float.round(critical, 4)} paired_mean_delta_us_99ci=[#{Float.round(lo, 3)},#{Float.round(hi, 3)}] conclusion=#{conclusion}"
         )
       end
 
       IO.puts(
-        "OAEP algorithm=#{algorithm} caller_valid=ok caller_padding=#{inspect(padding_error)} caller_tag=#{inspect(tag_error)} errors_equal=true all_three_results_equal=false"
+        "OAEP algorithm=#{algorithm} caller_failures=#{inspect(Map.take(results, failures))} errors_equal=#{errors_equal} failure_results_equal=#{failure_results_equal} all_results_equal=#{all_results_equal}"
       )
     end
   end

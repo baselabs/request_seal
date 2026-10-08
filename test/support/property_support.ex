@@ -39,10 +39,77 @@ defmodule RequestSeal.PropertySupport do
     ])
   end
 
-  def parameters do
-    map(list_of(bare(), max_length: 5), fn values ->
-      values |> Enum.with_index() |> Enum.map(fn {value, i} -> {"p#{i}", value} end)
+  # RFC 9651 Section 4.2.3.3: keys and parameter names share this grammar.
+  def key_name do
+    bind(member_of(Enum.to_list(?a..?z) ++ [?*]), fn first ->
+      map(
+        list_of(member_of(Enum.to_list(?a..?z) ++ Enum.to_list(?0..?9) ++ ~c"_-.*"),
+          max_length: 15
+        ),
+        &List.to_string([first | &1])
+      )
     end)
+  end
+
+  def parameters do
+    uniq_list_of(tuple({key_name(), bare()}), max_length: 5, uniq_fun: &elem(&1, 0))
+  end
+
+  def ows, do: member_of(["", " ", "\t", " \t "])
+
+  def parsing_dictionary do
+    gen = tuple({key_name(), key_name(), integer(-100..100), integer(-100..100), ows()})
+
+    map(gen, fn {key, parameter, first, last, whitespace} ->
+      {key <>
+         "=" <>
+         Integer.to_string(first) <>
+         ";" <>
+         parameter <>
+         "=1," <>
+         whitespace <>
+         key <> "=" <> Integer.to_string(last) <> ";" <> parameter <> "=2;" <> parameter <> "=3",
+       %Value{
+         type: :dictionary,
+         value: [
+           {key,
+            %Value{type: :item, value: {:integer, last}, parameters: [{parameter, {:integer, 3}}]}}
+         ]
+       }}
+    end)
+  end
+
+  def signature_case do
+    map(
+      tuple(
+        {key_name(), string(:alphanumeric, min_length: 1, max_length: 12),
+         member_of(["%2F", "%20", "%25", "%C3%A9"]), integer(-100..100)}
+      ),
+      fn {key, value, encoded, number} ->
+        target = "/" <> value <> encoded <> "?q=" <> value <> encoded <> "&other=1"
+        dictionary = key <> "=" <> Integer.to_string(number)
+
+        components = [
+          ~s["@path"],
+          ~s["@query"],
+          ~s["@query-param";name="q"],
+          ~s["x-covered";sf],
+          ~s["x-covered";bs],
+          ~s["x-covered";key="#{key}"]
+        ]
+
+        %{
+          message: message(dictionary, target),
+          components: components,
+          options: [field_schemas: %{"x-covered" => schema(:dictionary)}],
+          key: key,
+          dictionary: dictionary,
+          number: number,
+          target: target,
+          query_value: value <> encoded
+        }
+      end
+    )
   end
 
   def item do
@@ -64,12 +131,12 @@ defmodule RequestSeal.PropertySupport do
   def value(:list), do: map(list_of(member(), max_length: 8), &%Value{type: :list, value: &1})
 
   def value(:dictionary) do
-    map(list_of(member(), max_length: 8), fn values ->
-      %Value{
-        type: :dictionary,
-        value: values |> Enum.with_index() |> Enum.map(fn {v, i} -> {"k#{i}", v} end)
-      }
-    end)
+    map(
+      uniq_list_of(tuple({key_name(), member()}), max_length: 8, uniq_fun: &elem(&1, 0)),
+      fn members ->
+        %Value{type: :dictionary, value: members}
+      end
+    )
   end
 
   def change(bytes, index, mask \\ 1) do
@@ -100,20 +167,26 @@ defmodule RequestSeal.PropertySupport do
     m
   end
 
-  def keys do
-    {ed, seed} = :crypto.generate_key(:eddsa, :ed25519)
-    {point, scalar} = :crypto.generate_key(:ecdh, :secp256r1)
+  # Property seeds reproduce Ed25519 seeds and P-256 private scalars.
+  # RSA key generation, ECDSA signing nonces, and JWE CEKs/IVs remain random.
+  def keys(seed \\ 9421) do
+    ed_seed = :crypto.hash(:sha256, :erlang.term_to_binary({:ed25519, seed}))
+    {ed, ^ed_seed} = :crypto.generate_key(:eddsa, :ed25519, ed_seed)
+    order = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+    hash = :crypto.hash(:sha256, :erlang.term_to_binary({:p256, seed}))
+    scalar = <<rem(:binary.decode_unsigned(hash), order - 1) + 1::unsigned-big-size(256)>>
+    {point, ^scalar} = :crypto.generate_key(:ecdh, :secp256r1, scalar)
     {:ok, ed_public} = PublicKey.import({:ed25519, ed}, :raw)
     {:ok, ec_public} = PublicKey.import({:ec, "P-256", point}, :raw)
 
     [
-      {"ed25519", {:ed25519, seed}, ed_public},
+      {"ed25519", {:ed25519, ed_seed}, ed_public},
       {"ecdsa-p256-sha256", {:ec, "P-256", scalar}, ec_public}
     ]
   end
 
-  def jose do
-    [{_, material, public} | _] = keys()
+  def jose(seed \\ 7516) do
+    [{_, material, public} | _] = keys(seed)
     signer = fn alg, base -> Crypto.sign(alg, base, material) end
 
     jws = %{
@@ -161,10 +234,11 @@ defmodule RequestSeal.PropertySupport do
     source
   end
 
-  def jwks(count) do
+  def jwks(count, seed \\ 7517) do
     keys =
-      for _ <- 1..count do
-        {point, _} = :crypto.generate_key(:eddsa, :ed25519)
+      for i <- 1..count do
+        private = :crypto.hash(:sha256, :erlang.term_to_binary({:jwks, seed, i}))
+        {point, ^private} = :crypto.generate_key(:eddsa, :ed25519, private)
         {:ok, key} = PublicKey.import({:ed25519, point}, :raw)
         {:ok, jwk} = PublicKey.export(key, :jwk)
         jwk

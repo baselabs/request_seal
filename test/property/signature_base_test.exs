@@ -6,7 +6,7 @@ defmodule RequestSeal.SignatureBasePropertyTest do
   @seed 9421
   @runs 300
 
-  setup_all do: %{keys: P.keys()}
+  setup_all do: %{keys: P.keys(@seed)}
 
   property "generated component lists have deterministic bases and reject duplicates" do
     check all(
@@ -32,6 +32,33 @@ defmodule RequestSeal.SignatureBasePropertyTest do
       assert {:error, %SignatureBase.Error{reason: :duplicate_component}} =
                SignatureBase.build(message, duplicate)
     end
+  end
+
+  property "encoded targets, query parameters and structured field selections retain covered values" do
+    check all(
+            sample <- P.signature_case(),
+            max_runs: @runs,
+            max_run_time: :infinity,
+            initial_seed: @seed
+          ) do
+      params = "(" <> Enum.join(sample.components, " ") <> ")"
+      assert {:ok, base} = SignatureBase.build(sample.message, params, sample.options)
+      assert SignatureBase.build(sample.message, params, sample.options) == {:ok, base}
+      assert base =~ ~s["@path": #{hd(String.split(sample.target, "?"))}]
+      assert base =~ ~s["@query-param";name="q": #{sample.query_value}]
+      assert base =~ ~s["x-covered";sf: #{sample.dictionary}]
+      assert base =~ ~s["x-covered";bs: :#{Base.encode64(sample.dictionary)}:]
+      assert base =~ ~s["x-covered";key="#{sample.key}": #{sample.number}]
+      duplicate = "(" <> Enum.join(sample.components ++ [hd(sample.components)], " ") <> ")"
+
+      assert {:error, %SignatureBase.Error{reason: :duplicate_component}} =
+               SignatureBase.build(sample.message, duplicate, sample.options)
+    end
+  end
+
+  test "seeded asymmetric key material is reproducible and seed-specific" do
+    assert P.keys(@seed) == P.keys(@seed)
+    refute P.keys(@seed) == P.keys(@seed + 1)
   end
 
   property "newline-bearing covered values reject before a base is returned" do

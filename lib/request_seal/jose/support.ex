@@ -173,7 +173,13 @@ defmodule RequestSeal.JOSE.Support do
   end
 
   def segment_count?(bytes, count) do
-    match?({:ok, _}, safe(fn -> {:ok, segments(bytes, count, [])} end))
+    match?(
+      {:ok, _},
+      safe(fn ->
+        bytes(bytes)
+        {:ok, segments(bytes, count, [])}
+      end)
+    )
   end
 
   defp segments(bytes, remaining, acc) do

@@ -7,7 +7,7 @@ defmodule RequestSeal.JOSEPropertyTest do
   @runs 300
 
   setup do
-    ctx = P.jose()
+    ctx = P.jose(@seed)
     on_exit(fn -> if Process.alive?(ctx.owner), do: Agent.stop(ctx.owner) end)
     ctx
   end
@@ -152,10 +152,53 @@ defmodule RequestSeal.JOSEPropertyTest do
         )
 
       assert byte_size(input) == 1_048_576
+      assert Support.segment_count?(input, count)
       assert {:ok, _} = Support.safe(fn -> {:ok, Support.compact(input, count)} end)
 
       assert {:error, %Error{reason: :limit}} =
                Support.safe(fn -> Support.compact(input <> "a", count) end)
+    end
+  end
+
+  test "segment count rejects oversized input before splitting" do
+    Code.ensure_loaded!(Support)
+
+    assert :erlang.trace_pattern(
+             {Support, :segments, 3},
+             [{:_, [], [{:message, {:const, :split}}]}],
+             [:local]
+           ) == 1
+
+    on_exit(fn -> :erlang.trace_pattern({Support, :segments, 3}, false, [:local]) end)
+    parent = self()
+
+    for {input, expected, split?} <- [
+          {"a.b.c", true, true},
+          {String.duplicate("a", 1_048_577) <> ".b.c", false, false}
+        ] do
+      pid =
+        spawn(fn ->
+          receive do
+            :go -> send(parent, {:result, self(), Support.segment_count?(input, 3)})
+          end
+
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+      :erlang.trace(pid, true, [:call, {:tracer, self()}])
+      send(pid, :go)
+      assert_receive {:result, ^pid, ^expected}, 1_000
+      ref = :erlang.trace_delivered(pid)
+      assert_receive {:trace_delivered, ^pid, ^ref}, 1_000
+
+      if split?,
+        do: assert_received({:trace, ^pid, :call, {Support, :segments, _}, :split}),
+        else: refute_received({:trace, ^pid, :call, {Support, :segments, _}, :split})
+
+      send(pid, :stop)
     end
   end
 
