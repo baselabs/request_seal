@@ -33,8 +33,9 @@ No server, database, container, provider account, or key is needed for the shipp
 Every subprocess has a bounded deadline; each exported notebook has a 300-second limit
 and a 1 MiB output limit. The runner checks nonempty code and complete ordered export,
 and the gate executes rejection checks for empty/omitted code, branches, unsupported
-cells, import warnings, early exit, failure, deadlines, and output limits. Seven pin
-channels and immutable CI action references are checked together. Failures retain the command and output; no fallback
+cells, import warnings, early exit, failure, deadlines, and output limits. The library
+range and OTP floor are checked separately from exact development and notebook pins.
+All three CI lanes and immutable action references have drift rejection checks. Failures retain the command and output; no fallback
 reports a skipped check as successful.
 
 For focused development:

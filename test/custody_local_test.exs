@@ -89,6 +89,22 @@ defmodule RequestSeal.CustodyLocalTest do
     )
   end
 
+  test "RFC 5958 v2 Ed25519 containers carrying a public key reject" do
+    # RFC 8410 Section 10.3: independently published OneAsymmetricKey example.
+    # https://www.rfc-editor.org/rfc/rfc8410.html#section-10.3
+    pem = """
+    -----BEGIN PRIVATE KEY-----
+    MHICAQEwBQYDK2VwBCIEINTuctv5E1hK1bbY8fdp+K06/nwoy/HU++CXqI9EdVhC
+    oB8wHQYKKoZIhvcNAQkJFDEPDA1DdXJkbGUgQ2hhaXJzgSEAGb9ECWmEzf6FQbrB
+    Z9w7lshQhqowtrbLDFw4rXAxZuE=
+    -----END PRIVATE KEY-----
+    """
+
+    for algorithm <- ["ed25519", {:jws, "EdDSA"}] do
+      assert_error(Local.import(algorithm, pem, :pem), :unsupported_format)
+    end
+  end
+
   test "independent private JWKs enforce metadata and public/private agreement" do
     [ec, rsa] = @jwks["keys"]
     assert_error(Local.import("ecdsa-p256-sha256", ec, :jwk), :key_mismatch)

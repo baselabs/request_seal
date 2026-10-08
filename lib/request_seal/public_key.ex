@@ -404,22 +404,25 @@ defmodule RequestSeal.PublicKey do
           {@ed, :asn1_NOVALUE, bytes}
       end
 
-    # The OTP 27 ASN.1 encoder requires parameter DER, unlike OTP 28+.
-    params =
-      if System.otp_release() == "27" do
-        case params do
-          :NULL -> <<5, 0>>
-          {:namedCurve, _} -> :public_key.der_encode(:EcpkParameters, params)
-          :asn1_NOVALUE -> :asn1_NOVALUE
-        end
-      else
-        params
-      end
+    try do
+      :public_key.der_encode(
+        :SubjectPublicKeyInfo,
+        {:SubjectPublicKeyInfo, {:AlgorithmIdentifier, oid, params}, bytes}
+      )
+    rescue
+      _ ->
+        encoded_params =
+          case params do
+            :NULL -> <<5, 0>>
+            {:namedCurve, _} -> :public_key.der_encode(:EcpkParameters, params)
+            :asn1_NOVALUE -> :asn1_NOVALUE
+          end
 
-    :public_key.der_encode(
-      :SubjectPublicKeyInfo,
-      {:SubjectPublicKeyInfo, {:AlgorithmIdentifier, oid, params}, bytes}
-    )
+        :public_key.der_encode(
+          :SubjectPublicKeyInfo,
+          {:SubjectPublicKeyInfo, {:AlgorithmIdentifier, oid, encoded_params}, bytes}
+        )
+    end
   end
 
   defp encode(key, :pem),

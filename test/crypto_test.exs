@@ -646,12 +646,7 @@ defmodule RequestSeal.CryptoTest do
       :public_key.der_decode(:SubjectPublicKeyInfo, der)
 
     bad_curve =
-      :public_key.der_encode(
-        :SubjectPublicKeyInfo,
-        {:SubjectPublicKeyInfo,
-         {:AlgorithmIdentifier, oid,
-          spki_parameters(:EcpkParameters, {:namedCurve, {1, 3, 132, 0, 10}})}, point}
-      )
+      spki_encode(oid, :EcpkParameters, {:namedCurve, {1, 3, 132, 0, 10}}, point)
 
     assert_error(PublicKey.import(bad_curve, :der), :invalid_key)
 
@@ -669,14 +664,11 @@ defmodule RequestSeal.CryptoTest do
       :public_key.der_decode(:SubjectPublicKeyInfo, der)
 
     constrained =
-      :public_key.der_encode(
-        :SubjectPublicKeyInfo,
-        {:SubjectPublicKeyInfo,
-         {:AlgorithmIdentifier, oid,
-          spki_parameters(
-            :"RSASSA-PSS-params",
-            {:"RSASSA-PSS-params", :asn1_DEFAULT, :asn1_DEFAULT, :asn1_DEFAULT, :asn1_DEFAULT}
-          )}, point}
+      spki_encode(
+        oid,
+        :"RSASSA-PSS-params",
+        {:"RSASSA-PSS-params", :asn1_DEFAULT, :asn1_DEFAULT, :asn1_DEFAULT, :asn1_DEFAULT},
+        point
       )
 
     assert_error(PublicKey.import(constrained, :der), :invalid_key)
@@ -710,13 +702,12 @@ defmodule RequestSeal.CryptoTest do
 
     try do
       p384_key =
-        {:ECPrivateKey, if(System.otp_release() == "27", do: 1, else: :ecPrivkeyVer1),
-         hex(@p384["x"]), {:namedCurve, {1, 3, 132, 0, 34}},
+        {:ECPrivateKey, :ecPrivkeyVer1, hex(@p384["x"]), {:namedCurve, {1, 3, 132, 0, 34}},
          <<4>> <> hex(@p384["Ux"]) <> hex(@p384["Uy"]), :asn1_NOVALUE}
 
       File.write!(
         Path.join(dir, "p384_private.pem"),
-        :public_key.pem_encode([:public_key.pem_entry_encode(:ECPrivateKey, p384_key)])
+        :public_key.pem_encode([ec_private_entry(p384_key)])
       )
 
       {:ok, p384_public} =
@@ -936,8 +927,24 @@ defmodule RequestSeal.CryptoTest do
     key
   end
 
-  defp spki_parameters(type, value) do
-    if System.otp_release() == "27", do: :public_key.der_encode(type, value), else: value
+  defp spki_encode(oid, parameter_type, params, point) do
+    :public_key.der_encode(
+      :SubjectPublicKeyInfo,
+      {:SubjectPublicKeyInfo, {:AlgorithmIdentifier, oid, params}, point}
+    )
+  rescue
+    _ ->
+      :public_key.der_encode(
+        :SubjectPublicKeyInfo,
+        {:SubjectPublicKeyInfo,
+         {:AlgorithmIdentifier, oid, :public_key.der_encode(parameter_type, params)}, point}
+      )
+  end
+
+  defp ec_private_entry(key) do
+    :public_key.pem_entry_encode(:ECPrivateKey, key)
+  rescue
+    _ -> :public_key.pem_entry_encode(:ECPrivateKey, put_elem(key, 1, 1))
   end
 
   defp ed25519_input(bytes, :raw), do: {:ed25519, bytes}

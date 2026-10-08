@@ -3,6 +3,7 @@
 ## Unreleased
 
 - JOSE protected headers now use compact JSON in caller member order.
+- Feature-adaptive public-key encoding supports Elixir 1.18 or newer on OTP 27 or newer, with tested Elixir/OTP pairs 1.18.4/27, 1.19.5/28, and 1.20.4/29. PKCS #8 v2 containers carrying a public key consistently reject. CI validates all three pairs and optional client floors on the floor toolchain.
 - Added a package-namespaced extension surface for named application profiles.
 - Added explicit directory-assigned discovery key IDs while retaining computed thumbprints for identity, revocation, and removal.
 - Added `RequestSeal.JOSE.JWS.sign_protected/4` for caller-serialized protected JSON bytes with the same bounds and header rejections as `Header.json/1`.

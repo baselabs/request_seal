@@ -232,13 +232,32 @@ class ToolchainTest(unittest.TestCase):
         self.assertIn("minimum_otp = 27", sources["config/config.exs"])
         self.assertIn("running_otp < minimum_otp", sources["config/config.exs"])
 
-    def test_ci_declares_both_supported_pairs(self):
+    def test_ci_declares_three_supported_pairs(self):
         workflow = self.sources()[".github/workflows/ci.yml"]
         self.assertIn("- lane: floor\n            elixir: '1.18.4'\n            otp: '27.3.4'", workflow)
+        self.assertIn("- lane: mid\n            elixir: '1.19.5'\n            otp: '28.5.0.7'", workflow)
         self.assertIn("- lane: latest\n            elixir: '1.20.4'\n            otp: '29.1.1'", workflow)
+
+    def test_ci_runs_optional_clients_on_floor(self):
+        workflow = self.sources()[".github/workflows/ci.yml"]
+        self.assertIn("- if: matrix.lane == 'floor'\n        run: python3 scripts/check_optional_clients.py", workflow)
+
+    def test_ci_budget_covers_latest_gate(self):
+        self.assertIn("timeout-minutes: 40", self.sources()[".github/workflows/ci.yml"])
 
     def test_range_floor_and_matrix_mutations_are_rejected(self):
         mutations = [
+            (".github/workflows/ci.yml", "timeout-minutes: 40", "timeout-minutes: 20"),
+            (".github/workflows/ci.yml", "- lane: mid", "- lane: other"),
+            (".github/workflows/ci.yml", "elixir: '1.19.5'", "elixir: '1.19.4'"),
+            (".github/workflows/ci.yml", "otp: '28.5.0.7'", "otp: '28.5.0.3'"),
+            (".github/workflows/ci.yml", "matrix.lane == 'mid'", "matrix.lane == 'other'"),
+            (".github/workflows/ci.yml", "run: python3 scripts/check_optional_clients.py", "run: mix test test/client_adapters_test.exs"),
+            ("mix.exs", '{:finch, ">= 0.23.0 and < 0.25.0"', '{:finch, ">= 0.24.0 and < 0.25.0"'),
+            ("mix.exs", '{:req, "~> 0.7.4"', '{:req, "~> 0.7.5"'),
+            (".github/workflows/ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest"),
+            (".github/workflows/ci.yml", "fail-fast: false", "fail-fast: true"),
+            (".github/workflows/ci.yml", "image: postgres:18", "image: postgres:17"),
             ("mix.exs", 'elixir: "~> 1.18"', 'elixir: "~> 1.19"'),
             ("mix.exs", 'elixir: "~> 1.18"', 'elixir: "~> 1.18.4"'),
             ("mix.exs", "unless Code.ensure_loaded?(:json) do", "if Code.ensure_loaded?(:json) do"),
@@ -268,6 +287,17 @@ class ToolchainTest(unittest.TestCase):
                 self.assertIn(old, sources[path])
                 sources[path] = sources[path].replace(old, new)
                 self.assertTrue(gate.toolchain_errors(sources))
+
+    def test_optional_client_floors_derive_from_package_requirements(self):
+        spec = importlib.util.spec_from_file_location("optional_clients", ROOT / "scripts/check_optional_clients.py")
+        clients = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(clients)
+        source = self.sources()["mix.exs"]
+        self.assertEqual(("0.23.0", "0.7.4"), clients.client_floors(source))
+        self.assertEqual(("0.24.0", "0.7.5"), clients.client_floors(
+            source.replace(">= 0.23.0", ">= 0.24.0").replace("~> 0.7.4", "~> 0.7.5")))
+        with self.assertRaises(ValueError):
+            clients.client_floors(source.replace("{:req,", "{:other,"))
 
     def test_actual_action_refs_reject_mutable_tags_and_missing_checkout(self):
         inputs = self.sources()

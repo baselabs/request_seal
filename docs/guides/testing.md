@@ -167,7 +167,7 @@ group. These are runner checks, not remote profile acceptance.
 
 The toolchain check validates the library's Elixir range and OTP floor separately
 from the exact development and notebook identity in `.tool-versions`. CI declares
-a floor test lane and a latest full-gate lane; each channel has a drift rejection check. CI actions use immutable
+floor and middle test lanes and a latest full-gate lane; each channel has a drift rejection check. CI actions use immutable
 commits resolved from their official repositories. Dependency audit evidence covers
 Hex-reported retirements and advisories; it does not claim every advisory database was
 queried independently.

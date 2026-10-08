@@ -105,7 +105,7 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
 
 
 def toolchain_errors(sources):
-    """Validate the consumer range, exact tooling identity, and both CI lanes."""
+    """Validate the consumer range, exact tooling identity, and all three CI lanes."""
     errors = []
     versions = {}
     for number, line in enumerate(sources[".tool-versions"].splitlines(), 1):
@@ -127,12 +127,19 @@ def toolchain_errors(sources):
         errors.append("Version-manager Elixir/OTP identities disagree")
     postgres_env = "\n        env:\n          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres"
     required = {
-        "mix.exs": ['elixir: "~> 1.18"', "unless Code.ensure_loaded?(:json) do"],
+        "mix.exs": ['elixir: "~> 1.18"', "unless Code.ensure_loaded?(:json) do",
+            '{:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false}',
+            '{:req, "~> 0.7.4", optional: true, runtime: false}'],
         "tools/notebooks/mix.exs": [f'elixir: "{elixir}"'],
         "config/config.exs": ["minimum_otp = 27", ":erlang.system_info(:otp_release) |> to_string() |> String.to_integer()", "if running_otp < minimum_otp do"],
         "tools/notebooks/config/config.exs": ['import_config "../../../config/config.exs"', f'expected_otp = "{major}"', 'to_string(:erlang.system_info(:otp_release))', "if running_otp != expected_otp do"],
         "livebooks/environment.livemd": [f'"{elixir}" = System.version()', f'"{major}" = System.otp_release()'],
         ".github/workflows/ci.yml": [
+            "runs-on: ubuntu-24.04", "timeout-minutes: 40", "fail-fast: false",
+            "postgres:\n        image: postgres:18",
+            "- lane: mid\n            elixir: '1.19.5'\n            otp: '28.5.0.7'",
+            "- if: matrix.lane == 'mid'\n        run: mix test --warnings-as-errors" + postgres_env,
+            "- if: matrix.lane == 'floor'\n        run: python3 scripts/check_optional_clients.py",
             "- lane: floor\n            elixir: '1.18.4'\n            otp: '27.3.4'",
             f"- lane: latest\n            elixir: '{elixir}'\n            otp: '{otp}'",
             "elixir-version: ${{ matrix.elixir }}", "otp-version: ${{ matrix.otp }}",
@@ -158,7 +165,7 @@ def check_toolchain():
     errors = toolchain_errors({path: (ROOT/path).read_text() for path in paths})
     if errors:
         raise ValueError("\n".join(errors))
-    print("PASS: consumer range, development/notebook pins, and both CI lanes agree; CI actions use immutable commits")
+    print("PASS: consumer range, development/notebook pins, and all three CI lanes agree; CI actions use immutable commits")
 
 
 def normalize_exdoc_inventory(output, project_root=ROOT):

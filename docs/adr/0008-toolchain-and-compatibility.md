@@ -54,14 +54,26 @@ Erlang/OTP 29.1.1 in `.tool-versions`. Notebook tooling retains its exact Elixir
 requirement, OTP assertion, and executable environment checks. Its isolated
 dependency graph remains unchanged.
 
-Linux CI declares two lanes: Elixir 1.18.4 / OTP 27.3.4 runs the complete
-`mix test --warnings-as-errors` suite, including OpenSSH agent, Node WebCrypto,
-and PostgreSQL replay checks; Elixir 1.20.4 / OTP 29.1.1 runs
-`python3 scripts/check.py`, including documentation and notebook execution.
-Both lanes receive the PostgreSQL service URL. CI actions remain pinned to
-immutable commit SHAs. The gate validates the library range, development and
-notebook pins, both lane identities, and their commands; mutation tests reject
-drift in each channel. Declaring this matrix does not establish a hosted run.
+Linux CI declares three lanes: Elixir 1.18.4 / OTP 27.3.4 and Elixir 1.19.5 /
+OTP 28.5.0.7 run the complete `mix test --warnings-as-errors` suite, including
+OpenSSH agent, Node WebCrypto, and PostgreSQL replay checks; Elixir 1.20.4 /
+OTP 29.1.1 runs `python3 scripts/check.py`, including documentation and notebook
+execution. All three lanes receive the PostgreSQL service URL. The floor lane
+also runs `scripts/check_optional_clients.py` with fresh consumers using its
+running toolchain. The latest gate has a 40-minute CI budget. Local compatibility
+checks use Elixir 1.18.4 / OTP 27.3.4, Elixir 1.19.5 / OTP 28.5.0.3, and
+Elixir 1.20.4 / OTP 29.1.1 with separate build roots; the CI middle lane uses
+the available Ubuntu OTP patch. Declaring this matrix does not establish a
+hosted run.
+
+CI actions remain pinned to immutable commit SHAs. The gate validates the
+library range, optional client requirements, development and notebook pins,
+all three lane identities and commands, Ubuntu runner, matrix failure policy,
+PostgreSQL image, and timeout; mutation tests reject drift in each channel.
+Public-key encoders try ASN.1 term parameters first, then DER parameters when
+required by the active runtime, without predicting support from an OTP release
+string. PKCS #8 v2 containers carrying a public key reject with
+`:unsupported_format` on every supported runtime rather than ignoring that key.
 
 Optional client requirements become `finch >= 0.23.0 and < 0.25.0` and
 `req ~> 0.7.4`. They remain optional and do not start client pools. The optional

@@ -9,6 +9,7 @@ defmodule RequestSeal.Custody.Local do
   containers reject. A PSS-only private key never becomes a PKCS #1 signing key;
   parameter-constrained PSS containers reject rather than dropping restrictions.
   Imported EC/OKP public components must agree with the derived private key.
+  PKCS #8 v2 containers carrying a public key reject with `:unsupported_format`.
 
   All six HTTP algorithms and the eight explicit JWS extensions in `Crypto` are
   supported. Construction derives a public key and performs an actual sign/verify
@@ -430,17 +431,26 @@ defmodule RequestSeal.Custody.Local do
   defp pkcs8(der) do
     # public_key's PrivateKeyInfo decoder unwraps RSA-PSS and fills default
     # parameters. Read the container first to preserve absent vs constrained PSS.
-    {:ok, info} = :"PKCS-FRAME".decode(:PrivateKeyInfo, der)
+    info =
+      case :"PKCS-FRAME".decode(:PrivateKeyInfo, der) do
+        {:ok, info} -> info
+        _ -> ensure(false, :unsupported_format)
+      end
+
     {:ok, encoded} = :"PKCS-FRAME".encode(:PrivateKeyInfo, info)
     ensure(encoded == der, :invalid_key)
 
     {oid, params, private} =
       case info do
-        {:PrivateKeyInfo, _, {:PrivateKeyInfo_privateKeyAlgorithm, oid, params}, private, _} ->
+        {:PrivateKeyInfo, :v1, {:PrivateKeyInfo_privateKeyAlgorithm, oid, params}, private, _} ->
           {oid, params, private}
 
-        {:OneAsymmetricKey, _, {:PrivateKeyAlgorithmIdentifier, oid, params}, private, _, _} ->
+        {:OneAsymmetricKey, :v1, {:PrivateKeyAlgorithmIdentifier, oid, params}, private, _,
+         :asn1_NOVALUE} ->
           {oid, params, private}
+
+        _ ->
+          ensure(false, :unsupported_format)
       end
 
     params =

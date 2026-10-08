@@ -7,7 +7,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -15,6 +15,9 @@ jobs:
           - lane: floor
             elixir: '1.18.4'
             otp: '27.3.4'
+          - lane: mid
+            elixir: '1.19.5'
+            otp: '28.5.0.7'
           - lane: latest
             elixir: '1.20.4'
             otp: '29.1.1'
@@ -52,6 +55,12 @@ jobs:
         run: mix test --warnings-as-errors
         env:
           REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      - if: matrix.lane == 'mid'
+        run: mix test --warnings-as-errors
+        env:
+          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      - if: matrix.lane == 'floor'
+        run: python3 scripts/check_optional_clients.py
       - if: matrix.lane == 'latest'
         run: python3 scripts/check.py
         env:
