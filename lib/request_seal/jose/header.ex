@@ -44,7 +44,8 @@ defmodule RequestSeal.JOSE.Header do
   def serialize(pairs) do
     h = from_pairs(pairs)
     parts = Enum.map(pairs, fn {k, v} -> [json_value(k), ":", json_value(v)] end)
-    # Compact JSON serialization preserves caller member order.
+    # Compact JSON keeps top-level caller order; nested JSON objects use map order.
+    # For exact JWS protected bytes, callers use JWS.sign_protected/4.
     bytes = IO.iodata_to_binary(["{", Enum.intersperse(parts, ","), "}"])
     ensure(byte_size(bytes) <= 16_384, :limit)
     {b64(bytes), h}

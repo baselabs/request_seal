@@ -23,6 +23,27 @@ defmodule RequestSeal.JOSEJWSTest do
     end
   end
 
+  test "HS256 signing matches independently computed compact bytes" do
+    v = fixture("rfc7515.json")["A.1"]
+    key = Base.url_decode64!(v["key"]["k"], padding: false)
+    [_, payload_wire, _] = String.split(v["compact"], ".")
+    payload = Base.url_decode64!(payload_wire, padding: false)
+    protected = Base.url_encode64(~s({"alg":"HS256"}), padding: false)
+    signing_input = protected <> "." <> Base.url_encode64(payload, padding: false)
+    signature = :crypto.mac(:hmac, :sha256, key, signing_input)
+    expected = signing_input <> "." <> Base.url_encode64(signature, padding: false)
+    assert {:ok, handle} = RequestSeal.Custody.Local.new({:jws, "HS256"}, {:hmac, key})
+
+    try do
+      assert {:ok, compact} = JWS.sign([{"alg", "HS256"}], payload, handle)
+      assert compact == expected
+      assert {:ok, result} = JWS.verify(compact, jws_policy(v["key"], "HS256"))
+      assert result.payload == payload
+    after
+      RequestSeal.Custody.Local.release(handle)
+    end
+  end
+
   test "serialized JWS signing preserves published bytes and rejects invalid inputs" do
     v = fixture("rfc7515.json")["A.2"]
     [protected, payload, _] = String.split(v["compact"], ".")
@@ -133,6 +154,11 @@ defmodule RequestSeal.JOSEJWSTest do
       assert {:ok, handle} = RequestSeal.Custody.Local.new({:jws, alg}, material(v["key"]))
 
       try do
+        if name == "A.2" do
+          assert JWS.sign([{"alg", "RS256"}], b64(payload), handle) == {:ok, v["compact"]}
+        end
+
+        # A.1's published header uses the CRLF layout, which sign/4 does not emit.
         assert JWS.sign_protected(b64(protected), b64(payload), handle, timeout: 5000) ==
                  {:ok, v["compact"]}
       after

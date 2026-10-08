@@ -6,8 +6,10 @@ defmodule RequestSeal.JOSE.JWE do
   bytes, and a `PublicKey` or arity-two wrapper `(wire_algorithm, generated_cek)`.
   The wrapper returns `{:ok, %{encrypted_key: bytes, header: additions_map}}`;
   additions are protected, cannot replace caller members, and may contain only
-  `iv`/`tag` for GCMKW. Protected headers use compact JSON in caller member order,
-  followed by additions sorted by member name. For `dir`, the wrapper must
+  `iv`/`tag` for GCMKW. Protected headers use compact JSON: top-level members keep
+  caller order, followed by additions sorted by member name; nested JSON objects
+  are serialized in map order. For JWS signatures needing exact protected bytes,
+  use `RequestSeal.JOSE.JWS.sign_protected/4`. For `dir`, the wrapper must
   provision the generated CEK to its recipient through caller-owned custody
   and return an empty encrypted key.
   No symmetric secret can be supplied in a public key or header. Only
