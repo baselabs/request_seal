@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- JOSE protected headers now use compact JSON in caller member order.
 - Added a package-namespaced extension surface for named application profiles.
 - Added explicit directory-assigned discovery key IDs while retaining computed thumbprints for identity, revocation, and removal.
 - Added `RequestSeal.JOSE.JWS.sign_protected/4` for caller-serialized protected JSON bytes with the same bounds and header rejections as `Header.json/1`.

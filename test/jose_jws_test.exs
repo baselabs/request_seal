@@ -3,6 +3,26 @@ defmodule RequestSeal.JOSEJWSTest do
   alias RequestSeal.JOSE.JWS
   import RequestSeal.JOSEVectors
 
+  test "JWS signing emits compact protected JSON in caller order" do
+    v = fixture("rfc7515.json")["A.2"]
+    assert {:ok, handle} = RequestSeal.Custody.Local.new({:jws, "RS256"}, material(v["key"]))
+
+    try do
+      for {header, expected} <- [
+            {[{"alg", "RS256"}, {"kid", "k1"}], ~s({"alg":"RS256","kid":"k1"})},
+            {[{"kid", "k1"}, {"alg", "RS256"}], ~s({"kid":"k1","alg":"RS256"})}
+          ] do
+        assert {:ok, compact} = JWS.sign(header, "payload", handle)
+        [protected, _, _] = String.split(compact, ".")
+        assert b64(protected) == expected
+        assert {:ok, result} = JWS.verify(compact, jws_policy(v["key"], "RS256"))
+        assert result.payload == "payload"
+      end
+    after
+      RequestSeal.Custody.Local.release(handle)
+    end
+  end
+
   test "serialized JWS signing preserves published bytes and rejects invalid inputs" do
     v = fixture("rfc7515.json")["A.2"]
     [protected, payload, _] = String.split(v["compact"], ".")
@@ -107,16 +127,14 @@ defmodule RequestSeal.JOSEJWSTest do
       refute inspect(result) =~ result.payload
     end
 
-    for {name, alg, header} <- [
-          {"A.1", "HS256", [{"typ", "JWT"}, {"alg", "HS256"}]},
-          {"A.2", "RS256", [{"alg", "RS256"}]}
-        ] do
+    for {name, alg} <- [{"A.1", "HS256"}, {"A.2", "RS256"}] do
       v = vectors[name]
-      [_, payload, _] = String.split(v["compact"], ".")
+      [protected, payload, _] = String.split(v["compact"], ".")
       assert {:ok, handle} = RequestSeal.Custody.Local.new({:jws, alg}, material(v["key"]))
 
       try do
-        assert JWS.sign(header, b64(payload), handle, timeout: 5000) == {:ok, v["compact"]}
+        assert JWS.sign_protected(b64(protected), b64(payload), handle, timeout: 5000) ==
+                 {:ok, v["compact"]}
       after
         RequestSeal.Custody.Local.release(handle)
       end

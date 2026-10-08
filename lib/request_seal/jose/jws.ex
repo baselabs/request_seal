@@ -4,8 +4,8 @@ defmodule RequestSeal.JOSE.JWS do
 
   `sign/4` takes ordered header pairs, nonempty payload bytes, an algorithm-bound
   `KeyHandle` or `Policy.signer`, and only `timeout: milliseconds` (default 5,000;
-  1–300,000). The ordered serializer uses CRLF and one space between members,
-  matching RFC 7515 A.1. No received header is serialized again.
+  1–300,000). Protected headers use compact JSON in caller member order.
+  No received header is serialized again.
 
   `sign_protected/4` accepts caller-serialized protected JSON bytes without
   reserialization, with the same bounds and header rejections as `Header.json/1`.

@@ -44,8 +44,8 @@ defmodule RequestSeal.JOSE.Header do
   def serialize(pairs) do
     h = from_pairs(pairs)
     parts = Enum.map(pairs, fn {k, v} -> [json_value(k), ":", json_value(v)] end)
-    # Explicit ordered serializer: RFC 7515 A.1's CRLF and one-space separator.
-    bytes = IO.iodata_to_binary(["{", Enum.intersperse(parts, ",\r\n "), "}"])
+    # Compact JSON serialization preserves caller member order.
+    bytes = IO.iodata_to_binary(["{", Enum.intersperse(parts, ","), "}"])
     ensure(byte_size(bytes) <= 16_384, :limit)
     {b64(bytes), h}
   end

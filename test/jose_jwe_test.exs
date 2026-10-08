@@ -3,6 +3,38 @@ defmodule RequestSeal.JOSEJWETest do
   alias RequestSeal.JOSE.{JWE, KeyManagement, Nested}
   import RequestSeal.JOSEVectors
 
+  test "JWE encryption emits compact protected JSON with ordered wrapping additions" do
+    v = fixture("5_7.key_wrap_using_aes-gcm_keywrap_with_aes-cbc-hmac-sha2.json")
+    key = {:aes, b64(v["input"]["key"]["k"])}
+    wrap = fn alg, cek -> KeyManagement.wrap(alg, cek, %{}, key) end
+    header = [{"alg", "A256GCMKW"}, {"kid", "k1"}, {"enc", "A128GCM"}]
+
+    assert {:ok, compact} = JWE.encrypt(header, "plaintext", wrap)
+    [protected, _, _, _, _] = String.split(compact, ".")
+    json = b64(protected)
+    additions = :json.decode(json)
+
+    assert json ==
+             ~s({"alg":"A256GCMKW","kid":"k1","enc":"A128GCM","iv":"#{additions["iv"]}","tag":"#{additions["tag"]}"})
+
+    policy = %{
+      algorithms: ["A256GCMKW"],
+      encryption: ["A128GCM"],
+      max_plaintext: 1_048_576,
+      timeout: 5000,
+      key_resolver: fn _ ->
+        {:ok,
+         %{
+           algorithm: "A256GCMKW",
+           unwrap: fn ek, h -> KeyManagement.unwrap("A256GCMKW", ek, h, key) end
+         }}
+      end
+    }
+
+    assert {:ok, result} = JWE.decrypt(compact, policy)
+    assert result.plaintext == "plaintext"
+  end
+
   test "RFC 7516 and RFC 7520 OAEP/GCM decrypt published bytes and exact stages" do
     a = fixture("rfc7516.json")
     b = fixture("5_2.key_encryption_using_rsa-oaep_with_aes-gcm.json")
