@@ -1,0 +1,153 @@
+RequestSeal
+Copyright 2026 BaseLabs
+
+The library is licensed under Apache License 2.0 (see LICENSE).
+
+The signature base, signature and public key in livebooks/rfc-ed25519.livemd
+are extracted from RFC 9421, Appendix B. Signature-base vectors in
+test/fixtures/signature_base/rfc9421.json and test/signature_base_test.exs
+and signed-message fields in test/fixtures/verification/rfc9421.json
+and test/fixtures/multi_signature/rfc9421.json
+derive from RFC 9421 Sections 2, 4.3, 5.1 and Appendix B (retrieved October 7, 2026).
+Source: https://www.rfc-editor.org/rfc/rfc9421.txt
+Source SHA-256: 612655786bf4293bfc486e4177571467fbb3de6e6f0eea90cb74c346a34fdf3c
+RFC 8792 presentation wraps are removed; LF separates base lines with no final LF. Request-target and repeated-field
+examples in test/message_test.exs derive from RFC 9421 Sections 2.1, 2.2.5, and 2.2.7. The HTTP capture fixtures record a real exchange with the
+HTTP Working Group public RFC source; capture.json records their provenance.
+Copyright (c) 2024 IETF Trust and the persons identified as the document authors.
+All rights reserved.
+
+Digest inputs and expected checksums in test/digest_test.exs are extracted
+from RFC 9530, Appendices A, B, C, and D. The IETF copyright notice,
+license conditions, and disclaimer above and below apply to these excerpts.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+3. Neither the name of Internet Society, IETF or IETF Trust, nor the names
+   of specific contributors, may be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+Structured Fields vectors in test/fixtures/structured_fields/ are vendored
+unchanged from https://github.com/httpwg/structured-field-tests at commit
+00462dd7938b43bf596cb2af6a373d9c928a6cbe (retrieved October 7, 2026).
+Source URL: https://github.com/httpwg/structured-field-tests/tree/00462dd7938b43bf596cb2af6a373d9c928a6cbe
+The root JSON files and serialisation-tests/ JSON files retain their upstream
+bytes. The upstream LICENSE.md is retained verbatim as
+test/fixtures/structured_fields/LICENSE. License: BSD-3-Clause.
+Copyright (c) 2018- IETF Trust and the persons identified as authors of the code.
+All rights reserved. The full applicable license and disclaimer follow.
+
+Copyright (c) 2018- IETF Trust and the persons identified as authors of the code. All rights
+reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted
+provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this list of conditions
+  and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice, this list of conditions
+  and the following disclaimer in the documentation and/or other materials provided with the
+  distribution.
+
+* Neither the name of Internet Society, IETF or IETF Trust, nor the names of specific contributors,
+  may be used to endorse or promote products derived from this software without specific prior
+  written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Cryptographic test vectors in test/fixtures/crypto/ are extracted from public
+RFC 9421 (Sections 4.3 and Appendix B), RFC 8032 (Section 7.1), and
+RFC 6979 Appendix A.2.6, retrieved October 7, 2026 from rfc-editor.org.
+The RFC 6979 Appendix A.2.5 P-256 public key is embedded in test/crypto_test.exs.
+RFC 9421 continuations use RFC 8792 unwrapping; JSON stores the published component bytes.
+The fixture SHA256SUMS file identifies every extracted artifact. Keys and secrets
+are published test material and MUST NOT be used outside tests. These IETF Code
+Components use the Revised BSD license reproduced above.
+Copyright (c) 2013, 2017, 2024 IETF Trust and the persons identified as the document
+authors. All rights reserved. Source URLs:
+https://www.rfc-editor.org/rfc/rfc9421.txt
+https://www.rfc-editor.org/rfc/rfc8032.txt
+https://www.rfc-editor.org/rfc/rfc6979.txt
+
+Private JWK test vectors in test/fixtures/custody/ are extracted from RFC 7517
+Appendix A.2 and RFC 8037 Appendix A.1, retrieved October 7, 2026. Line breaks
+inside RFC 7517 component strings are removed as specified by the source. The
+fixture SHA256SUMS identifies both extracted artifacts. These are published test
+keys, never operational credentials, and use the Revised BSD license above.
+Copyright (c) 2015, 2017 IETF Trust and the persons identified as the document
+authors. All rights reserved. Source URLs:
+https://www.rfc-editor.org/rfc/rfc7517.txt
+https://www.rfc-editor.org/rfc/rfc8037.txt
+
+Thumbprint expectations in test/discovery_test.exs derive from RFC 7638
+Section 3.1 and RFC 8037 Appendix A.3. The Ed25519 public x in Web Bot Auth
+protocol-00 Section 5.5.1 has a locally recomputed thumbprint; the draft's
+printed kid is not used as an expected value. Retrieved October 7, 2026.
+The IETF Code Component license and disclaimer above apply.
+https://www.rfc-editor.org/rfc/rfc7638.txt
+https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.txt
+
+JOSE vectors in test/fixtures/jose/rfc7515.json and rfc7516.json are
+extracted from RFC 7515 Appendix A and RFC 7516 Appendix A.1.
+The numbered cookbook JSON files are vendored unchanged from the IETF JOSE
+cookbook, the companion vector repository for RFC 7520. Retrieved October 8, 2026.
+RFC sources: https://www.rfc-editor.org/rfc/rfc7515.txt
+https://www.rfc-editor.org/rfc/rfc7516.txt
+https://www.rfc-editor.org/rfc/rfc7520.txt
+Cookbook source: https://github.com/ietf-jose/cookbook/tree/13692b68bfc18b99557a5b1ed311fd5077bfff04
+The pinned cookbook repository is released under the Unlicense (public domain):
+https://github.com/ietf-jose/cookbook/blob/13692b68bfc18b99557a5b1ed311fd5077bfff04/LICENSE
+The same cookbook vectors also appear in RFC 7520 under BCP 78 and the IETF
+Trust's Legal Provisions Relating to IETF Documents. Copyright (c) 2015 IETF
+Trust and the persons identified as the document authors. All rights reserved.
+The extracted RFC Code Components retain the IETF license text and disclaimer
+reproduced above. These published test keys are never operational credentials.
+SHA256SUMS identifies the vendored and extracted bytes.
+
+Wycheproof rsa_oaep_2048_sha256_mgf1sha256_test.json and aes_gcm_test.json
+are vendored unchanged from https://github.com/C2SP/wycheproof/tree/12fd3aaf33eb5fa1f52e026912ee00c054f9d984
+Retrieved October 8, 2026. The Wycheproof project supplies these public vectors.
+Licensed under Apache License 2.0; the unchanged upstream license is retained
+in test/fixtures/jose/WYCHEPROOF-LICENSE.
+
+Web Bot Auth fixtures in test/fixtures/web_bot_auth/protocol-00.json are extracted
+from draft-ietf-webbotauth-httpsig-protocol-00 Appendix E, retrieved October 8, 2026.
+Source: https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.txt
+Source SHA-256: 3021fd94cdffdb2eb030dec68b1a5c968f2348502dd94c481e2085ec7ddd90a0
+Copyright (c) 2026 IETF Trust and the document authors. The Revised BSD license
+and disclaimer reproduced above apply to these Code Components.
+
+The unchanged web_bot_auth_architecture_v2.json fixture and upstream LICENSE in
+that directory come from https://github.com/cloudflare/web-bot-auth at commit
+6a8ece9bd2a64d83fc7bf3d7f9fd7886900a7355 (Apache License 2.0).
+requests.json contains output produced with its npm package web-bot-auth@0.2.0;
+directory.json contains OpenSSL output over an independently derived draft base.
+PROVENANCE.md records package integrity, generation script, date, and sources.
+SHA256SUMS pins every artifact. No upstream implementation code is a dependency.
+All signing keys are published RFC 9421 test material, never operational keys.

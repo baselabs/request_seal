@@ -1,0 +1,64 @@
+# Verify a published HTTP signature
+
+**Status:** current · **Kind:** guide · **Updated:** 2026-10-06 · **Governed by:** RFC 9421 Appendix B · **Review when:** the vector or OTP crypto contract changes
+
+This notebook verifies the published Ed25519 signature in [RFC 9421 Appendix B.2.6](https://www.rfc-editor.org/rfc/rfc9421.html#appendix-B.2.6), using the public key from [Appendix B.1.4](https://www.rfc-editor.org/rfc/rfc9421.html#appendix-B.1.4).
+
+It exercises OTP's real Ed25519 implementation against independently published bytes. It does not yet exercise RequestSeal parsing, canonicalization, profile policy, freshness, replay protection, or a remote peer. The timestamp is deliberately historical: this is a fixed cryptographic vector, not a request accepted by an authentication policy today. No private key, account, dependency installation, or network connection is needed.
+
+## Load the independent vector
+
+The RFC's visual line wrapping is removed; signature-base lines are separated by LF with no final LF. The public key is decoded from the RFC's public JWK `x` value. The signature field uses standard Base64; the JWK uses unpadded Base64url.
+
+```elixir
+public_key = Base.url_decode64!("JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs", padding: false)
+
+signature =
+  Base.decode64!(
+    "wqcAqbmYJ2ji2glfAMaRy4gruYYnx2nEFN2HN6jrnDnQCK1u02Gb04v9EDgwUPiu4A0w6vuQv5lIp5WPpBKRCw=="
+  )
+
+signature_base =
+  Enum.join(
+    [
+      ~s("date": Tue, 20 Apr 2021 02:07:55 GMT),
+      ~s("@method": POST),
+      ~s("@path": /foo),
+      ~s("@authority": example.com),
+      ~s("content-type": application/json),
+      ~s("content-length": 18),
+      ~s|"@signature-params": ("date" "@method" "@path" "@authority" "content-type" "content-length");created=1618884473;keyid="test-key-ed25519"|
+    ],
+    "\n"
+  )
+
+32 = byte_size(public_key)
+64 = byte_size(signature)
+IO.puts("Published vector loaded: #{byte_size(signature_base)} signature-base bytes")
+```
+
+## Verify and reject tampering
+
+```elixir
+true = :crypto.verify(:eddsa, :none, signature_base, signature, [public_key, :ed25519])
+
+# Change an authenticated path byte, retaining the original signature.
+tampered_base = String.replace(signature_base, ~s("@path": /foo), ~s("@path": /boo))
+false = tampered_base == signature_base
+false = :crypto.verify(:eddsa, :none, tampered_base, signature, [public_key, :ed25519])
+
+# Change an actual decoded signature byte; do not merely edit Base64 padding.
+<<first, rest::binary>> = signature
+corrupt_signature = <<Bitwise.bxor(first, 1), rest::binary>>
+false = :crypto.verify(:eddsa, :none, signature_base, corrupt_signature, [public_key, :ed25519])
+
+IO.puts("Published vector verified; altered path and signature rejected")
+```
+
+## Reuse this evidence correctly
+
+Future RequestSeal conformance tests must independently construct the same signature base from the published HTTP message, then verify the published signature. This notebook establishes the crypto baseline only. Protocol support requires the separately tracked parser, canonicalization, policy and interoperability evidence.
+
+## RFC code-component attribution
+
+The vector is extracted from RFC 9421, Copyright (c) 2024 IETF Trust and the persons identified as the document authors. All rights reserved. Redistribution and use are permitted under the Revised BSD License in the [IETF Trust Legal Provisions, Section 4.e](https://trustee.ietf.org/license-info/). The accompanying third-party notice must retain the full license when this notebook is distributed.

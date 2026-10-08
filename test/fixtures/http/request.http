@@ -1,0 +1,6 @@
+HEAD /httpwg/http-core/main/rfc9112.xml?capture=a%2Fb&capture=two HTTP/1.1
+Host: raw.githubusercontent.com
+Accept: text/plain
+Accept: */*
+Connection: close
+

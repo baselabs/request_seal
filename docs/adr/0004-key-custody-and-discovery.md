@@ -1,0 +1,43 @@
+# ADR 0004: Keep key custody external and discovery controlled
+
+- Status: Accepted
+- Date: 2026-10-06
+- Updated: 2026-10-08
+
+## Context
+
+RequestSeal must support local keys, HSM/KMS-style custody, JWK/JWKS, WBA directories, rotation, and revocation without requiring a network or key store. Sender-provided identifiers and URLs are attacker-controlled until a profile-valid trust association is established. [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html) define JWK sets, thumbprints, and OKP keys.
+
+## Decision
+
+Represent private custody as an opaque caller-owned `KeyHandle`; only the selected signing or verification custodian interprets it. The core receives signature/verification results and bounded public metadata, never exportable private material. Asymmetric verification resolves a public key; HMAC verification resolves an opaque verification handle. Both include provenance and asserted associations, which profiles must validate before principal attribution. HMAC establishes shared-secret possession, not a unique signer or public verifiability.
+
+Distinct-key policies use canonical public components for asymmetric keys and trusted nonsecret custodian/resolver key-equivalence identities for HMAC. All aliases/imports of one secret map to one identity within the declared trust scope; per-handle IDs cannot establish distinctness. Unknown cross-custodian equivalence rejects a key-distinct threshold. The custodian supplies HMAC key-equivalence identity as an opaque value; RequestSeal never derives it. It stays internal and follows the redaction contract. An explicitly selected principal/role policy may use its own independently established trust bindings.
+
+TLS custody stays with the caller's transport. Internal CEKs/IVs never become public metadata.
+
+Network discovery is an optional adapter invoked only by explicit profile/caller policy. It enforces HTTPS, no automatic redirects by default, DNS and post-connect address checks, private/link-local/loopback denial, bounded redirects when specifically allowed, response/decompression/key-count limits, deadlines, cancellation, cache freshness, and explicit removal/rotation semantics. A message cannot introduce a fetchable URL outside configured discovery types and trust roots.
+
+## Strongest alternatives
+
+1. **Accept raw private keys in `sign/3`.** It makes local development direct. It spreads secret-bearing values across structs, inspection, errors, and adapters, making non-exporting custody impossible.
+2. **Require a general-purpose HTTP client/cache.** It offers turnkey discovery. It imposes network/process choices on every consumer and conflates fetching with trust. The implemented optional discovery adapter instead uses a bounded HTTP/1.1 GET over caller-started OTP TLS, with vetted addresses and explicit source policy. Its optional cache starts only when the caller requests it; neither transport nor cache is required by core signing or verification.
+3. **Let the key resolver fetch arbitrary `keyid` URLs.** It is flexible and mirrors some generic libraries. It creates an SSRF and confused-deputy surface and treats location as identity.
+4. **Require callers to resolve everything before RequestSeal.** It removes network code. It also strips provenance and profile-specific directory validation from the result, encouraging key possession to be mistaken for identity.
+
+## Deciding evidence and deletion test
+
+WBA protocol-00 requires explicit discovery types and HTTPS/200/no automatic redirects; RFC/JWK sources define key representation, not trust. Delete the custody boundary and every caller/custodian must expose or translate secrets differently. Delete discovery as a core-required subsystem and pure callers get simpler; therefore discovery stays an optional adapter rather than a required layer.
+
+## Consequences
+
+Local use has no network requirement. Local construction starts one unsupervised sensitive holder per handle, addressed only by PID and token. Sensitivity is set before key material arrives; the holder rejects system introspection and performs cryptography without returning private state. It monitors the creator and exits on creator death or explicit `Local.release/1`; later signing returns the existing `:key_not_found` reason. Loading the library starts no process. Remote signers and discovery integrations must implement deadlines, cancellation, redaction, and provenance. Principal attribution remains unavailable when a valid key lacks a trusted association.
+
+## Acceptance
+
+- Secret canaries never appear in public values, inspection, logs, telemetry, exceptions, or package artifacts.
+- Actual local and authorized external signers exercise success, timeout, cancellation, and provider error paths.
+- Real controlled discovery exercises redirects, DNS/IP changes, IPv4/IPv6 restricted ranges, oversized/decompressed responses, excessive keys, cache expiry, rotation, and removal.
+- Asymmetric thumbprints are deterministic and key type/use/operations/algorithm compatibility is enforced.
+- Actual HMAC verification retains secret custody; same-secret aliases/imports count once, distinct trusted identities count as configured, and unknown cross-custodian equivalence rejects key-distinct thresholds.
+- A valid signature from an untrusted or unattributed key cannot populate an authenticated principal.

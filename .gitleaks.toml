@@ -1,0 +1,44 @@
+# Published vectors and explicitly labeled local cryptographic fixtures.
+# They never authenticate real accounts. Each entry names exact files, never a directory.
+[extend]
+useDefault = true
+
+# RFC 9421 Appendix B.1 published example keys.
+[[allowlists]]
+description = "RFC 9421 Appendix B.1 published example keys"
+paths = [
+  '''^test/fixtures/crypto/(rsa|rsa_pss|p256|ed25519)_private\.pem$''',
+]
+
+# RFC 7520 cookbook files (ietf-jose/cookbook at 13692b68), two Wycheproof files
+# (C2SP/wycheproof at 12fd3aaf), and examples extracted from RFC 7515 and RFC 7516.
+[[allowlists]]
+description = "RFC 7520 cookbook, Wycheproof and RFC 7515/7516 JOSE vectors"
+paths = [
+  '''^test/fixtures/jose/4_1\.rsa_v15_signature\.json$''',
+  '''^test/fixtures/jose/4_2\.rsa-pss_signature\.json$''',
+  '''^test/fixtures/jose/4_3\.ecdsa_signature\.json$''',
+  '''^test/fixtures/jose/4_4\.hmac-sha2_integrity_protection\.json$''',
+  '''^test/fixtures/jose/4_5\.signature_with_detached_content\.json$''',
+  '''^test/fixtures/jose/4_6\.protecting_specific_header_fields\.json$''',
+  '''^test/fixtures/jose/4_7\.protecting_content_only\.json$''',
+  '''^test/fixtures/jose/4_8\.multiple_signatures\.json$''',
+  '''^test/fixtures/jose/5_1\.key_encryption_using_rsa_v15_and_aes-hmac-sha2\.json$''',
+  '''^test/fixtures/jose/5_10\.including_additional_authentication_data\.json$''',
+  '''^test/fixtures/jose/5_11\.protecting_specific_header_fields\.json$''',
+  '''^test/fixtures/jose/5_12\.protecting_content_only\.json$''',
+  '''^test/fixtures/jose/5_13\.encrypting_to_multiple_recipients\.json$''',
+  '''^test/fixtures/jose/5_2\.key_encryption_using_rsa-oaep_with_aes-gcm\.json$''',
+  '''^test/fixtures/jose/5_3\.key_wrap_using_pbes2-aes-keywrap_with-aes-cbc-hmac-sha2\.json$''',
+  '''^test/fixtures/jose/5_4\.key_agreement_with_key_wrapping_using_ecdh-es_and_aes-keywrap_with_aes-gcm\.json$''',
+  '''^test/fixtures/jose/5_5\.key_agreement_using_ecdh-es_with_aes-cbc-hmac-sha2\.json$''',
+  '''^test/fixtures/jose/5_6\.direct_encryption_using_aes-gcm\.json$''',
+  '''^test/fixtures/jose/5_7\.key_wrap_using_aes-gcm_keywrap_with_aes-cbc-hmac-sha2\.json$''',
+  '''^test/fixtures/jose/5_8\.key_wrap_using_aes-keywrap_with_aes-gcm\.json$''',
+  '''^test/fixtures/jose/5_9\.compressed_content\.json$''',
+  '''^test/fixtures/jose/6\.nesting_signatures_and_encryption\.json$''',
+  '''^test/fixtures/jose/aes_gcm_test\.json$''',
+  '''^test/fixtures/jose/rfc7515\.json$''',
+  '''^test/fixtures/jose/rfc7516\.json$''',
+  '''^test/fixtures/jose/rsa_oaep_2048_sha256_mgf1sha256_test\.json$''',
+]

@@ -1,0 +1,210 @@
+defmodule RequestSeal.Message do
+  @moduledoc """
+  Lossless HTTP message values for later component derivation.
+
+  `new/1` accepts a map. Required for both kinds: `:kind` (`:request` or
+  `:response`), ordered `:fields` of `RequestSeal.FieldOccurrence`, `:trailers`,
+  a `RequestSeal.Body`, and `:transport` (`RequestSeal.TransportFacts`). Trailers
+  are an ordered list (including an observed empty list), `:unavailable`, or
+  `:pending` while the body is streaming. A streaming body describes unread
+  caller-owned content, not transport progress: a completed capture may have
+  known trailers while its content stream remains unread. Header and trailer
+  sections never mix.
+  Total fields and trailers are bounded to 1,024 occurrences and 1,048,576 bytes
+  of names and values. Field maps, tuples, and invalid nested structs reject.
+
+  Requests require a token `:method` (at most 256 bytes), `:raw_target` (at most
+  16,384 bytes), and explicit `:target_form`: `:origin`, `:absolute`, `:authority`
+  (CONNECT with a port), or `:asterisk` (OPTIONS). URI octets and percent-encoding
+  remain unchanged; fragments, userinfo, malformed escapes, and controls reject.
+  Absolute targets require a scheme and authority. Optional `:scheme` and
+  `:authority` are a pair of caller-declared authoritative origin facts, never
+  inferred from Host or Forwarded. Scheme is bounded to 64 bytes; authority to
+  1,024 bytes. Ports are decimal numbers in 0..65535. Missing origin is preserved
+  as `nil`; a later component rule decides whether it is required. When supplied,
+  an absolute target must match the declared scheme and authority byte for byte;
+  a CONNECT target must match the declared authority. No normalization is used
+  to reconcile conflicting declarations.
+
+  Responses require integer `:status` in 100..599. Optional `:related_request`
+  is a validated request (not another response); absent context remains `nil`.
+  Request-only fields must be `nil` on responses. Requests cannot carry status
+  or another related request. Unknown options reject; no normalization occurs.
+
+  `validate/1` applies the same checks to directly constructed or modified structs.
+  Success establishes a well-formed value, not HTTP framing, component availability,
+  cryptographic validity, or authentication. Signature-base derivation is provided by `RequestSeal.SignatureBase`.
+  Generic signing and verification are provided by `RequestSeal`; optional Req/Finch
+  adapters and Ash scope mapping are implemented. Named profiles and Plug/Phoenix
+  adapters remain planned. This module starts no process and reads no stream.
+  Default inspection is redacted.
+
+      iex> {:ok, body} = RequestSeal.Body.new(%{state: :unavailable})
+      iex> {:ok, transport} = RequestSeal.TransportFacts.new(%{})
+      iex> {:ok, request} = RequestSeal.Message.new(%{kind: :request, method: "GET", raw_target: "/a%2Fb?", target_form: :origin, fields: [], trailers: :unavailable, body: body, transport: transport})
+      iex> {request.raw_target, request.body.state, request.scheme}
+      {"/a%2Fb?", :unavailable, nil}
+      iex> RequestSeal.Message.validate(request)
+      :ok
+      iex> RequestSeal.Message.new(%{kind: :request})
+      {:error, %RequestSeal.Message.Error{reason: :invalid_message}}
+  """
+  alias RequestSeal.{Body, FieldOccurrence, TransportFacts}
+  alias RequestSeal.Message.Validation
+  @derive {Inspect, only: []}
+  defstruct [
+    :kind,
+    :method,
+    :raw_target,
+    :target_form,
+    :scheme,
+    :authority,
+    :status,
+    :fields,
+    :trailers,
+    :body,
+    :related_request,
+    :transport
+  ]
+
+  @type t :: %__MODULE__{
+          kind: :request | :response,
+          method: binary() | nil,
+          raw_target: binary() | nil,
+          target_form: :origin | :absolute | :authority | :asterisk | nil,
+          scheme: binary() | nil,
+          authority: binary() | nil,
+          status: 100..599 | nil,
+          fields: [FieldOccurrence.t()],
+          trailers: [FieldOccurrence.t()] | :unavailable | :pending,
+          body: Body.t(),
+          related_request: t() | nil,
+          transport: TransportFacts.t()
+        }
+
+  @doc "Construct a request or response; return a bounded error on invalid input."
+  @spec new(map()) :: {:ok, t()} | {:error, RequestSeal.Message.Error.t()}
+  def new(attrs),
+    do:
+      Validation.construct(
+        attrs,
+        __MODULE__,
+        [:kind, :fields, :trailers, :body, :transport],
+        :invalid_message
+      )
+
+  @doc "Validate all nested values, states, bounds, targets, and request linkage."
+  @spec validate(term()) :: :ok | {:error, RequestSeal.Message.Error.t()}
+  def validate(%__MODULE__{} = message) do
+    with true <- Validation.exact_struct?(message, __MODULE__),
+         :ok <- Body.validate(message.body),
+         :ok <- TransportFacts.validate(message.transport),
+         true <- kind_valid?(message),
+         {:ok, count, bytes} <- fields(message.fields, :headers, 0, 0),
+         {:ok, _, _} <- trailers(message, count, bytes) do
+      :ok
+    else
+      {:error, _} = error -> error
+      _ -> Validation.error(:invalid_message)
+    end
+  end
+
+  def validate(_), do: Validation.error(:invalid_message)
+
+  defp kind_valid?(%{kind: :request, status: nil, related_request: nil} = m),
+    do:
+      Validation.token?(m.method, 256) and origin_valid?(m.scheme, m.authority) and
+        target_valid?(m)
+
+  defp kind_valid?(%{
+         kind: :response,
+         method: nil,
+         raw_target: nil,
+         target_form: nil,
+         scheme: nil,
+         authority: nil,
+         status: status,
+         related_request: request
+       }),
+       do: is_integer(status) and status in 100..599 and related_valid?(request)
+
+  defp kind_valid?(_), do: false
+
+  defp related_valid?(nil), do: true
+  defp related_valid?(%__MODULE__{kind: :request} = request), do: validate(request) == :ok
+  defp related_valid?(_), do: false
+  defp origin_valid?(nil, nil), do: true
+
+  defp origin_valid?(scheme, authority),
+    do: Validation.scheme?(scheme) and Validation.authority?(authority)
+
+  defp target_valid?(%{raw_target: raw} = m) when is_binary(raw) and byte_size(raw) in 1..16_384,
+    do:
+      Validation.uri_bytes?(raw) and form_valid?(m.target_form, m.method, raw) and
+        target_origin_valid?(m)
+
+  defp target_valid?(_), do: false
+  defp form_valid?(:authority, "CONNECT", raw), do: Validation.authority?(raw, true)
+  defp form_valid?(_, "CONNECT", _), do: false
+  defp form_valid?(:asterisk, "OPTIONS", "*"), do: true
+  defp form_valid?(:origin, _, "/" <> _ = raw), do: path_query_valid?(raw)
+
+  defp form_valid?(:absolute, _, raw) do
+    case Regex.run(~r/\A([A-Za-z][A-Za-z0-9+.-]*):\/\/([^\/?]+)((?:[\/?].*)?)\z/, raw) do
+      [_, scheme, authority, tail] ->
+        Validation.scheme?(scheme) and Validation.authority?(authority) and
+          path_query_valid?(tail)
+
+      _ ->
+        false
+    end
+  end
+
+  defp form_valid?(_, _, _), do: false
+
+  defp target_origin_valid?(%{scheme: nil, authority: nil}), do: true
+
+  defp target_origin_valid?(%{target_form: :authority, raw_target: raw, authority: authority}),
+    do: raw == authority
+
+  defp target_origin_valid?(%{
+         target_form: :absolute,
+         raw_target: raw,
+         scheme: scheme,
+         authority: authority
+       }) do
+    case Regex.run(~r/\A([A-Za-z][A-Za-z0-9+.-]*):\/\/([^\/?]+)/, raw) do
+      [_, ^scheme, ^authority] -> true
+      _ -> false
+    end
+  end
+
+  defp target_origin_valid?(_), do: true
+
+  defp path_query_valid?(raw), do: :binary.match(raw, ["[", "]"]) == :nomatch
+
+  defp fields([], _, count, bytes), do: {:ok, count, bytes}
+
+  defp fields([%FieldOccurrence{section: section} = field | rest], section, count, bytes)
+       when count < 1024 do
+    with :ok <- FieldOccurrence.validate(field),
+         total = bytes + byte_size(field.name) + byte_size(field.value),
+         true <- total <= 1_048_576 do
+      fields(rest, section, count + 1, total)
+    else
+      _ -> Validation.error(:invalid_field)
+    end
+  end
+
+  defp fields(_, _, _, _), do: Validation.error(:invalid_field)
+
+  defp trailers(%{trailers: :unavailable}, count, bytes), do: {:ok, count, bytes}
+
+  defp trailers(%{trailers: :pending, body: %Body{state: :streaming}}, count, bytes),
+    do: {:ok, count, bytes}
+
+  defp trailers(%{trailers: :pending}, _, _), do: Validation.error(:invalid_message)
+
+  defp trailers(%{trailers: trailers}, count, bytes),
+    do: fields(trailers, :trailers, count, bytes)
+end

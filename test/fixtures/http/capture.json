@@ -1,0 +1,10 @@
+{
+  "source": "https://raw.githubusercontent.com/httpwg/http-core/main/rfc9112.xml",
+  "captured_at": "2026-10-07T20:49:06.778540+00:00",
+  "method": "Python ssl verified TLS socket; sendall request.http; recv response.http until EOF",
+  "purpose": "Real HTTP bytes for value-model round trip; no signature or peer-conformance claim",
+  "sha256": {
+    "request.http": "7f39c164b83fc5446c698eeaff790ecea7b7f71ed99fda333c213803618e3c66",
+    "response.http": "6be9285be87903a900265263433d299755c9d5dd57698c34a6e2a028bd69bc9c"
+  }
+}

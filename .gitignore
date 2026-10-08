@@ -1,0 +1,20 @@
+/.kimosabe/
+/_build/
+/deps/
+/doc/
+/cover/
+/*.ez
+/*.tar
+/erl_crash.dump
+/tools/notebooks/_build/
+/tools/notebooks/deps/
+/tools/notebooks/erl_crash.dump
+
+# Local credentials and environment overrides are never public source.
+/.env
+/.env.*
+!/.env.example
+
+# Developer filesystem and Python bytecode metadata.
+.DS_Store
+__pycache__/

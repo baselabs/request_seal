@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.bin -text
+*.png -text
+
+# Keep captured HTTP CRLF and raw octets identical in every checkout.
+test/fixtures/http/*.http binary

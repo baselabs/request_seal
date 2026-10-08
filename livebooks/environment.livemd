@@ -1,0 +1,33 @@
+# Inspect the local library
+
+**Status:** current · **Kind:** guide · **Updated:** 2026-10-07 · **Governed by:** public architecture and accepted ADRs · **Review when:** the referenced contract or implementation changes
+
+This notebook installs the real local RequestSeal checkout. It checks the module's
+public function exports and actual runtime. Protocol verification is exercised by the
+library's published-vector tests; this notebook checks installation and prerequisites.
+Set `REQUESTSEAL_PATH` to your clone or extracted package before starting the runtime.
+The path dependency installs in the runtime's production environment without clone-only config or lockfile paths. The checks reject a different runtime or unexpected public function exports. No provider key is required.
+
+```elixir
+requestseal_path = System.fetch_env!("REQUESTSEAL_PATH")
+Mix.install([{:request_seal, path: requestseal_path}])
+```
+
+## Inspect actual capabilities
+
+```elixir
+Code.ensure_loaded!(RequestSeal)
+"1.20.4" = System.version()
+"29" = System.otp_release()
+true = :eddsa in Keyword.fetch!(:crypto.supports(), :public_keys)
+true = :ed25519 in Keyword.fetch!(:crypto.supports(), :curves)
+{:docs_v1, _, :elixir, _, %{"en" => module_docs}, _, _} = Code.fetch_docs(RequestSeal)
+true = is_binary(module_docs)
+[sign: 3, sign: 4, verify: 3, verify_quorum: 3] = RequestSeal.__info__(:functions)
+IO.puts("Local RequestSeal module loaded; pinned runtime and Ed25519 available")
+```
+
+The result proves installation and prerequisites only. See [testing and evidence](../docs/guides/testing.md)
+for the distinction between these checks and protocol support. No filesystem path, secret,
+private key, request body, or token is printed. Mix's own dependency cache remains available;
+the repository gate removes its temporary exported scripts after execution.
