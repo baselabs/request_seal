@@ -21,8 +21,11 @@ defmodule RequestSeal.AcceptSignature do
   with `:negotiation_unfulfillable`, without a partial message.
 
   Passing requests as `accept_signature:` to `RequestSeal.verify_quorum/3`
-  requires each exact label to qualify, the same covered identity set, and every
-  requested parameter. Extra metadata and separate signatures are allowed.
+  requires each exact label in the verified, selector-eligible pool after key-unit
+  filtering, with the same covered component identity set and every requested
+  parameter. The label need not be assigned to a counted slot; it appears in
+  `qualifying` and `signatures` only when assigned. Extra metadata and separate
+  signatures are allowed.
   A challenge match is established; replay storage and authorization are not.
   Limits: 16 requests, 65,536 wire bytes, and the signature-base component bounds.
   """

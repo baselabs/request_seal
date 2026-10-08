@@ -7,8 +7,11 @@ The signature base, signature and public key in livebooks/rfc-ed25519.livemd
 are extracted from RFC 9421, Appendix B. Signature-base vectors in
 test/fixtures/signature_base/rfc9421.json and test/signature_base_test.exs
 and signed-message fields in test/fixtures/verification/rfc9421.json
-and test/fixtures/multi_signature/rfc9421.json
-derive from RFC 9421 Sections 2, 4.3, 5.1 and Appendix B (retrieved October 7, 2026).
+derive from RFC 9421 Sections 2, 4.3 and Appendix B (retrieved October 7, 2026).
+Signed-message and nested-signature fields in
+test/fixtures/multi_signature/rfc9421.json derive from Section 4.3 and Appendix B.
+Its accept_signature field, exercised in test/accept_signature_test.exs,
+is the Accept-Signature example from Section 5.1, not a signature-base vector.
 Source: https://www.rfc-editor.org/rfc/rfc9421.txt
 Source SHA-256: 612655786bf4293bfc486e4177571467fbb3de6e6f0eea90cb74c346a34fdf3c
 RFC 8792 presentation wraps are removed; LF separates base lines with no final LF. Request-target and repeated-field

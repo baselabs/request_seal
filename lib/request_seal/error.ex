@@ -69,7 +69,7 @@ defmodule RequestSeal.Error do
     key equivalence unknown), `:binding_unsatisfied` (nested or parameter binding).
   * `:negotiation`: `:invalid_accept_signature` (malformed request or unsupported
     parameter), `:inapplicable_component` (wrong target context),
-    `:negotiation_unfulfilled` (qualifying label, component set, or parameter differs),
+    `:negotiation_unfulfilled` (eligible verified label, component set, or parameter differs),
     `:negotiation_unfulfillable` (unavailable component, incompatible chooser,
     unfulfillable parameter, callback fault, or signing failure).
   * `:freshness`: `:invalid_clock` (fault or noninteger/out-of-range clock),

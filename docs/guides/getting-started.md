@@ -12,7 +12,8 @@ bounded extension surface; see ADR 0013.
 ## Prerequisites
 
 Use Elixir 1.20.4 built for OTP 29, Erlang/OTP 29.1.1, Python 3.11 or newer, Git,
-Hex, Node 24.21.0, and the OpenSSL command-line tool. Node is required for the
+Hex, Node 24.21.0, the OpenSSL command-line tool, and OpenSSH tools (`ssh-agent`,
+`ssh-add`, and `ssh-keygen`). Node is required for the
 reciprocal JOSE tests against the independent Node WebCrypto peer; OpenSSL runs
 reciprocal signature checks. `.tool-versions` records the exact Elixir/OTP and
 Node versions. Use a version manager such as asdf

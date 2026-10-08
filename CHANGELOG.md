@@ -5,7 +5,7 @@
 - Added a package-namespaced extension surface for named application profiles.
 - Added explicit directory-assigned discovery key IDs while retaining computed thumbprints for identity, revocation, and removal.
 - Added `RequestSeal.JOSE.JWS.sign_protected/4` for caller-serialized protected JSON bytes with the same bounds and header rejections as `Header.json/1`.
-- Add explicit Web Bot Auth protocol-00 signing and source-bound verification with nested coverage and whole-envelope replay; deployed-verifier acceptance remains open.
+- Added explicit Web Bot Auth protocol-00 signing and source-bound verification with nested coverage and whole-envelope replay; deployed-verifier acceptance remains open.
 - `RequestSeal.Verification` inspection no longer shows `principal` for any profile; access authenticated principals explicitly.
 
 - Plug verification requires the original replay adapter and, after any replay read, full draining with a digest matching the complete captured body. Partial reads, unread-suffix tampering, and replaced adapters reject before key resolution. The configured RequestSeal body reader records invocation; custom readers that bypass both it and the adapter remain a documented caller-configuration boundary.
@@ -24,11 +24,15 @@
 - Added explicit Ash actor/tenant/context bindings, authorization-enabled scopes, and real ETS policy denial and tenant-isolation checks.
 - Added optional Req/Finch adapters with final-attempt signing, fresh retry/redirect parameters, explicit origin policy, exact response association, and bounded verified streaming delivery.
 - Added RFC public-key thumbprints and explicit HTTPS directory/JWKS/CIMD discovery with signed possession proofs, address and byte limits, cancellation, and a caller-started cache for freshness, rotation, removal, and revocation.
+- Discovery cache freshness honors Cache-Control before Expires with Date/Age accounting; fallback freshness defaults to 300 seconds and negative entries are capped at 300 seconds. CIMD failures are not cached, expired snapshots are not served after refresh failure, and 5xx status failures are retryable while 4xx failures are not.
 - Added post-validation nonce replay commitments, bounded deadlines and retention, atomic caller-owned ETS and optional Postgrex stores, and real concurrency checks.
 - `verify/3` intentionally fails closed with `:duplicate_label` for repeated labels within or across Signature-Input or Signature field occurrences, per [RFC 9421 Section 3.2](https://www.rfc-editor.org/rfc/rfc9421.html#section-3.2).
 - Signing and single-label/quorum verification reject repeated parameter names in either signature dictionary with `:duplicate_parameter`.
 - Key resolvers accept an optional `:identity` member carrying trusted `RequestSeal.KeyIdentity` for quorum key-equivalence counting; identities remain internal and establish no principal attribution.
 - Added explicit RFC 9421 quorum verification, trusted key/principal/role counting, nested bindings, and Accept-Signature challenge negotiation.
+- Quorum results use a plural label-keyed `signatures` map for assigned signatures; `satisfied` includes optional slots, and negotiation can be fulfilled by a verified eligible label outside the counted assignment.
+- Quorum assignment maximizes distinct units before filled slots, enforces unique labels and merged identity classes, and searches binding alternatives under a 131,072-node budget. New identity-bridging evidence can reduce an otherwise feasible count; budget exhaustion succeeds only with a policy-satisfying assignment.
+- Quorum verification rejects required replay before callbacks and stores run. Slot policies accept retained-body Content-Digest checks, rejecting representation digests and caller-fed digest state.
 - Added opaque caller-owned key handles, local OTP/private PEM/JWK custody, trusted symmetric equivalence, monitored deadlines and cancellation, and verified non-exporting OpenSSH agent signing.
 - Added explicit generic RFC 9421 policy, single-label layered verification, caller-owned signing functions, bounded safe errors, and published signed-message checks.
 - Added six HTTP signature primitives, explicit JWS algorithm selection, public key formats and binding, published vectors, and reciprocal OpenSSL checks.

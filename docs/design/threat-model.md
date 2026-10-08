@@ -36,9 +36,9 @@ The caller controls accepted profiles, trusted origins/proxies, trust anchors, d
 | Stale/removed key acceptance | Source-bound cache expiry, fetched-at metadata, refresh semantics, explicit removed-key behavior, no stale resurrection. | Actual rotation/removal against the named discovery adapter. |
 | Key exfiltration | Opaque handle; signer boundary; public-only serialization; redaction; no secret fields in inspection. | Real local and remote signer error pathways plus log/telemetry scan. |
 | Forwarded-header spoofing | Explicit trusted-proxy policy and authoritative external origin; retain ingress and reconstructed facts. | Actual proxy route with trusted and untrusted hops. |
-| Retry/redirect reuse | Req/Finch re-sign each attempt; cross-origin redirect requires policy; nonce/time refreshed; response tied to attempt request. | Actual redirect/retry flows, including cross-origin denial. |
+| Retry/redirect reuse | Req re-signs each final attempt and requires cross-origin policy; selected nonce/time parameters regenerate. Finch signs each explicit caller invocation; callers own its retry/redirect loop. Responses bind to the supplied request. | Actual redirect/retry flows, including cross-origin denial. |
 | Parser/resource exhaustion | Bounded bytes, members, depth, signature/component/key counts, numeric magnitudes, deadlines, and streaming work. | Just-inside/outside bounds, fuzz corpus, timeout/cancel paths, measured resource receipts. |
-| Error oracle/data leak | Stable bounded public reasons; detailed diagnostics opt-in and redacted; bounded telemetry cardinality. | Real negative paths with sensitive canaries absent from output. |
+| Error oracle/data leak | Stable bounded public reasons and redacted default inspection. Opt-in diagnostic redactors and a versioned telemetry contract remain proposed in ADR 0006. | Real negative paths with sensitive canaries absent from output. |
 | Cross-profile replay | Domain-separate the trusted profile/security context in replay identity; no fallback. | Same nonce under generic, Web Bot Auth, and package-namespaced extension profiles; tag substitution rejection. |
 | Corpus compromise | Immutable provenance, independent expected values, digest manifest, source review, and the Elixir consumer prohibited from regenerating expectations. | Tampered-case red proof in Elixir and manifest verification. |
 | Supply-chain substitution | Exact development pins, locked dependencies, package content allowlist, advisory/license review, provenance/checksums, isolated notebook toolchain. CI actions use immutable commit SHAs; the PostgreSQL service uses the moving `postgres:18` tag, not a digest pin. | Fresh clone, package inspection, audit output, and consumer install on required platforms; the service tag does not establish immutable image identity. |
@@ -64,7 +64,16 @@ and application trust explicitly; generic JOSE cannot infer them from wire data.
 
 Malformed or unsupported input returns a stable error before cryptographic work when safe. Verification continues only when needed to apply an explicit multi-signature policy; it never silently accepts the first convenient label. Required digest, discovery, clock, custody, replay, or related-request data that is unavailable fails closed for that profile.
 
-External work receives an absolute deadline and cancellation signal. A timeout is distinct from invalid cryptography and from policy rejection, but none produces an authenticated principal. Store/discovery outages are retryable only where the caller can safely replay the whole operation; the result explains retryability without echoing attacker-controlled details.
+Custody, discovery, JOSE callbacks, Web Bot Auth trust callbacks, and required replay
+receive bounded deadlines and caller cancellation. Generic policy resolver, clock,
+verification-function, and signer callbacks run synchronously in the calling process;
+callers own their external-work deadlines or delegate to bounded custody/discovery
+operations. A timeout is distinct from invalid cryptography and from policy rejection,
+but none produces an authenticated principal. Replay errors are always nonretryable;
+a timeout may have committed. Discovery classifies transient failures separately,
+including retryable 5xx and nonretryable 4xx status failures. Callers own retry
+scheduling and whether replaying the whole operation is safe. Errors retain no
+attacker-controlled diagnostics.
 
 ## Residual boundaries
 

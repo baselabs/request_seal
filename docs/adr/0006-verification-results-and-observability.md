@@ -36,3 +36,21 @@ The result type is richer and compatibility-sensitive. Callers can make explicit
 - Sensitive canaries are absent from real error, inspect, log, exception, and telemetry paths.
 - Every public reason is documented, bounded, searchable, and has stable retryability semantics.
 - Cardinality and byte limits are measured under hostile input.
+
+## Implemented result boundary — October 8, 2026
+
+OBSERVED in `lib/request_seal/verification.ex` and
+`lib/request_seal/quorum/evaluation.ex`: the single-label result records algorithm,
+coverage, parameters, content, freshness, replay, and profile. Generic results
+remain unattributed and do not include discovery provenance or separate HMAC
+identity facts. Web Bot Auth records trusted association/provenance in each
+principal. Quorum results expose a plural label-keyed `signatures` map for assigned
+labels, caller counting bindings, and required/satisfied slot IDs; they establish
+no principal attribution and reject required replay. A negotiated label can be
+verified without being assigned to that map. Default single-label inspection
+omits principals and signature metadata.
+
+The Decision's opt-in diagnostic redactors and versioned telemetry contracts
+remain proposed observability requirements. The implemented core error is a
+bounded nonretryable value with a random correlation token; it retains no
+callback text. See `RequestSeal.Error` for its reason/layer contract.

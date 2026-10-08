@@ -2,18 +2,21 @@ defmodule RequestSeal.Quorum.Verification do
   @moduledoc """
   Complete composite verification facts, returned only after all selected checks.
 
-  `mode`, `unit`, and `required` preserve the configured policy; `satisfied`
-  lists qualifying slots in configured order. `count` counts deduplicated trusted
-  units, never labels. `qualifying` records label/slot and caller counting
+  `mode` and `unit` preserve the configured policy; `required` lists only required
+  slot IDs, while `satisfied` includes assigned required and optional slots in
+  configured order. `count` counts deduplicated trusted units, never labels. `qualifying` records label/slot and caller counting
   bindings (principal/role); these are not authenticated attribution. `signatures`
-  retains each qualifying single-label result and its independent coverage.
+  is a label-keyed map of assigned single-label results and their independent
+  coverage. A negotiated label can fulfill a challenge without being assigned;
+  such a label is absent from this map and `qualifying`.
   `nonqualifying` records bounded reason/layer atoms for ignored labels and failed
   slot attempts. No key material or KeyIdentity is retained.
 
   `bindings` is `:not_required` or satisfied binding entries. `negotiation` is
   `:not_requested` or `:fulfilled`. `replay` stays `:not_required`, `principal`
   stays `:unattributed`, and `authorization` stays `:not_evaluated`.
-  Default inspection omits labels, counting bindings, and signature metadata.
+  Default inspection includes required/satisfied slot IDs and count but omits
+  signature labels, counting bindings, signature metadata, and negotiation details.
   """
   @derive {Inspect,
            only: [

@@ -41,3 +41,15 @@ Local use has no network requirement. Local construction starts one unsupervised
 - Asymmetric thumbprints are deterministic and key type/use/operations/algorithm compatibility is enforced.
 - Actual HMAC verification retains secret custody; same-secret aliases/imports count once, distinct trusted identities count as configured, and unknown cross-custodian equivalence rejects key-distinct thresholds.
 - A valid signature from an untrusted or unattributed key cannot populate an authenticated principal.
+
+## Implemented resolver boundary — October 8, 2026
+
+OBSERVED in `lib/request_seal/authentication.ex` (`resolve/3`) and
+`lib/request_seal/discovery.ex` (`resolver/2`): generic resolution returns an
+authoritative algorithm and public key or verification function, plus optional
+internal key-equivalence identity. HMAC uses a verification function that can
+invoke an opaque custody handle. Provenance and asserted principal associations
+are not generic resolver-result members. `Discovery.Resolution` exposes source
+provenance separately; Web Bot Auth applies caller trust before attribution.
+This supersedes the Decision's claim that both generic key results include
+provenance and asserted associations.

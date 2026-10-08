@@ -25,9 +25,13 @@ python3 scripts/check.py
 The gate checks formatting, warnings-as-errors compilation, tests, public-document
 inclusion and links, ExDoc output, dependency advisories, and official Livebook
 import/export and execution. It runs each notebook in a fresh Elixir process and
-requires evidence that the export reached its final assertion. It starts no server.
+requires evidence that the export reached its final assertion. Integration tests start
+temporary local HTTP/TLS listeners and a real OpenSSH agent; the notebook runner
+starts no Livebook web server. Tests clean up their listeners and agent processes.
 
-Default public tests and guides require only files supplied by the repository. Public
+Default tests use repository fixtures, real local cryptography, and local integration
+processes. The SSH custody tests require `ssh-agent`, `ssh-add`, and `ssh-keygen`.
+Database and deployed-source checks are opt-in. Public
 documentation and notebooks are enumerated explicitly in mix.exs. The document
 checker rejects unapproved documents, missing metadata, private targets, machine
 paths, and known internal-process prose. This is a bounded disclosure check;

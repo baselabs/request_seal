@@ -35,8 +35,9 @@ defmodule RequestSeal.Message do
   Success establishes a well-formed value, not HTTP framing, component availability,
   cryptographic validity, or authentication. Signature-base derivation is provided by `RequestSeal.SignatureBase`.
   Generic signing and verification are provided by `RequestSeal`; optional Req/Finch
-  adapters and Ash scope mapping are implemented. Named profiles and Plug/Phoenix
-  adapters remain planned. This module starts no process and reads no stream.
+  adapters, Plug/Phoenix adapters, Ash scope mapping, and Web Bot Auth protocol-00
+  are implemented. Other named application profiles use `RequestSeal.Profile`
+  in extension packages. This module starts no process and reads no stream.
   Default inspection is redacted.
 
       iex> {:ok, body} = RequestSeal.Body.new(%{state: :unavailable})

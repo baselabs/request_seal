@@ -27,9 +27,10 @@ defmodule RequestSeal.Discovery do
   requires unique printable directory-assigned IDs while retaining thumbprints
   for identity, revocation and cache removal; private material and malformed keys reject the
   entire set. HTTP `alg` tokens map to the JOSE restriction held by `PublicKey`.
-  Encryption-only, signing-only, not-yet-valid, expired and revoked keys are not
-  resolvable. Directory signatures use the existing `RequestSeal.verify/3`
-  contract to bind `@authority;req`, digest, created/expires, key ID and tag.
+  Keys whose use/operation restrictions forbid verification, and not-yet-valid,
+  expired or revoked keys, are not resolvable. Duplicate IDs reject among eligible
+  entries only. Signed directory sources require thumbprint mode. Directory
+  signatures use the existing `RequestSeal.verify/3` contract to bind `@authority;req`, digest, created/expires, key ID and tag.
   Directory proof means cryptographic possession, never principal attribution.
   Proof selection uses the `directory` label or a directory-tagged member whose
   key ID names a published directory key. Unrelated labels are ignored; missing

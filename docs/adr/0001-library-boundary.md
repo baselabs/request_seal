@@ -41,3 +41,11 @@ RequestSeal carries full responsibility for standards maintenance and corpus qua
 ## Amendment
 
 October 8, 2026: the TypeScript counterpart is deferred; RequestSeal is Elixir only. The cross-language corpus format remains a design for later use.
+
+## Implementation amendment — October 8, 2026
+
+The Decision's qualified JOSE dependency was not selected. OBSERVED in
+`lib/request_seal/jose/jws.ex`, `jwe.ex`, `key_management.ex`, and
+`lib/request_seal/public_key.ex`: compact JOSE and public-key handling use the
+owned bounded machinery over OTP cryptographic primitives. The portable corpus
+remains a design; published vector fixtures run in the Elixir test suite.
