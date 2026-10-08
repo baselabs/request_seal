@@ -4,9 +4,11 @@
 
 RequestSeal processes attacker-controlled wire data at an authentication boundary. Its primary security goal is to report exactly what was cryptographically established, by which trusted association, under which profile, without granting caller authorization or payment authority.
 
+RequestSeal is Elixir only. The TypeScript counterpart is deferred, not planned for the current release; the cross-language corpus format remains a design for later use.
+
 ## Assets and trust boundaries
 
-Assets are private signing authority, verified message bytes, content-integrity state, principal attribution, replay uniqueness, nested signature binding, and diagnostic confidentiality. Trust boundaries exist between wire input and the lossless model; model and profile; profile and key/discovery; verification and replay store; RequestSeal and each framework adapter; Elixir and TypeScript corpus consumers; and authenticated principal and caller authorization.
+Assets are private signing authority, verified message bytes, content-integrity state, principal attribution, replay uniqueness, nested signature binding, and diagnostic confidentiality. Trust boundaries exist between wire input and the lossless model; model and profile; profile and key/discovery; verification and replay store; RequestSeal and each framework adapter; independent corpus data and the Elixir consumer; and authenticated principal and caller authorization.
 
 The caller controls accepted profiles, trusted origins/proxies, trust anchors, discovery endpoints, key handles, clocks, replay adapter, resource limits, and authorization. An input message controls none of those merely by naming a key, URL, label, algorithm, tag, or identity.
 
@@ -38,7 +40,7 @@ The caller controls accepted profiles, trusted origins/proxies, trust anchors, d
 | Parser/resource exhaustion | Bounded bytes, members, depth, signature/component/key counts, numeric magnitudes, deadlines, and streaming work. | Just-inside/outside bounds, fuzz corpus, timeout/cancel paths, measured resource receipts. |
 | Error oracle/data leak | Stable bounded public reasons; detailed diagnostics opt-in and redacted; bounded telemetry cardinality. | Real negative paths with sensitive canaries absent from output. |
 | Cross-profile replay | Domain-separate the trusted profile/security context in replay identity; no fallback. | Same nonce under generic, Web Bot Auth, and package-namespaced extension profiles; tag substitution rejection. |
-| Corpus compromise | Immutable provenance, independent expected values, digest manifest, source review, and both consumers prohibited from regenerating expectations. | Tampered-case red proof in each language and manifest verification. |
+| Corpus compromise | Immutable provenance, independent expected values, digest manifest, source review, and the Elixir consumer prohibited from regenerating expectations. | Tampered-case red proof in Elixir and manifest verification. |
 | Supply-chain substitution | Exact development pins, locked dependencies, package content allowlist, advisory/license review, provenance/checksums, isolated notebook toolchain. CI actions use immutable commit SHAs; the PostgreSQL service uses the moving `postgres:18` tag, not a digest pin. | Fresh clone, package inspection, audit output, and consumer install on required platforms; the service tag does not establish immutable image identity. |
 
 ## Profile-specific hazards

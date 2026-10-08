@@ -4,6 +4,9 @@
 
 ## Release conditions
 
+RequestSeal is Elixir only. The TypeScript counterpart and npm package are deferred,
+not planned for the current release. Cross-language parity is outside current release acceptance.
+
 Release acceptance must establish the advertised scope through the actual public entry points,
 package artifact, documentation, and required counterpart checks. The current checkout
 implements generic RFC 9421 signing, single-label and quorum verification, caller-owned
@@ -22,7 +25,7 @@ Other named application profiles belong in extension packages.
    corpus, notebook assets, absence of secrets/private paths, and generated application metadata.
 5. Install that exact artifact into a clean consumer, exercise actual public entry points,
    and compare source/artifact identities. Run supported Linux compatibility lanes and record
-   macOS developer evidence. Native TypeScript parity uses the same corpus identity.
+   macOS developer evidence.
 6. Verify a private security-reporting channel, release provenance, source links, checksums,
    compatibility/deprecation policy, package ownership, and documented rollback/retirement.
 7. Publish the approved artifact with `mix hex.publish`. Confirm the registry's

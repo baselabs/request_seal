@@ -35,3 +35,7 @@ Adapters have a stricter capture contract and may reject when a framework has al
 - Known RFC 8941 fields do not accept RFC 9651-only types without an explicit field revision.
 - Elixir and TypeScript produce the same bases and rejection rule IDs from the same occurrence model.
 
+
+## Amendment
+
+October 8, 2026: the TypeScript counterpart is deferred; RequestSeal is Elixir only. The cross-language corpus format remains a design for later use.

@@ -2,14 +2,15 @@
 
 **Status:** current · **Kind:** guide · **Updated:** 2026-10-08 · **Governed by:** public architecture and accepted ADRs · **Review when:** the public contract or implementation changes
 
-HTTP message signatures and agent authentication for Elixir.
+HTTP message signatures and agent authentication for Elixir only.
 
-Package family: Hex `request_seal`, npm `request-seal`, Elixir namespace `RequestSeal`.
+Package: Hex `request_seal`, Elixir namespace `RequestSeal`.
+The TypeScript counterpart and npm package are deferred, not planned for the current release.
 
 The scope covers RFC 9421 HTTP Message Signatures, Structured Fields,
 content digests, generic JOSE, and the source-selected Web Bot Auth draft.
 The design includes optional
-Plug/Phoenix, Req/Finch, and Ash integrations and a native TypeScript counterpart.
+Plug/Phoenix, Req/Finch, and Ash integrations.
 
 **Current checkout:** lossless HTTP message values, Structured Fields, content digests,
 signature-base construction, cryptographic primitives, caller-owned key custody, and
@@ -31,8 +32,8 @@ Ash scopes. Optional Plug/Phoenix adapters capture retained request bytes, verif
 requests, and sign responses. Generic compact JWS/JWE and one-level JWS-in-JWE
 nesting and explicit Web Bot Auth protocol-00 signing/verification are implemented.
 Named application profiles compose the generic machinery through the unstable
-`RequestSeal.Profile` extension surface; pin it exactly. Native TypeScript acceptance
-remains separate.
+`RequestSeal.Profile` extension surface; pin it exactly. Node WebCrypto is an
+independent verifier for tests, not a TypeScript product.
 
 Start with [local development](docs/guides/getting-started.md) and
 [the executable notebooks](livebooks/README.md). Read the

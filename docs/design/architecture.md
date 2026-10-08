@@ -2,7 +2,7 @@
 
 **Status:** current · **Kind:** design · **Updated:** 2026-10-08 · **Governed by:** accepted ADRs 0001–0011 and 0013 · **Review when:** a supported standard, profile, public contract, or trust boundary changes
 
-RequestSeal is one framework-independent Elixir library for signing and verifying HTTP messages and generic compact JOSE, with Web Bot Auth protocol-00 and an explicit named-profile extension surface. The lossless message value model (the Message/occurrence/body/transport portion of
+RequestSeal is one framework-independent, Elixir-only library for signing and verifying HTTP messages and generic compact JOSE, with Web Bot Auth protocol-00 and an explicit named-profile extension surface. The TypeScript counterpart is deferred, not planned for the current release. The lossless message value model (the Message/occurrence/body/transport portion of
 ADR 0002) is implemented by `RequestSeal.Message`, `FieldOccurrence`,
 `Body`, and `TransportFacts`; their module documentation is the API reference.
 Structured Fields parsing, serialization, and explicit type schemas are implemented
@@ -18,7 +18,7 @@ Plug/Phoenix adapters, Ash scope mapping, generic compact JWS/JWE, and one-level
 JWS-in-JWE nesting are implemented.
 Web Bot Auth protocol-00 signing and verification are implemented by
 `RequestSeal.WebBotAuth`, composing explicit trust, discovery, nested coverage,
-and one whole-envelope replay claim. Native TypeScript acceptance remains separate.
+and one whole-envelope replay claim.
 Body sinks/spools and reverse-proxy adapters remain **proposed public shapes**.
 
 ## Architectural contract
@@ -29,7 +29,7 @@ The library owns five pieces of knowledge:
 2. RFC 9651 Structured Fields parsing/serialization under the field schema each standard actually references.
 3. Explicit policies for generic RFC 9421 and the named Web Bot Auth draft, with a bounded extension surface for application profiles.
 4. A layered verification result that separates valid cryptography, authenticated principal, content integrity, freshness/replay, and caller authorization.
-5. One language-neutral conformance corpus consumed by native Elixir and native TypeScript implementations.
+5. An independent conformance corpus for Elixir; its cross-language format remains a design for later use.
 
 It does not own an application server, general-purpose HTTP client or connection pool, global key store, replay database, identity provider, authorization engine, or payment execution. The optional discovery adapter implements bounded HTTP/1.1 GET over caller-started OTP TLS under explicit source policy; its cache is caller-started. Importing the package starts no process and performs no network or storage operation. Optional adapters translate those boundaries without moving their policy into the core.
 
@@ -58,7 +58,8 @@ Generic compact JWS/JWE and one-level JWS-in-JWE nesting are implemented by
 Their module documentation defines per-call algorithm pinning, protected-byte
 preservation, bounded inputs, caller-owned key callbacks, and explicit-access
 results. Published vectors and reciprocal Node WebCrypto/OpenSSL checks exercise
-these generic contracts.
+these generic contracts. Node WebCrypto is an independent verifier for tests,
+not a TypeScript product.
 
 JWS/JWE serialization stays separate from RFC 9421 signature bases and Structured
 Fields. Shared custody, exact final-body ownership, resource limits, and safe
@@ -261,9 +262,9 @@ caller authorization remains outside RequestSeal.
 
 Each adapter must refuse when its framework cannot supply a required component faithfully. It cannot synthesize a plausible value and call the signature valid.
 
-## Native TypeScript contract
+## Deferred TypeScript counterpart
 
-The TypeScript implementation is native code with an idiomatic API, not an Elixir runtime, sidecar, transpilation target, or generated wrapper. Elixir is the reference implementation for project ownership, while the shared corpus is the semantic arbiter across languages. The corpus stores inputs, exact signature bases, outputs, rejection rule IDs, provenance, and externally owned source references. Neither implementation generates its own expected values during a conformance run.
+RequestSeal is Elixir only. The TypeScript counterpart is deferred, not planned for the current release. The cross-language corpus format remains a design for later use. That design stores inputs, exact signature bases, outputs, rejection rule IDs, provenance, and externally owned source references; consumers must not generate their own expected values during a conformance run.
 
 ## Sources
 

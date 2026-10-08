@@ -36,3 +36,7 @@ Corpus changes are compatibility-sensitive reviews. A source correction may chan
 - Published/provider cases retain source revision and immutable bytes; unresolved source ambiguities have no invented golden output.
 - Unicode, numeric bounds, duplicate names, Structured Fields ordering, base64/base64url, raw targets, trailers, and ECDSA encodings have positive and negative cases.
 
+
+## Amendment
+
+October 8, 2026: the TypeScript counterpart is deferred; RequestSeal is Elixir only. The cross-language corpus format remains a design for later use.

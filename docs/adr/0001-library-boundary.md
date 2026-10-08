@@ -37,3 +37,7 @@ RequestSeal carries full responsibility for standards maintenance and corpus qua
 - No public module merely forwards another signature library's API.
 - Native TypeScript runs reciprocal corpus checks without Elixir or Go.
 
+
+## Amendment
+
+October 8, 2026: the TypeScript counterpart is deferred; RequestSeal is Elixir only. The cross-language corpus format remains a design for later use.
