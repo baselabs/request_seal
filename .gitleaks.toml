@@ -10,6 +10,22 @@ paths = [
   '''^test/fixtures/crypto/(rsa|rsa_pss|p256|ed25519)_private\.pem$''',
 ]
 
+[[allowlists]]
+description = "RFC 8410 Section 10.3 published OneAsymmetricKey example"
+paths = [
+  '''^test/fixtures/crypto/rfc8410_10_3_oneasymmetrickey\.pem$''',
+]
+
+# The same RFC 8410 Section 10.3 example appeared inline in one test before it
+# moved to the fixture above. Both conditions must match: that commit and file.
+[[allowlists]]
+description = "RFC 8410 Section 10.3 example inline in one earlier test commit"
+condition = "AND"
+commits = ["175cd2ab75569267d3c2c8319661c35a06947d79"]
+paths = [
+  '''^test/custody_local_test\.exs$''',
+]
+
 # RFC 7520 cookbook files (ietf-jose/cookbook at 13692b68), two Wycheproof files
 # (C2SP/wycheproof at 12fd3aaf), and examples extracted from RFC 7515 and RFC 7516.
 [[allowlists]]

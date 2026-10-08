@@ -420,7 +420,7 @@ defmodule RequestSeal.CryptoTest do
 
   test "fixture integrity inventory covers every published artifact" do
     lines = File.read!(Path.join(@root, "SHA256SUMS")) |> String.split("\n", trim: true)
-    assert length(lines) == 12
+    assert length(lines) == 13
 
     for line <- lines do
       [hash, name] = String.split(line, "  ")

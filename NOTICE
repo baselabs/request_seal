@@ -98,6 +98,16 @@ https://www.rfc-editor.org/rfc/rfc9421.txt
 https://www.rfc-editor.org/rfc/rfc8032.txt
 https://www.rfc-editor.org/rfc/rfc6979.txt
 
+The published OneAsymmetricKey example in
+test/fixtures/crypto/rfc8410_10_3_oneasymmetrickey.pem is extracted from
+RFC 8410 Section 10.3, retrieved October 8, 2026. Presentation indentation is
+removed; the PEM lines retain the published bytes. Its checksum is recorded
+in test/fixtures/crypto/SHA256SUMS. This is published test material, never an
+operational credential. The Revised BSD license and disclaimer above apply.
+Copyright (c) 2018 IETF Trust and the persons identified as the document
+authors. All rights reserved.
+Source: https://www.rfc-editor.org/rfc/rfc8410.txt
+
 Private JWK test vectors in test/fixtures/custody/ are extracted from RFC 7517
 Appendix A.2 and RFC 8037 Appendix A.1, retrieved October 7, 2026. Line breaks
 inside RFC 7517 component strings are removed as specified by the source. The

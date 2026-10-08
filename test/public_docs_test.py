@@ -242,8 +242,32 @@ class ToolchainTest(unittest.TestCase):
         workflow = self.sources()[".github/workflows/ci.yml"]
         self.assertIn("- if: matrix.lane == 'floor'\n        run: python3 scripts/check_optional_clients.py", workflow)
 
-    def test_ci_budget_covers_latest_gate(self):
+    def test_ci_budget_covers_every_lane(self):
         self.assertIn("timeout-minutes: 40", self.sources()[".github/workflows/ci.yml"])
+
+    def test_additional_matrix_lane_is_rejected(self):
+        path = ".github/workflows/ci.yml"
+        mutations = [
+            "          - lane: other\n"
+            "            elixir: '1.20.4'\n"
+            "            otp: '29.1.1'\n",
+            "          - elixir: '1.20.4'\n"
+            "            lane: other\n"
+            "            otp: '29.1.1'\n",
+            "          - elixir: '1.20.4'\n"
+            "            otp: '29.1.1'\n",
+            "          - {lane: other, elixir: '1.20.4', otp: '29.1.1'}\n",
+            "        os: ['ubuntu-24.04']\n",
+        ]
+        for extra in mutations:
+            with self.subTest(extra=extra):
+                sources = self.sources()
+                self.assertEqual(1, sources[path].count("    services:\n"))
+                sources[path] = sources[path].replace("    services:\n", extra + "    services:\n")
+                self.assertEqual(
+                    ["CI matrix must contain only the floor, mid, and latest lanes"],
+                    gate.toolchain_errors(sources),
+                )
 
     def test_range_floor_and_matrix_mutations_are_rejected(self):
         mutations = [

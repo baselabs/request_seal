@@ -92,13 +92,23 @@ defmodule RequestSeal.CustodyLocalTest do
   test "RFC 5958 v2 Ed25519 containers carrying a public key reject" do
     # RFC 8410 Section 10.3: independently published OneAsymmetricKey example.
     # https://www.rfc-editor.org/rfc/rfc8410.html#section-10.3
-    pem = """
-    -----BEGIN PRIVATE KEY-----
-    MHICAQEwBQYDK2VwBCIEINTuctv5E1hK1bbY8fdp+K06/nwoy/HU++CXqI9EdVhC
-    oB8wHQYKKoZIhvcNAQkJFDEPDA1DdXJkbGUgQ2hhaXJzgSEAGb9ECWmEzf6FQbrB
-    Z9w7lshQhqowtrbLDFw4rXAxZuE=
-    -----END PRIVATE KEY-----
-    """
+    pem = File.read!(Path.join(@root, "rfc8410_10_3_oneasymmetrickey.pem"))
+
+    for algorithm <- ["ed25519", {:jws, "EdDSA"}] do
+      assert_error(Local.import(algorithm, pem, :pem), :unsupported_format)
+    end
+  end
+
+  test "RFC 5958 v2 Ed25519 containers without a public key reject" do
+    pem = File.read!(Path.join(@root, "rfc8410_10_3_oneasymmetrickey.pem"))
+    [{:PrivateKeyInfo, der, :not_encrypted}] = :public_key.pem_decode(pem)
+
+    # Remove the final [1] public-key BIT STRING (35 bytes) from the RFC 8410
+    # example, retain version INTEGER 1 and all other fields, and fix the length.
+    <<0x30, 114, fields::binary-size(79), 0x81, 33, 0, _public::binary-size(32)>> = der
+    assert <<2, 1, 1, _rest::binary>> = fields
+    without_public = <<0x30, byte_size(fields), fields::binary>>
+    pem = :public_key.pem_encode([{:PrivateKeyInfo, without_public, :not_encrypted}])
 
     for algorithm <- ["ed25519", {:jws, "EdDSA"}] do
       assert_error(Local.import(algorithm, pem, :pem), :unsupported_format)

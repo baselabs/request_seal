@@ -152,6 +152,13 @@ def toolchain_errors(sources):
         for value in values:
             if sources[path].count(value) != 1:
                 errors.append(f"{path}: missing or duplicated toolchain binding {value}")
+    matrix = re.search(r"^      matrix:\n((?:^ {8}.*\n|^\n)*)", sources[".github/workflows/ci.yml"], re.MULTILINE)
+    body = matrix.group(1) if matrix else ""
+    axes = re.findall(r"^ {8}(\S[^:\n]*):", body, re.MULTILINE)
+    entries = re.findall(r"^ {10}-\s+", body, re.MULTILINE)
+    lanes = re.findall(r"^ {10}- lane:\s*(\S+)", body, re.MULTILINE)
+    if axes != ["include"] or len(entries) != 3 or sorted(lanes) != ["floor", "latest", "mid"]:
+        errors.append("CI matrix must contain only the floor, mid, and latest lanes")
     actions = re.findall(r"uses:\s*(\S+)", sources[".github/workflows/ci.yml"])
     required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
     if not required_actions.issubset({action.split("@", 1)[0] for action in actions}) or any(not re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) for action in actions):

@@ -5,7 +5,7 @@
 HTTP message signatures and agent authentication for Elixir only.
 
 Package: Hex `request_seal`, Elixir namespace `RequestSeal`.
-Supported range: Elixir 1.18 or newer on OTP 27 or newer; tested on 1.18.4/27, 1.19.5/28, and 1.20.4/29.
+Supported range: Elixir 1.18 or newer on OTP 27 or newer; tested in CI on 1.18.4/27, 1.19.5/28, and 1.20.4/29.
 The TypeScript counterpart and npm package are deferred, not planned for the current release.
 
 The scope covers RFC 9421 HTTP Message Signatures, Structured Fields,

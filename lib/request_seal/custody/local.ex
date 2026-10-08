@@ -9,7 +9,7 @@ defmodule RequestSeal.Custody.Local do
   containers reject. A PSS-only private key never becomes a PKCS #1 signing key;
   parameter-constrained PSS containers reject rather than dropping restrictions.
   Imported EC/OKP public components must agree with the derived private key.
-  PKCS #8 v2 containers carrying a public key reject with `:unsupported_format`.
+  PKCS #8 v2 (OneAsymmetricKey) containers reject with `:unsupported_format`.
 
   All six HTTP algorithms and the eight explicit JWS extensions in `Crypto` are
   supported. Construction derives a public key and performs an actual sign/verify
