@@ -82,7 +82,7 @@ with principal attribution owned by the selected profile's trust policy.
 `RequestSeal.Discovery.resolver/2` connects a fetched KeySet or `{cache, source}`
 to a generic policy's key resolver with an explicit algorithm allowlist. Default
 key IDs are RFC thumbprints. JWKS/CIMD sources may explicitly use directory-assigned
-IDs; thumbprints still govern identity, revocation, and removal. Signed directory
+IDs; thumbprints still govern identity, revocation, and removal. Directory
 sources require thumbprint IDs. `RequestSeal.Discovery.Cache.start_link/1` starts
 only on caller request; refresh, removal, and invalidation are explicit. The cache
 never serves an expired snapshot after a failed refresh and has no background timer.
