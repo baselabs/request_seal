@@ -225,6 +225,49 @@ class ToolchainTest(unittest.TestCase):
     def test_actual_pins_are_consistent(self):
         self.assertEqual([], gate.toolchain_errors(self.sources()))
 
+    def test_library_range_and_runtime_floor_are_declared(self):
+        sources = self.sources()
+        self.assertIn('elixir: "~> 1.18"', sources["mix.exs"])
+        self.assertIn("minimum_otp = 27", sources["config/config.exs"])
+        self.assertIn("running_otp < minimum_otp", sources["config/config.exs"])
+
+    def test_ci_declares_both_supported_pairs(self):
+        workflow = self.sources()[".github/workflows/ci.yml"]
+        self.assertIn("- lane: floor\n            elixir: '1.18.4'\n            otp: '27.3.4'", workflow)
+        self.assertIn("- lane: latest\n            elixir: '1.20.4'\n            otp: '29.1.1'", workflow)
+
+    def test_range_floor_and_matrix_mutations_are_rejected(self):
+        mutations = [
+            ("mix.exs", 'elixir: "~> 1.18"', 'elixir: "~> 1.19"'),
+            ("mix.exs", 'elixir: "~> 1.18"', 'elixir: "~> 1.18.4"'),
+            ("mix.exs", "unless Code.ensure_loaded?(:json) do", "if Code.ensure_loaded?(:json) do"),
+            ("config/config.exs", "running_otp < minimum_otp", "running_otp != minimum_otp"),
+            ("config/config.exs", "String.to_integer()", "String.to_float()"),
+            ("tools/notebooks/config/config.exs", 'expected_otp = "29"', 'expected_otp = "27"'),
+            ("tools/notebooks/config/config.exs", "running_otp != expected_otp", "running_otp < expected_otp"),
+            ("livebooks/environment.livemd", '"29" = System.otp_release()', '"27" = System.otp_release()'),
+            (".tool-versions", "elixir 1.20.4-otp-29", "elixir 1.20.4-otp-28"),
+            (".tool-versions", "nodejs 24.21.0", "nodejs latest"),
+            (".github/workflows/ci.yml", "- lane: floor", "- lane: other"),
+            (".github/workflows/ci.yml", "elixir: '1.18.4'", "elixir: '1.19.5'"),
+            (".github/workflows/ci.yml", "otp: '27.3.4'", "otp: '28.5.0.3'"),
+            (".github/workflows/ci.yml", "- lane: latest", "- lane: other"),
+            (".github/workflows/ci.yml", "elixir: '1.20.4'", "elixir: '1.20.3'"),
+            (".github/workflows/ci.yml", "otp: '29.1.1'", "otp: '29.0.3'"),
+            (".github/workflows/ci.yml", "${{ matrix.elixir }}", "1.20.4"),
+            (".github/workflows/ci.yml", "${{ matrix.otp }}", "29.1.1"),
+            (".github/workflows/ci.yml", "matrix.lane == 'floor'", "matrix.lane == 'other'"),
+            (".github/workflows/ci.yml", "matrix.lane == 'latest'", "matrix.lane == 'other'"),
+            (".github/workflows/ci.yml", "mix test --warnings-as-errors", "mix test test/crypto_test.exs"),
+            (".github/workflows/ci.yml", "REQUESTSEAL_REPLAY_PG_URL:", "UNUSED_DATABASE_URL:"),
+        ]
+        for path, old, new in mutations:
+            with self.subTest(path=path, mutation=old):
+                sources = self.sources()
+                self.assertIn(old, sources[path])
+                sources[path] = sources[path].replace(old, new)
+                self.assertTrue(gate.toolchain_errors(sources))
+
     def test_actual_action_refs_reject_mutable_tags_and_missing_checkout(self):
         inputs = self.sources()
         original = inputs[".github/workflows/ci.yml"]
@@ -238,9 +281,9 @@ class ToolchainTest(unittest.TestCase):
     def test_each_real_pin_channel_detects_drift(self):
         mutations = {
             ".tool-versions": ("29.1.1", "29.1.2"),
-            "mix.exs": ('elixir: "1.20.4"', 'elixir: "1.20.5"'),
-            "config/config.exs": ('expected_otp = "29"', 'expected_otp = "28"'),
-            ".github/workflows/ci.yml": ("OTP_VERSION: 29.1.1", "OTP_VERSION: 29.1.2"),
+            "mix.exs": ('elixir: "~> 1.18"', 'elixir: "1.20.4"'),
+            "config/config.exs": ('minimum_otp = 27', 'minimum_otp = 29'),
+            ".github/workflows/ci.yml": ("otp: '29.1.1'", "otp: '29.1.2'"),
             "tools/notebooks/mix.exs": ('elixir: "1.20.4"', 'elixir: "1.20.5"'),
             "tools/notebooks/config/config.exs": ('import_config "../../../config/config.exs"', 'import_config "other.exs"'),
             "livebooks/environment.livemd": ('"1.20.4" = System.version()', '"1.20.5" = System.version()'),

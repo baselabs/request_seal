@@ -37,3 +37,35 @@ Two lockfiles and two audit surfaces are maintained. Development identity is una
 - Every claimed consumer pair installs the built package in a clean consumer and runs the selected public acceptance surface.
 - Root and notebook graphs resolve independently; their locks, licenses, advisories, and package contents are inspected.
 - Livebook 0.19.10 importer/exporter and standalone execution run with chosen overrides; failure/omission tampering turns the gate red.
+
+## Amendment: Library consumer range (October 8, 2026)
+
+This amendment supersedes the root library's exact Elixir requirement and exact
+OTP assertion in the Decision and Acceptance sections. Applications keep exact
+pins; libraries declare a supported range so they do not block consumers on a
+patch version. RequestSeal declares `elixir: "~> 1.18"` and requires OTP 27 or
+newer because discovery and JOSE use the OTP `:json` module. The root config
+checks that floor instead of requiring OTP 29. The Mix project also requires
+`:json` to be available because dependency consumers do not load the library's
+config.
+
+The exact development identity remains Elixir 1.20.4 built for OTP 29 and
+Erlang/OTP 29.1.1 in `.tool-versions`. Notebook tooling retains its exact Elixir
+requirement, OTP assertion, and executable environment checks. Its isolated
+dependency graph remains unchanged.
+
+Linux CI declares two lanes: Elixir 1.18.4 / OTP 27.3.4 runs the complete
+`mix test --warnings-as-errors` suite, including OpenSSH agent, Node WebCrypto,
+and PostgreSQL replay checks; Elixir 1.20.4 / OTP 29.1.1 runs
+`python3 scripts/check.py`, including documentation and notebook execution.
+Both lanes receive the PostgreSQL service URL. CI actions remain pinned to
+immutable commit SHAs. The gate validates the library range, development and
+notebook pins, both lane identities, and their commands; mutation tests reject
+drift in each channel. Declaring this matrix does not establish a hosted run.
+
+Optional client requirements become `finch >= 0.23.0 and < 0.25.0` and
+`req ~> 0.7.4`. They remain optional and do not start client pools. The optional
+client check compiles a fresh consumer locked to Finch 0.23.0 and Req 0.7.4 and
+runs the client adapter tests against real TCP listeners and an OpenSSH agent.
+The separate core consumer check continues to verify operation without HTTP
+clients or frameworks installed.

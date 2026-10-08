@@ -334,6 +334,15 @@ defmodule RequestSeal.CryptoTest do
     assert_error(Crypto.verify("ed25519", "", <<0::512>>, struct(PublicKey)), :invalid_key)
   end
 
+  test "published SPKI bytes survive import and export on the active runtime" do
+    for id <- ~w(rsa_pss p256 ed25519) do
+      pem = File.read!(Path.join(@root, id <> "_public.pem"))
+      [{:SubjectPublicKeyInfo, der, :not_encrypted}] = :public_key.pem_decode(pem)
+      assert {:ok, key} = PublicKey.import(pem, :pem)
+      assert {:ok, ^der} = PublicKey.export(key, :der)
+    end
+  end
+
   test "public PEM DER JWK and raw imports export equal public components" do
     for id <- ["rsa", "p256", "ed25519"] do
       key = verification_key(id)
@@ -639,8 +648,9 @@ defmodule RequestSeal.CryptoTest do
     bad_curve =
       :public_key.der_encode(
         :SubjectPublicKeyInfo,
-        {:SubjectPublicKeyInfo, {:AlgorithmIdentifier, oid, {:namedCurve, {1, 3, 132, 0, 10}}},
-         point}
+        {:SubjectPublicKeyInfo,
+         {:AlgorithmIdentifier, oid,
+          spki_parameters(:EcpkParameters, {:namedCurve, {1, 3, 132, 0, 10}})}, point}
       )
 
     assert_error(PublicKey.import(bad_curve, :der), :invalid_key)
@@ -663,8 +673,10 @@ defmodule RequestSeal.CryptoTest do
         :SubjectPublicKeyInfo,
         {:SubjectPublicKeyInfo,
          {:AlgorithmIdentifier, oid,
-          {:"RSASSA-PSS-params", :asn1_DEFAULT, :asn1_DEFAULT, :asn1_DEFAULT, :asn1_DEFAULT}},
-         point}
+          spki_parameters(
+            :"RSASSA-PSS-params",
+            {:"RSASSA-PSS-params", :asn1_DEFAULT, :asn1_DEFAULT, :asn1_DEFAULT, :asn1_DEFAULT}
+          )}, point}
       )
 
     assert_error(PublicKey.import(constrained, :der), :invalid_key)
@@ -698,7 +710,8 @@ defmodule RequestSeal.CryptoTest do
 
     try do
       p384_key =
-        {:ECPrivateKey, :ecPrivkeyVer1, hex(@p384["x"]), {:namedCurve, {1, 3, 132, 0, 34}},
+        {:ECPrivateKey, if(System.otp_release() == "27", do: 1, else: :ecPrivkeyVer1),
+         hex(@p384["x"]), {:namedCurve, {1, 3, 132, 0, 34}},
          <<4>> <> hex(@p384["Ux"]) <> hex(@p384["Uy"]), :asn1_NOVALUE}
 
       File.write!(
@@ -921,6 +934,10 @@ defmodule RequestSeal.CryptoTest do
   defp verification_key_ed(v) do
     {:ok, key} = PublicKey.import({:ed25519, hex(v["PUBLIC KEY:"])}, :raw)
     key
+  end
+
+  defp spki_parameters(type, value) do
+    if System.otp_release() == "27", do: :public_key.der_encode(type, value), else: value
   end
 
   defp ed25519_input(bytes, :raw), do: {:ed25519, bytes}

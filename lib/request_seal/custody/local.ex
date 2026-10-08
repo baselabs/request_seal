@@ -433,7 +433,15 @@ defmodule RequestSeal.Custody.Local do
     {:ok, info} = :"PKCS-FRAME".decode(:PrivateKeyInfo, der)
     {:ok, encoded} = :"PKCS-FRAME".encode(:PrivateKeyInfo, info)
     ensure(encoded == der, :invalid_key)
-    {:OneAsymmetricKey, _, {:PrivateKeyAlgorithmIdentifier, oid, params}, private, _, _} = info
+
+    {oid, params, private} =
+      case info do
+        {:PrivateKeyInfo, _, {:PrivateKeyInfo_privateKeyAlgorithm, oid, params}, private, _} ->
+          {oid, params, private}
+
+        {:OneAsymmetricKey, _, {:PrivateKeyAlgorithmIdentifier, oid, params}, private, _, _} ->
+          {oid, params, private}
+      end
 
     params =
       case params do

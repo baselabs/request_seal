@@ -165,8 +165,9 @@ code cell must occur in order in the export, including repeated cells. Notebook 
 is limited to 1 MiB and execution to 300 seconds; timeout/failure cleans up its process
 group. These are runner checks, not remote profile acceptance.
 
-The seven toolchain declarations are tied to `.tool-versions`, including notebook
-and CI declarations; each channel has a drift rejection check. CI actions use immutable
+The toolchain check validates the library's Elixir range and OTP floor separately
+from the exact development and notebook identity in `.tool-versions`. CI declares
+a floor test lane and a latest full-gate lane; each channel has a drift rejection check. CI actions use immutable
 commits resolved from their official repositories. Dependency audit evidence covers
 Hex-reported retirements and advisories; it does not claim every advisory database was
 queried independently.

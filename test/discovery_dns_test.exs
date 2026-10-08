@@ -7,7 +7,7 @@ defmodule RequestSeal.DiscoveryDNSIsolationTest do
         "elixir",
         [
           "-pa",
-          Path.expand("_build/test/lib/request_seal/ebin"),
+          Application.app_dir(:request_seal, "ebin"),
           "test/support/discovery_dns_helper.exs"
         ],
         stderr_to_stdout: true

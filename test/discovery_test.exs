@@ -187,7 +187,7 @@ defmodule RequestSeal.DiscoveryTest do
     {output, status} =
       System.cmd(
         "elixir",
-        ["-pa", Path.expand("_build/test/lib/request_seal/ebin"), "-e", script],
+        ["-pa", Application.app_dir(:request_seal, "ebin"), "-e", script],
         stderr_to_stdout: true
       )
 

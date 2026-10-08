@@ -216,6 +216,15 @@ defmodule RequestSeal.PublicKey do
     {:SubjectPublicKeyInfo, {:AlgorithmIdentifier, oid, params}, bytes} =
       canonical_der(:SubjectPublicKeyInfo, value)
 
+    # OTP 27 exposes open-type parameter DER; OTP 28+ decodes its value.
+    # Normalize only the selected algorithm after the container's canonical check.
+    params =
+      case {oid, params} do
+        {@rsa, <<5, 0>>} -> :NULL
+        {@ec, der} when is_binary(der) -> canonical_der(:EcpkParameters, der)
+        _ -> params
+      end
+
     material =
       case oid do
         oid when oid in [@rsa, @pss] ->
@@ -393,6 +402,18 @@ defmodule RequestSeal.PublicKey do
 
         {:ed25519, bytes} ->
           {@ed, :asn1_NOVALUE, bytes}
+      end
+
+    # The OTP 27 ASN.1 encoder requires parameter DER, unlike OTP 28+.
+    params =
+      if System.otp_release() == "27" do
+        case params do
+          :NULL -> <<5, 0>>
+          {:namedCurve, _} -> :public_key.der_encode(:EcpkParameters, params)
+          :asn1_NOVALUE -> :asn1_NOVALUE
+        end
+      else
+        params
       end
 
     :public_key.der_encode(

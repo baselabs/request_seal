@@ -35,12 +35,17 @@ defmodule RequestSeal.MixProject do
   ]
 
   def project do
+    # Dependency consumers do not load this library's config/config.exs.
+    unless Code.ensure_loaded?(:json) do
+      raise "RequestSeal requires Erlang/OTP 27 or newer for :json."
+    end
+
     [
       app: :request_seal,
       version: "0.1.0-dev",
-      # Development identity: move with config/config.exs, .tool-versions, and CI.
-      # Broader consumer support requires the compatibility evidence in ADR 0008.
-      elixir: "1.20.4",
+      # Libraries declare a consumer range; development and notebook tools stay pinned.
+      # OTP 27 supplies :json; both supported CI lanes are recorded in ADR 0008.
+      elixir: "~> 1.18",
       name: "RequestSeal",
       source_url: "https://github.com/baselabs/request_seal",
       description: "HTTP message signatures and agent authentication for Elixir.",
@@ -52,8 +57,8 @@ defmodule RequestSeal.MixProject do
         {:simple_sat, "~> 0.1", only: :test},
         # Use stable Req; 0.8.0-rc.0 is a release candidate.
         # Consumers own client startup; importing this library starts no pool.
-        {:req, "~> 0.7.5", optional: true, runtime: false},
-        {:finch, "~> 0.24.0", optional: true, runtime: false},
+        {:req, "~> 0.7.4", optional: true, runtime: false},
+        {:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false},
         {:plug, "~> 1.20.3", optional: true, runtime: false},
         {:bandit, "~> 1.12.5", only: :test},
         {:phoenix, "~> 1.8.15", only: :test},

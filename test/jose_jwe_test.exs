@@ -208,7 +208,7 @@ defmodule RequestSeal.JOSESafetyTest do
           "elixir",
           [
             "-pa",
-            Path.expand("_build/test/lib/request_seal/ebin"),
+            Application.app_dir(:request_seal, "ebin"),
             "test/support/jose_entropy_check.exs"
           ],
           env: [{"OPENSSL_CONF", conf}],

@@ -8,9 +8,16 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    env:
-      ELIXIR_VERSION: 1.20.4
-      OTP_VERSION: 29.1.1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: floor
+            elixir: '1.18.4'
+            otp: '27.3.4'
+          - lane: latest
+            elixir: '1.20.4'
+            otp: '29.1.1'
     services:
       postgres:
         image: postgres:18
@@ -29,8 +36,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
         with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
           version-type: strict
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
@@ -41,7 +48,11 @@ jobs:
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get --check-locked
-      - run: python3 scripts/check.py
-      - run: mix test --warnings-as-errors test/replay_postgres_test.exs test/replay_test.exs
+      - if: matrix.lane == 'floor'
+        run: mix test --warnings-as-errors
         env:
-          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports[5432] }}/postgres
+          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      - if: matrix.lane == 'latest'
+        run: python3 scripts/check.py
+        env:
+          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres

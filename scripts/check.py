@@ -105,7 +105,7 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
 
 
 def toolchain_errors(sources):
-    """Tie the repository's declared pin channels to its version-manager identity."""
+    """Validate the consumer range, exact tooling identity, and both CI lanes."""
     errors = []
     versions = {}
     for number, line in enumerate(sources[".tool-versions"].splitlines(), 1):
@@ -125,18 +125,26 @@ def toolchain_errors(sources):
     elixir, major = match.groups()
     if otp.split(".")[0] != major:
         errors.append("Version-manager Elixir/OTP identities disagree")
+    postgres_env = "\n        env:\n          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres"
     required = {
-        "mix.exs": [f'elixir: "{elixir}"'],
+        "mix.exs": ['elixir: "~> 1.18"', "unless Code.ensure_loaded?(:json) do"],
         "tools/notebooks/mix.exs": [f'elixir: "{elixir}"'],
-        "config/config.exs": [f'expected_otp = "{major}"', 'to_string(:erlang.system_info(:otp_release))'],
-        "tools/notebooks/config/config.exs": ['import_config "../../../config/config.exs"'],
+        "config/config.exs": ["minimum_otp = 27", ":erlang.system_info(:otp_release) |> to_string() |> String.to_integer()", "if running_otp < minimum_otp do"],
+        "tools/notebooks/config/config.exs": ['import_config "../../../config/config.exs"', f'expected_otp = "{major}"', 'to_string(:erlang.system_info(:otp_release))', "if running_otp != expected_otp do"],
         "livebooks/environment.livemd": [f'"{elixir}" = System.version()', f'"{major}" = System.otp_release()'],
-        ".github/workflows/ci.yml": [f'ELIXIR_VERSION: {elixir}', f'OTP_VERSION: {otp}', 'version-type: strict', f"node-version: '{node}'"],
+        ".github/workflows/ci.yml": [
+            "- lane: floor\n            elixir: '1.18.4'\n            otp: '27.3.4'",
+            f"- lane: latest\n            elixir: '{elixir}'\n            otp: '{otp}'",
+            "elixir-version: ${{ matrix.elixir }}", "otp-version: ${{ matrix.otp }}",
+            "version-type: strict", f"node-version: '{node}'",
+            "- if: matrix.lane == 'floor'\n        run: mix test --warnings-as-errors" + postgres_env,
+            "- if: matrix.lane == 'latest'\n        run: python3 scripts/check.py" + postgres_env,
+        ],
     }
     for path, values in required.items():
         for value in values:
             if sources[path].count(value) != 1:
-                errors.append(f"{path}: missing or duplicated pin binding {value}")
+                errors.append(f"{path}: missing or duplicated toolchain binding {value}")
     actions = re.findall(r"uses:\s*(\S+)", sources[".github/workflows/ci.yml"])
     required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
     if not required_actions.issubset({action.split("@", 1)[0] for action in actions}) or any(not re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) for action in actions):
@@ -150,7 +158,7 @@ def check_toolchain():
     errors = toolchain_errors({path: (ROOT/path).read_text() for path in paths})
     if errors:
         raise ValueError("\n".join(errors))
-    print("PASS: all seven toolchain declarations agree; CI actions use immutable commits")
+    print("PASS: consumer range, development/notebook pins, and both CI lanes agree; CI actions use immutable commits")
 
 
 def normalize_exdoc_inventory(output, project_root=ROOT):
