@@ -156,7 +156,13 @@ defmodule RequestSeal.Conformance do
       :file_inventory
     )
 
-    require!(Enum.sort(File.ls!(root)) == ["cases", "index.json", "sources"], :unlisted_file)
+    # macOS Finder writes `.DS_Store` into any folder it displays; it is OS metadata, not a corpus
+    # file. Only that exact name is skipped; every other unlisted file still refuses.
+    require!(
+      root |> File.ls!() |> Enum.reject(&os_metadata?/1) |> Enum.sort() ==
+        ["cases", "index.json", "sources"],
+      :unlisted_file
+    )
 
     require!(
       Enum.all?(
@@ -173,6 +179,7 @@ defmodule RequestSeal.Conformance do
       for folder <- ["sources", "cases"],
           file <- Path.wildcard(Path.join([root, folder, "**", "*"]), match_dot: true),
           not File.dir?(file),
+          not os_metadata?(Path.basename(file)),
           do: Path.relative_to(file, root)
 
     require!(Enum.all?(paths, &(&1 in actual)), :missing_file)
@@ -371,4 +378,6 @@ defmodule RequestSeal.Conformance do
       if(kind in ["core", "jose"], do: Atom.to_string(error.layer) <> ".", else: "") <>
       Atom.to_string(reason)
   end
+
+  defp os_metadata?(name), do: name == ".DS_Store"
 end

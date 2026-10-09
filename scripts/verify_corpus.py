@@ -6,7 +6,8 @@ from corpus_json import canonical, decode
 
 
 def verify(root):
-    if sorted(p.name for p in root.iterdir()) != ["cases", "index.json", "sources"]:
+    # macOS Finder writes .DS_Store into any folder it displays; only that exact name is skipped.
+    if sorted(p.name for p in root.iterdir() if p.name != ".DS_Store") != ["cases", "index.json", "sources"]:
         raise ValueError("unlisted_file")
     if any(p.is_symlink() for p in root.rglob("*")):
         raise ValueError("unsafe_path")
@@ -16,7 +17,7 @@ def verify(root):
         raise ValueError("invalid_index")
     paths = [v["path"] for v in index["files"]]
     actual = sorted(str(p.relative_to(root)) for folder in ("sources", "cases")
-                    for p in (root / folder).rglob("*") if p.is_file())
+                    for p in (root / folder).rglob("*") if p.is_file() and p.name != ".DS_Store")
     if paths != actual or len(set(paths)) != len(paths):
         raise ValueError("file_inventory")
     for entry in index["files"]:
