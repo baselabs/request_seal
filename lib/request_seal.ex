@@ -49,15 +49,20 @@ defmodule RequestSeal do
   Composite verification uses `verify_quorum/3` with explicit `RequestSeal.Quorum`.
   Every Signature label must have a matching Signature-Input label.
 
-  `sign/4` takes a map with exactly `:label`, `:signature_input` (serialized Inner
+  The explicit-input form of `sign/4` takes a map with exactly `:label`, `:signature_input` (serialized Inner
   List or `RequestSeal.StructuredFields.Value`), and `:algorithm`, plus an
   arity-two caller signer `(algorithm, base)` returning `{:ok, signature_bytes}`
   or `{:error, term}`. It appends two caller-provenance header occurrences and
   validates the resulting Message and dictionaries. Existing labels reject.
-  Its only option is `:field_schemas`, default `%{}`, with the same schema rules
+  That form's only option is `:field_schemas`, default `%{}`, with the same schema rules
   as Policy. Sign dictionaries have a 16-encounter ceiling and signatures must
   be nonempty and at most 1,024 bytes. HTTP alg must equal the explicit algorithm;
   JWS selection requires no HTTP alg. Signing establishes local construction.
+
+  `sign/4` also accepts `t:signing_spec/0` to generate metadata from `:clock`,
+  compute/check content digests, and use bounded custody signing. This is the
+  shared Req/Finch signing path; `Message.request/5` and `Message.response/4`
+  build lossless messages from ordered headers and exact retained bytes.
 
   Callback exceptions, exits, throws and malformed results reject without
   retaining their text. `RequestSeal.Error` documents every reason and layer;
@@ -70,6 +75,27 @@ defmodule RequestSeal do
   See the public architecture, threat model, and technical decisions in the generated guides.
   """
   alias RequestSeal.{Authentication, Error, Message, Policy, Verification}
+
+  @type signature_spec :: %{
+          label: binary(),
+          signature_input: binary() | RequestSeal.StructuredFields.Value.t(),
+          algorithm: RequestSeal.Crypto.algorithm()
+        }
+  @type signing_spec :: %{
+          label: binary(),
+          components: binary(),
+          algorithm: RequestSeal.Crypto.algorithm(),
+          parameters: %{
+            created: boolean(),
+            expires_in: pos_integer() | nil,
+            nonce: :random | nil,
+            alg: boolean(),
+            keyid: binary() | nil,
+            tag: binary() | nil
+          },
+          digest: [binary()] | nil,
+          field_schemas: map()
+        }
 
   @doc """
   Verify one explicit label under a fully explicit generic policy.
@@ -112,9 +138,53 @@ defmodule RequestSeal do
   def verify_quorum(message, quorum, opts),
     do: RequestSeal.Quorum.Evaluation.verify(message, quorum, opts)
 
-  @doc "Append a signature through caller-owned custody; no private key enters the API."
-  @spec sign(Message.t(), map(), Policy.signer(), keyword()) ::
+  @doc """
+  Append one signature through caller-owned custody or an arity-two signer.
+
+  A `t:signing_spec/0` uses the same spec-to-input implementation as Req and Finch:
+  serialized `:components`, explicit `:parameters`, `:digest`, `:field_schemas`,
+  `:label`, and `:algorithm`. Every parameter key is required. Created and alg
+  are booleans; expires_in is a positive number of seconds or nil (requires
+  created); nonce is `:random` or nil; keyid and tag are strings or nil. Parameter
+  order is created, expires, nonce, alg, keyid, tag. JWS requires alg false.
+  Digest is nil or a unique SHA-256/SHA-512 list. Existing digests are checked
+  against retained bytes; covered Content-Length is supplied from those bytes.
+  Host and trailer components reject; related-request components need a response.
+
+  Spec options are `:clock` (arity zero, default system seconds),
+  `:signing_timeout` (1–300,000 ms, default 5,000), and `:nonce` (optional
+  caller-owned 32-byte entropy, encoded as unpadded Base64url when nonce is
+  selected). Without that option nonce uses the CSPRNG. Supply fresh entropy on
+  every attempt. Spec signers accept a KeyHandle or function; both run through
+  custody's monitored deadline/cancellation workers. No framework is required.
+
+  The original three-key specification (`:label`, `:signature_input`,
+  `:algorithm`) keeps its synchronous function signer and only `:field_schemas`
+  as an option. It never generates metadata. Both forms append ordered signature
+  headers and return bounded `RequestSeal.Error` on rejection.
+
+      iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+      iex> spec = %{label: "sig", algorithm: "ed25519", components: ~s[("@method" "@authority" "@path")], parameters: %{created: true, expires_in: 60, nonce: :random, alg: true, keyid: "example-key", tag: nil}, digest: nil, field_schemas: %{}}
+      iex> {:ok, signed} = RequestSeal.sign(message, spec, handle)
+      iex> Enum.map(signed.fields, & &1.name)
+      ["Signature-Input", "Signature"]
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+  """
+  @spec sign(
+          Message.t(),
+          signature_spec() | signing_spec(),
+          Policy.signer() | RequestSeal.KeyHandle.t(),
+          keyword()
+        ) ::
           {:ok, Message.t()} | {:error, Error.t()}
-  def sign(message, spec, signer, opts \\ []),
+  def sign(message, spec, signer, opts \\ [])
+
+  def sign(message, %{components: _} = spec, signer, opts),
+    do: RequestSeal.Signing.core_sign(message, spec, signer, opts)
+
+  def sign(message, spec, signer, opts),
     do: Authentication.sign(message, spec, signer, opts)
 end

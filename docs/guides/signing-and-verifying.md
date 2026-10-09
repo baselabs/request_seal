@@ -16,42 +16,27 @@ signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
 
 Reuse the handle in a long-lived owner in your application; see [key custody](key-custody.md). Trust the public key through configuration, not a message-supplied key ID.
 
-## 2. Retain the body and compute its digest
+## 2. Build the request
 
 ```elixir
-{:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: ~s({"event":"created"})})
-{:ok, digest} = RequestSeal.Digest.compute(body, ["sha-256"])
-{:ok, digest_wire} = RequestSeal.Digest.serialize(digest)
-
-{:ok, digest_field} =
-  RequestSeal.FieldOccurrence.new(%{
-    name: "content-digest",
-    value: digest_wire,
-    section: :headers
-  })
+{:ok, message} = RequestSeal.Message.request("POST", "https://api.example.com/webhooks", [], ~s({"event":"created"}), digest: ["sha-256"])
 ```
 
-Construct the request with those retained bytes and the digest header:
+The builder preserves header order, repeats, case, explicit ports, percent escapes,
+and query bytes. `nil` and `""` both retain empty content. Its optional `digest:`
+adds Content-Digest over those exact bytes. Transport declarations remain unknown
+and trailers unavailable; it does not establish a connection. Invalid values
+return `RequestSeal.Message.Error` through the same validation as `Message.new/1`.
+Bodies use `Body.new/1`'s 1 MiB retention limit. Existing digest headers reject
+when generating a digest; omit `digest:` to preserve them.
+
+For a response, retain its exact body and optionally link the request:
 
 ```elixir
-{:ok, transport} = RequestSeal.TransportFacts.new(%{})
-
-{:ok, message} =
-  RequestSeal.Message.new(%{
-    kind: :request,
-    method: "POST",
-    raw_target: "/webhooks",
-    target_form: :origin,
-    scheme: "https",
-    authority: "api.example.com",
-    fields: [digest_field],
-    trailers: :unavailable,
-    body: body,
-    transport: transport
-  })
+{:ok, response} = RequestSeal.Message.response(200, [{"content-type", "text/plain"}], "accepted", request: message, digest: ["sha-256"])
 ```
 
-`Message` preserves ordered field occurrences, raw targets, separate trailers, and body availability. `TransportFacts` records your declarations; it does not prove a TLS connection occurred. For responses, construct `kind: :response` with `status:` and provide `related_request:` when using request components selected with `req`.
+The linked request supplies components selected with `req`; no request is inferred.
 
 ## 3. Choose acceptance rules
 
@@ -80,32 +65,34 @@ All six choices are required: algorithms, components, key resolver, freshness, c
 ## 4. Sign and verify
 
 ```elixir
-now = System.system_time(:second)
-nonce = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
-
-input =
-  Enum.join(
-    [
-      ~s[("@method" "@authority" "@path" "content-digest")],
-      "created=#{now}",
-      "expires=#{now + 60}",
-      ~s[nonce="#{nonce}"],
-      ~s[keyid="demo-key"],
-      ~s[alg="ed25519"]
-    ],
-    ";"
-  )
-
-{:ok, signed} =
-  RequestSeal.sign(
-    message,
-    %{label: "sig", signature_input: input, algorithm: "ed25519"},
-    signer,
-    []
-  )
+signing = %{
+  label: "sig",
+  algorithm: "ed25519",
+  components: ~s[("@method" "@authority" "@path" "content-digest")],
+  parameters: %{created: true, expires_in: 60, nonce: :random, alg: true, keyid: "demo-key", tag: nil},
+  digest: ["sha-256"],
+  field_schemas: %{}
+}
+{:ok, signed} = RequestSeal.sign(message, signing, handle)
 ```
 
-Verify the signature and inspect its result:
+This is the same six-key spec accepted by Req and Finch. All six parameter keys
+are explicit. The signer's `clock:` defaults to system seconds; `created: true`
+records it, and `expires_in: 60` adds 60 seconds. `nonce: :random` generates 32
+CSPRNG bytes encoded as unpadded Base64url. `alg: true` records the selected HTTP
+algorithm; JWS algorithms require `alg: false`. Nil `keyid`, `tag`, expiration,
+or nonce omit that parameter. The shared pipeline adds or checks Content-Digest
+and supplies covered Content-Length only over retained bytes. Existing conflicting
+digests reject. It refuses `host` and trailer components; cover `@authority`
+instead. Responses can cover related-request components.
+
+Spec signing accepts a custody handle or an arity-two signer `(algorithm, base)`.
+Both use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
+accepts 1–300,000 ms. Optional `nonce:` supplies caller-owned 32-byte entropy
+instead of generating it; callers must provide fresh entropy for each signing
+attempt. It is ignored when the spec omits nonce. Unknown or duplicate options,
+callback faults, malformed results, and reused labels reject with bounded
+`RequestSeal.Error` values.
 
 ```elixir
 {:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
@@ -115,7 +102,8 @@ verification.authorization
 # => :not_evaluated
 ```
 
-The label selects exactly one signature. The signer receives the selected algorithm and exact signature-base bytes. Exceptions, malformed callback results, and reused labels reject. Generic callbacks run synchronously; bound any external work yourself or delegate to custody/discovery.
+The label selects exactly one signature. Policy still requires all six acceptance
+choices; construction and signing do not select verification or authorization rules.
 
 ## 5. Require a signer with a quorum
 
@@ -137,6 +125,62 @@ result.satisfied
 ```
 
 Choose `:all`, `:any`, or `{:threshold, n}` and count distinct keys, caller-bound principals, or roles. Each assigned signature independently meets its complete policy; coverage is never pooled. Counting bindings establish no identity attribution. Required replay and representation digests reject in quorum policies; required content digests need retained bytes.
+
+## Build messages by hand
+
+Use `Message.new/1` for other target forms, separate trailers, body availability,
+retention bounds, provenance, or transport declarations. This path preserves every
+caller-supplied value and runs the same validation as the builders. Compute a
+content digest explicitly when needed:
+
+```elixir
+{:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: ~s({"event":"created"})})
+{:ok, digest} = RequestSeal.Digest.compute(body, ["sha-256"])
+{:ok, digest_wire} = RequestSeal.Digest.serialize(digest)
+
+{:ok, digest_field} =
+  RequestSeal.FieldOccurrence.new(%{
+    name: "content-digest",
+    value: digest_wire,
+    section: :headers
+  })
+```
+
+Supply the fields and authoritative origin without inferring them from headers:
+
+```elixir
+{:ok, transport} = RequestSeal.TransportFacts.new(%{})
+
+{:ok, message} =
+  RequestSeal.Message.new(%{
+    kind: :request,
+    method: "POST",
+    raw_target: "/webhooks",
+    target_form: :origin,
+    scheme: "https",
+    authority: "api.example.com",
+    fields: [digest_field],
+    trailers: :unavailable,
+    body: body,
+    transport: transport
+  })
+```
+
+For exact signature metadata, the original `sign/4` contract remains available.
+It accepts a serialized Inner List or `StructuredFields.Value` and appends the
+signature fields without generating parameters. This example intentionally omits
+freshness; the earlier freshness policy would reject it:
+
+```elixir
+{:ok, low_level_signed} = RequestSeal.sign(message, %{
+  label: "manual", algorithm: "ed25519",
+  signature_input: ~s[("@method" "@authority" "@path" "content-digest");alg="ed25519";keyid="demo-key"]
+}, signer, field_schemas: %{})
+```
+
+The explicit-input path retains its synchronous callback contract; callers bound
+external work themselves or delegate to custody. Use the spec path for generated
+parameters and bounded signer execution.
 
 ## Read the result
 

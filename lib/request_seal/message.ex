@@ -94,6 +94,135 @@ defmodule RequestSeal.Message do
         :invalid_message
       )
 
+  @doc """
+  Build a request from an absolute HTTP(S) URL, ordered headers, and exact body bytes.
+
+  Scheme, authority (including an explicit port), percent escapes, and query bytes
+  are preserved. An absent path becomes `/`; an empty query retains its `?`.
+  Header case, order, and repeats remain unchanged. `nil` and `""` both retain
+  empty content. Transport declarations stay unknown and trailers unavailable.
+  All values pass through `new/1`, including its 1 MiB body retention limit.
+
+  The only option is `:digest`, default `nil`: a nonempty unique list of
+  `"sha-256"` and/or `"sha-512"` adds Content-Digest over the exact bytes.
+  Existing Content-Digest headers reject when generating a digest; omit the
+  option to preserve caller-supplied headers. Invalid options return
+  `:invalid_message`; invalid headers and bodies retain their existing errors.
+
+      iex> {:ok, message} = RequestSeal.Message.request("post", "https://example.com:8443/a%2Fb?", [{"X", "one"}, {"X", "two"}], nil)
+      iex> {message.method, message.authority, message.raw_target, message.body.bytes}
+      {"post", "example.com:8443", "/a%2Fb?", ""}
+      iex> Enum.map(message.fields, &{&1.name, &1.value})
+      [{"X", "one"}, {"X", "two"}]
+  """
+  @spec request(binary(), binary(), [{binary(), binary()}], binary() | nil, keyword()) ::
+          {:ok, t()} | {:error, RequestSeal.Message.Error.t()}
+  def request(method, url, headers, bytes, opts \\ []) do
+    with :ok <- builder_options(opts, [:digest]),
+         {:ok, scheme, authority, target} <- request_parts(url),
+         {:ok, attrs} <- builder_parts(headers, bytes, opts) do
+      new(
+        Map.merge(attrs, %{
+          kind: :request,
+          method: method,
+          scheme: scheme,
+          authority: authority,
+          raw_target: target,
+          target_form: :origin
+        })
+      )
+    end
+  end
+
+  @doc """
+  Build a response with ordered headers and retained bytes (`nil` means empty).
+
+  Accepts the same `:digest` option as `request/5`. Optional `:request` links a
+  validated request for components with `req`; no linkage is inferred. Status,
+  fields, body, and related request pass through `new/1` unchanged.
+
+      iex> {:ok, request} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+      iex> {:ok, response} = RequestSeal.Message.response(204, [], nil, request: request)
+      iex> {response.status, response.related_request == request, response.body.bytes}
+      {204, true, ""}
+  """
+  @spec response(100..599, [{binary(), binary()}], binary() | nil, keyword()) ::
+          {:ok, t()} | {:error, RequestSeal.Message.Error.t()}
+  def response(status, headers, bytes, opts \\ []) do
+    with :ok <- builder_options(opts, [:digest, :request]),
+         {:ok, attrs} <- builder_parts(headers, bytes, opts) do
+      new(
+        Map.merge(attrs, %{
+          kind: :response,
+          status: status,
+          related_request: Keyword.get(opts, :request)
+        })
+      )
+    end
+  end
+
+  defp builder_options(opts, allowed) do
+    if is_list(opts) and Keyword.keyword?(opts) and
+         length(Keyword.keys(opts)) == length(Enum.uniq(Keyword.keys(opts))) and
+         Enum.all?(Keyword.keys(opts), &(&1 in allowed)),
+       do: :ok,
+       else: Validation.error(:invalid_message)
+  end
+
+  defp request_parts(url) when is_binary(url) and byte_size(url) <= 17_480 do
+    # Split raw bytes instead of URI normalization (which can discard explicit ports).
+    case Regex.run(~r/\A((?i:https?)):\/\/([^\/?]+)((?:[\/?].*)?)\z/, url) do
+      [_, scheme, authority, tail] ->
+        target = if tail == "" or String.starts_with?(tail, "?"), do: "/" <> tail, else: tail
+        {:ok, scheme, authority, target}
+
+      _ ->
+        Validation.error(:invalid_message)
+    end
+  end
+
+  defp request_parts(_), do: Validation.error(:invalid_message)
+
+  defp builder_parts(headers, bytes, opts) do
+    with {:ok, body} <- builder_body(bytes),
+         {:ok, fields} <- builder_fields(headers, []),
+         {:ok, fields} <- builder_digest(fields, body, Keyword.get(opts, :digest)),
+         {:ok, transport} <- TransportFacts.new(%{}) do
+      {:ok, %{fields: fields, body: body, trailers: :unavailable, transport: transport}}
+    end
+  end
+
+  defp builder_body(nil), do: builder_body("")
+  defp builder_body(bytes), do: Body.new(%{state: :retained, bytes: bytes})
+
+  defp builder_fields([], fields), do: {:ok, Enum.reverse(fields)}
+
+  defp builder_fields([{name, value} | rest], fields) when length(fields) < 1024 do
+    with {:ok, field} <- FieldOccurrence.new(%{name: name, value: value, section: :headers}) do
+      builder_fields(rest, [field | fields])
+    end
+  end
+
+  defp builder_fields(_, _), do: Validation.error(:invalid_field)
+
+  defp builder_digest(fields, _, nil), do: {:ok, fields}
+
+  defp builder_digest(fields, body, algorithms) do
+    if algorithms in [["sha-256"], ["sha-512"], ["sha-256", "sha-512"], ["sha-512", "sha-256"]] and
+         not Enum.any?(fields, &(String.downcase(&1.name) == "content-digest")) do
+      with {:ok, digest} <- RequestSeal.Digest.compute(body, algorithms),
+           {:ok, wire} <- RequestSeal.Digest.serialize(digest),
+           {:ok, field} <-
+             FieldOccurrence.new(%{name: "content-digest", value: wire, section: :headers}) do
+        {:ok, fields ++ [field]}
+      else
+        _ -> Validation.error(:invalid_body)
+      end
+    else
+      Validation.error(:invalid_message)
+    end
+  end
+
   @doc "Validate all nested values, states, bounds, targets, and request linkage."
   @spec validate(term()) :: :ok | {:error, RequestSeal.Message.Error.t()}
   def validate(%__MODULE__{} = message) do

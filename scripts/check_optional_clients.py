@@ -77,7 +77,25 @@ false = Enum.any?(Application.started_applications(), fn {app, _, _} -> app in [
 {:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: ""})
 {:ok, digest} = RequestSeal.Digest.compute(body, ["sha-256"])
 {:ok, _} = RequestSeal.Digest.serialize(digest)
-IO.puts("PASS: fresh consumer compiles and runs core without Req/Finch/Plug/Bandit/Phoenix")
+{:ok, request} = RequestSeal.Message.request("POST", "https://example.com/a%2Fb?x=1", [{"x", "one"}, {"x", "two"}], <<0, 255>>, digest: ["sha-256"])
+{_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, key} = RequestSeal.Custody.public_key(handle)
+components = ~s[("@method" "@authority" "@path" "content-digest")]
+spec = %{label: "sig", algorithm: "ed25519", components: components,
+  parameters: %{created: true, expires_in: 60, nonce: :random, alg: true, keyid: "consumer-key", tag: nil},
+  digest: ["sha-256"], field_schemas: %{}}
+{:ok, signed} = RequestSeal.sign(request, spec, handle)
+{:ok, policy} = RequestSeal.Policy.new(%{algorithms: ["ed25519"], components: components,
+  key_resolver: fn %{keyid: "consumer-key"} -> {:ok, %{algorithm: "ed25519", key: key}}; _ -> :error end,
+  freshness: %{clock: fn -> System.system_time(:second) end, max_age: 60, skew: 5, require_expires: true},
+  content: %{kind: :content, algorithms: ["sha-256"], section: :headers}, replay: :not_required})
+{:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
+:valid = verification.signature.crypto
+{:ok, response} = RequestSeal.Message.response(204, [], nil, request: request)
+true = response.related_request == request
+:ok = RequestSeal.Custody.Local.release(handle)
+IO.puts("PASS: fresh consumer builds, signs, and verifies core without Req/Finch/Plug/Bandit/Phoenix")
 """],
         ]
         for command in commands:

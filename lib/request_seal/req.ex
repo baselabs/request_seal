@@ -24,6 +24,7 @@ if Code.ensure_loaded?(Req) do
     containing `policy`, `label`, and a nonnegative `max_stream_bytes`.
     The specification is documented in `RequestSeal.Finch`. Optional
     `signing_timeout` defaults to 5,000 ms; `clock` to system seconds;
+    `nonce` optionally supplies caller-owned 32-byte entropy (fresh each attempt);
     `request_body` to `:as_is` or explicit `{:retain, max}`. Retention replaces a
     stream with replayable bytes before transport. Every attempt removes only
     this adapter's previously appended values, then regenerates parameters.
@@ -85,6 +86,7 @@ if Code.ensure_loaded?(Req) do
       :signer,
       :signing_timeout,
       :clock,
+      :nonce,
       :redirect,
       :request_body,
       :verify,
@@ -316,7 +318,7 @@ if Code.ensure_loaded?(Req) do
 
     defp sign_options(opts),
       do:
-        Keyword.take(opts, [:signing_timeout, :clock]) ++
+        Keyword.take(opts, [:signing_timeout, :clock, :nonce]) ++
           [body: Keyword.get(opts, :request_body, :as_is)]
 
     @doc false

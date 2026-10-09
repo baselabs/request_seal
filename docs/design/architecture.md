@@ -107,7 +107,7 @@ signing and verification are implemented with the following signatures:
 `RequestSeal.verify/3` requires an explicit `RequestSeal.Policy` and a `:label`
 option selecting exactly one signature. `RequestSeal.Policy.new/1` requires
 algorithms, components, key resolver, freshness, content, and replay choices;
-replay is explicitly `:not_required` or a bounded nonce/namespace/commitment/store policy. `RequestSeal.sign/4` accepts one
+replay is explicitly `:not_required` or a bounded nonce/namespace/commitment/store policy. The explicit-input form of `RequestSeal.sign/4` accepts one
 specification map with exactly `:label`, `:signature_input`, and `:algorithm`.
 Its arity-two signer receives `(algorithm, base)` and returns
 `{:ok, signature_bytes}` or `{:error, term}`. The signature input is a serialized
@@ -115,6 +115,14 @@ Inner List or a `RequestSeal.StructuredFields.Value`. Signing returns the messag
 with appended `Signature-Input` and `Signature` header occurrences. Options
 default to `[]`, also exposing `sign/3`; `:field_schemas` is its only option.
 Both APIs return bounded `RequestSeal.Error` values on rejection.
+
+`Message.request/5` and `Message.response/4` build validated messages from
+ordered header tuples and exact retained body bytes. Optional `digest:` adds
+Content-Digest without re-encoding. `RequestSeal.sign/4` also accepts the six-key
+`t:RequestSeal.signing_spec/0` used by Req and Finch, through one shared internal
+pipeline. It generates explicit metadata with a caller clock and optional
+caller-owned nonce entropy, and accepts an opaque custody handle or function
+with bounded execution. The original explicit-input contract remains unchanged.
 
 Composite verification returns `RequestSeal.Quorum.Verification`, including plural
 `signatures`, the qualifying label/slot set, counting facts, bindings, and negotiation:

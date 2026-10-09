@@ -57,102 +57,34 @@ No HTTP client or server is needed. Generate an Ed25519 key for this example; in
 signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
 ```
 
-Retain the exact request body and compute its content digest, a checksum that the signature will cover:
+Build the request from its exact body bytes. The signing spec adds its content digest and generates a 60-second validity window and random nonce:
 
 ```elixir
-{:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: ~s({"event":"created"})})
-{:ok, digest} = RequestSeal.Digest.compute(body, ["sha-256"])
-{:ok, digest_wire} = RequestSeal.Digest.serialize(digest)
-
-{:ok, digest_field} =
-  RequestSeal.FieldOccurrence.new(%{
-    name: "content-digest",
-    value: digest_wire,
-    section: :headers
-  })
+components = ~s[("@method" "@authority" "@path" "content-digest")]
+{:ok, message} = RequestSeal.Message.request("POST", "https://api.example.com/webhooks", [], ~s({"event":"created"}))
+signing = %{
+  label: "sig", algorithm: "ed25519", components: components,
+  parameters: %{created: true, expires_in: 60, nonce: :random, alg: true, keyid: "demo-key", tag: nil},
+  digest: ["sha-256"], field_schemas: %{}
+}
+{:ok, signed} = RequestSeal.sign(message, signing, handle)
 ```
 
-Build a request message with the method, path, origin, and digest header:
+The verifier explicitly chooses trusted keys, algorithms, coverage, freshness, body integrity, and replay rules:
 
 ```elixir
-{:ok, transport} = RequestSeal.TransportFacts.new(%{})
-
-{:ok, message} =
-  RequestSeal.Message.new(%{
-    kind: :request,
-    method: "POST",
-    raw_target: "/webhooks",
-    target_form: :origin,
-    scheme: "https",
-    authority: "api.example.com",
-    fields: [digest_field],
-    trailers: :unavailable,
-    body: body,
-    transport: transport
-  })
-```
-
-Choose a signature label (`"sig"` links the two signature headers), fields to cover, and a 60-second validity window. The signature input joins the covered fields and parameters with semicolons:
-
-```elixir
-now = System.system_time(:second)
-nonce = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
-
-input =
-  Enum.join(
-    [
-      ~s[("@method" "@authority" "@path" "content-digest")],
-      "created=#{now}",
-      "expires=#{now + 60}",
-      ~s[nonce="#{nonce}"],
-      ~s[keyid="demo-key"],
-      ~s[alg="ed25519"]
-    ],
-    ";"
-  )
-
-{:ok, signed} =
-  RequestSeal.sign(
-    message,
-    %{label: "sig", signature_input: input, algorithm: "ed25519"},
-    signer,
-    []
-  )
-```
-
-The verifier chooses which keys, coverage, freshness, body integrity, and replay rules to accept:
-
-```elixir
-{:ok, policy} =
-  RequestSeal.Policy.new(%{
-    algorithms: ["ed25519"],
-    components: ~s[("@method" "@authority" "@path" "content-digest")],
-    key_resolver: fn
-      %{keyid: "demo-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
-      _ -> :error
-    end,
-    freshness: %{
-      clock: fn -> System.system_time(:second) end,
-      max_age: 60,
-      skew: 5,
-      require_expires: true
-    },
-    content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
-    replay: :not_required
-  })
-```
-
-Verify the signed message under that policy:
-
-```elixir
+{:ok, policy} = RequestSeal.Policy.new(%{
+  algorithms: ["ed25519"], components: components,
+  key_resolver: fn %{keyid: "demo-key"} -> {:ok, %{algorithm: "ed25519", key: key}}; _ -> :error end,
+  freshness: %{clock: fn -> System.system_time(:second) end, max_age: 60, skew: 5, require_expires: true},
+  content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
+  replay: :not_required
+})
 {:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
-verification.signature.crypto
-# => :valid
-verification.authorization
-# => :not_evaluated
+verification.signature.crypto # => :valid
 ```
 
-A valid signature does not authorize an action. [Signing and verifying](docs/guides/signing-and-verifying.md) explains results, errors, and quorum verification.
+A valid signature does not authorize an action; `verification.authorization` remains `:not_evaluated`. [Signing and verifying](docs/guides/signing-and-verifying.md) explains results, errors, response builders, and exact control with hand-built messages.
 
 ### Sign outgoing requests with Req
 
