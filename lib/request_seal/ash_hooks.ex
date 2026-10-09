@@ -5,8 +5,9 @@ if Code.ensure_loaded?(AshHooks.Provider) do
 
     A consumer's `c:AshHooks.Provider.verify_signature/3` delegates to
     `verify_signature/4` with an explicit policy and label. `:policy` is a
-    `RequestSeal.Policy` or an arity-one function resolving a policy from the
-    provider's nonempty binary secret/key reference. RequestSeal never interprets
+    `RequestSeal.Policy` or an arity-two function resolving a policy from the
+    provider context's tenant and nonempty binary secret/key reference.
+    RequestSeal never interprets
     that reference as key material or authorizes an application action.
 
     The provider context must supply method, absolute request URI, and a headers
@@ -19,7 +20,7 @@ if Code.ensure_loaded?(AshHooks.Provider) do
     """
     @doc "Verify a provider's exact body under an explicit policy and signature label."
     @spec verify_signature(binary(), AshHooks.Provider.verify_context(), binary(), keyword()) ::
-            :ok | {:error, :invalid_signature | :no_webhook_secret | :stale_timestamp}
+            :ok | {:error, :invalid_signature | :no_webhook_secret}
     def verify_signature(body, context, reference, opts) do
       if not is_binary(reference) or reference == "" do
         {:error, :no_webhook_secret}
@@ -37,7 +38,7 @@ if Code.ensure_loaded?(AshHooks.Provider) do
 
       policy =
         case opts[:policy] do
-          fun when is_function(fun, 1) -> fun.(reference)
+          fun when is_function(fun, 2) -> fun.(context.tenant, reference)
           policy -> policy
         end
 
@@ -63,16 +64,21 @@ if Code.ensure_loaded?(AshHooks.Provider) do
 
     Configure `http: RequestSeal.AshHooks.Http` and
     `http_opts: [request_seal: [spec: signing_spec, signer: custody_handle]]`.
-    Optional signing options are `:clock`, `:nonce`, and `:signing_timeout`.
+    Optional signing options are `:clock` (a zero-arity function) and
+    `:signing_timeout`. Nonces are freshly generated for every attempt.
     The spec must cover `@method`, `@authority`, `@path`, `content-digest`,
     `content-type`, and `webhook-id` without component parameters. The digest
-    defaults to SHA-256. Incoming signature fields and transport-owned headers
+    defaults to SHA-256. URLs with a query must also cover `@query`.
+    Incoming signature fields and transport-owned headers
     reject; case-colliding headers reject before conversion to the transport map.
 
     Delegates one signed request to `AshHooks.Http.Bounded` with the remaining
     total timeout and unchanged transport options. ash_hooks continues to own
     SSRF resolve-and-pin, durable attempts, retries, secret references, rotation,
-    and response classification. Signing failures return a bounded error.
+    and response classification. Signing failures return
+    `{:error, {:terminal, :request_seal_signing_failed}}`; transport exceptions
+    propagate unchanged. The terminal tag is for caller classification;
+    ash_hooks 2.0 retries returned adapter errors other than `:unsafe_destination`.
     ash_hooks still requires its Standard Webhooks secret reference and emits
     those headers alongside RFC 9421 fields. Select the RFC label explicitly.
     Adapter options receive no endpoint or tenant identity; choose custody in
@@ -101,7 +107,8 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       if is_integer(timeout) and timeout in 1..300_000 do
         deadline = System.monotonic_time(:millisecond) + timeout
 
-        with {:ok, signed} <- signed(method, url, headers, body, opts, deadline) do
+        with {:ok, signed} <- signed(method, url, headers, body, opts, deadline),
+             {:ok, signed_headers} <- signed_headers(signed) do
           remaining = max(deadline - System.monotonic_time(:millisecond), 0)
 
           if remaining == 0 do
@@ -112,7 +119,7 @@ if Code.ensure_loaded?(AshHooks.Provider) do
             AshHooks.Http.Bounded.request(
               method,
               url,
-              Map.new(signed.fields, &{&1.name, &1.value}),
+              signed_headers,
               body,
               transport
             )
@@ -121,22 +128,37 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       else
         {:error, :timeout}
       end
-    rescue
-      _ -> {:error, :request_seal_rejected}
-    catch
-      _, _ -> {:error, :request_seal_rejected}
+    end
+
+    @doc false
+    def signed_headers(%Message{fields: fields}) do
+      names = Enum.map(fields, &String.downcase(&1.name))
+
+      if length(names) == length(Enum.uniq(names)),
+        do: {:ok, Map.new(fields, &{String.downcase(&1.name), &1.value})},
+        else: {:error, {:terminal, :request_seal_signing_failed}}
     end
 
     defp signed(method, url, headers, body, opts, deadline) do
       signing = opts[:request_seal]
-      Signing.options(signing, [:spec, :signer, :clock, :nonce, :signing_timeout])
+      Signing.options(signing, [:spec, :signer, :clock, :signing_timeout])
+
+      Signing.ensure(
+        not Keyword.has_key?(signing, :clock) or is_function(signing[:clock], 0),
+        :invalid_options
+      )
+
       Signing.ensure(match?(%KeyHandle{}, signing[:signer]), :invalid_options)
       spec = signing[:spec] |> Map.put_new(:digest, ["sha-256"]) |> Signing.normalize_spec!()
       input = Signing.spec!(spec)
 
+      # @query preserves the core's query normalization while retaining the
+      # existing method/authority/path contract, including percent-encoded bytes.
+      required = if URI.parse(url).query == nil, do: @required, else: ["@query" | @required]
+
       Signing.ensure(
         spec.digest != nil and
-          Enum.all?(@required, fn name ->
+          Enum.all?(required, fn name ->
             Enum.any?(input.value, &(&1.value == {:string, name} and &1.parameters == []))
           end),
         :invalid_options
@@ -161,15 +183,19 @@ if Code.ensure_loaded?(AshHooks.Provider) do
 
       sign_opts =
         signing
-        |> Keyword.take([:clock, :nonce, :signing_timeout])
+        |> Keyword.take([:clock, :signing_timeout])
         |> Keyword.put(:signing_timeout, min(signing[:signing_timeout] || 5_000, remaining))
 
       with {:ok, message} <- Message.request(method, url, fields, body),
            {:ok, signed} <- RequestSeal.sign(message, spec, signing[:signer], sign_opts) do
         {:ok, signed}
       else
-        _ -> {:error, :request_seal_rejected}
+        _ -> {:error, {:terminal, :request_seal_signing_failed}}
       end
+    rescue
+      _ -> {:error, {:terminal, :request_seal_signing_failed}}
+    catch
+      _, _ -> {:error, {:terminal, :request_seal_signing_failed}}
     end
   end
 end

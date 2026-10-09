@@ -30,6 +30,18 @@ defmodule RequestSeal.PublicDocumentationTest do
     assert "README.md" in extras, "the public inventory must include the entry guide"
   end
 
+  test "publishing runtime guard refuses older toolchains" do
+    [guard, "hex.publish"] = Mix.Project.config()[:aliases][:"hex.publish"]
+
+    if Version.match?(System.version(), ">= 1.20.0") do
+      assert guard.([]) == nil
+    else
+      assert_raise Mix.Error, ~r/Publishing RequestSeal requires Elixir 1.20 or newer/, fn ->
+        guard.([])
+      end
+    end
+  end
+
   defp public_extras do
     Mix.Project.config()
     |> Keyword.fetch!(:docs)

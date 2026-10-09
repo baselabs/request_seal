@@ -43,6 +43,85 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       assert {:error, %Error{reason: :invalid_store}} = AshOnetime.store(OwnedRepo, partition: "")
     end
 
+    test "invalid claim bytes and deterministic arguments are failures", %{prefix: prefix} do
+      store = AshOnetime.store(OwnedRepo, partition: "invalid", prefix: prefix)
+      context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 5_000}
+
+      for invalid <- [
+            %{claim() | key: :not_binary},
+            %{claim() | namespace: :not_binary},
+            %{claim() | key: ""}
+          ] do
+        assert {:error, :failure} = AshOnetime.claim(store.ref, invalid, context)
+      end
+
+      assert {:error, :failure} = AshOnetime.claim({String, "invalid", prefix}, claim(), context)
+    end
+
+    test "issuance uses the database transaction clock and retention survives immediate cleanup",
+         %{prefix: prefix} do
+      store = AshOnetime.store(OwnedRepo, partition: "db-clock", prefix: prefix)
+
+      for horizon <- [
+            System.system_time(:second) - 60,
+            System.system_time(:second),
+            System.system_time(:second) + 120
+          ] do
+        c = %{claim() | retain_until: horizon}
+        assert :claimed = Replay.claim(store, c, timeout: 5_000)
+
+        assert %{rows: [[issued, admitted, retention]]} =
+                 OwnedRepo.query!(
+                   "SELECT issued_at, admitted_at, retain_until FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'db-clock' ORDER BY admitted_at DESC LIMIT 1"
+                 )
+
+        assert issued == admitted
+        assert DateTime.compare(retention, admitted) == :gt
+        assert DateTime.to_unix(retention) >= horizon
+        OwnedRepo.query!("SELECT #{prefix}.ash_onetime_cleanup_nonce(100)")
+        assert :already_claimed = Replay.claim(store, c, timeout: 5_000)
+      end
+    end
+
+    test "a timeout after the actual commit leaves a spent nonce", %{prefix: prefix} do
+      store = AshOnetime.store(OwnedRepo, partition: "committed-timeout", prefix: prefix)
+      c = claim()
+      id = {__MODULE__, make_ref()}
+
+      :ok =
+        :telemetry.attach(
+          id,
+          [:request_seal, :owned_repo, :query],
+          &__MODULE__.delay_commit_reply/4,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(id) end)
+      attempt = Task.async(fn -> Replay.claim(store, c, timeout: 500) end)
+      assert_receive :claim_committed, 5_000
+      assert {:error, %Error{reason: :store_timeout}} = Task.await(attempt, 5_000)
+      :telemetry.detach(id)
+
+      assert %{rows: [[1]]} =
+               OwnedRepo.query!(
+                 "SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'committed-timeout'"
+               )
+
+      assert :already_claimed = Replay.claim(store, c, timeout: 5_000)
+    end
+
+    def delay_commit_reply(_event, _measurements, metadata, owner) do
+      if String.downcase(metadata.query) == "commit" do
+        send(owner, :claim_committed)
+
+        receive do
+          :release_commit_reply -> :ok
+        after
+          5_000 -> :ok
+        end
+      end
+    end
+
     test "64 real concurrent claimers have exactly one winner", %{prefix: prefix} do
       store = AshOnetime.store(OwnedRepo, partition: "storm", prefix: prefix)
       c = claim()

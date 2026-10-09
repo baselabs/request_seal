@@ -22,7 +22,20 @@ Other named application profiles belong in extension packages.
    reasons for exact tool pins and verify any overrides through their real execution path.
 3. Run the full declared gate and all advertised algorithm/profile/adapter/corpus/peer checks.
    Execute each notebook from a clean environment and inspect generated docs in a real browser.
-4. Build with `mix hex.build`. Inspect the tarball's file allowlist, licenses, public docs,
+4. Release builds and publishing require Elixir 1.20 or newer. The `hex.publish`
+   alias refuses publishing below 1.20 before invoking Hex; older toolchains omit
+   the optional integrations from development dependencies. Run the same guard
+   before building the release artifact:
+
+   ```sh
+   mix run --no-start -e 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])' && mix hex.build
+   ```
+
+   Inspect `hex_metadata.config` from `mix hex.build --unpack`: both `ash_onetime`
+   and `ash_hooks` must be optional requirements. The latest lane builds, checks,
+   and deletes an unpacked package under `_build`.
+
+   Inspect the tarball's file allowlist, licenses, public docs,
    corpus, notebook assets, absence of secrets/private paths, and generated application metadata.
 5. Install that exact artifact into a clean consumer, exercise actual public entry points,
    and compare source/artifact identities. Run supported Linux compatibility lanes and record

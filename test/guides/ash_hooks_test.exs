@@ -202,7 +202,7 @@ if Code.ensure_loaded?(AshHooks.Provider) do
             tenant: nil
           }
           :ok = RequestSeal.AshHooks.verify_signature(body, context, "webhook-key",
-            policy: fn "webhook-key" -> policy end, label: "sig")
+            policy: fn nil, "webhook-key" -> policy end, label: "sig")
           ''',
           binding,
           "docs/guides/ash-hooks.md",

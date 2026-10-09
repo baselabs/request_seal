@@ -91,5 +91,5 @@ packages; the latest lane executes the owned-package tests, including real
 PostgreSQL migrations and a Bandit delivery receiver, through `scripts/check.py`.
 Version-conditional root development dependencies do not change the published
 optional requirements: release metadata is built on the latest toolchain.
-Ash requires `>= 3.34.3 and < 4.0.0` on every lane. The core consumer check
+Ash requires `~> 3.34 and >= 3.34.3` on every lane. The core consumer check
 also verifies that neither optional bridge compiles without its dependency.

@@ -131,8 +131,14 @@ durable_replay = %{replay | store: durable_store}
 Each claim commits in its own READ COMMITTED repo transaction under the remaining
 deadline. Namespace and commitment bytes are base64url encoded. ash_onetime retains
 the claim at least through RequestSeal's `retain_until`, with its additional safety
-margin. Keep application and database clocks synchronized. Duplicate claims do not
-extend retention. A timeout is indeterminate and never permits automatic retry.
+margin. The adapter reads `issued_at` from PostgreSQL's transaction clock in that
+same transaction; retention therefore uses the database clock even if the
+application clock differs. ash_onetime's freshness check can still reject skew.
+Past or current `retain_until` values still block an immediate duplicate until
+cleanup becomes eligible. Duplicate claims do not extend retention. A timeout is
+indeterminate and never permits automatic retry: the insert may already have
+committed, and a later claim then returns already-claimed. Invalid claim bytes and
+deterministic argument errors return failure rather than transient unavailability.
 `RequestSeal.Replay.AshOnetime.sweep/3` returns `{:error, :externally_managed}`;
 use `mix ash_onetime.prune` or its Oban cleanup worker. For atomic nonce spending
 with an application effect, verify with replay explicitly `:not_required` and

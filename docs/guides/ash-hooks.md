@@ -119,11 +119,22 @@ With an existing pending `delivery` row, run the real driver:
 
 The driver records success only after the receiver returns 2xx. It owns retries,
 redirect refusal, 410 handling, and delivery leases. Every attempt is freshly
-signed. `http_opts` can also be an ash_hooks MFA resolver; the HTTP adapter itself
+signed with a random nonce. Static `:nonce` options reject; `:clock` must be a
+zero-arity function. For a destination containing a query, include `"@query"`
+in the signing components and use a receiver that verifies the complete received
+URI. Generic `RequestSeal.Plug.Verify` rejects query coverage because Plug does
+not prove the original raw target; use the core verifier with target evidence
+owned by the HTTP receiver. `http_opts` can also be an ash_hooks MFA resolver; the HTTP adapter itself
 receives no endpoint or tenant identity, so choose custody in that configuration.
 The adapter delegates to `AshHooks.Http.Bounded` with the remaining total deadline
 and retains its SSRF defaults. Existing signature fields, transport-owned headers,
-case collisions, insufficient coverage, and digest conflicts reject before sending.
+case collisions, duplicate signed fields, insufficient coverage, and digest conflicts
+reject before sending. Signing failures return
+`{:error, {:terminal, :request_seal_signing_failed}}`; transport errors and exceptions
+retain the bounded transport's classification. The terminal tag identifies an
+adapter signing failure to callers. ash_hooks 2.0 treats returned adapter errors
+other than `:unsafe_destination` as retryable; callers must account for that driver
+behavior when configuring their delivery policy.
 
 ## Delegate from a Provider
 
@@ -141,7 +152,7 @@ context = %{
   tenant: nil
 }
 :ok = RequestSeal.AshHooks.verify_signature(body, context, "webhook-key",
-  policy: fn "webhook-key" -> policy end, label: "sig")
+  policy: fn nil, "webhook-key" -> policy end, label: "sig")
 ```
 
 ash_hooks currently passes a headers map and accepts only `:ok` or its signature
@@ -149,4 +160,6 @@ errors. The helper cannot restore lost duplicate lines/order or return verified
 facts through that callback. The upstream Plug pattern preserves those facts and
 ordered occurrences. An absent key reference returns `:no_webhook_secret`;
 verification or policy failures return `:invalid_signature`. Configure provider
-key-reference resolution independently of the inbound request.
+key-reference resolution independently of the inbound request. A policy callback
+receives both the provider context's tenant and the secret reference; resolve keys
+within that tenant even when another tenant uses the same reference.

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Cover webhook URL queries, generate a new nonce per attempt, reject duplicate
+  signed fields, and preserve transport exceptions with distinct signing errors.
+- Bind inbound webhook policy resolution to tenant and key reference.
+- Validate durable replay claims before encoding and anchor retention to the
+  database transaction clock; retain spent nonces across indeterminate timeouts.
+- Preserve portable replay guide coverage and require optional integration
+  metadata and Elixir 1.20 or newer for publishing.
+
 - Added optional `RequestSeal.Replay.AshOnetime` for independently committed durable nonce claims, deadline propagation, and ash_onetime-managed retention and cleanup. It is the recommended durable store; `Replay.Postgres` remains available.
 - Added `RequestSeal.AshHooks.Http` for final-byte RFC 9421 signing through ash_hooks' bounded transport, and `RequestSeal.AshHooks.verify_signature/4` for Provider delegation. Added executable webhook and durable replay examples.
 - Optional ash_onetime `~> 1.5` and ash_hooks `~> 2.0` run on the latest Elixir lane; Elixir 1.18/1.19 omit them. Raised the Ash dependency floor to 3.34.3.

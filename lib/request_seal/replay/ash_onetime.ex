@@ -15,11 +15,14 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     `:not_required`, then use ash_onetime in the application's transaction.
     No timeout or failure permits automatic retry: the claim may have committed.
 
-    Facts are anchored to the current wall clock, with max age derived from
-    `retain_until` and one second of clock skew. ash_onetime adds its cleanup
-    safety margin, so retention is never shorter than the requested horizon.
-    Keep database and application clocks synchronized. Historical verification
-    clocks do not move ash_onetime's cleanup clock. Duplicate claims do not
+    Facts use PostgreSQL's transaction clock, read in the same transaction as
+    admission. Max age is derived from `retain_until`; one second of rounding
+    headroom and ash_onetime's cleanup margin keep retention beyond that horizon
+    without relying on application/database clock synchronization. ash_onetime's
+    freshness check can still reject clock skew; rejection never spends a nonce.
+    Past or current retention horizons still block an immediate duplicate.
+    Historical verification clocks do not move the database's cleanup clock.
+    Duplicate claims do not
     extend retention; use one freshness bound per namespace.
 
     `sweep/3` returns `{:error, :externally_managed}`. Cleanup belongs to
@@ -37,7 +40,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       if Keyword.keyword?(opts) and
            length(Keyword.keys(opts)) == length(Enum.uniq(Keyword.keys(opts))) and
            Enum.all?(Keyword.keys(opts), &(&1 in [:partition, :prefix])) and
-           text?(opts[:partition], 255) and (opts[:prefix] == nil or text?(opts[:prefix], 255)) and
+           text?(opts[:partition], 255) and (opts[:prefix] == nil or text?(opts[:prefix], 63)) and
            Code.ensure_loaded?(repo) and function_exported?(repo, :transaction, 2) do
         %Store{adapter: __MODULE__, ref: {repo, opts[:partition], opts[:prefix]}}
       else
@@ -52,43 +55,57 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     @spec claim(ref(), Claim.t(), Context.t()) ::
             :claimed | :already_claimed | {:error, :unavailable | :timeout | :failure}
     def claim({repo, partition, prefix}, %Claim{} = claim, %Context{} = context) do
-      remaining = Context.remaining(context)
+      cond do
+        not Claim.valid?(claim) or not valid_ref?(repo, partition, prefix) ->
+          {:error, :failure}
 
-      if remaining == 0 do
-        {:error, :timeout}
-      else
-        now = DateTime.utc_now() |> DateTime.truncate(:second)
-        key = Base.url_encode64(claim.key, padding: false)
+        Context.remaining(context) == 0 ->
+          {:error, :timeout}
 
-        with true <- Claim.valid?(claim),
-             {:ok, verified} <-
-               AshOnetime.Verified.new(
-                 key: key,
-                 issued_at: now,
-                 verifier_id: "request_seal.replay.v1"
-               ) do
+        not running_repo?(repo) ->
+          {:error, :unavailable}
+
+        true ->
+          key = Base.url_encode64(claim.key, padding: false)
+          scope = Base.url_encode64(claim.namespace, padding: false)
+
           repo.transaction(
             fn ->
-              AshOnetime.Transaction.nonce(repo,
-                operation: {__MODULE__, :claim},
-                partition: partition,
-                prefix: prefix,
-                scope: Base.url_encode64(claim.namespace, padding: false),
-                key: key,
-                verified: [verified],
-                max_age: max(claim.retain_until - DateTime.to_unix(now), 0),
-                clock_skew: 1
-              )
+              # The same PostgreSQL transaction timestamp anchors ash_onetime's
+              # admitted_at and cleanup floor, even when the host clock differs.
+              %{rows: [[now]]} =
+                Ecto.Adapters.SQL.query!(repo, "SELECT transaction_timestamp()", [],
+                  timeout: Context.remaining(context)
+                )
+
+              with {:ok, verified} <-
+                     AshOnetime.Verified.new(
+                       key: key,
+                       issued_at: now,
+                       verifier_id: "request_seal.replay.v1"
+                     ) do
+                AshOnetime.Transaction.nonce(repo,
+                  operation: {__MODULE__, :claim},
+                  partition: partition,
+                  prefix: prefix,
+                  scope: scope,
+                  key: key,
+                  verified: [verified],
+                  max_age: max(claim.retain_until - DateTime.to_unix(now), 0),
+                  clock_skew: 1
+                )
+              else
+                _ -> {:error, :invalid_claim}
+              end
             end,
-            timeout: remaining
+            timeout: Context.remaining(context)
           )
           |> result()
-        else
-          _ -> {:error, :failure}
-        end
       end
     rescue
-      _ -> {:error, :unavailable}
+      error in DBConnection.ConnectionError -> connection_error(error)
+      error in Postgrex.Error -> database_error(error)
+      _ -> {:error, :failure}
     catch
       :exit, {:timeout, _} -> {:error, :timeout}
       :exit, {:noproc, _} -> {:error, :unavailable}
@@ -97,6 +114,35 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     end
 
     def claim(_, _, _), do: {:error, :failure}
+
+    defp valid_ref?(repo, partition, prefix) do
+      is_atom(repo) and Code.ensure_loaded?(repo) and function_exported?(repo, :transaction, 2) and
+        text?(partition, 255) and (prefix == nil or text?(prefix, 63))
+    end
+
+    defp running_repo?(repo) do
+      Ecto.Repo.Registry.lookup(repo.get_dynamic_repo())
+      true
+    rescue
+      _ -> false
+    end
+
+    defp connection_error(%DBConnection.ConnectionError{reason: :timeout}), do: {:error, :timeout}
+    defp connection_error(_), do: {:error, :unavailable}
+
+    defp database_error(%Postgrex.Error{postgres: %{code: code}})
+         when code in [:query_canceled, :lock_not_available], do: {:error, :timeout}
+
+    defp database_error(%Postgrex.Error{postgres: %{code: code}})
+         when code in [
+                :admin_shutdown,
+                :crash_shutdown,
+                :cannot_connect_now,
+                :too_many_connections
+              ],
+         do: {:error, :unavailable}
+
+    defp database_error(_), do: {:error, :failure}
 
     @doc "Cleanup is externally managed by ash_onetime's prune task or Oban worker."
     @impl true

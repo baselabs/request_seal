@@ -7,6 +7,7 @@ import re
 import selectors
 import time
 import signal
+import tempfile
 from pathlib import Path
 import subprocess
 import sys
@@ -130,7 +131,7 @@ def toolchain_errors(sources):
         "mix.exs": ['elixir: "~> 1.18"', "unless Code.ensure_loaded?(:json) do",
             '{:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false}',
             '{:req, "~> 0.7.4", optional: true, runtime: false}',
-            '{:ash, ">= 3.34.3 and < 4.0.0", optional: true}',
+            '{:ash, "~> 3.34 and >= 3.34.3", optional: true}',
             '] ++ test_dependencies ++ owned_integrations()',
             'defp owned_integrations do\n'
             '    if Version.match?(System.version(), ">= 1.20.0") do\n'
@@ -187,6 +188,38 @@ def check_toolchain():
     print("PASS: consumer range, development/notebook pins, and all three CI lanes agree; owned optional integrations require Elixir 1.20+; CI actions use immutable commits")
 
 
+RELEASE_RUNTIME_CHECK = 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])'
+
+
+def check_package_metadata(path):
+    """Consult the built Hex artifact, not the development dependency list."""
+    run(["elixir", "-e", r"""
+{:ok, metadata} = :file.consult(System.argv() |> hd() |> String.to_charlist())
+{"requirements", requirements} = List.keyfind(metadata, "requirements", 0)
+for name <- ["ash_onetime", "ash_hooks"] do
+  matches = Enum.filter(requirements, &(List.keyfind(&1, "name", 0) == {"name", name}))
+  unless length(matches) == 1 and List.keyfind(hd(matches), "optional", 0) == {"optional", true} do
+    raise "Hex metadata must contain exactly one optional requirement for #{name}"
+  end
+end
+IO.puts("PASS: built Hex metadata lists ash_onetime and ash_hooks as optional requirements")
+""", str(path)])
+
+
+def check_package():
+    runbook = (ROOT / "docs/operations/releases.md").read_text()
+    command = "mix run --no-start -e '" + RELEASE_RUNTIME_CHECK + "'"
+    if command not in runbook or "refuses publishing below 1.20" not in runbook:
+        raise ValueError("Release runbook must require the publishing runtime guard")
+    run(["mix", "run", "--no-start", "-e", RELEASE_RUNTIME_CHECK])
+    (ROOT / "_build").mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="package-check-", dir=ROOT / "_build") as temporary:
+        artifact = Path(temporary) / "unpacked"
+        run(["mix", "hex.build", "--unpack", "--output", str(artifact)])
+        check_package_metadata(artifact / "hex_metadata.config")
+    print("PASS: release runtime guard and optional package requirements; unpacked artifact deleted")
+
+
 def normalize_exdoc_inventory(output, project_root=ROOT):
     # ExDoc 0.40 emits absolute paths for copied Livebooks in its cleanup inventory.
     # Keep cleanup functional without including developer paths in served artifacts.
@@ -240,6 +273,7 @@ if __name__ == "__main__":
             run(["mix", "docs", "--warnings-as-errors"])
             normalize_exdoc_inventory(ROOT / "doc")
             run(["mix", "hex.audit"])
+            check_package()
         notebooks()
     except subprocess.CalledProcessError as error:
         raise SystemExit(error.returncode)

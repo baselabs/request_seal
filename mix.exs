@@ -62,6 +62,7 @@ defmodule RequestSeal.MixProject do
         "Sign and verify HTTP requests and responses in Elixir: RFC 9421 HTTP Message Signatures, Web Bot Auth for AI agents, JWS/JWE, digests and replay protection, with Plug (including Phoenix), Req, Finch and Ash integrations.",
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: dependencies(),
+      aliases: ["hex.publish": [&release_runtime_check!/1, "hex.publish"]],
       package: [
         licenses: ["Apache-2.0", "BSD-3-Clause"],
         files: ["lib/**/*.ex", "mix.exs" | @public_documents],
@@ -118,6 +119,14 @@ defmodule RequestSeal.MixProject do
     ]
   end
 
+  defp release_runtime_check!(_args) do
+    unless Version.match?(System.version(), ">= 1.20.0") do
+      Mix.raise(
+        "Publishing RequestSeal requires Elixir 1.20 or newer so optional integrations remain in Hex metadata."
+      )
+    end
+  end
+
   defp dependencies do
     # Ash needs StreamData in dev/prod; scope the test override here to keep it out of Hex requirements.
     test_dependencies =
@@ -128,7 +137,7 @@ defmodule RequestSeal.MixProject do
     [
       {:ex_doc, "~> 0.40.4", only: [:dev, :test], runtime: false},
       # Require the Ash security patch line used by the optional integrations.
-      {:ash, ">= 3.34.3 and < 4.0.0", optional: true},
+      {:ash, "~> 3.34 and >= 3.34.3", optional: true},
       {:simple_sat, "~> 0.1", only: :test},
       # Use stable Req; 0.8.0-rc.0 is a release candidate.
       # Consumers own client startup; importing this library starts no pool.

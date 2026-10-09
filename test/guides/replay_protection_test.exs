@@ -2,12 +2,8 @@ defmodule RequestSeal.GuideReplayProtectionTest do
   use ExUnit.Case, async: false
   alias RequestSeal.DocsExamples, as: E
 
-  @tag :owned_integrations
-  @tag :postgres
-  test "documented examples execute against real cryptography and integrations" do
-    prefix = RequestSeal.OwnedDatabase.start()
-    on_exit(fn -> RequestSeal.OwnedDatabase.drop(prefix) end)
-    binding = [repo: RequestSeal.OwnedRepo, prefix: prefix]
+  setup_all do
+    binding = []
 
     binding =
       E.eval(
@@ -157,24 +153,56 @@ defmodule RequestSeal.GuideReplayProtectionTest do
     assert example_result == {:ok, 1}
     E.assert_rejected_signature(binding)
 
-    binding =
-      E.eval(
-        ~S'''
-        durable_store = RequestSeal.Replay.AshOnetime.store(repo,
-          partition: "demo-api", prefix: prefix)
-        durable_replay = %{replay | store: durable_store}
-        {:ok, durable_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: durable_replay})
-        {:ok, durable_accepted} = RequestSeal.verify(signed, durable_policy, label: "sig")
-        ''',
-        binding,
-        "docs/guides/replay-protection.md",
-        9
-      )
+    executed = Process.get({RequestSeal.DocsExamples, "docs/guides/replay-protection.md"})
+    assert executed == Enum.to_list(1..8)
 
-    assert %RequestSeal.Replay.Receipt{store: RequestSeal.Replay.AshOnetime} =
-             Keyword.fetch!(binding, :durable_accepted).replay
+    on_exit(fn ->
+      RequestSeal.Custody.Local.release(Keyword.fetch!(binding, :handle))
+      pid = Keyword.fetch!(binding, :replay_pid)
+      if Process.alive?(pid), do: GenServer.stop(pid)
+    end)
 
-    E.assert_fences("docs/guides/replay-protection.md", 9)
-    assert is_list(binding)
+    %{binding: binding, executed: executed}
+  end
+
+  test "portable replay fences execute with real cryptography and ETS", %{
+    binding: binding,
+    executed: executed
+  } do
+    assert executed == Enum.to_list(1..8)
+
+    assert %RequestSeal.Replay.Receipt{store: RequestSeal.Replay.ETS} =
+             Keyword.fetch!(binding, :accepted).replay
+  end
+
+  if Code.ensure_loaded?(AshOnetime.Transaction) do
+    @tag :owned_integrations
+    @tag :postgres
+    test "durable replay fence uses ash_onetime", %{binding: common, executed: executed} do
+      prefix = RequestSeal.OwnedDatabase.start()
+      on_exit(fn -> RequestSeal.OwnedDatabase.drop(prefix) end)
+      binding = common ++ [repo: RequestSeal.OwnedRepo, prefix: prefix]
+      Process.put({RequestSeal.DocsExamples, "docs/guides/replay-protection.md"}, executed)
+
+      binding =
+        E.eval(
+          ~S'''
+          durable_store = RequestSeal.Replay.AshOnetime.store(repo,
+            partition: "demo-api", prefix: prefix)
+          durable_replay = %{replay | store: durable_store}
+          {:ok, durable_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: durable_replay})
+          {:ok, durable_accepted} = RequestSeal.verify(signed, durable_policy, label: "sig")
+          ''',
+          binding,
+          "docs/guides/replay-protection.md",
+          9
+        )
+
+      assert %RequestSeal.Replay.Receipt{store: RequestSeal.Replay.AshOnetime} =
+               Keyword.fetch!(binding, :durable_accepted).replay
+
+      E.assert_fences("docs/guides/replay-protection.md", 9)
+      assert is_list(binding)
+    end
   end
 end

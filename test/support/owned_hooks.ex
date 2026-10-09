@@ -60,16 +60,6 @@ if Code.ensure_loaded?(AshHooks.Provider) do
           )
         )
 
-      conn =
-        RequestSeal.Plug.Verify.call(
-          conn,
-          RequestSeal.Plug.Verify.init(
-            policy: opts[:policy],
-            label: "sig",
-            on_reject: {:halt, 401}
-          )
-        )
-
       {:ok, capture} = RequestSeal.Plug.capture(conn)
       # The real ash_hooks reader receives exactly the bytes replayed by Capture.
       {:ok, bytes, conn} = AshHooks.BodyReader.read_body(conn, [])
@@ -77,23 +67,28 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       context = %{
         headers: Map.new(conn.req_headers),
         method: conn.method,
-        request_uri: "http://#{capture.message.authority}#{conn.request_path}",
+        request_uri:
+          "http://#{capture.message.authority}#{RequestSeal.Plug.Target.reconstruct(conn)}",
         signature: Map.new(conn.req_headers)["signature"],
         tenant: nil
       }
 
       result =
         RequestSeal.AshHooks.verify_signature(bytes, context, "receiver-key",
-          policy: fn "receiver-key" -> opts[:policy] end,
+          policy: fn nil, "receiver-key" -> opts[:policy] end,
           label: "sig"
         )
 
-      send(
-        opts[:owner],
-        {:hooks_received, RequestSeal.Plug.verification(conn), result, bytes, conn.req_headers}
-      )
+      # This reference receiver owns the complete received target. Generic Plug
+      # verification deliberately rejects target-dependent components.
+      {:ok, message} =
+        RequestSeal.Message.request(conn.method, context.request_uri, conn.req_headers, bytes)
 
-      if conn.halted, do: conn, else: Plug.Conn.send_resp(conn, 204, "")
+      verification = RequestSeal.verify(message, opts[:policy], label: "sig")
+      send(opts[:owner], {:hooks_received, verification, result, bytes, conn.req_headers})
+
+      status = if match?({:ok, _}, verification) and result == :ok, do: 204, else: 401
+      Plug.Conn.send_resp(conn, status, "")
     end
   end
 
@@ -154,6 +149,72 @@ if Code.ensure_loaded?(AshHooks.Provider) do
 
       {:ok, {_, port}} = ThousandIsland.listener_info(server)
       "http://localhost:#{port}/events"
+    end
+
+    # Relay actual TCP bytes, changing only one query value before the receiver.
+    def query_relay(receiver) do
+      target = URI.parse(receiver)
+
+      {:ok, listener} =
+        :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}, reuseaddr: true])
+
+      {:ok, {_, port}} = :inet.sockname(listener)
+      ExUnit.Callbacks.on_exit(fn -> :gen_tcp.close(listener) end)
+
+      task =
+        Task.async(fn ->
+          {:ok, incoming} = :gen_tcp.accept(listener, 5_000)
+
+          {:ok, outgoing} =
+            :gen_tcp.connect({127, 0, 0, 1}, target.port, [:binary, active: false], 5_000)
+
+          try do
+            request = read_request(incoming, "")
+
+            :ok =
+              :gen_tcp.send(
+                outgoing,
+                String.replace(request, "?account=one HTTP/1.1", "?account=two HTTP/1.1")
+              )
+
+            relay_response(outgoing, incoming)
+          after
+            :gen_tcp.close(incoming)
+            :gen_tcp.close(outgoing)
+            :gen_tcp.close(listener)
+          end
+        end)
+
+      {"http://localhost:#{port}/events?account=one", task}
+    end
+
+    defp read_request(socket, bytes) do
+      case String.split(bytes, "\r\n\r\n", parts: 2) do
+        [head, body] ->
+          [_, length] = Regex.run(~r/content-length: (\d+)/i, head)
+
+          if byte_size(body) >= String.to_integer(length) do
+            bytes
+          else
+            {:ok, chunk} = :gen_tcp.recv(socket, 0, 5_000)
+            read_request(socket, bytes <> chunk)
+          end
+
+        _ ->
+          {:ok, chunk} = :gen_tcp.recv(socket, 0, 5_000)
+          read_request(socket, bytes <> chunk)
+      end
+    end
+
+    defp relay_response(source, destination) do
+      case :gen_tcp.recv(source, 0, 5_000) do
+        {:ok, chunk} ->
+          :ok = :gen_tcp.send(destination, chunk)
+          relay_response(source, destination)
+
+        {:error, :closed} ->
+          :ok
+      end
     end
 
     def key do
