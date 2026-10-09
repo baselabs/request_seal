@@ -6,6 +6,11 @@ defmodule RequestSealNotebooks.MixProject do
       app: :request_seal_notebooks,
       version: "0.1.0",
       elixir: "1.20.4",
+      # EEF-CVE-2026-104635 (protobuf JSON decoding recursion) has no fixed release. Protobuf
+      # arrives here only through Livebook; this tooling runs Livebook's notebook importer and
+      # exporter on the repository's own notebooks, decodes no protobuf JSON, and never ships
+      # in the request_seal package. Remove this entry when protobuf publishes a fix.
+      hex: [ignore_advisories: ["EEF-CVE-2026-104635"]],
       # The Livebook Hex release pins earmark_parser; isolate it from ExDoc.
       # Exact Livebook identity binds the internal importer/exporter we execute.
       deps: [
