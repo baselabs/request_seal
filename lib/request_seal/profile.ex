@@ -41,6 +41,38 @@ defmodule RequestSeal.Profile do
           optional(atom()) => atom() | integer() | binary()
         }
 
+  @doc """
+  Check the semantic rules for one parsed RFC 9421 Signature-Input Inner List.
+
+  Accepts a `RequestSeal.StructuredFields.Value` with `type: :inner_list`,
+  ordered component items, and signature parameters. It delegates to the shared
+  signature-field validator: at most 256 components, unique component identities,
+  recognized derived components or lowercase field names, permitted component
+  parameters, and integer `created`/`expires` or string `nonce`/`alg`/`keyid`/`tag`.
+  Unknown signature parameters remain permitted under RFC 9421 Section 2.3.
+  An empty component list is permitted; profiles select required coverage.
+
+  Parse or validate the Structured Fields representation first under an RFC 8941
+  schema. This predicate checks signature semantics, not the complete Structured
+  Fields grammar, parameter uniqueness, freshness, key trust, or cryptography.
+  It does not parse wire binaries. Non-inner lists and malformed structures that
+  cannot be inspected return false.
+
+      iex> alias RequestSeal.StructuredFields.{Schema, Value}
+      iex> {:ok, schema} = Schema.new(%{revision: :rfc8941, type: :list, item_types: [:string], inner_lists: true})
+      iex> {:ok, %Value{value: [input]}} = RequestSeal.StructuredFields.parse(~s[("@method" "@path");created=1618884473], schema)
+      iex> RequestSeal.Profile.valid_signature_input?(input)
+      true
+      iex> RequestSeal.Profile.valid_signature_input?(~s[("@method")])
+      false
+  """
+  @spec valid_signature_input?(term()) :: boolean()
+  def valid_signature_input?(input) do
+    SignatureFields.valid_inner?(input)
+  rescue
+    _ -> false
+  end
+
   @doc "Parse paired signature dictionaries in encounter order under a member limit."
   @spec dictionaries(Message.t(), pos_integer()) ::
           {:ok, {[{binary(), Value.t()}], %{binary() => Value.t()}}} | {:error, Error.t()}

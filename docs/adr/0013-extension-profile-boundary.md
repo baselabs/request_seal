@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-08
+- Updated: 2026-10-09
 
 ## Context
 
@@ -13,7 +14,7 @@ the framework-independent core or allowing extensions to impersonate core names.
 ## Decision
 
 Named application profiles live in extension packages against the documented
-`RequestSeal.Profile` surface: `dictionaries/2`, `preflight/4`, and
+`RequestSeal.Profile` surface: `valid_signature_input?/1`, `dictionaries/2`, `preflight/4`, and
 `verify_label/6`. This surface is unstable; pin RequestSeal exactly.
 Extensions select and enforce their public source-specific
 predicates before returning success and own any trusted principal attribution.
@@ -40,8 +41,11 @@ Cryptographic validity and principal attribution grant no authorization.
 
 Undocumented helpers are not extension API. Extensions carry their own JOSE
 support, message validation, source URL/origin validation, and replay composition.
-RequestSeal.Custody.run/2 remains an undocumented, exactly pinned dependency
-for operation deadlines and cancellation. Generic signing uses public
+`RequestSeal.Custody.run/2` is a documented public boundary for operation
+deadlines and cancellation. `RequestSeal.Replay.Claim.valid?/1` exposes bounded
+claim validation. JWS verification and JWE encryption/decryption document their
+explicit policy and callback shapes; these primitives establish no application
+profile enforcement or authorization. Generic signing uses public
 `RequestSeal.JOSE.JWS.sign_protected/4` for caller-serialized protected bytes.
 `RequestSeal.Discovery.Source.directory_id?/1` is publicly documented.
 

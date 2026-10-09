@@ -112,7 +112,11 @@ defmodule RequestSeal.Custody do
 
         args = args.()
         context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
-        run(context, fn -> invoke(handle, op, args, context) end)
+
+        case run(context, fn -> invoke(handle, op, args, context) end) do
+          {:ok, :ok} when op == :verify -> :ok
+          result -> result
+        end
       end,
       :custodian_failure
     )
@@ -205,68 +209,157 @@ defmodule RequestSeal.Custody do
 
   defp normalize(_, _), do: {:error, Error.new(:custodian_failure)}
 
-  @doc false
-  def run(%Context{} = context, callback) when is_function(callback, 0) do
-    owner = self()
-    tag = make_ref()
+  @doc """
+  Run a zero-arity callback in a sensitive process under an absolute deadline.
+
+  `context` is a `RequestSeal.Custody.Context` with an integer `deadline` in
+  monotonic milliseconds and an `owner` PID. Construct the deadline with
+  `System.monotonic_time(:millisecond) + timeout`. An expired deadline returns
+  immediately without invoking the callback. The caller and `context.owner`
+  are both monitored; either dying cancels the callback, including blocked
+  callbacks that trap exits. Nested runs monitor their immediate caller as well
+  as their context owner, so cancellation propagates through nested operations.
+
+  The callback and its supervising middle process set sensitivity before work.
+  Neither is linked to the caller. The runner is terminated and its exit awaited
+  before the middle process sends a result; the caller awaits the middle process's
+  exit before returning. Deadline expiry cancels the runner and awaits cleanup.
+  Replies use a revocable process alias: queued replies are drained and later
+  replies to that alias are discarded, without consuming unrelated caller messages.
+
+  Callback `{:ok, value}` and `{:error, reason}` results pass through unchanged;
+  `:ok` becomes `{:ok, :ok}`. Callback errors and successful values belong to the
+  caller and are not redacted. Custody and cryptographic validation failures
+  retain their bounded `RequestSeal.Custody.Error` reason. Other returns,
+  exceptions, unrecognized throws, exits, or unexpected worker termination return
+  `{:error, %RequestSeal.Custody.Error{reason: :custodian_failure, retryable: false}}`
+  without retaining exception text. Deadline expiry returns the same error shape
+  with `reason: :deadline_exceeded, retryable: true`. Invalid context or callback
+  arguments return `reason: :invalid_options, retryable: false`.
+
+  Callbacks are trusted code. They must propagate the deadline and cancellation
+  to additional processes or external work they start. Cancellation cannot undo
+  effects already accepted by a peer, prevent messages explicitly sent to a caller
+  PID by callback code, or terminate arbitrary unlinked callback descendants.
+  Use nested `run/2` calls for work requiring the same cancellation boundary.
+
+      iex> context = %RequestSeal.Custody.Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 5_000}
+      iex> RequestSeal.Custody.run(context, fn -> {:ok, :completed} end)
+      {:ok, :completed}
+  """
+  @spec run(Context.t(), (-> :ok | {:ok, term()} | {:error, term()})) ::
+          {:ok, term()} | {:error, term()}
+  def run(%Context{deadline: deadline, owner: owner} = context, callback)
+      when is_integer(deadline) and is_pid(owner) and is_function(callback, 0) do
+    if Context.remaining(context) == 0 do
+      {:error, Error.new(:deadline_exceeded)}
+    else
+      run_worker(context, callback)
+    end
+  end
+
+  def run(_, _), do: {:error, Error.new(:invalid_options)}
+
+  defp run_worker(context, callback) do
+    caller = self()
+    reply = :erlang.alias()
 
     {worker, monitor} =
       spawn_monitor(fn ->
         Process.flag(:sensitive, true)
-        watch_owner(owner, tag, callback)
+        watch_owner(caller, reply, context, callback)
       end)
 
+    try do
+      receive_result(context, worker, monitor, reply)
+    after
+      :erlang.unalias(reply)
+      flush(reply)
+    end
+  end
+
+  defp receive_result(context, worker, monitor, reply) do
     receive do
-      {^tag, result} ->
-        Process.demonitor(monitor, [:flush])
-        flush(tag)
+      {^reply, result} ->
+        await_worker(worker, monitor)
 
         if Context.remaining(context) > 0,
           do: result,
           else: {:error, Error.new(:deadline_exceeded)}
 
       {:DOWN, ^monitor, :process, ^worker, _} ->
-        flush(tag)
         {:error, Error.new(:custodian_failure)}
     after
-      Context.remaining(context) ->
-        send(worker, {:cancel, tag})
-
-        receive do
-          {:DOWN, ^monitor, :process, ^worker, _} -> :ok
+      min(Context.remaining(context), 4_294_967_295) ->
+        if Context.remaining(context) > 0 do
+          receive_result(context, worker, monitor, reply)
+        else
+          :erlang.unalias(reply)
+          send(worker, {:cancel, reply})
+          await_worker(worker, monitor)
+          {:error, Error.new(:deadline_exceeded)}
         end
-
-        flush(tag)
-        {:error, Error.new(:deadline_exceeded)}
     end
   end
 
-  defp watch_owner(owner, tag, callback) do
+  defp await_worker(worker, monitor) do
+    receive do
+      {:DOWN, ^monitor, :process, ^worker, _} -> :ok
+    end
+  end
+
+  defp watch_owner(caller, reply, context, callback) do
     Process.flag(:trap_exit, true)
-    owner_ref = Process.monitor(owner)
+    caller_ref = Process.monitor(caller)
+    owner_ref = if context.owner == caller, do: caller_ref, else: Process.monitor(context.owner)
     middle = self()
 
-    runner =
-      spawn_link(fn ->
-        Process.flag(:sensitive, true)
-        send(middle, {tag, Support.safe(callback, :custodian_failure)})
-      end)
+    if Context.remaining(context) == 0 do
+      send(reply, {reply, {:error, Error.new(:deadline_exceeded)}})
+    else
+      runner =
+        spawn_link(fn ->
+          Process.flag(:sensitive, true)
+          result = Support.safe(callback, :custodian_failure) |> run_result()
+          send(middle, {reply, result})
+        end)
 
+      watch_runner(caller, caller_ref, owner_ref, reply, context, runner)
+    end
+  end
+
+  defp watch_runner(caller, caller_ref, owner_ref, reply, context, runner) do
     receive do
-      {^tag, result} ->
+      {^reply, result} ->
         stop_runner(runner)
-        send(owner, {tag, result})
+        send(reply, {reply, result})
 
-      {:DOWN, ^owner_ref, :process, ^owner, _} ->
+      {:DOWN, ^caller_ref, :process, ^caller, _} ->
         stop_runner(runner)
 
-      {:cancel, ^tag} ->
+      {:DOWN, ^owner_ref, :process, _, _} ->
+        stop_runner(runner)
+        send(reply, {reply, {:error, Error.new(:custodian_failure)}})
+
+      {:cancel, ^reply} ->
         stop_runner(runner)
 
       {:EXIT, ^runner, _} ->
         :ok
+    after
+      min(Context.remaining(context), 4_294_967_295) ->
+        if Context.remaining(context) > 0 do
+          watch_runner(caller, caller_ref, owner_ref, reply, context, runner)
+        else
+          stop_runner(runner)
+          send(reply, {reply, {:error, Error.new(:deadline_exceeded)}})
+        end
     end
   end
+
+  defp run_result(:ok), do: {:ok, :ok}
+  defp run_result({tag, _} = result) when tag in [:ok, :error], do: result
+  defp run_result(_), do: {:error, Error.new(:custodian_failure)}
 
   defp stop_runner(runner) do
     Process.exit(runner, :kill)

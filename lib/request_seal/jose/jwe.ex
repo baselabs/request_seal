@@ -52,6 +52,42 @@ defmodule RequestSeal.JOSE.JWE do
   alias JOSE.JWE.Result
   import Support
 
+  @doc """
+  Encrypt plaintext into compact JWE with fresh CEK and IV bytes (RFC 7516).
+
+  `header` is an ordered list of `{string_name, json_value}` pairs with `"alg"`
+  selected from `"RSA-OAEP-256"`, `"RSA-OAEP"`, `"A128GCMKW"`, `"A256GCMKW"`,
+  or `"dir"`, and `"enc"` selected from `"A128GCM"` or `"A256GCM"`.
+  Members must be unique; unsupported critical headers and compression reject.
+  Plaintext and the resulting compact envelope are bounded to 1,048,576 bytes.
+
+  `recipient` is a compatible RSA `RequestSeal.PublicKey` or an arity-two function
+  receiving `(wire_algorithm, generated_cek_bytes)`. The function returns
+  `{:ok, %{encrypted_key: bytes, header: additions_map}}` with exactly those keys.
+  Additions may contain only `"iv"`/`"tag"` for GCM key wrapping, cannot replace
+  caller members, and become authenticated protected headers. For `"dir"`, the
+  function provisions the generated CEK through caller-owned custody and returns
+  an empty encrypted key. Symmetric secrets cannot be supplied as public keys.
+
+  `opts` accepts only `timeout: milliseconds` (default 5,000; integer 1–300,000).
+  This function accepts no policy map; decryption selects its own explicit policy.
+  Wrapping and encryption run in a sensitive worker with deadline and caller
+  cancellation. Returns `{:ok, compact_binary}` or
+  `{:error, RequestSeal.JOSE.Error.t()}`. Invalid options return `:invalid_options`;
+  callback failures return `:signer_failed`; expiry returns `:deadline_exceeded`.
+  See the module documentation for protected JSON serialization order.
+
+  This example uses actual RFC 7518 AES GCM key wrapping and content encryption:
+
+      iex> wrapping_key = {:aes, :crypto.strong_rand_bytes(32)}
+      iex> wrap = fn algorithm, cek -> RequestSeal.JOSE.KeyManagement.wrap(algorithm, cek, %{}, wrapping_key) end
+      iex> {:ok, token} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}], "payload", wrap, timeout: 5_000)
+      iex> is_binary(token) and length(String.split(token, ".")) == 5
+      true
+      iex> {:error, error} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}], "payload", wrap, timeout: 0)
+      iex> error.reason
+      :invalid_options
+  """
   @spec encrypt(JOSE.header(), binary(), PublicKey.t() | function(), keyword()) ::
           {:ok, binary()} | {:error, JOSE.Error.t()}
   def encrypt(header, plaintext, recipient, opts \\ []) do
@@ -119,6 +155,47 @@ defmodule RequestSeal.JOSE.JWE do
     {:ok, compact}
   end
 
+  @doc """
+  Authenticate and decrypt a compact JWE under an explicit policy (RFC 7516).
+
+  The policy must be a map containing exactly these atom keys:
+
+  * `:algorithms`: a nonempty unique list selected from `"RSA-OAEP-256"`,
+    `"RSA-OAEP"`, `"A128GCMKW"`, `"A256GCMKW"`, and `"dir"`.
+  * `:encryption`: a nonempty unique list selected from `"A128GCM"` and `"A256GCM"`.
+  * `:max_plaintext`: an integer from 1 through 1,048,576 bytes.
+  * `:timeout`: an integer from 1 through 300,000 milliseconds.
+  * `:key_resolver`: an arity-one function receiving
+    `%{algorithm: wire_name, encryption: wire_name, header: decoded_header_map}`.
+    It returns `:error`, `{:ok, %{algorithm: same_name, unwrap: arity_two_function}}`,
+    or `{:ok, %{algorithm: same_name, key: custody_handle}}`, with exactly two
+    entry keys. Unwrap receives `(encrypted_key_bytes, header)` and returns
+    `{:ok, cek_bytes}` or `{:error, term}`. A handle binds `{:jwe, same_name}`
+    with only `:unwrap` capability; RSA private operations stay in custody.
+
+  Resolution, unwrapping, and authentication share one absolute deadline with
+  sensitive workers and caller cancellation. No plaintext leaves the worker
+  before full tag authentication. Returns `{:ok, RequestSeal.JOSE.JWE.Result.t()}`
+  or `{:error, RequestSeal.JOSE.Error.t()}`. Invalid policies return `:invalid_policy`;
+  unwrap and authentication failures share `:decryption_failed`; expiry remains
+  `:deadline_exceeded`. Compact input is bounded to 1,048,576 bytes. The received
+  protected segment is used verbatim as AAD. Recipient integrity establishes no
+  sender identity, request association, claims validation, or authorization.
+
+  This is a local RFC 7518 round trip, using real key wrapping and AEAD:
+
+      iex> wrapping_key = {:aes, :crypto.strong_rand_bytes(32)}
+      iex> wrap = fn algorithm, cek -> RequestSeal.JOSE.KeyManagement.wrap(algorithm, cek, %{}, wrapping_key) end
+      iex> {:ok, token} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}], "payload", wrap)
+      iex> unwrap = fn bytes, header -> RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", bytes, header, wrapping_key) end
+      iex> policy = %{algorithms: ["A256GCMKW"], encryption: ["A256GCM"], max_plaintext: 1_024, timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "A256GCMKW", unwrap: unwrap}} end}
+      iex> {:ok, result} = RequestSeal.JOSE.JWE.decrypt(token, policy)
+      iex> result.plaintext
+      "payload"
+      iex> {:error, error} = RequestSeal.JOSE.JWE.decrypt(token, Map.delete(policy, :encryption))
+      iex> error.reason
+      :invalid_policy
+  """
   @spec decrypt(binary(), map()) :: {:ok, Result.t()} | {:error, JOSE.Error.t()}
   def decrypt(compact, policy) do
     safe(fn ->

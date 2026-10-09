@@ -75,6 +75,49 @@ defmodule RequestSeal.JOSE.JWS do
     end)
   end
 
+  @doc """
+  Verify a compact JWS over its received protected and payload segments (RFC 7515).
+
+  The policy must be a map containing exactly these atom keys:
+
+  * `:algorithms`: a nonempty unique list selected from `"RS256"`, `"PS256"`,
+    `"PS384"`, `"PS512"`, `"HS256"`, `"ES256"`, `"ES384"`, and `"EdDSA"`.
+  * `:timeout`: an integer from 1 through 300,000 milliseconds, shared by key
+    resolution and verification under one absolute deadline.
+  * `:key_resolver`: an arity-one function receiving
+    `%{algorithm: wire_name, header: decoded_header_map}`. It returns `:error`
+    or `{:ok, %{algorithm: same_wire_name, key: public_key_or_verify_function}}`,
+    with exactly those two entry keys. The verification function has arity three,
+    receives `({:jws, wire_name}, exact_base_bytes, signature_bytes)`, and returns
+    `:ok` on validity. Use it for HMAC so secrets remain in caller-owned custody.
+
+  Returns `{:ok, RequestSeal.JOSE.JWS.Result.t()}` only after verification,
+  otherwise `{:error, RequestSeal.JOSE.Error.t()}`. Malformed policies return
+  `:invalid_policy`; rejected algorithms return `:algorithm_not_permitted`;
+  invalid signatures return `:invalid_signature`; callback failures are bounded.
+  Resolver and verification callbacks execute in a sensitive worker with deadline
+  and caller cancellation. Input is bounded to 1,048,576 bytes. Empty or detached
+  payloads and noncompact serializations reject. Protected bytes are never
+  reserialized. Header `kid`/`x5c` values confer no trust or network permission.
+  Valid cryptography supplies no identity, claims validation, replay protection,
+  freshness, or authorization.
+
+  This example constructs and verifies a local RFC 8037 Ed25519 JWS:
+
+      iex> {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new({:jws, "EdDSA"}, {:ed25519, seed})
+      iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
+      iex> {:ok, token} = RequestSeal.JOSE.JWS.sign([{"alg", "EdDSA"}], "payload", handle)
+      iex> policy = %{algorithms: ["EdDSA"], timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: key}} end}
+      iex> {:ok, result} = RequestSeal.JOSE.JWS.verify(token, policy)
+      iex> result.payload
+      "payload"
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+      iex> {:error, error} = RequestSeal.JOSE.JWS.verify(token, Map.put(policy, :extra, true))
+      iex> error.reason
+      :invalid_policy
+  """
   @spec verify(binary(), map()) :: {:ok, Result.t()} | {:error, RequestSeal.JOSE.Error.t()}
   def verify(compact, policy) do
     safe(fn ->

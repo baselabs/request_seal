@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## Unreleased 0.2.0
+
+- Document `RequestSeal.Custody.run/2` as a public deadline and cancellation
+  boundary, with sensitive workers, caller and context-owner monitoring,
+  nested cancellation, bounded failures, and revocable replies with cleanup.
+- Add `RequestSeal.Profile.valid_signature_input?/1` for parsed RFC 9421
+  Signature-Input Inner List semantics, delegating to the shared validator.
+- Document `RequestSeal.Replay.Claim.valid?/1` without changing its validation.
+- Document JWS verification and JWE encryption/decryption arguments, exact
+  policy shapes, error results, and executable cryptographic examples.
 
 ## 0.1.0 - 2026-10-08
 

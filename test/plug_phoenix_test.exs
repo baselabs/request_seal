@@ -24,7 +24,7 @@ defmodule RequestSeal.PlugPhoenixTest do
       {origin, _} =
         T.start([owner: self(), origin: rule],
           ip: {0, 0, 0, 0, 0, 0, 0, 0},
-          thousand_island_options: [transport_options: [ipv6_v6only: false]]
+          thousand_island_options: [transport_options: [ipv6_v6only: false, reuseaddr: false]]
         )
 
       assert T.raw(
@@ -188,7 +188,7 @@ defmodule RequestSeal.PlugPhoenixTest do
         if dual_stack,
           do: [
             ip: {0, 0, 0, 0, 0, 0, 0, 0},
-            thousand_island_options: [transport_options: [ipv6_v6only: false]]
+            thousand_island_options: [transport_options: [ipv6_v6only: false, reuseaddr: false]]
           ],
           else: []
 
