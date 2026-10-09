@@ -53,6 +53,7 @@ defmodule RequestSeal.ReadmeTest do
       E.eval(
         ~S'''
         [
+          {:request_seal, git: "https://github.com/baselabs/request_seal.git"},
           {:req, "~> 0.7.4"},
           {:finch, ">= 0.23.0 and < 0.25.0"},
           {:plug, "~> 1.20.3"},
@@ -71,6 +72,7 @@ defmodule RequestSeal.ReadmeTest do
         defmodule WebhookReceiver do
           use Plug.Router
 
+          # Capture keeps the signed body bytes before Parsers consumes them.
           plug(RequestSeal.Plug.Capture,
             origin: :connection,
             max_body_bytes: 1_048_576,
@@ -160,6 +162,7 @@ defmodule RequestSeal.ReadmeTest do
               retry: false
             )
 
+          # verify: :none skips response verification; the receiver verifies this request.
           {:ok, request} =
             RequestSeal.Req.attach(request, sign: webhook_signing, signer: webhook_handle, verify: :none)
 
@@ -188,11 +191,60 @@ defmodule RequestSeal.ReadmeTest do
         4
       )
 
+    original_binding = binding
+
     binding =
       E.eval(
         ~S'''
+        {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+        {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+        {:ok, apps} = Application.ensure_all_started(:req)
+        {:ok, pool} = Finch.start_link(name: OutgoingFinch)
+        try do
+          request = Req.new(url: "http://example.com/", finch: [name: OutgoingFinch], retry: false)
+          spec = %{label: "sig", algorithm: "ed25519", components: ~s[("@method" "@authority" "@path")], expires_in: 60}
+          # verify: :none skips verification of this unsigned response.
+          {:ok, request} = RequestSeal.Req.attach(request, sign: spec, signer: handle, verify: :none)
+          {:ok, response} = Req.request(request)
+          IO.inspect(response.status)
+        after
+          Supervisor.stop(pool)
+          RequestSeal.Custody.Local.release(handle)
+          Enum.each(Enum.reverse(apps), &Application.stop/1)
+        end
+        ''',
+        binding,
+        "README.md",
+        5
+      )
+
+    assert Keyword.fetch!(binding, :example_result) == 200
+    binding = original_binding
+
+    # The webhook script released its sender. Use the live hello-world key here.
+    key = Keyword.fetch!(binding, :key)
+
+    {:ok, phoenix_policy} =
+      RequestSeal.Policy.new(%{
+        Map.from_struct(Keyword.fetch!(binding, :webhook_policy))
+        | key_resolver: fn
+            %{keyid: "sender-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
+            _ -> :error
+          end
+      })
+
+    E.configure(:my_app, :http_signature_policy, phoenix_policy)
+    binding = Keyword.put(binding, :webhook_policy, phoenix_policy)
+
+    binding =
+      E.eval(
+        ~S'''
+        Application.put_env(:my_app, :http_signature_policy, webhook_policy)
+
         defmodule MyAppWeb.SignedWebhookPipeline do
           use Plug.Builder
+
+          def signature_policy, do: Application.fetch_env!(:my_app, :http_signature_policy)
 
           plug(RequestSeal.Plug.Capture,
             origin: :connection,
@@ -208,7 +260,7 @@ defmodule RequestSeal.ReadmeTest do
           )
 
           plug(RequestSeal.Plug.Verify,
-            policy: {Application, :fetch_env!, [:my_app, :http_signature_policy]},
+            policy: &__MODULE__.signature_policy/0,
             label: "sig",
             on_reject: {:halt, 401}
           )
@@ -222,41 +274,53 @@ defmodule RequestSeal.ReadmeTest do
             json(conn, %{signature_label: verified.label, event: params["event"]})
           end
         end
+
+        defmodule MyAppWeb.Router do
+          use Phoenix.Router
+
+          scope "/", MyAppWeb do
+            post("/webhooks", WebhookController, :create)
+          end
+        end
+
+        defmodule MyAppWeb.Endpoint do
+          use Phoenix.Endpoint, otp_app: :my_app
+
+          plug(MyAppWeb.SignedWebhookPipeline)
+
+          plug(Plug.Parsers,
+            parsers: [:urlencoded, :multipart, :json],
+            pass: ["*/*"],
+            json_decoder: Jason
+          )
+
+          plug(MyAppWeb.Router)
+        end
         ''',
         binding,
         "README.md",
-        5
+        6
       )
 
-    phoenix_binding =
-      Keyword.merge(binding,
-        policy: Keyword.fetch!(binding, :webhook_policy),
-        handle: Keyword.fetch!(binding, :handle),
-        signing: Keyword.fetch!(binding, :webhook_signing)
-      )
+    E.configure(:my_app, MyAppWeb.Endpoint,
+      server: true,
+      adapter: Bandit.PhoenixAdapter,
+      http: [ip: {127, 0, 0, 1}, port: 0, http_options: [compress: false]],
+      secret_key_base: String.duplicate("a", 64),
+      debug_errors: false,
+      pubsub_server: RequestSeal.ReadmePubSub
+    )
 
-    # The script released its separate sender; use the hello-world key for this endpoint.
-    key = Keyword.fetch!(binding, :key)
-
-    {:ok, policy} =
-      RequestSeal.Policy.new(%{
-        Map.from_struct(Keyword.fetch!(binding, :webhook_policy))
-        | key_resolver: fn
-            %{keyid: "sender-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
-            _ -> :error
-          end
-      })
-
-    phoenix_binding = Keyword.put(phoenix_binding, :policy, policy)
-
-    phoenix_binding =
-      E.endpoint(phoenix_binding, MyAppWeb.SignedWebhookPipeline, MyAppWeb.WebhookController)
+    start_supervised!({Phoenix.PubSub, name: RequestSeal.ReadmePubSub})
+    start_supervised!(MyAppWeb.Endpoint)
+    {:ok, {_, port}} = Bandit.PhoenixAdapter.server_info(MyAppWeb.Endpoint, :http)
+    url = "http://127.0.0.1:#{port}/webhooks"
 
     {:ok, pool} = Finch.start_link(name: ReadmePhoenixFinch)
 
     request =
       Req.new(
-        url: Keyword.fetch!(phoenix_binding, :url),
+        url: url,
         method: :post,
         json: %{"event" => "created"},
         finch: [name: ReadmePhoenixFinch],
@@ -272,9 +336,9 @@ defmodule RequestSeal.ReadmeTest do
 
     {:ok, response} = Req.request(request)
     assert response.status == 200
-    E.assert_received_request()
+    assert response.body == %{"event" => "created", "signature_label" => "sig"}
 
-    assert Req.post!(Keyword.fetch!(phoenix_binding, :url),
+    assert Req.post!(url,
              finch: [name: ReadmePhoenixFinch],
              json: %{"event" => "created"},
              retry: false
@@ -303,10 +367,12 @@ defmodule RequestSeal.ReadmeTest do
             },
             signer
           )
+
+        IO.puts("signed agent request")
         ''',
         binding,
         "README.md",
-        6
+        7
       )
 
     binding =
@@ -330,10 +396,11 @@ defmodule RequestSeal.ReadmeTest do
 
         {:ok, envelope} = RequestSeal.WebBotAuth.verify(agent_request, agent_policy)
         verification = envelope.signatures["agent"]
+        IO.inspect(verification.signature.crypto)
         ''',
         binding,
         "README.md",
-        7
+        8
       )
 
     record = E.seed_documents(AshApp.Document)
@@ -352,10 +419,11 @@ defmodule RequestSeal.ReadmeTest do
           })
 
         documents = Ash.read!(AshApp.Document, scope: scope, authorize?: true)
+        IO.inspect(scope.tenant)
         ''',
         binding,
         "README.md",
-        8
+        9
       )
 
     E.assert_ash_read(binding, record)
@@ -376,25 +444,26 @@ defmodule RequestSeal.ReadmeTest do
 
         {:ok, replay_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: replay})
         {:ok, accepted} = RequestSeal.verify(signed, replay_policy, label: "sig")
-        ''',
-        binding,
-        "README.md",
-        9
-      )
-
-    binding =
-      E.eval(
-        ~S'''
-        RequestSeal.verify(signed, replay_policy, label: "sig")
-        # => {:error, %RequestSeal.Error{reason: :replayed, ...}}
+        IO.inspect(accepted.signature.crypto)
         ''',
         binding,
         "README.md",
         10
       )
 
-    assert {:error, %{reason: :replayed}} = Keyword.fetch!(binding, :example_result)
-    E.assert_fences("README.md", 10)
+    binding =
+      E.eval(
+        ~S'''
+        {:error, replay_error} = RequestSeal.verify(signed, replay_policy, label: "sig")
+        IO.inspect(replay_error.reason)
+        ''',
+        binding,
+        "README.md",
+        11
+      )
+
+    assert Keyword.fetch!(binding, :replay_error).reason == :replayed
+    E.assert_fences("README.md", 11)
     RequestSeal.Custody.Local.release(Keyword.fetch!(binding, :handle))
   end
 end

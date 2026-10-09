@@ -2,11 +2,28 @@
 
 # Discover trusted public keys over HTTPS
 
-**What you will build:** An HTTPS JWKS fetcher, an explicit verification policy using its keys, and a caller-owned cache with key removal. Install RequestSeal and choose a trusted HTTPS publisher. Set `jwks_url` to its HTTPS URL, `trust_roots` to `:os` or its trusted DER CA certificates, and `permitted_addresses` to `[]` for public hosts (or the approved IP tuples for your private publisher), once in your caller. Select the source independently of message-supplied key IDs. Sources: [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), [Web Bot Auth protocol-00](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html), and [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html).
+**What you will build:** An HTTPS JWKS fetcher, an explicit verification policy using its keys, and a caller-owned cache with key removal. Install RequestSeal and choose a trusted HTTPS publisher. Set `JWKS_URL` in your environment to your trusted publisher's HTTPS endpoint. System CA roots and public addresses are the defaults; for an approved private publisher, set `JWKS_CA_FILE` to a PEM CA file and `JWKS_PERMITTED_ADDRESSES` to comma-separated IP addresses. Select the source independently of message-supplied key IDs. Sources: [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), [Web Bot Auth protocol-00](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html), and [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html).
 
 ## 1. Fetch only your configured source
 
 ```elixir
+jwks_url = System.fetch_env!("JWKS_URL")
+
+trust_roots =
+  case System.get_env("JWKS_CA_FILE") do
+    nil ->
+      :os
+
+    path ->
+      for {:Certificate, der, :not_encrypted} <- :public_key.pem_decode(File.read!(path)), do: der
+  end
+
+permitted_addresses =
+  for address <- String.split(System.get_env("JWKS_PERMITTED_ADDRESSES", ""), ",", trim: true) do
+    {:ok, ip} = :inet.parse_address(String.to_charlist(String.trim(address)))
+    ip
+  end
+
 {:ok, _apps} = Application.ensure_all_started(:ssl)
 
 {:ok, source} =

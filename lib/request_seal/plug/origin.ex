@@ -25,14 +25,21 @@ if Code.ensure_loaded?(Plug.Conn) do
     def validate!(_), do: Signing.fail(:invalid_options)
 
     def select!(conn, :connection) do
+      normalized_host = String.downcase(conn.host, :ascii)
+
       host =
-        if String.contains?(conn.host, ":") and not String.starts_with?(conn.host, "["),
-          do: "[" <> conn.host <> "]",
-          else: conn.host
+        if String.contains?(normalized_host, ":") and
+             not String.starts_with?(normalized_host, "["),
+           do: "[" <> normalized_host <> "]",
+           else: normalized_host
+
+      default_port? =
+        (conn.scheme == :http and conn.port == 80) or
+          (conn.scheme == :https and conn.port == 443)
 
       %{
         scheme: to_string(conn.scheme),
-        authority: host <> ":" <> Integer.to_string(conn.port),
+        authority: if(default_port?, do: host, else: host <> ":" <> Integer.to_string(conn.port)),
         source: :connection
       }
     end

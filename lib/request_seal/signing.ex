@@ -63,27 +63,8 @@ defmodule RequestSeal.Signing do
 
     ensure(
       SignatureFields.label?(s.label) and SignatureFields.algorithm?(s.algorithm) and
-        Policy.schemas?(s.field_schemas),
+        is_binary(s.components) and Policy.schemas?(s.field_schemas),
       :invalid_options
-    )
-
-    input =
-      case SignatureFields.inner(s.components) do
-        {:ok, value} -> value
-        {:error, %{reason: :limit}} -> fail(:limit)
-        _ -> fail(:invalid_options)
-      end
-
-    ensure(input.parameters == [], :invalid_options)
-
-    ensure(
-      Enum.all?(input.value, fn item ->
-        item.value != {:string, "host"} and
-          not Enum.any?(item.parameters, fn {name, _} ->
-            name == "tr" or (name == "req" and not related)
-          end)
-      end),
-      :unsupported_component
     )
 
     p = s.parameters
@@ -107,6 +88,25 @@ defmodule RequestSeal.Signing do
       s.digest == nil or
         s.digest in [["sha-256"], ["sha-512"], ["sha-256", "sha-512"], ["sha-512", "sha-256"]],
       :invalid_options
+    )
+
+    input =
+      case SignatureFields.inner(s.components) do
+        {:ok, value} -> value
+        {:error, %{reason: :limit}} -> fail(:limit)
+        _ -> fail(:invalid_options)
+      end
+
+    ensure(input.parameters == [], :invalid_options)
+
+    ensure(
+      Enum.all?(input.value, fn item ->
+        item.value != {:string, "host"} and
+          not Enum.any?(item.parameters, fn {name, _} ->
+            name == "tr" or (name == "req" and not related)
+          end)
+      end),
+      :unsupported_component
     )
 
     input
@@ -194,12 +194,14 @@ defmodule RequestSeal.Signing do
   def core_sign(message, spec, signer, opts) do
     options(opts, [:clock, :signing_timeout, :nonce])
 
-    spec = core_spec!(spec)
+    spec = normalize_spec!(spec)
 
     case RequestSeal.Message.validate(message) do
       :ok -> {:ok, sign(message, spec, signer, opts, related: message.kind == :response)}
       _ -> {:error, RequestSeal.Error.new(:invalid_message, :input)}
     end
+  rescue
+    _ -> {:error, RequestSeal.Error.new(:invalid_options, :input)}
   catch
     {:adapter, _, %RequestSeal.Error{} = source} ->
       {:error, source}

@@ -102,7 +102,7 @@ defmodule RequestSeal do
           required(:components) => binary(),
           required(:algorithm) => RequestSeal.Crypto.algorithm(),
           required(:parameters) => %{
-            required(:expires_in) => pos_integer(),
+            required(:expires_in) => pos_integer() | nil,
             optional(:created) => boolean(),
             optional(:nonce) => :random | nil,
             optional(:alg) => boolean(),
@@ -162,8 +162,8 @@ defmodule RequestSeal do
   `nonce: :random`, `alg: true` (false for JWS algorithm tuples), `keyid: nil`,
   `tag: nil`, `digest: nil`, and `field_schemas: %{}`. A negative clock rejects.
   Req and Finch accept the same defaults through shared signing construction.
-  Explicit full adapter specs remain supported; core signing requires a positive
-  integer expires_in in that shape.
+  Complete full specs (all parameter keys, digest, and field_schemas) also support
+  expires_in nil. The short form requires a positive integer.
   Parameter order is created, expires, nonce, alg, keyid, tag. JWS requires alg false.
   Digest is nil or a unique SHA-256/SHA-512 list. Existing digests are checked
   against retained bytes; covered Content-Length is supplied from those bytes.

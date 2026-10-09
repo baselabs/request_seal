@@ -8,9 +8,51 @@ defmodule RequestSeal.GuideKeyDiscoveryTest do
     {:ok, key} = RequestSeal.Custody.public_key(handle)
     binding = E.publisher(key: key)
 
+    ca_path =
+      Path.join(System.tmp_dir!(), "requestseal-ca-#{System.unique_integer([:positive])}.pem")
+
+    File.write!(
+      ca_path,
+      :public_key.pem_encode(
+        Enum.map(Keyword.fetch!(binding, :trust_roots), &{:Certificate, &1, :not_encrypted})
+      )
+    )
+
+    on_exit(fn -> File.rm!(ca_path) end)
+
+    for {name, value} <- [
+          {"JWKS_URL", Keyword.fetch!(binding, :jwks_url)},
+          {"JWKS_CA_FILE", ca_path},
+          {"JWKS_PERMITTED_ADDRESSES", "127.0.0.1,::1"}
+        ] do
+      previous = System.get_env(name)
+      System.put_env(name, value)
+
+      on_exit(fn ->
+        if previous, do: System.put_env(name, previous), else: System.delete_env(name)
+      end)
+    end
+
     binding =
       E.eval(
         ~S'''
+        jwks_url = System.fetch_env!("JWKS_URL")
+
+        trust_roots =
+          case System.get_env("JWKS_CA_FILE") do
+            nil ->
+              :os
+
+            path ->
+              for {:Certificate, der, :not_encrypted} <- :public_key.pem_decode(File.read!(path)), do: der
+          end
+
+        permitted_addresses =
+          for address <- String.split(System.get_env("JWKS_PERMITTED_ADDRESSES", ""), ",", trim: true) do
+            {:ok, ip} = :inet.parse_address(String.to_charlist(String.trim(address)))
+            ip
+          end
+
         {:ok, _apps} = Application.ensure_all_started(:ssl)
 
         {:ok, source} =

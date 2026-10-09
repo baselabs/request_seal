@@ -7,7 +7,7 @@ defmodule RequestSeal.DocsEndpoint do
 
   defp pipeline(conn, _) do
     options = Application.fetch_env!(:request_seal, :docs_endpoint)
-    options.pipeline.call(conn, options.pipeline.init(policy: options.policy))
+    options.pipeline.call(conn, options.pipeline.init([]))
   end
 
   defp sign_response(conn, _) do
@@ -113,7 +113,11 @@ defmodule RequestSeal.DocsExamples do
     configure(:request_seal, RequestSeal.DocsEndpoint,
       server: true,
       adapter: Bandit.PhoenixAdapter,
-      http: [ip: {127, 0, 0, 1}, port: 0, http_options: [compress: false]],
+      http: [
+        ip: {127, 0, 0, 1},
+        port: Keyword.get(binding, :endpoint_port, 0),
+        http_options: [compress: false]
+      ],
       secret_key_base: String.duplicate("a", 64),
       debug_errors: false,
       pubsub_server: RequestSeal.DocsPubSub

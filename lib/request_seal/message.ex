@@ -176,7 +176,7 @@ defmodule RequestSeal.Message do
       case Regex.run(~r/\A((?i:https?)):\/\/([^\/?]+)((?:[\/?].*)?)\z/, url) do
         [_, scheme, authority, tail] ->
           scheme = String.downcase(scheme)
-          authority = String.downcase(authority)
+          authority = String.downcase(authority, :ascii)
           default_port = if scheme == "https", do: 443, else: 80
 
           authority =

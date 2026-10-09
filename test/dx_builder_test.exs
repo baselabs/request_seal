@@ -53,6 +53,71 @@ defmodule RequestSeal.DXBuilderTest do
     end
   end
 
+  test "request origins reject Unicode case-folding lookalikes" do
+    for host <- ["K.example", "ſ.example", "EXAMPLE.K", "EXAMPLE.ſ"] do
+      assert {:error, %Message.Error{}} = Message.request("GET", "https://#{host}/", [], nil)
+    end
+  end
+
+  test "every spec field rejects malformed types with bounded core errors" do
+    {:ok, message} = Message.request("POST", "https://example.com/a", [], "body")
+    secret = :crypto.strong_rand_bytes(32)
+    signer = fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
+    full = spec("hmac-sha256")
+    short = Map.merge(Map.delete(full, :parameters), full.parameters)
+    {:ok, input} = RequestSeal.SignatureFields.inner(full.components)
+
+    wrong = %{
+      label: [nil, 1, :sig, [], %{}, {:sig}],
+      algorithm: [nil, 1, :ed25519, [], %{}, {:jws}, {:jws, 1}],
+      components: [nil, 1, :components, [], %{}, input],
+      expires_in: ["60", 1.0, :seconds, [], %{}, -1, 0],
+      created: [nil, 1, "true", [], %{}],
+      nonce: [true, 1, "random", [], %{}],
+      alg: [nil, 1, "true", [], %{}],
+      keyid: [true, 1, :key, [], %{}],
+      tag: [true, 1, :tag, [], %{}],
+      digest: [true, 1, "sha-256", %{}, [1]],
+      field_schemas: [nil, true, 1, "schemas", [], %{1 => :bad}, %{"x" => :bad}]
+    }
+
+    for {key, values} <- wrong, value <- values do
+      assert {:error, %RequestSeal.Error{reason: :invalid_options, layer: :input}} =
+               RequestSeal.sign(message, Map.put(short, key, value), signer)
+
+      invalid =
+        if Map.has_key?(full.parameters, key),
+          do: %{full | parameters: Map.put(full.parameters, key, value)},
+          else: Map.put(full, key, value)
+
+      assert {:error, %RequestSeal.Error{reason: :invalid_options, layer: :input}} =
+               RequestSeal.sign(message, invalid, signer)
+    end
+
+    for parameters <- [nil, true, 1, "parameters", [], {:bad}] do
+      assert {:error, %RequestSeal.Error{reason: :invalid_options}} =
+               RequestSeal.sign(message, %{full | parameters: parameters}, signer)
+    end
+
+    for opts <- [[clock: 1], [signing_timeout: "5000"], [nonce: 1], nil, %{}] do
+      assert {:error, %RequestSeal.Error{reason: :invalid_options}} =
+               RequestSeal.sign(message, short, signer, opts)
+    end
+
+    assert {:ok, _} = RequestSeal.sign(message, short, signer)
+    assert {:ok, _} = RequestSeal.sign(message, full, signer)
+
+    assert {:ok, _} =
+             RequestSeal.sign(
+               message,
+               %{full | parameters: %{full.parameters | expires_in: nil}},
+               signer
+             )
+
+    assert {:error, %RequestSeal.Error{reason: :invalid_options}} =
+             RequestSeal.sign(message, %{short | expires_in: nil}, signer)
+  end
+
   test "response builder preserves related request and validates through Message.new" do
     {:ok, request} = Message.request("GET", "https://example.com/", [], nil)
     {:ok, body} = Body.new(%{state: :retained, bytes: ""})

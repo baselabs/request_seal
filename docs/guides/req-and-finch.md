@@ -2,7 +2,7 @@
 
 # Sign Req and Finch requests and verify responses
 
-**What you will build:** A Req client that signs outgoing JSON requests and verifies signed responses, followed by the equivalent Finch calls. Install Req (`~> 0.7.4`) and Finch (`>= 0.23.0 and < 0.25.0`), and configure `:my_app, :webhook_url` with your receiving endpoint. These examples use [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) and [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html).
+**What you will build:** A Req client that signs outgoing JSON requests and verifies signed responses, followed by the equivalent Finch calls. Install Req (`~> 0.7.4`) and Finch (`>= 0.23.0 and < 0.25.0`), and run the receiver from [Phoenix and Plug](phoenix-and-plug.md) at `http://localhost:4000/webhooks`. These examples use [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) and [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html).
 
 ## Shared setup and outgoing coverage
 
@@ -44,8 +44,10 @@ signing = %{
 
 ## 2. Start your pool and send with Req
 
+The literal URL below targets that local Phoenix receiver. Replace it with your deployed receiver's URL when integrating; no application URL configuration is required.
+
 ```elixir
-url = Application.fetch_env!(:my_app, :webhook_url)
+url = "http://localhost:4000/webhooks"
 {:ok, _pool} = Finch.start_link(name: MyApp.Finch)
 
 request =

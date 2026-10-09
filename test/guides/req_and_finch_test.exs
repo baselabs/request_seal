@@ -45,12 +45,13 @@ defmodule RequestSeal.GuideReqAndFinchTest do
         1
       )
 
+    binding = Keyword.put(binding, :endpoint_port, 4000)
     binding = E.endpoint(binding, RequestSeal.DocsPipeline, RequestSeal.DocsController)
 
     binding =
       E.eval(
         ~S'''
-        url = Application.fetch_env!(:my_app, :webhook_url)
+        url = "http://localhost:4000/webhooks"
         {:ok, _pool} = Finch.start_link(name: MyApp.Finch)
 
         request =

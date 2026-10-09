@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-06 · Governed by: public architecture and accepted ADRs · Review when: the public contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the public contract or implementation changes -->
 
 # Contributing
 
@@ -24,7 +24,9 @@ ordered/raw transport information, caller-owned custody, explicit profiles, and 
 results. Document each option and error at its public boundary. Add the corresponding
 guide, executable example, notebook, and corpus case as capabilities are implemented.
 
-Run `python3 scripts/check.py` before delivering a change. Run the actual profile,
+Run the declared gate, `python3 scripts/check.py`, before delivering a change. It checks
+formatting, compilation, tests, public documentation, optional clients, dependency
+advisories, and shipped notebooks. Run the actual profile,
 corpus, and counterpart checks required by the behavior being changed. Record which
 checks executed; avoid performance or conformance claims from a local self-round-trip.
 

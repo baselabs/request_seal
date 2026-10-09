@@ -172,7 +172,7 @@ if Code.ensure_loaded?(Finch) do
     def prepare(_, _), do: Signing.fail(:invalid_request)
 
     defp authority(request) do
-      normalized_host = String.downcase(request.host)
+      normalized_host = String.downcase(request.host, :ascii)
 
       host =
         if String.contains?(normalized_host, ":"),

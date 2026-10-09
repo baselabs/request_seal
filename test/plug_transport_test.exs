@@ -20,6 +20,34 @@ defmodule RequestSeal.PlugTransportTest do
     %{handle: T.handle()}
   end
 
+  test "Capture, builder and Finch agree on mixed-case hosts and default ports" do
+    tls = T.tls()
+
+    for {scheme, default, server_opts} <- [
+          {"http", 80, []},
+          {"https", 443,
+           [scheme: :https, thousand_island_options: [transport_options: tls.server_config]]}
+        ] do
+      {origin, _} = T.start([owner: self(), policy: T.policy()], server_opts)
+
+      for host <- ["ExAmPlE.COM", "ExAmPlE.COM:#{default}", "ExAmPlE.COM:8443"] do
+        T.raw(origin, "GET /path HTTP/1.1\r\nHost: #{host}\r\nConnection: close\r\n\r\n")
+        assert_receive {:observed, _conn, {:ok, captured}, _verdict}
+        url = "#{scheme}://#{host}/path"
+        {:ok, built} = RequestSeal.Message.request("GET", url, [], nil)
+        {:ok, finch} = RequestSeal.Finch.request_message(Finch.build(:get, url))
+        assert captured.message.authority == built.authority
+        assert captured.message.scheme == built.scheme
+        assert {finch.authority, finch.scheme} == {built.authority, built.scheme}
+
+        for message <- [captured.message, finch] do
+          assert RequestSeal.SignatureBase.build(message, ~s[("@authority" "@scheme")]) ==
+                   RequestSeal.SignatureBase.build(built, ~s[("@authority" "@scheme")])
+        end
+      end
+    end
+  end
+
   test "published requests preserve bytes; exact query coverage refuses missing evidence" do
     for section <- ["B.2.3", "B.2.6", "B.3"] do
       {origin, _} =
@@ -880,11 +908,11 @@ defmodule RequestSeal.PlugTransportTest do
     assert conn.private[:request_seal].error.reason == :limit
   end
 
-  test "zero-byte bound retains empty bodies, OPTIONS asterisk, host case and IPv6 authority" do
+  test "zero-byte bound retains empty bodies, OPTIONS asterisk and normalized IPv6 authority" do
     {origin, _} = T.start(owner: self(), max_body_bytes: 0)
 
     for {method, target, host, authority} <- [
-          {"OPTIONS", "*", "ExAmPlE.CoM:80", "ExAmPlE.CoM:80"},
+          {"OPTIONS", "*", "ExAmPlE.CoM:80", "example.com"},
           {"GET", "/foo", "[2001:db8:cafe::17]:4711", "[2001:db8:cafe::17]:4711"}
         ] do
       assert T.raw(origin, [
