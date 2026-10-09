@@ -72,6 +72,7 @@ async function respond(r) {
     return {key:key.private,signing_key:sk.private,verification_key:sk.public,plaintext:b64(plaintext),payload:b64(payload),jwe:await encrypt(alg,enc,key.public,plaintext),jws:await sign(r.signature_algorithm,sk.private,payload)};
   }
   if(r.operation==='verify')return {valid:await verify(r.algorithm,r.key,r.compact)};
+  if(r.operation==='encrypt')return {jwe:await encrypt(r.algorithm,r.encryption,r.key,dec(r.plaintext))};
   if(r.operation==='decrypt')return {plaintext:await decrypt(r.algorithm,r.encryption,r.key,r.compact)};
   throw Error('operation');
 }

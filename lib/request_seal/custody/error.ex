@@ -11,6 +11,7 @@ defmodule RequestSeal.Custody.Error do
     explicitly unimplemented selection; no fallback.
   * `:invalid_key`, `:key_mismatch`: invalid material or incompatible binding.
   * `:invalid_data`, `:invalid_signature`, `:limit`: invalid or excessive bytes.
+  * `:decryption_failed`: RSA-OAEP key unwrapping failed; no private diagnostics.
   * `:no_public_key`: symmetric custody has no public export.
   * `:key_not_found`: the selected key was released, removed, or is unavailable.
   * `:deadline_exceeded`: the absolute operation deadline expired.
@@ -23,7 +24,7 @@ defmodule RequestSeal.Custody.Error do
   @reasons ~w(invalid_handle invalid_options unsupported_algorithm unsupported_operation
               invalid_key key_mismatch invalid_data invalid_signature unsupported_format
               no_public_key key_not_found deadline_exceeded custodian_unavailable
-              custodian_rejected custodian_protocol custodian_failure limit)a
+              custodian_rejected custodian_protocol custodian_failure decryption_failed limit)a
   @type reason :: unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))
   @type t :: %__MODULE__{reason: reason(), retryable: boolean()}
   @doc false

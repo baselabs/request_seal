@@ -1,6 +1,6 @@
 defmodule RequestSeal.KeyHandle do
   @moduledoc """
-  Caller-owned, algorithm-bound signing or secret-bearing verification capability.
+  Caller-owned, algorithm-bound signing, verification, or key-unwrapping capability.
 
   Construct handles through a custodian such as `RequestSeal.Custody.Local` or
   `RequestSeal.Custody.SSHAgent`. Only that custodian interprets `ref`. Local
@@ -19,8 +19,8 @@ defmodule RequestSeal.KeyHandle do
 
   @type t :: %__MODULE__{
           custodian: module(),
-          algorithm: RequestSeal.Crypto.algorithm(),
-          capabilities: [:sign | :verify],
+          algorithm: RequestSeal.Custody.algorithm(),
+          capabilities: [:sign | :verify | :unwrap],
           ref: (-> term())
         }
 end

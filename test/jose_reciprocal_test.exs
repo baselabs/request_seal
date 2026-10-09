@@ -170,6 +170,7 @@ defmodule RequestSeal.JOSEReciprocalTest do
     {tool, 0} = System.cmd("openssl", ["version"])
     IO.puts("RECIPROCAL TOOL " <> String.trim(tool))
     desc = {:rsa, k} = rsa_key()
+    assert {:ok, unwrap_handle} = RequestSeal.Custody.Local.new({:jwe, "RSA-OAEP-256"}, desc)
     {:ok, pub} = RequestSeal.PublicKey.import({:rsa, elem(k, 2), elem(k, 3)}, :raw)
     dir = Path.join(System.tmp_dir!(), "requestseal-oaep-#{System.unique_integer([:positive])}")
     File.mkdir!(dir)
@@ -215,6 +216,9 @@ defmodule RequestSeal.JOSEReciprocalTest do
         )
 
       assert code == 0, out
+
+      assert RequestSeal.Custody.unwrap(unwrap_handle, File.read!(Path.join(dir, "wrapped"))) ==
+               {:ok, cek}
 
       assert KeyManagement.unwrap(
                "RSA-OAEP-256",
@@ -273,6 +277,9 @@ defmodule RequestSeal.JOSEReciprocalTest do
       assert code == 0, out
 
       assert {:error, %{reason: :decryption_failed}} =
+               RequestSeal.Custody.unwrap(unwrap_handle, File.read!(Path.join(dir, "wrapped")))
+
+      assert {:error, %{reason: :decryption_failed}} =
                KeyManagement.unwrap(
                  "RSA-OAEP-256",
                  File.read!(Path.join(dir, "wrapped")),
@@ -280,6 +287,7 @@ defmodule RequestSeal.JOSEReciprocalTest do
                  desc
                )
     after
+      RequestSeal.Custody.Local.release(unwrap_handle)
       File.rm_rf!(dir)
     end
   end

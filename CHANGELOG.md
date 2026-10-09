@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added algorithm-bound local RSA-OAEP and RSA-OAEP-256 decryption custody, private PEM/PKCS #8 DER/JWK import, and `RequestSeal.Custody.unwrap/3`; JWE resolvers accept unwrap handles while retaining random-CEK fallback and identical OAEP/GCM failure errors.
 - Added executable installation and integration examples, task-oriented guides, and grouped API documentation. Documentation metadata is retained in hidden HTML comments; the documentation check requires byte-identical tested Elixir examples.
 - The TypeScript counterpart and npm package remain deferred; this release targets the Elixir library.
 

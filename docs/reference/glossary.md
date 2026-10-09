@@ -14,7 +14,7 @@
 | Identity attribution | Verified association between the signing key and a claimed agent/domain/issuer. |
 | Authentication | Successful cryptography plus all required profile, trust, integrity, time and replay rules. |
 | Authorization | The caller's decision about what the authenticated party may do. |
-| Custodian | Owner of signing or secret-bearing verification capability; an opaque handle may invoke a remote HSM/KMS without exposing its key. |
+| Custodian | Owner of signing, secret-bearing verification, or key-unwrapping capability; an opaque handle may invoke a remote HSM/KMS without exposing its key. |
 | Trust resolver | A caller-configured mechanism binding key material to an allowed identity and profile. |
 | Replay claim | An atomic claim using a caller-supplied commitment bound to a verified nonce, challenge, or transaction identifier and caller-defined security scope; expiry controls retention. |
 | Key-equivalence identity | Trusted algorithm-appropriate identity used to deduplicate aliases of one key; public components for asymmetric keys, an opaque custodian-supplied value for symmetric keys that RequestSeal never derives. |

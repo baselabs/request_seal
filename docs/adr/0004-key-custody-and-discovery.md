@@ -53,3 +53,31 @@ are not generic resolver-result members. `Discovery.Resolution` exposes source
 provenance separately; Web Bot Auth applies caller trust before attribution.
 This supersedes the Decision's claim that both generic key results include
 provenance and asserted associations.
+
+## RSA-OAEP recipient custody — October 8, 2026
+
+Extend opaque local custody to key unwrapping under
+[RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html) and
+[RFC 7518 Section 4.3](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.3).
+`Local.new/3` and `Local.import/4` select `{:jwe, "RSA-OAEP"}` or
+`{:jwe, "RSA-OAEP-256"}` with only `:unwrap` capability. Import accepts
+unencrypted private PEM, PKCS #8 DER, or private JWK; RSA moduli are 2048–8192
+bits, CRT components are validated, and PSS-only keys reject. JWK algorithm,
+encryption use, and decryption/unwrapping operation restrictions apply.
+Signing and unwrap capabilities remain separate, each bound to one algorithm.
+
+`Custody.unwrap/3` shares the monitored runner, cancellation, bounded input,
+and deadline contract. The holder performs the private RSA operation and
+returns only unwrapped bytes. A JWE resolver may return
+`{:ok, %{algorithm: wire_algorithm, key: handle}}`; its request receives the
+remaining envelope deadline. The raw-key unwrap callback remains supported.
+The CEK leaves the holder only for authenticated content decryption in the
+sensitive JWE worker and never becomes public metadata. Unwrap rejection uses
+a fresh random CEK and still attempts GCM authentication; OAEP padding failure
+and GCM tag failure return the same complete error. Deadline expiration remains
+a separate bounded failure.
+
+Acceptance requires actual OTP round trips, independent published OAEP vectors,
+Node WebCrypto encryption to the handle's public key, wrong/released handle
+rejection, suspended-holder timeout/cancellation, and private-key canary checks
+on values, inspection, BEAM serialization, process introspection, and diagnostics.

@@ -1,6 +1,6 @@
 defmodule RequestSeal.Custody do
   @moduledoc """
-  Caller-owned signing, secret verification, public-key resolution, and identity.
+  Caller-owned signing, secret verification, key unwrapping, and public metadata.
 
   Each callback runs in a fresh runner, never linked to the caller. A monitored
   middle process traps exits, monitors the caller before linking the runner, and
@@ -11,7 +11,7 @@ defmodule RequestSeal.Custody do
   uniquely tagged result. Loading the library starts no process, store, or
   background work. Local handle construction explicitly starts its key holder.
 
-  `sign/3` and `verify/4` accept only `timeout: milliseconds` (default 5,000;
+  `sign/3`, `verify/4`, and `unwrap/3` accept only `timeout: milliseconds` (default 5,000;
   1–300,000, no infinity). Unknown and duplicate options reject. Public-key and
   identity resolution use the default deadline. Exact input bytes are limited to
   1,048,576; signatures and public container inputs are bounded to 16,384 bytes.
@@ -27,13 +27,36 @@ defmodule RequestSeal.Custody do
   alias RequestSeal.Custody.{Context, Error, Support}
   import Support, only: [ensure: 2]
 
+  @type unwrap_algorithm :: {:jwe, binary()}
+  @type algorithm :: RequestSeal.Crypto.algorithm() | unwrap_algorithm()
+
   @callback sign(term(), RequestSeal.Crypto.algorithm(), binary(), Context.t()) ::
               {:ok, binary()} | {:error, Error.reason()}
   @callback verify(term(), RequestSeal.Crypto.algorithm(), binary(), binary(), Context.t()) ::
               :ok | {:error, Error.reason()}
   @callback public_key(term()) :: {:ok, PublicKey.t()} | {:error, Error.reason()}
   @callback identity(term()) :: KeyIdentity.t()
-  @optional_callbacks verify: 5
+  @callback unwrap(term(), unwrap_algorithm(), binary(), Context.t()) ::
+              {:ok, binary()} | {:error, Error.reason()}
+  @optional_callbacks verify: 5, unwrap: 4
+
+  @doc """
+  Unwrap a bounded RSA-OAEP encrypted key using the handle's exact algorithm.
+
+  Only `{:jwe, "RSA-OAEP"}` and `{:jwe, "RSA-OAEP-256"}` handles with `:unwrap`
+  capability are accepted. Encrypted keys are 1–1,024 bytes and must match the
+  RSA modulus width inside the custodian. Returns unwrapped bytes, never the
+  private key. OAEP failures return `:decryption_failed`; callers must authenticate
+  content before exposing plaintext. `RequestSeal.JOSE.JWE` performs that step
+  with a random fallback CEK on unwrap failure.
+  """
+  @spec unwrap(KeyHandle.t(), binary(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
+  def unwrap(handle, encrypted_key, opts \\ []) do
+    operation(handle, :unwrap, opts, fn ->
+      ensure(is_binary(encrypted_key) and byte_size(encrypted_key) in 1..1024, :invalid_data)
+      [encrypted_key]
+    end)
+  end
 
   @doc "Sign exact bounded bytes with the algorithm bound to a handle."
   @spec sign(KeyHandle.t(), binary(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
@@ -68,7 +91,12 @@ defmodule RequestSeal.Custody do
       fn ->
         timeout = Support.timeout(opts)
         handle!(handle)
-        ensure(op not in [:sign, :verify] or op in handle.capabilities, :unsupported_operation)
+
+        ensure(
+          op not in [:sign, :verify, :unwrap] or op in handle.capabilities,
+          :unsupported_operation
+        )
+
         args = args.()
         context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
         run(context, fn -> invoke(handle, op, args, context) end)
@@ -85,7 +113,7 @@ defmodule RequestSeal.Custody do
 
     ensure(
       is_list(handle.capabilities) and handle.capabilities != [] and
-        Enum.all?(handle.capabilities, &(&1 in [:sign, :verify])) and
+        Enum.all?(handle.capabilities, &(&1 in [:sign, :verify, :unwrap])) and
         Enum.uniq(handle.capabilities) == handle.capabilities,
       :invalid_handle
     )
@@ -97,7 +125,15 @@ defmodule RequestSeal.Custody do
       :invalid_handle
     )
 
-    RequestSeal.Crypto.Algorithm.resolve(handle.algorithm)
+    case handle.algorithm do
+      {:jwe, alg} when alg in ["RSA-OAEP", "RSA-OAEP-256"] ->
+        ensure(handle.capabilities == [:unwrap], :invalid_handle)
+        ensure(function_exported?(handle.custodian, :unwrap, 4), :invalid_handle)
+
+      _ ->
+        ensure(:unwrap not in handle.capabilities, :invalid_handle)
+        RequestSeal.Crypto.Algorithm.resolve(handle.algorithm)
+    end
   end
 
   defp handle!(_), do: ensure(false, :invalid_handle)
@@ -115,11 +151,11 @@ defmodule RequestSeal.Custody do
     normalize(:verify, result)
   end
 
-  defp invoke(handle, :sign, args, context),
+  defp invoke(handle, op, args, context) when op in [:sign, :unwrap],
     do:
       normalize(
-        :sign,
-        apply(handle.custodian, :sign, [handle.ref, handle.algorithm | args] ++ [context])
+        op,
+        apply(handle.custodian, op, [handle.ref, handle.algorithm | args] ++ [context])
       )
 
   defp invoke(handle, op, [], _), do: normalize(op, apply(handle.custodian, op, [handle.ref]))
@@ -129,6 +165,9 @@ defmodule RequestSeal.Custody do
   defp normalize(:verify, :ok), do: :ok
 
   defp normalize(:sign, {:ok, bytes}) when is_binary(bytes) and byte_size(bytes) in 1..16_384,
+    do: {:ok, bytes}
+
+  defp normalize(:unwrap, {:ok, bytes}) when is_binary(bytes) and byte_size(bytes) in 1..1024,
     do: {:ok, bytes}
 
   defp normalize(:public_key, {:ok, %PublicKey{} = public}) do

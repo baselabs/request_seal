@@ -318,6 +318,16 @@ defmodule RequestSeal.CustodyLocalTest do
     refute :erlang.term_to_binary(handle) =~ secret
     assert {:ok, signature} = Custody.sign(handle, "sample")
     assert :ok = Custody.verify(handle, "sample", signature)
+
+    {:rsa, private} = material("rsa")
+    <<131, rsa_canary::binary>> = :erlang.term_to_binary(elem(private, 4))
+    assert :erlang.term_to_binary(private) =~ rsa_canary
+
+    for alg <- ~w(RSA-OAEP RSA-OAEP-256) do
+      assert {:ok, handle} = Local.new({:jwe, alg}, {:rsa, private})
+      refute :erlang.term_to_binary(handle) =~ rsa_canary
+      assert :ok = Local.release(handle)
+    end
   end
 
   @tag :holder
@@ -329,6 +339,21 @@ defmodule RequestSeal.CustodyLocalTest do
 
     for fun <- reachable_functions(handle) do
       refute :erlang.term_to_binary(:erlang.fun_info(fun)) =~ secret
+    end
+
+    {:rsa, private} = material("rsa")
+    <<131, rsa_canary::binary>> = :erlang.term_to_binary(elem(private, 4))
+    positive = fn -> private end
+    assert :erlang.term_to_binary(:erlang.fun_info(positive)) =~ rsa_canary
+
+    for alg <- ~w(RSA-OAEP RSA-OAEP-256) do
+      assert {:ok, handle} = Local.new({:jwe, alg}, {:rsa, private})
+
+      for fun <- reachable_functions(handle) do
+        refute :erlang.term_to_binary(:erlang.fun_info(fun)) =~ rsa_canary
+      end
+
+      assert :ok = Local.release(handle)
     end
   end
 

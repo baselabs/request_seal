@@ -20,7 +20,11 @@ defmodule RequestSeal.JOSE.JWE do
   unique nonempty lists selected from RSA-OAEP-256, RSA-OAEP, A128GCMKW,
   A256GCMKW, dir; content encryption is A128GCM or A256GCM. The arity-one
   resolver receives `%{algorithm: name, encryption: name, header: map}` and
-  returns `{:ok, %{algorithm: same_name, unwrap: arity_two_fun}}` or `:error`.
+  returns `{:ok, %{algorithm: same_name, unwrap: arity_two_fun}}`,
+  `{:ok, %{algorithm: same_name, key: custody_handle}}`, or `:error`.
+  A custody handle must bind `{:jwe, same_name}` with `:unwrap` capability;
+  RSA-OAEP private operations stay inside its sensitive local holder. The
+  existing callback path can still use caller-owned raw key material.
   Unwrap receives `(encrypted_key_bytes, header)` and returns `{:ok, cek}` or
   `{:error, term}`. Resolver and unwrap execute within one sensitive custody
   worker and one absolute deadline. Unwrap failure uses a fresh random CEK and
@@ -31,7 +35,7 @@ defmodule RequestSeal.JOSE.JWE do
   tags 16 bytes, CEKs exactly 16/32 bytes. The protected segment is verbatim AAD.
   Returns `{:ok, compact}` / `{:ok, Result}` or `{:error, JOSE.Error}`.
   """
-  alias RequestSeal.{PublicKey, JOSE}
+  alias RequestSeal.{Custody, KeyHandle, PublicKey, JOSE}
   alias JOSE.{Header, KeyManagement, Support}
   alias JOSE.JWE.Result
   import Support
@@ -107,11 +111,18 @@ defmodule RequestSeal.JOSE.JWE do
   def decrypt(compact, policy) do
     safe(fn ->
       p = policy(policy, :jwe)
-      worker(p.timeout, fn -> decrypt_internal(compact, p) end, :decryption_failed, :crypto)
+      deadline = System.monotonic_time(:millisecond) + p.timeout
+
+      worker(
+        p.timeout,
+        fn -> decrypt_internal(compact, p, deadline) end,
+        :decryption_failed,
+        :crypto
+      )
     end)
   end
 
-  defp decrypt_internal(compact, p) do
+  defp decrypt_internal(compact, p, deadline) do
     [protected, ek_wire, iv_wire, ct_wire, tag_wire] = compact(compact, 5)
     h = Header.parse(protected)
     alg = selected(h, :jwe, p.algorithms, p.encryption)
@@ -125,15 +136,12 @@ defmodule RequestSeal.JOSE.JWE do
     encrypted_key!(alg, ek, h)
     entry = resolve(p.key_resolver, %{algorithm: alg, encryption: h["enc"], header: h})
 
-    ensure(
-      Enum.sort(Map.keys(entry)) == [:algorithm, :unwrap] and is_function(entry.unwrap, 2),
-      :key_resolver_failed,
-      :key
-    )
+    unwrap = unwrapper(entry, alg, deadline)
 
     # Generate fallback unconditionally so the success path also performs CSPRNG work.
     fallback = random(width(h["enc"]))
-    unwrapped = safe(fn -> entry.unwrap.(ek, h) end, :decryption_failed, :crypto)
+    unwrapped = safe(fn -> unwrap.(ek, h) end, :decryption_failed, :crypto)
+    ensure(System.monotonic_time(:millisecond) < deadline, :deadline_exceeded, :crypto)
 
     {cek, valid_unwrap} =
       case unwrapped do
@@ -153,6 +161,24 @@ defmodule RequestSeal.JOSE.JWE do
        plaintext: plaintext
      }}
   end
+
+  defp unwrapper(%{algorithm: _, unwrap: fun} = entry, _, _)
+       when map_size(entry) == 2 and is_function(fun, 2),
+       do: fun
+
+  defp unwrapper(%{algorithm: _, key: %KeyHandle{} = handle} = entry, alg, deadline)
+       when map_size(entry) == 2 do
+    ensure(handle.algorithm == {:jwe, alg}, :algorithm_mismatch, :key)
+    ensure(handle.capabilities == [:unwrap], :algorithm_mismatch, :key)
+
+    fn bytes, _header ->
+      remaining = deadline - System.monotonic_time(:millisecond)
+      ensure(remaining > 0, :deadline_exceeded, :crypto)
+      Custody.unwrap(handle, bytes, timeout: remaining)
+    end
+  end
+
+  defp unwrapper(_, _, _), do: fail(:key_resolver_failed, :key)
 
   defp encrypted_key!("dir", ek, _), do: ensure(ek == "", :decryption_failed, :crypto)
 
