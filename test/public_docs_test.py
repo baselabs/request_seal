@@ -311,6 +311,21 @@ class ToolchainTest(unittest.TestCase):
         self.assertIn("- lane: mid\n            elixir: '1.19.5'\n            otp: '28.5.0.7'", workflow)
         self.assertIn("- lane: latest\n            elixir: '1.20.4'\n            otp: '29.1.1'", workflow)
 
+    def test_owned_dependency_rule_is_enforced(self):
+        sources = self.sources()
+        for old, new in [
+            ('Version.match?(System.version(), ">= 1.20.0")', 'true'),
+            ('{:ash_onetime, "~> 1.5", optional: true}', '{:ash_onetime, "~> 1.5"}'),
+            ('{:ash_hooks, "~> 2.0", optional: true}', '{:ash_hooks, "== 2.0.3", optional: true}'),
+            ('{:ash, ">= 3.34.3 and < 4.0.0", optional: true}', '{:ash, "~> 3.34", optional: true}'),
+            ('] ++ test_dependencies ++ owned_integrations()', '] ++ test_dependencies'),
+        ]:
+            with self.subTest(old=old):
+                changed = dict(sources)
+                self.assertIn(old, changed["mix.exs"])
+                changed["mix.exs"] = changed["mix.exs"].replace(old, new)
+                self.assertTrue(gate.toolchain_errors(changed))
+
     def test_ci_runs_optional_clients_on_floor(self):
         workflow = self.sources()[".github/workflows/ci.yml"]
         self.assertIn("- if: matrix.lane == 'floor'\n        run: python3 scripts/check_optional_clients.py", workflow)

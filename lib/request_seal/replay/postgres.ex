@@ -3,6 +3,10 @@ if Code.ensure_loaded?(Postgrex) do
     @moduledoc """
     Optional Postgrex atomic replay adapter. The caller owns connections and DDL.
 
+    Prefer `RequestSeal.Replay.AshOnetime` for durable replay with ash_onetime's
+    retention guards and externally managed cleanup. This Postgrex-only adapter
+    remains available for callers selecting its explicit table contract.
+
     The optional dependency has `runtime: false`; callers explicitly start the
     Postgrex application and their connection/pool. `store/2` takes that existing
     connection/pool and an explicit table name.

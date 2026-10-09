@@ -81,3 +81,15 @@ client check compiles a fresh consumer locked to Finch 0.23.0 and Req 0.7.4 and
 runs the client adapter tests against real TCP listeners and an OpenSSH agent.
 The separate core consumer check continues to verify operation without HTTP
 clients or frameworks installed.
+
+## Amendment: Optional durable replay and webhook integrations (October 8, 2026)
+
+ash_onetime 1.5 and ash_hooks 2.0 require Elixir 1.20. The dependency list
+includes both optional ranges only when `Version.match?(System.version(), ">= 1.20.0")`.
+Floor and mid lanes compile core and their available integrations without these
+packages; the latest lane executes the owned-package tests, including real
+PostgreSQL migrations and a Bandit delivery receiver, through `scripts/check.py`.
+Version-conditional root development dependencies do not change the published
+optional requirements: release metadata is built on the latest toolchain.
+Ash requires `>= 3.34.3 and < 4.0.0` on every lane. The core consumer check
+also verifies that neither optional bridge compiles without its dependency.

@@ -129,7 +129,19 @@ def toolchain_errors(sources):
     required = {
         "mix.exs": ['elixir: "~> 1.18"', "unless Code.ensure_loaded?(:json) do",
             '{:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false}',
-            '{:req, "~> 0.7.4", optional: true, runtime: false}'],
+            '{:req, "~> 0.7.4", optional: true, runtime: false}',
+            '{:ash, ">= 3.34.3 and < 4.0.0", optional: true}',
+            '] ++ test_dependencies ++ owned_integrations()',
+            'defp owned_integrations do\n'
+            '    if Version.match?(System.version(), ">= 1.20.0") do\n'
+            '      [\n'
+            '        {:ash_onetime, "~> 1.5", optional: true},\n'
+            '        {:ash_hooks, "~> 2.0", optional: true}\n'
+            '      ]\n'
+            '    else\n'
+            '      []\n'
+            '    end\n'
+            '  end'],
         "tools/notebooks/mix.exs": [f'elixir: "{elixir}"'],
         "config/config.exs": ["minimum_otp = 27", ":erlang.system_info(:otp_release) |> to_string() |> String.to_integer()", "if running_otp < minimum_otp do"],
         "tools/notebooks/config/config.exs": ['import_config "../../../config/config.exs"', f'expected_otp = "{major}"', 'to_string(:erlang.system_info(:otp_release))', "if running_otp != expected_otp do"],
@@ -172,7 +184,7 @@ def check_toolchain():
     errors = toolchain_errors({path: (ROOT/path).read_text() for path in paths})
     if errors:
         raise ValueError("\n".join(errors))
-    print("PASS: consumer range, development/notebook pins, and all three CI lanes agree; CI actions use immutable commits")
+    print("PASS: consumer range, development/notebook pins, and all three CI lanes agree; owned optional integrations require Elixir 1.20+; CI actions use immutable commits")
 
 
 def normalize_exdoc_inventory(output, project_root=ROOT):

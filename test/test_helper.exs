@@ -9,5 +9,10 @@ exclude =
      do: exclude,
      else: [:postgres_restart | exclude]
 
+exclude =
+  if Code.ensure_loaded?(AshOnetime.Transaction),
+    do: exclude,
+    else: [:owned_integrations | exclude]
+
 ExUnit.start(exclude: exclude)
 Code.require_file("support/multi_signature_helper.exs", __DIR__)

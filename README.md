@@ -60,7 +60,9 @@ Add the optional dependencies for the integrations you use. The JSON pipeline ex
 | `:phoenix` | `~> 1.8.15` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.23.0 and < 0.25.0` | Finch transport and caller-started pools |
-| `:ash` | `~> 3.34` | Ash scope protocol and authorization-enabled actions |
+| `:ash` | `>= 3.34.3 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
+| `:ash_onetime` | `~> 1.5` | Recommended durable replay; Elixir 1.20+ |
+| `:ash_hooks` | `~> 2.0` | Webhook signing and verification; Elixir 1.20+ |
 | `:postgrex` | `~> 0.22.4` | PostgreSQL replay storage using your existing connection |
 
 For the webhook script, add these alongside RequestSeal (Jason decodes JSON):
@@ -360,11 +362,13 @@ Here one trusted key uses one namespace. Define your own commitment for your tru
 | Req | `:req`, `:finch` | `RequestSeal.Req` | Sign each finalized attempt and verify responses before decoding or delivery |
 | Finch | `:finch` | `RequestSeal.Finch` | Sign requests and verify responses against the exact sent request |
 | Ash | `:ash` | `RequestSeal.Ash` | Map verified facts to actors, tenants, and scopes with authorization enabled |
+| ash_onetime | `:ash_onetime` | `RequestSeal.Replay.AshOnetime` | Recommended durable atomic replay with caller-owned Postgres |
+| ash_hooks | `:ash_hooks` | `RequestSeal.AshHooks.Http`, `RequestSeal.AshHooks` | Sign deliveries and verify ingress; ash_hooks owns transport and ledger |
 | PostgreSQL replay | `:postgrex` | `RequestSeal.Replay.Postgres` | Atomically claim nonces using your connection and table |
 
 ## Compatibility
 
-Elixir 1.18 or newer on OTP 27 or newer. CI tests 1.18.4/27, 1.19.5/28, and 1.20.4/29. Development instructions work on macOS and Linux; Windows developers use WSL2.
+Elixir 1.18 or newer on OTP 27 or newer. CI tests 1.18.4/27, 1.19.5/28, and 1.20.4/29. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Development instructions work on macOS and Linux; Windows developers use WSL2.
 
 ## Security model
 
@@ -379,6 +383,7 @@ A valid signature proves which key signed which covered bytes; a trusted associa
 - [Phoenix and Plug](docs/guides/phoenix-and-plug.md)
 - [Web Bot Auth](docs/guides/web-bot-auth.md)
 - [Ash actors, tenants, and authorization](docs/guides/ash.md)
+- [Webhooks with ash_hooks](docs/guides/ash-hooks.md)
 - [Replay protection](docs/guides/replay-protection.md)
 - [Key discovery](docs/guides/key-discovery.md)
 - [JOSE: JWS and JWE](docs/guides/jose.md)

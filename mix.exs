@@ -29,6 +29,7 @@ defmodule RequestSeal.MixProject do
     "docs/guides/phoenix-and-plug.md",
     "docs/guides/req-and-finch.md",
     "docs/guides/ash.md",
+    "docs/guides/ash-hooks.md",
     "docs/guides/web-bot-auth.md",
     "docs/guides/replay-protection.md",
     "docs/guides/key-discovery.md",
@@ -110,7 +111,7 @@ defmodule RequestSeal.MixProject do
           Replay: ~r/^RequestSeal\.Replay(\.|$)/,
           JOSE: ~r/^RequestSeal\.JOSE(\.|$)/,
           "Web Bot Auth": ~r/^RequestSeal\.WebBotAuth(\.|$)/,
-          Integrations: ~r/^RequestSeal\.(Req|Finch|Plug|Ash|Adapter)(\.|$)/,
+          Integrations: ~r/^RequestSeal\.(Req|Finch|Plug|Ash|AshHooks|Adapter)(\.|$)/,
           Profiles: [RequestSeal.Profile]
         ]
       ]
@@ -126,8 +127,8 @@ defmodule RequestSeal.MixProject do
 
     [
       {:ex_doc, "~> 0.40.4", only: [:dev, :test], runtime: false},
-      # Floor is the Ash minor series the real-action tests ran against (lock: 3.34.5); Ash.Scope itself dates from 3.5.13.
-      {:ash, "~> 3.34", optional: true},
+      # Require the Ash security patch line used by the optional integrations.
+      {:ash, ">= 3.34.3 and < 4.0.0", optional: true},
       {:simple_sat, "~> 0.1", only: :test},
       # Use stable Req; 0.8.0-rc.0 is a release candidate.
       # Consumers own client startup; importing this library starts no pool.
@@ -137,7 +138,20 @@ defmodule RequestSeal.MixProject do
       {:bandit, "~> 1.12.5", only: :test},
       {:phoenix, "~> 1.8.15", only: :test},
       {:postgrex, "~> 0.22.4", optional: true, runtime: false}
-    ] ++ test_dependencies
+    ] ++ test_dependencies ++ owned_integrations()
+  end
+
+  # These optional packages require Elixir 1.20. Floor/mid developer and CI
+  # toolchains omit them; the latest lane executes their real integrations.
+  defp owned_integrations do
+    if Version.match?(System.version(), ">= 1.20.0") do
+      [
+        {:ash_onetime, "~> 1.5", optional: true},
+        {:ash_hooks, "~> 2.0", optional: true}
+      ]
+    else
+      []
+    end
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

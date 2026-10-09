@@ -2,8 +2,12 @@ defmodule RequestSeal.GuideReplayProtectionTest do
   use ExUnit.Case, async: false
   alias RequestSeal.DocsExamples, as: E
 
+  @tag :owned_integrations
+  @tag :postgres
   test "documented examples execute against real cryptography and integrations" do
-    binding = []
+    prefix = RequestSeal.OwnedDatabase.start()
+    on_exit(fn -> RequestSeal.OwnedDatabase.drop(prefix) end)
+    binding = [repo: RequestSeal.OwnedRepo, prefix: prefix]
 
     binding =
       E.eval(
@@ -152,7 +156,25 @@ defmodule RequestSeal.GuideReplayProtectionTest do
     example_result = Keyword.fetch!(binding, :example_result)
     assert example_result == {:ok, 1}
     E.assert_rejected_signature(binding)
-    E.assert_fences("docs/guides/replay-protection.md", 8)
+
+    binding =
+      E.eval(
+        ~S'''
+        durable_store = RequestSeal.Replay.AshOnetime.store(repo,
+          partition: "demo-api", prefix: prefix)
+        durable_replay = %{replay | store: durable_store}
+        {:ok, durable_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: durable_replay})
+        {:ok, durable_accepted} = RequestSeal.verify(signed, durable_policy, label: "sig")
+        ''',
+        binding,
+        "docs/guides/replay-protection.md",
+        9
+      )
+
+    assert %RequestSeal.Replay.Receipt{store: RequestSeal.Replay.AshOnetime} =
+             Keyword.fetch!(binding, :durable_accepted).replay
+
+    E.assert_fences("docs/guides/replay-protection.md", 9)
     assert is_list(binding)
   end
 end

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added optional `RequestSeal.Replay.AshOnetime` for independently committed durable nonce claims, deadline propagation, and ash_onetime-managed retention and cleanup. It is the recommended durable store; `Replay.Postgres` remains available.
+- Added `RequestSeal.AshHooks.Http` for final-byte RFC 9421 signing through ash_hooks' bounded transport, and `RequestSeal.AshHooks.verify_signature/4` for Provider delegation. Added executable webhook and durable replay examples.
+- Optional ash_onetime `~> 1.5` and ash_hooks `~> 2.0` run on the latest Elixir lane; Elixir 1.18/1.19 omit them. Raised the Ash dependency floor to 3.34.3.
+
 - Req and Finch accept the same defaulted signing specs as `RequestSeal.sign/4`, with fresh nonces per attempt and unchanged full-spec wire bytes.
 - Plug verification accepts zero-arity policy functions and policy MFAs, validates their results per request, and contains callback failures.
 - Req and Finch reject the `:nonce` option; selected nonces regenerate per attempt or invocation.

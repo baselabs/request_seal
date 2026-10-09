@@ -112,7 +112,33 @@ Use a trusted clock consistent with verification. Retention ends at the first re
 
 Supervise `RequestSeal.Replay.ETS` with an explicit capacity in your application. It serializes atomic claims and sweeps; owner termination loses the claims. It is local, not a distributed store.
 
-For PostgreSQL, add `:postgrex` (`~> 0.22.4`), start the Postgrex application and your connection, execute SQL returned by `RequestSeal.Replay.Postgres.ddl("signature_replay")`, and select `RequestSeal.Replay.Postgres.store(connection, table: "signature_replay")`. The adapter starts no database or pool. Table names are explicit lowercase ASCII identifiers; namespace/key columns form a primary key. Persistence follows your database configuration. See [replay-store testing](testing.md#replay-stores) for actual database, concurrency, and restart checks.
+For durable replay, prefer `RequestSeal.Replay.AshOnetime` with optional
+`{:ash_onetime, "~> 1.5", optional: true}` on Elixir 1.20 or newer. Install
+ash_onetime's migrations in your existing repo using
+`mix ash_onetime.gen.migrations --repo MyApp.Repo`, then `mix ecto.migrate`, as
+specified by its public [migration task](https://hexdocs.pm/ash_onetime/Mix.Tasks.AshOnetime.Gen.Migrations.html)
+and [transaction contract](https://hexdocs.pm/ash_onetime/AshOnetime.Transaction.html).
+Given your existing `repo` and schema `prefix` (`nil` for its default schema):
+
+```elixir
+durable_store = RequestSeal.Replay.AshOnetime.store(repo,
+  partition: "demo-api", prefix: prefix)
+durable_replay = %{replay | store: durable_store}
+{:ok, durable_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: durable_replay})
+{:ok, durable_accepted} = RequestSeal.verify(signed, durable_policy, label: "sig")
+```
+
+Each claim commits in its own READ COMMITTED repo transaction under the remaining
+deadline. Namespace and commitment bytes are base64url encoded. ash_onetime retains
+the claim at least through RequestSeal's `retain_until`, with its additional safety
+margin. Keep application and database clocks synchronized. Duplicate claims do not
+extend retention. A timeout is indeterminate and never permits automatic retry.
+`RequestSeal.Replay.AshOnetime.sweep/3` returns `{:error, :externally_managed}`;
+use `mix ash_onetime.prune` or its Oban cleanup worker. For atomic nonce spending
+with an application effect, verify with replay explicitly `:not_required` and
+call `AshOnetime.Transaction.nonce/2` inside that application's transaction.
+
+The Postgrex-only adapter remains available. For PostgreSQL, add `:postgrex` (`~> 0.22.4`), start the Postgrex application and your connection, execute SQL returned by `RequestSeal.Replay.Postgres.ddl("signature_replay")`, and select `RequestSeal.Replay.Postgres.store(connection, table: "signature_replay")`. The adapter starts no database or pool. Table names are explicit lowercase ASCII identifiers; namespace/key columns form a primary key. Persistence follows your database configuration. See [replay-store testing](testing.md#replay-stores) for actual database, concurrency, and restart checks.
 
 For Web Bot Auth, use the same generic replay policy fields on its policy. Bind the draft's nonce, key ID, and stable agent identifier in your commitment; one claim follows the complete verified envelope. Generic single-label verification requires bounded freshness and a nonempty nonce. Quorum verification rejects required replay until a composite claim contract is implemented.
 
@@ -120,4 +146,4 @@ For Web Bot Auth, use the same generic replay policy fields on its policy. Bind 
 
 `:missing_replay_identifier` means the selected signature has no usable nonce. `:replayed` means a prior claim exists. `:commitment_failed` means your function failed or returned an invalid result. `:store_unavailable`, `:store_timeout`, and `:store_failed` reject authentication, including full stores. A single deadline covers commitment and atomic storage; caller cancellation stops work but cannot undo a committed claim. A timeout may already have committed, so no replay error permits automatic retry.
 
-Module docs: `RequestSeal.Policy`, `RequestSeal.Replay`, `RequestSeal.Replay.ETS`, `RequestSeal.Replay.Postgres`, `RequestSeal.Replay.Store`, `RequestSeal.Replay.Receipt`, `RequestSeal.Error`.
+Module docs: `RequestSeal.Policy`, `RequestSeal.Replay`, `RequestSeal.Replay.ETS`, `RequestSeal.Replay.AshOnetime`, `RequestSeal.Replay.Postgres`, `RequestSeal.Replay.Store`, `RequestSeal.Replay.Receipt`, `RequestSeal.Error`.

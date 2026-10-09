@@ -61,6 +61,7 @@ jobs:
           REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       - if: matrix.lane == 'floor'
         run: python3 scripts/check_optional_clients.py
+      # The Elixir 1.20 lane includes ash_onetime and ash_hooks integration tests.
       - if: matrix.lane == 'latest'
         run: python3 scripts/check.py
         env:
