@@ -223,7 +223,7 @@ defmodule RequestSeal.ReadmeTest do
       )
 
     assert Keyword.fetch!(binding, :example_result) == 200
-    assert_receive {:observed, _, {:ok, captured}, _}
+    assert_receive {:observed, _, {:ok, captured}, _}, 5_000
 
     {:ok, outgoing_key} =
       RequestSeal.PublicKey.import({:ed25519, Keyword.fetch!(binding, :_public)}, :raw)

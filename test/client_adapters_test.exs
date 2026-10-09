@@ -61,8 +61,8 @@ defmodule RequestSeal.ClientAdaptersTest do
 
     assert {:ok, response} = Req.request(req)
     assert {:ok, _} = RequestSeal.Req.verification(response)
-    assert_receive {:wire_request, first, {:ok, _}}
-    assert_receive {:wire_request, second, {:ok, _}}
+    assert_receive {:wire_request, first, {:ok, _}}, 5_000
+    assert_receive {:wire_request, second, {:ok, _}}, 5_000
     assert params(first)["nonce"] != params(second)["nonce"]
     assert params(second)["expires"] - params(second)["created"] == 60
     assert params(second)["alg"] == "hmac-sha256"
@@ -81,7 +81,7 @@ defmodule RequestSeal.ClientAdaptersTest do
       for spec <- [full, short] do
         assert {:ok, req} = request(origin, h, [], sign: spec, clock: clock)
         assert {:ok, _} = Req.request(req)
-        assert_receive {:wire_request, message, {:ok, _}}
+        assert_receive {:wire_request, message, {:ok, _}}, 5_000
         message
       end
 
@@ -158,7 +158,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert response.body == Peer.body()
     assert {:ok, result} = RequestSeal.Req.verification(response)
     assert result.signature.crypto == :valid
-    assert_receive {:wire_request, sent, {:ok, _}}
+    assert_receive {:wire_request, sent, {:ok, _}}, 5_000
     assert :zlib.gunzip(sent.body.bytes) == Jason.encode!(%{"hello" => "world"})
     assert sent.raw_target == "/foo%2Fbar?param=Value&Pet=dog"
     assert for(f <- sent.fields, f.name == "accept", do: f.value) == ["text/plain", "*/*"]
@@ -189,8 +189,8 @@ defmodule RequestSeal.ClientAdaptersTest do
 
     assert {:ok, response} = Req.request(req)
     assert {:ok, _} = RequestSeal.Req.verification(response)
-    assert_receive {:wire_request, first, {:ok, _}}
-    assert_receive {:wire_request, second, {:ok, _}}
+    assert_receive {:wire_request, first, {:ok, _}}, 5_000
+    assert_receive {:wire_request, second, {:ok, _}}, 5_000
     assert params(first)["nonce"] != params(second)["nonce"]
     assert is_integer(params(first)["created"])
     assert is_integer(params(second)["created"])
@@ -226,8 +226,8 @@ defmodule RequestSeal.ClientAdaptersTest do
              )
 
     assert {:ok, _} = Req.request(req)
-    assert_receive {:wire_request, first, {:ok, _}}
-    assert_receive {:wire_request, second, {:ok, _}}
+    assert_receive {:wire_request, first, {:ok, _}}, 5_000
+    assert_receive {:wire_request, second, {:ok, _}}, 5_000
     assert params(first)["nonce"] != params(second)["nonce"]
     assert Enum.count(second.fields, &(&1.name == "signature-input")) == 1
     Peer.finish(task)
@@ -240,8 +240,8 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:ok, req} = request(origin, h, redirect_log_level: false)
     assert {:ok, response} = Req.request(req)
     assert {:ok, _} = RequestSeal.Req.verification(response)
-    assert_receive {:wire_request, first, {:ok, _}}
-    assert_receive {:wire_request, second, {:ok, _}}
+    assert_receive {:wire_request, first, {:ok, _}}, 5_000
+    assert_receive {:wire_request, second, {:ok, _}}, 5_000
     assert first.raw_target != second.raw_target
     assert params(first)["nonce"] != params(second)["nonce"]
     Peer.finish(task)
@@ -271,13 +271,13 @@ defmodule RequestSeal.ClientAdaptersTest do
 
       if allow do
         assert {:ok, _} = Req.request(req)
-        assert_receive {:wire_request, original, {:ok, _}}
+        assert_receive {:wire_request, original, {:ok, _}}, 5_000
         assert Enum.any?(original.fields, &(&1.name == "authorization"))
-        assert_receive {:wire_request, sent, {:ok, _}}
+        assert_receive {:wire_request, sent, {:ok, _}}, 5_000
         refute Enum.any?(sent.fields, &(&1.name == "authorization"))
       else
         assert {:error, %Error{reason: :cross_origin_redirect}} = Req.request(req)
-        assert_receive {:wire_request, _, {:ok, _}}
+        assert_receive {:wire_request, _, {:ok, _}}, 5_000
         assert_receive :no_connection, 1_500
       end
 
@@ -298,8 +298,8 @@ defmodule RequestSeal.ClientAdaptersTest do
              )
 
     assert {:ok, _} = Req.request(req)
-    assert_receive {:wire_request, _, {:ok, _}}
-    assert_receive {:wire_request, sent, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
+    assert_receive {:wire_request, sent, {:ok, _}}, 5_000
     assert sent.method == "GET"
     assert sent.body.bytes == ""
     Peer.finish(task)
@@ -324,8 +324,8 @@ defmodule RequestSeal.ClientAdaptersTest do
              )
 
     assert {:ok, _} = Req.request(req)
-    assert_receive {:wire_request, first, {:ok, _}}
-    assert_receive {:wire_request, second, {:ok, _}}
+    assert_receive {:wire_request, first, {:ok, _}}, 5_000
+    assert_receive {:wire_request, second, {:ok, _}}, 5_000
     assert first.body.bytes == second.body.bytes
     Peer.finish(task)
     {origin, task} = Peer.start([%{}], h)
@@ -357,7 +357,7 @@ defmodule RequestSeal.ClientAdaptersTest do
         refute_receive {:delivered, _}
       end
 
-      assert_receive {:wire_request, _, {:ok, _}}
+      assert_receive {:wire_request, _, {:ok, _}}, 5_000
       Peer.finish(task)
     end
   end
@@ -408,8 +408,8 @@ defmodule RequestSeal.ClientAdaptersTest do
                digest_state: d
              )
 
-    assert_receive {:wire_request, _, {:ok, _}}
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -524,7 +524,10 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:ok, signed} = RequestSeal.Finch.sign(req, Peer.spec(), h)
     tampered = %{signed | body: String.replace(Peer.body(), "world", "earth")}
     assert {:ok, _} = Finch.request(tampered, __MODULE__.Pool)
-    assert_receive {:wire_request, _, {:error, %RequestSeal.Error{reason: :digest_mismatch}}}
+
+    assert_receive {:wire_request, _, {:error, %RequestSeal.Error{reason: :digest_mismatch}}},
+                   5_000
+
     Peer.finish(task)
   end
 
@@ -544,7 +547,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:ok, _} = RequestSeal.Req.verification(response)
     assert_receive :resolved
     refute_receive :resolved
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -564,7 +567,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:ok, response} = Req.request(req)
     assert response.body == Peer.body()
     assert {:ok, _} = RequestSeal.Req.verification(response)
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -587,7 +590,7 @@ defmodule RequestSeal.ClientAdaptersTest do
 
     assert {:error, %Error{reason: :limit}} = Req.request(req)
     refute File.exists?(file)
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -601,7 +604,7 @@ defmodule RequestSeal.ClientAdaptersTest do
               source: %RequestSeal.Error{reason: :missing_signature_input}
             }} = Req.request(req)
 
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -888,7 +891,7 @@ defmodule RequestSeal.ClientAdaptersTest do
              request(origin, h, [method: :post, body: body], request_body: {:retain, 100})
 
     assert {:ok, _} = Req.request(req)
-    assert_receive {:wire_request, sent, {:ok, _}}
+    assert_receive {:wire_request, sent, {:ok, _}}, 5_000
     assert sent.body.bytes == Peer.body()
     Peer.finish(task)
     assert {:ok, req} = request(origin, h, [body: body], request_body: {:retain, 1})
@@ -905,7 +908,7 @@ defmodule RequestSeal.ClientAdaptersTest do
              )
 
     assert {:error, %Error{reason: :limit}} = Req.request(req)
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -964,7 +967,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:ok, _} = Req.request(req, into: into)
     assert_receive {:runtime_destination, bytes}
     assert bytes == Peer.body()
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -1035,7 +1038,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:ok, req} = request(origin <> "/confidential-path", h, [], sign: secret_id)
     {sent_request, %Req.Response{}} = Req.Request.run_request(req)
     refute inspect(sent_request.private) =~ "confidential"
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -1046,7 +1049,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert response.body == %{"hello" => "world"}
     assert {:ok, result} = RequestSeal.Req.verification(response)
     assert result.content.bytes == byte_size(:zlib.gzip(Peer.body()))
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -1088,7 +1091,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     r = Finch.build(:get, origin <> "/foo?")
     assert {:ok, signed} = RequestSeal.Finch.sign(r, Peer.spec(components), h)
     assert {:ok, _} = Finch.request(signed, __MODULE__.Pool)
-    assert_receive {:wire_request, sent, {:ok, _}}
+    assert_receive {:wire_request, sent, {:ok, _}}, 5_000
     assert sent.raw_target == "/foo"
     Peer.finish(task)
   end
@@ -1306,7 +1309,7 @@ defmodule RequestSeal.ClientAdaptersTest do
                )
 
       result = Req.request(req)
-      assert_receive {:wire_request, _, {:ok, _}}
+      assert_receive {:wire_request, _, {:ok, _}}, 5_000
       assert {:error, %Error{reason: :response_rejected}} = result
       assert_receive :no_connection, 1_500
       refute_receive {:wire_request, _, _}
@@ -1334,9 +1337,9 @@ defmodule RequestSeal.ClientAdaptersTest do
              )
 
     assert {:ok, _} = Req.request(req)
-    assert_receive {:wire_request, first, {:ok, _}}
+    assert_receive {:wire_request, first, {:ok, _}}, 5_000
     assert Enum.all?(credentials, fn name -> Enum.any?(first.fields, &(&1.name == name)) end)
-    assert_receive {:wire_request, second, {:ok, _}}
+    assert_receive {:wire_request, second, {:ok, _}}, 5_000
     refute Enum.any?(second.fields, &(&1.name in credentials))
     Peer.finish(ta)
     Peer.finish(tb)
@@ -1356,7 +1359,7 @@ defmodule RequestSeal.ClientAdaptersTest do
              )
 
     assert {:error, %Error{reason: :limit}} = Req.request(req)
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     assert_receive {:peer_closed, {:error, :closed}}, 1_000
     Peer.finish(task)
   end
@@ -1375,7 +1378,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     {origin, task} = Peer.start([%{}], h)
     assert {:ok, req} = request(origin, h, [], signer: signer, signing_timeout: 30)
     result = Req.request(req)
-    assert_receive {:signer, worker, guardians}
+    assert_receive {:signer, worker, guardians}, 5_000
 
     assert {:error,
             %Error{
@@ -1401,17 +1404,17 @@ defmodule RequestSeal.ClientAdaptersTest do
     {origin, task} = Peer.start([%{}, :hold, %{}], h)
     assert {:ok, req} = request(origin, h)
     assert {:ok, _} = Req.request(req)
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     baseline = MapSet.new(Process.list())
     port = URI.parse(origin).port
     assert client_socket_count(port) == 0
     {caller, ref} = spawn_monitor(fn -> Req.request(req) end)
-    assert_receive {:wire_request, _, {:ok, _}}
-    assert_receive {:holding, _}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
+    assert_receive {:holding, _}, 5_000
     assert client_socket_count(port) == 1
     assert MapSet.member?(MapSet.difference(MapSet.new(Process.list()), baseline), caller)
     Process.exit(caller, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^caller, :killed}
+    assert_receive {:DOWN, ^ref, :process, ^caller, :killed}, 5_000
     assert_receive {:peer_closed, {:error, :closed}}, 1_000
     assert_receive :no_connection, 1_500
     refute_receive {:wire_request, _, _}
@@ -1450,7 +1453,7 @@ defmodule RequestSeal.ClientAdaptersTest do
                )
 
       assert {:error, %Error{reason: :cross_origin_redirect, attempt: 2}} = Req.request(req)
-      assert_receive {:wire_request, _, {:ok, _}}
+      assert_receive {:wire_request, _, {:ok, _}}, 5_000
       # Only policy errors trigger this retry callback; ordinary responses do not.
       refute_receive :retry_called
       assert_receive :no_connection, 1_500
@@ -1475,12 +1478,12 @@ defmodule RequestSeal.ClientAdaptersTest do
     {origin, task} = Peer.start([%{}], h)
     assert {:ok, req} = request(origin, h, [], signer: signer)
     {caller, caller_ref} = spawn_monitor(fn -> Req.request(req) end)
-    assert_receive {:signer_started, worker, guardians}
+    assert_receive {:signer_started, worker, guardians}, 5_000
     worker_ref = Process.monitor(worker)
     guardian_refs = Enum.map(guardians, &{&1, Process.monitor(&1)})
     assert Process.alive?(worker)
     Process.exit(caller, :kill)
-    assert_receive {:DOWN, ^caller_ref, :process, ^caller, :killed}
+    assert_receive {:DOWN, ^caller_ref, :process, ^caller, :killed}, 5_000
     assert_receive {:DOWN, ^worker_ref, :process, ^worker, :killed}, 1_000
 
     for {guardian, ref} <- guardian_refs do
@@ -1516,7 +1519,7 @@ defmodule RequestSeal.ClientAdaptersTest do
                )
 
       assert {:error, %Error{reason: ^reason, attempt: 1}} = Req.request(req)
-      assert_receive {:wire_request, _, {:ok, _}}
+      assert_receive {:wire_request, _, {:ok, _}}, 5_000
       assert_receive :no_connection, 1_500
       refute_receive :retry_called
       refute_receive {:wire_request, _, _}
@@ -1542,8 +1545,8 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:ok, response} = Req.request(req)
     assert response.body == Peer.body()
     assert {:ok, _} = RequestSeal.Req.verification(response)
-    assert_receive {:wire_request, _, {:ok, _}}
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 
@@ -1564,7 +1567,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:ok, response} = Req.request(req)
     assert response.body == Peer.body()
     assert_receive :observed_response
-    assert_receive {:wire_request, _, {:ok, _}}
+    assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
   end
 

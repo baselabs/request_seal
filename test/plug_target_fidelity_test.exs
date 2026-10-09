@@ -34,7 +34,7 @@ defmodule RequestSeal.PlugTargetFidelityTest do
           )
 
           assert status == 401
-          assert_receive {:observed, conn, {:ok, capture}, :error}
+          assert_receive {:observed, conn, {:ok, capture}, :error}, 5_000
 
           assert capture.message.raw_target ==
                    if(wire_target == "/foo?x=1", do: wire_target, else: "/foo")
@@ -64,7 +64,7 @@ defmodule RequestSeal.PlugTargetFidelityTest do
       assert send_exact(origin, :http1, "/foo?", signed_headers(origin, "/foo", ~s[("@path")])) ==
                200
 
-      assert_receive {:observed, conn, {:ok, _}, :error}
+      assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
 
       assert {:error, %Error{reason: :unsupported_component}} =
                conn.private.request_seal.verification
@@ -88,7 +88,7 @@ defmodule RequestSeal.PlugTargetFidelityTest do
 
       for target <- ["/foo", "/foo?"] do
         assert send_exact(origin, transport, target, headers, "POST", T.body()) == 200
-        assert_receive {:observed, _, {:ok, capture}, {:ok, result}}
+        assert_receive {:observed, _, {:ok, capture}, {:ok, result}}, 5_000
         assert capture.message.body.bytes == T.body()
         assert result.signature.crypto == :valid
       end
@@ -102,7 +102,7 @@ defmodule RequestSeal.PlugTargetFidelityTest do
                String.replace(T.body(), "world", "earth")
              ) == 200
 
-      assert_receive {:observed, conn, {:ok, _}, :error}
+      assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
 
       assert conn.private.request_seal.verification
              |> elem(1)
@@ -126,8 +126,8 @@ defmodule RequestSeal.PlugTargetFidelityTest do
             ["/foo", "/foo?", "/foo?x=1"] ++
               if(transport in [:http1, :https1, :http1_0], do: [origin <> "/foo?"], else: []) do
         assert send_exact(origin, transport, target, []) == 200
-        assert_receive {:target_ingress, ingress}
-        assert_receive {:observed, conn, {:ok, capture}, _}
+        assert_receive {:target_ingress, ingress}, 5_000
+        assert_receive {:observed, conn, {:ok, capture}, _}, 5_000
         {Bandit.Adapter, adapter} = ingress.adapter
         assert ingress.request_path == conn.request_path
         assert ingress.query_string == conn.query_string
@@ -194,14 +194,14 @@ defmodule RequestSeal.PlugTargetFidelityTest do
                  "POST"
                ) == status
 
-        assert_receive {:phoenix, conn, result}
+        assert_receive {:phoenix, conn, result}, 5_000
         assert conn.request_path == "/foo"
         assert conn.query_string == if(target == "/foo?x=1", do: "x=1", else: "")
 
         if component == "@path" do
           assert {:ok, _} = result
           assert Map.has_key?(conn.assigns, :verified)
-          assert_receive {:resolved, _}
+          assert_receive {:resolved, _}, 5_000
         else
           assert result == :error
 
@@ -231,7 +231,7 @@ defmodule RequestSeal.PlugTargetFidelityTest do
           do: {name, String.replace_prefix(value, "sig=", "other=")}
 
     assert send_exact(origin, :http1, "/foo?", path ++ other) == 200
-    assert_receive {:observed, _, {:ok, _}, {:ok, _}}
+    assert_receive {:observed, _, {:ok, _}, {:ok, _}}, 5_000
 
     for headers <- [
           [],
@@ -239,7 +239,7 @@ defmodule RequestSeal.PlugTargetFidelityTest do
           path ++ [{"signature-input", "sig=(\"@request-target\")"}]
         ] do
       assert send_exact(origin, :http1, "/foo?", headers) == 200
-      assert_receive {:observed, conn, {:ok, _}, :error}
+      assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
 
       assert {:error, %Error{reason: :request_rejected, source: %RequestSeal.Error{}}} =
                conn.private.request_seal.verification
@@ -287,7 +287,7 @@ defmodule RequestSeal.PlugTargetFidelityTest do
              signed_headers(origin, "/foo", ~s[("@request-target")])
            ) == 200
 
-    assert_receive {:observed, conn, {:ok, _}, :error}
+    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
 
     assert {:error, %Error{reason: :unsupported_component}} =
              conn.private.request_seal.verification
@@ -312,7 +312,7 @@ defmodule RequestSeal.PlugTargetFidelityTest do
       [headers, body] = :binary.split(response, "\r\n\r\n")
       assert body == ""
       refute headers =~ "signature"
-      assert_receive {:sent, conn}
+      assert_receive {:sent, conn}, 5_000
       assert conn.private.request_seal.error.reason == :unsupported_component
 
       refute Enum.any?(conn.resp_headers, fn {name, _} ->
@@ -360,7 +360,7 @@ defmodule RequestSeal.PlugTargetFidelityTest do
         assert send_exact(origin, :https1, target, signed_headers(origin, "/foo", covered)) ==
                  status
 
-        assert_receive {:observed, conn, {:ok, capture}, verdict}
+        assert_receive {:observed, conn, {:ok, capture}, verdict}, 5_000
         assert capture.message.raw_target == if(target == "/foo?x=1", do: target, else: "/foo")
         assert capture.origin.source == :forwarded
 

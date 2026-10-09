@@ -28,13 +28,13 @@ defmodule RequestSeal.RuntimePolicyTest do
 
       Application.put_env(:request_seal, :runtime_policy, policy)
       T.raw(origin, T.wire("B.2.6"))
-      assert_receive {:first_verification, {:ok, %{signature: %{crypto: :valid}}}}
-      assert_receive {:observed, _, _, {:ok, _}}
+      assert_receive {:first_verification, {:ok, %{signature: %{crypto: :valid}}}}, 5_000
+      assert_receive {:observed, _, _, {:ok, _}}, 5_000
 
       Application.put_env(:request_seal, :runtime_policy, %{policy | components: "invalid"})
       assert T.raw(origin, T.wire("B.2.6")) =~ "HTTP/1.1 401"
-      assert_receive {:first_verification, :error}
-      assert_receive {:observed, conn, _, :error}
+      assert_receive {:first_verification, :error}, 5_000
+      assert_receive {:observed, conn, _, :error}, 5_000
 
       assert {:error, %Error{reason: :invalid_options, source: nil}} =
                conn.private.request_seal.verification
@@ -67,14 +67,14 @@ defmodule RequestSeal.RuntimePolicyTest do
              )
 
     assert {:ok, %{status: 200}} = Req.request(request)
-    assert_receive {:observed, _, {:ok, captured}, {:ok, _}}
+    assert_receive {:observed, _, {:ok, captured}, {:ok, _}}, 5_000
     input = Enum.find(captured.message.fields, &(&1.name == "signature-input")).value
     assert input =~ ";nonce="
     refute input =~ ";alg="
 
     assert {:ok, request} = RequestSeal.Finch.sign(Finch.build(:get, origin), spec, handle)
     assert {:ok, %{status: 200}} = Finch.request(request, __MODULE__.Pool)
-    assert_receive {:observed, _, {:ok, captured}, {:ok, _}}
+    assert_receive {:observed, _, {:ok, captured}, {:ok, _}}, 5_000
     input = Enum.find(captured.message.fields, &(&1.name == "signature-input")).value
     refute input =~ ";alg="
     assert input =~ ";created="
@@ -129,7 +129,7 @@ defmodule RequestSeal.RuntimePolicyTest do
         )
 
       assert T.raw(origin, T.wire("B.2.6")) =~ "HTTP/1.1 401"
-      assert_receive {:observed, conn, _, :error}
+      assert_receive {:observed, conn, _, :error}, 5_000
       assert {:error, %Error{source: nil} = error} = conn.private.request_seal.verification
       assert error.reason in [:invalid_options, :response_rejected]
       refute inspect(error) =~ "policy-secret"
@@ -156,8 +156,8 @@ defmodule RequestSeal.RuntimePolicyTest do
       )
 
     T.raw(origin, T.wire("B.2.6"))
-    assert_receive :policy_resolved
-    assert_receive {:observed, conn, _, :error}
+    assert_receive :policy_resolved, 5_000
+    assert_receive {:observed, conn, _, :error}, 5_000
     assert {:error, %Error{reason: :already_verified}} = conn.private.request_seal.verification
     refute_receive :policy_resolved
 

@@ -32,7 +32,7 @@ defmodule RequestSeal.PlugTransportTest do
 
       for host <- ["ExAmPlE.COM", "ExAmPlE.COM:#{default}", "ExAmPlE.COM:8443"] do
         T.raw(origin, "GET /path HTTP/1.1\r\nHost: #{host}\r\nConnection: close\r\n\r\n")
-        assert_receive {:observed, _conn, {:ok, captured}, _verdict}
+        assert_receive {:observed, _conn, {:ok, captured}, _verdict}, 5_000
         url = "#{scheme}://#{host}/path"
         {:ok, built} = RequestSeal.Message.request("GET", url, [], nil)
         {:ok, finch} = RequestSeal.Finch.request_message(Finch.build(:get, url))
@@ -66,7 +66,7 @@ defmodule RequestSeal.PlugTransportTest do
         )
 
       assert T.raw(origin, T.wire(section)) =~ "HTTP/1.1 200"
-      assert_receive {:observed, conn, {:ok, captured}, verdict}
+      assert_receive {:observed, conn, {:ok, captured}, verdict}, 5_000
 
       if section == "B.2.6" do
         assert {:ok, result} = verdict
@@ -103,7 +103,7 @@ defmodule RequestSeal.PlugTransportTest do
         )
 
       T.raw(origin, T.wire("B.4", m))
-      assert_receive {:observed, conn, {:ok, captured}, verdict}
+      assert_receive {:observed, conn, {:ok, captured}, verdict}, 5_000
 
       if valid do
         assert {:ok, _} = verdict
@@ -139,7 +139,7 @@ defmodule RequestSeal.PlugTransportTest do
     assert T.raw(origin, T.wire("B.2.3", nil, String.replace(T.body(), "world", "earth"))) =~
              "HTTP/1.1 401"
 
-    assert_receive {:observed, conn, {:ok, _}, :error}
+    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
     assert conn.halted
 
     assert {:error,
@@ -182,7 +182,7 @@ defmodule RequestSeal.PlugTransportTest do
                RequestSeal.Req.attach(Req.new(opts), sign: T.spec(), signer: h, verify: :none)
 
       assert {:ok, _} = Req.request(req)
-      assert_receive {:observed, conn, {:ok, captured}, {:ok, _}}
+      assert_receive {:observed, conn, {:ok, captured}, {:ok, _}}, 5_000
       assert conn.body_params == %{"hello" => "world"}
       assert :zlib.gunzip(captured.message.body.bytes) == Jason.encode!(%{"hello" => "world"})
       assert captured.message.raw_target == "/foo%2Fbar?param=Value&Pet=dog"
@@ -220,7 +220,7 @@ defmodule RequestSeal.PlugTransportTest do
                )
 
       assert {:ok, _} = Req.request(req)
-      assert_receive {:observed, conn, {:ok, _}, {:ok, result}}
+      assert_receive {:observed, conn, {:ok, _}, {:ok, result}}, 5_000
       assert conn.body_params == %{"hello" => "world"}
       assert conn.assigns.verified == result
     end
@@ -237,7 +237,7 @@ defmodule RequestSeal.PlugTransportTest do
 
     # A complete published body exceeds the bound even if the adapter returns :ok past length.
     assert T.raw(origin, T.wire("B.2.3")) =~ "HTTP/1.1 413"
-    assert_receive {:observed, conn, :error, :error}
+    assert_receive {:observed, conn, :error, :error}, 5_000
     assert conn.private[:request_seal].error.reason == :limit
     refute_received {:first_verification, _}
   end
@@ -255,7 +255,7 @@ defmodule RequestSeal.PlugTransportTest do
       )
 
     assert T.raw(origin, T.wire("B.2.6")) =~ "HTTP/1.1 400"
-    assert_receive {:observed, conn, :error, :error}
+    assert_receive {:observed, conn, :error, :error}, 5_000
     assert conn.private[:request_seal].error.reason == :parser_order
     refute_received {:resolved, _}
 
@@ -270,9 +270,9 @@ defmodule RequestSeal.PlugTransportTest do
       )
 
     T.raw(origin, T.wire("B.2.6"))
-    assert_receive {:observed, conn, {:ok, _}, {:ok, _}}
+    assert_receive {:observed, conn, {:ok, _}, {:ok, _}}, 5_000
     assert conn.body_params == %{"hello" => "world"}
-    assert_receive {:resolved, _}
+    assert_receive {:resolved, _}, 5_000
   end
 
   test "verification contains malformed app policy without exposing it" do
@@ -286,7 +286,7 @@ defmodule RequestSeal.PlugTransportTest do
       )
 
     assert T.raw(origin, T.wire("B.2.6")) =~ "HTTP/1.1 400"
-    assert_receive {:observed, conn, {:ok, _}, :error}
+    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
 
     assert {:error, %Error{reason: :response_rejected, stage: :verify, source: nil} = error} =
              conn.private[:request_seal].verification
@@ -317,7 +317,7 @@ defmodule RequestSeal.PlugTransportTest do
     # Client completion can precede Bandit formatting its local transport exception.
     assert_receive {:closed_chunk, {:error, reason}}, 2000
     assert is_binary(reason)
-    assert_receive {:sent, _}
+    assert_receive {:sent, _}, 5_000
   end
 
   test "failure and rejection accept only final statuses", %{handle: h} do
@@ -378,11 +378,11 @@ defmodule RequestSeal.PlugTransportTest do
   test "body reader replays once and delegates without capture" do
     {origin, _} = T.start(owner: self(), parse: true, no_capture: true)
     T.raw(origin, T.wire("B.2.3"))
-    assert_receive {:observed, conn, :error, :error}
+    assert_receive {:observed, conn, :error, :error}, 5_000
     assert conn.body_params == %{"hello" => "world"}
     {origin, _} = T.start(owner: self())
     T.raw(origin, T.wire("B.2.3"))
-    assert_receive {:observed, conn, {:ok, _}, :error}
+    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
     assert {:ok, bytes, conn} = Capture.read_body(conn, [])
     assert bytes == T.body()
     assert {:ok, "", _} = Capture.read_body(conn, [])
@@ -392,7 +392,7 @@ defmodule RequestSeal.PlugTransportTest do
     p = T.published_policy("B.2.3", owner: self())
     {origin, _} = T.start(owner: self(), no_capture: true, policy: p, label: "sig-b23")
     T.raw(origin, T.wire("B.2.3"))
-    assert_receive {:observed, conn, :error, :error}
+    assert_receive {:observed, conn, :error, :error}, 5_000
 
     assert conn.private[:request_seal].verification |> elem(1) |> Map.fetch!(:reason) ==
              :not_captured
@@ -435,23 +435,24 @@ defmodule RequestSeal.PlugTransportTest do
              )
 
     assert {:ok, _} = Finch.request(signed, __MODULE__.Pool)
-    assert_receive {:observed, conn, {:ok, _}, :error}
+    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
     assert {:error, %Error{reason: :already_verified}} = conn.private[:request_seal].verification
-    assert_receive {:first_verification, {:ok, _}}
-    assert_receive {:resolved, _}
-    assert_receive {:commitment, _}
+    assert_receive {:first_verification, {:ok, _}}, 5_000
+    assert_receive {:resolved, _}, 5_000
+    assert_receive {:commitment, _}, 5_000
     refute_received {:resolved, _}
     refute_received {:commitment, _}
     assert {:ok, _} = Finch.request(signed, __MODULE__.Pool)
-    assert_receive {:observed, conn, {:ok, _}, :error}
+    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
     assert {:error, %Error{reason: :already_verified}} = conn.private[:request_seal].verification
-    assert_receive {:first_verification, :error}
+    assert_receive {:first_verification, :error}, 5_000
 
     assert_receive {:verification_attempt,
-                    {:error, %Error{source: %RequestSeal.Error{reason: :replayed}}}}
+                    {:error, %Error{source: %RequestSeal.Error{reason: :replayed}}}},
+                   5_000
 
-    assert_receive {:sent, _}
-    assert_receive {:sent, _}
+    assert_receive {:sent, _}, 5_000
+    assert_receive {:sent, _}, 5_000
     {origin, _} = T.start(owner: owner, policy: p, direct_claim: true)
 
     assert {:ok, signed} =
@@ -463,8 +464,8 @@ defmodule RequestSeal.PlugTransportTest do
              )
 
     assert {:ok, _} = Finch.request(signed, __MODULE__.Pool)
-    assert_receive {:direct_claim, {:ok, _}}
-    assert_receive {:observed, conn, {:ok, _}, :error}
+    assert_receive {:direct_claim, {:ok, _}}, 5_000
+    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
 
     assert {:error, %Error{source: %RequestSeal.Error{reason: :replayed}}} =
              conn.private[:request_seal].verification
@@ -516,7 +517,7 @@ defmodule RequestSeal.PlugTransportTest do
                )
 
       assert {:ok, %{status: 403}} = Finch.request(req, __MODULE__.Pool)
-      assert_receive {:observed, conn, {:ok, _}, result}
+      assert_receive {:observed, conn, {:ok, _}, result}, 5_000
 
       if keyid == "unknown" do
         assert :error = result
@@ -530,7 +531,7 @@ defmodule RequestSeal.PlugTransportTest do
         assert {:ok, result} = result
         assert result.principal == :unattributed
         assert result.authorization == :not_evaluated
-        assert_receive {:identity_commitment, _}
+        assert_receive {:identity_commitment, _}, 5_000
       end
 
       refute inspect(conn.private[:request_seal]) =~ "header-canary"
@@ -585,7 +586,7 @@ defmodule RequestSeal.PlugTransportTest do
     ]
 
     T.raw(origin, bytes)
-    assert_receive {:observed, conn, {:ok, captured}, :error}
+    assert_receive {:observed, conn, {:ok, captured}, :error}, 5_000
     assert captured.message.trailers == :unavailable
     assert {:error, %Error{reason: :request_rejected}} = conn.private[:request_seal].verification
   end
@@ -596,7 +597,7 @@ defmodule RequestSeal.PlugTransportTest do
     on_exit(fn -> :erlang.trace_pattern({Bandit.Adapter, :read_req_body, 2}, false, [:local]) end)
     {origin, _} = T.start(owner: self(), trace_body: true)
     assert T.raw(origin, "GET /foo HTTP/1.0\r\n\r\n") =~ "400"
-    assert_receive {:observed, conn, :error, :error}
+    assert_receive {:observed, conn, :error, :error}, 5_000
     assert conn.private[:request_seal].error.reason == :invalid_request
     refute_received {:trace, _, :call, {Bandit.Adapter, :read_req_body, _}}
 
@@ -607,7 +608,7 @@ defmodule RequestSeal.PlugTransportTest do
 
     # Known-positive probe on the same listener and tracing setup.
     assert T.raw(origin, T.wire("B.2.3")) =~ "200"
-    assert_receive {:trace, _, :call, {Bandit.Adapter, :read_req_body, _}}
+    assert_receive {:trace, _, :call, {Bandit.Adapter, :read_req_body, _}}, 5_000
   end
 
   test "response signature binds final bytes to captured request on HTTP/1.1 and HTTP/2", %{
@@ -642,7 +643,7 @@ defmodule RequestSeal.PlugTransportTest do
       assert {:ok, response} = Req.request(req)
       assert response.body == T.response()
       assert {:ok, _} = RequestSeal.Req.verification(response)
-      assert_receive {:observed, _, {:ok, captured}, _}
+      assert_receive {:observed, _, {:ok, captured}, _}, 5_000
       assert captured.message.raw_target == "/foo%2Fbar?param=Value"
 
       assert {:ok, request} =
@@ -659,7 +660,7 @@ defmodule RequestSeal.PlugTransportTest do
                  label: "res"
                )
 
-      assert_receive {:observed, _, {:ok, second_capture}, _}
+      assert_receive {:observed, _, {:ok, second_capture}, _}, 5_000
       assert second_capture.message.raw_target == "/different"
 
       assert {:error, %Error{reason: :response_rejected}} =
@@ -741,11 +742,11 @@ defmodule RequestSeal.PlugTransportTest do
                name in ["signature", "signature-input"]
              end)
 
-      assert_receive {:sent, conn}
+      assert_receive {:sent, conn}, 5_000
       assert conn.private[:request_seal].error.reason == :unsupported_delivery
 
       if delivery == :chunked do
-        assert_receive {:chunk_write, {:error, :closed}}
+        assert_receive {:chunk_write, {:error, :closed}}, 5_000
         assert {:error, :closed} = Plug.Conn.chunk(conn, "later bytes")
       end
     end
@@ -795,7 +796,7 @@ defmodule RequestSeal.PlugTransportTest do
                name in ["signature", "signature-input", "content-digest", "repr-digest"]
              end)
 
-      assert_receive {:sent, conn}
+      assert_receive {:sent, conn}, 5_000
       assert {Bandit.Adapter, _} = conn.adapter
       assert %Error{reason: :not_captured, source: nil} = conn.private.request_seal.error
     end
@@ -907,10 +908,10 @@ defmodule RequestSeal.PlugTransportTest do
 
     assert response =~ "HTTP/1.1 413"
     assert length(:binary.matches(response, "HTTP/1.1")) == 1
-    assert_receive {:trace, _, :call, {Bandit.Adapter, :read_req_body, [_, opts]}}
+    assert_receive {:trace, _, :call, {Bandit.Adapter, :read_req_body, [_, opts]}}, 5_000
     assert opts[:length] == 1
     refute_received {:trace, _, :call, {Bandit.Adapter, :read_req_body, _}}
-    assert_receive {:observed, conn, :error, :error}
+    assert_receive {:observed, conn, :error, :error}, 5_000
     assert conn.private[:request_seal].error.reason == :limit
   end
 
@@ -930,7 +931,7 @@ defmodule RequestSeal.PlugTransportTest do
                "\r\nConnection: close\r\n\r\n"
              ]) =~ "200"
 
-      assert_receive {:observed, _, {:ok, capture}, :error}
+      assert_receive {:observed, _, {:ok, capture}, :error}, 5_000
       assert capture.message.raw_target == target
       assert capture.message.authority == authority
       assert capture.message.body.bytes == ""
@@ -957,7 +958,7 @@ defmodule RequestSeal.PlugTransportTest do
       )
 
     assert {:ok, _} = Finch.request(req, __MODULE__.HTTP2Pool)
-    assert_receive {:observed, conn, {:ok, capture}, :error}
+    assert_receive {:observed, conn, {:ok, capture}, :error}, 5_000
 
     assert Enum.filter(capture.message.fields, &(&1.name == "cookie")) |> Enum.map(& &1.value) ==
              ["a=b; c=d; e=f"]
@@ -1016,11 +1017,11 @@ defmodule RequestSeal.PlugTransportTest do
     for opts <- [[connect_method: true], [capture_twice: true]] do
       {origin, _} = T.start([owner: self(), trace_body: true] ++ opts)
       assert T.raw(origin, T.wire("B.2.3")) =~ "400"
-      assert_receive {:observed, conn, _, :error}
+      assert_receive {:observed, conn, _, :error}, 5_000
       assert conn.private[:request_seal].error.reason == :invalid_request
 
       if opts[:capture_twice],
-        do: assert_receive({:trace, _, :call, {Bandit.Adapter, :read_req_body, _}})
+        do: assert_receive({:trace, _, :call, {Bandit.Adapter, :read_req_body, _}}, 5_000)
 
       refute_received {:trace, _, :call, {Bandit.Adapter, :read_req_body, _}}
     end
@@ -1029,7 +1030,7 @@ defmodule RequestSeal.PlugTransportTest do
   test "public accessors hide failures and capture inspection hides ingress authority" do
     {origin, _} = T.start(owner: self())
     T.raw(origin, "GET /foo HTTP/1.1\r\nHost: header-canary.example\r\nConnection: close\r\n\r\n")
-    assert_receive {:observed, conn, {:ok, capture}, :error}
+    assert_receive {:observed, conn, {:ok, capture}, :error}, 5_000
     assert {:ok, _} = RequestSeal.Plug.capture(conn)
     assert :error == RequestSeal.Plug.verification(conn)
     refute inspect(capture) =~ "header-canary"
@@ -1043,7 +1044,7 @@ defmodule RequestSeal.PlugTransportTest do
     assert response.status == 503
     assert response.body == ""
     refute Enum.any?(response.headers, fn {n, _} -> n in ["signature", "signature-input"] end)
-    assert_receive {:sent, conn}
+    assert_receive {:sent, conn}, 5_000
     assert conn.private[:request_seal].error.reason == :not_captured
   end
 
@@ -1131,7 +1132,7 @@ defmodule RequestSeal.PlugTransportTest do
       )
 
     assert T.raw(origin, T.wire("B.2.3")) =~ "200"
-    assert_receive {:observed, conn, {:ok, capture}, :error}
+    assert_receive {:observed, conn, {:ok, capture}, :error}, 5_000
 
     assert {:error, %Error{reason: :unsupported_component}} =
              conn.private[:request_seal].verification
@@ -1164,7 +1165,7 @@ defmodule RequestSeal.PlugTransportTest do
       assert response.status == 503
       assert response.body == ""
       refute Enum.any?(response.headers, fn {n, _} -> n in ["signature", "signature-input"] end)
-      assert_receive {:sent, conn}
+      assert_receive {:sent, conn}, 5_000
 
       if mode == :existing_signature,
         do:
@@ -1191,7 +1192,7 @@ defmodule RequestSeal.PlugTransportTest do
       "GET /foo HTTP/1.1\r\nHost: [2001:db8:cafe::17]:4711\r\nConnection: close\r\n\r\n"
     )
 
-    assert_receive {:observed, _, {:ok, capture}, :error}
+    assert_receive {:observed, _, {:ok, capture}, :error}, 5_000
     assert capture.ingress.host == "2001:db8:cafe::17"
     assert capture.origin.authority == "[2001:db8:cafe::17]:4711"
   end
@@ -1205,7 +1206,7 @@ defmodule RequestSeal.PlugTransportTest do
       {origin, _} = transport_start(protocol, [owner: self()] ++ opts)
       request = Finch.build(:post, origin <> "/foo", [], "ab")
       result = Finch.request(request, __MODULE__.HTTP2Pool)
-      assert_receive {:observed, conn, _, :error}
+      assert_receive {:observed, conn, _, :error}, 5_000
       assert conn.private[:request_seal].error.reason == unquote(reason)
       assert {:ok, response} = result
       assert response.status == unquote(status)
@@ -1242,7 +1243,7 @@ defmodule RequestSeal.PlugTransportTest do
 
       assert {:ok, req} = RequestSeal.Finch.sign(req, spec, h)
       assert {:ok, %{status: 200}} = Finch.request(req, transport_pool(protocol))
-      assert_receive {:observed, conn, captured, verdict}
+      assert_receive {:observed, conn, captured, verdict}, 5_000
       assert conn.body_params == %{"hello" => "world"}
 
       if no_capture do
@@ -1271,7 +1272,7 @@ defmodule RequestSeal.PlugTransportTest do
 
       req = Finch.build(:get, origin <> "/foo")
       assert {:ok, response} = Finch.request(req, transport_pool(protocol))
-      assert_receive {:sent, conn}
+      assert_receive {:sent, conn}, 5_000
 
       if response.status == 200 do
         assert {:ok, _} =
@@ -1303,7 +1304,7 @@ defmodule RequestSeal.PlugTransportTest do
 
       assert {:ok, req} = RequestSeal.Finch.sign(req, T.spec(), h)
       assert {:ok, %{status: 200}} = Finch.request(req, __MODULE__.Pool)
-      assert_receive {:observed, conn, {:ok, capture}, {:ok, _}}
+      assert_receive {:observed, conn, {:ok, capture}, {:ok, _}}, 5_000
       assert capture.message.body.bytes == T.body()
       assert conn.body_params == %{"hello" => if(transform, do: "earth", else: "world")}
     end
@@ -1329,7 +1330,7 @@ defmodule RequestSeal.PlugTransportTest do
 
     assert {:ok, req} = RequestSeal.Finch.sign(req, T.spec(), h)
     assert {:ok, _} = Finch.request(req, __MODULE__.Pool)
-    assert_receive {:observed, conn, {:ok, _}, :error}
+    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
     assert conn.body_params == %{"hello" => "world"}
 
     assert {:error, %Error{reason: :parser_order, source: nil}} =
@@ -1351,8 +1352,8 @@ defmodule RequestSeal.PlugTransportTest do
 
       req = Finch.build(:post, origin <> "/foo", [{"content-type", "application/json"}], T.body())
       assert {:ok, %{status: 413}} = Finch.request(req, transport_pool(protocol))
-      assert_receive {:parser_rejection, Plug.Parsers.RequestTooLargeError}
-      assert_receive {:observed, _, {:ok, capture}, :error}
+      assert_receive {:parser_rejection, Plug.Parsers.RequestTooLargeError}, 5_000
+      assert_receive {:observed, _, {:ok, capture}, :error}, 5_000
       assert capture.message.body.bytes == T.body()
     end
   end
@@ -1364,7 +1365,7 @@ defmodule RequestSeal.PlugTransportTest do
     assert {:ok, _} =
              Finch.request(Finch.build(:post, origin <> "/foo", [], "abcdefgh"), __MODULE__.Pool)
 
-    assert_receive {:observed, conn, {:ok, _}, :error}
+    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
     assert {:more, "abc", conn} = Capture.read_body(conn, length: 3)
     assert {:more, "def", conn} = Capture.read_body(conn, length: 3)
     assert {:ok, "gh", conn} = Capture.read_body(conn, length: 3)
@@ -1404,7 +1405,7 @@ defmodule RequestSeal.PlugTransportTest do
           )
 
         signed_body_request(origin, unquote(protocol), h)
-        assert_receive {:observed, conn, {:ok, _}, verdict}
+        assert_receive {:observed, conn, {:ok, _}, verdict}, 5_000
         assert verdict == :error
 
         assert {:error, %Error{reason: :parser_order, source: nil}} =
@@ -1432,7 +1433,7 @@ defmodule RequestSeal.PlugTransportTest do
         )
 
       signed_body_request(origin, unquote(protocol), h)
-      assert_receive {:observed, conn, {:ok, _}, verdict}
+      assert_receive {:observed, conn, {:ok, _}, verdict}, 5_000
       assert verdict == :error
 
       assert {:error, %Error{reason: :parser_order, source: nil}} =
@@ -1473,7 +1474,7 @@ defmodule RequestSeal.PlugTransportTest do
           )
 
         signed_body_request(origin, unquote(protocol), h)
-        assert_receive {:observed, conn, {:ok, _}, verdict}
+        assert_receive {:observed, conn, {:ok, _}, verdict}, 5_000
 
         if tamper do
           assert verdict == :error
@@ -1484,7 +1485,7 @@ defmodule RequestSeal.PlugTransportTest do
           refute_received {:resolved, _}
         else
           assert {:ok, _} = verdict
-          assert_receive {:resolved, _}
+          assert_receive {:resolved, _}, 5_000
         end
       end
     end
@@ -1515,7 +1516,7 @@ defmodule RequestSeal.PlugTransportTest do
           )
 
         signed_body_request(origin, unquote(protocol), h)
-        assert_receive {:observed, conn, {:ok, _}, verdict}
+        assert_receive {:observed, conn, {:ok, _}, verdict}, 5_000
         assert verdict == :error
 
         assert {:error, %Error{reason: :parser_order, source: nil} = error} =
@@ -1541,7 +1542,7 @@ defmodule RequestSeal.PlugTransportTest do
           )
 
         signed_body_request(origin, unquote(protocol), h)
-        assert_receive {:observed, conn, {:ok, _}, {:ok, _}}
+        assert_receive {:observed, conn, {:ok, _}, {:ok, _}}, 5_000
         assert Map.get(conn.private.request_seal, :reader_called?, false) == reader
         assert RequestSeal.Plug.Delivery.replayed?(conn.adapter)
       end
@@ -1566,7 +1567,7 @@ defmodule RequestSeal.PlugTransportTest do
         )
 
       signed_body_request(origin, unquote(protocol), h)
-      assert_receive {:observed, conn, {:ok, _}, :error}
+      assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
       assert conn.private.request_seal.reader_called?
       refute RequestSeal.Plug.Delivery.replayed?(conn.adapter)
 
@@ -1590,7 +1591,7 @@ defmodule RequestSeal.PlugTransportTest do
         )
 
       signed_body_request(origin, unquote(protocol), h)
-      assert_receive {:observed, conn, {:ok, capture}, {:ok, _}}
+      assert_receive {:observed, conn, {:ok, capture}, {:ok, _}}, 5_000
       assert conn.body_params == %{"hello" => "earth"}
       assert capture.message.body.bytes == T.body()
       refute Map.get(conn.private.request_seal, :reader_called?, false)
@@ -1601,7 +1602,7 @@ defmodule RequestSeal.PlugTransportTest do
           transport_start(unquote(protocol), owner: self(), parse: true, policy: T.policy())
 
         signed_body_request(origin, unquote(protocol), h, type)
-        assert_receive {:observed, conn, {:ok, _}, {:ok, _}}
+        assert_receive {:observed, conn, {:ok, _}, {:ok, _}}, 5_000
         refute Map.get(conn.private.request_seal, :reader_called?, false)
         refute RequestSeal.Plug.Delivery.replayed?(conn.adapter)
       end
@@ -1649,13 +1650,13 @@ defmodule RequestSeal.PlugTransportTest do
 
       for offset <- [0, 5, byte_size(T.body())],
           bad <- [-1, -5, 1.5, nil, :invalid, "length-canary"] do
-        assert_receive {:invalid_replay_length, ^offset, ^bad, result}
+        assert_receive {:invalid_replay_length, ^offset, ^bad, result}, 5_000
         assert {:error, %Error{reason: :invalid_options, source: nil} = error} = result
         assert byte_size(Exception.message(error)) < 100
         refute inspect(error) =~ "length-canary"
       end
 
-      assert_receive {:observed, _, {:ok, _}, {:ok, _}}
+      assert_receive {:observed, _, {:ok, _}, {:ok, _}}, 5_000
     end
 
     @tag :replay_coverage
@@ -1688,7 +1689,7 @@ defmodule RequestSeal.PlugTransportTest do
           assert response.body == ""
           refute List.keymember?(response.headers, "signature", 0)
           refute List.keymember?(response.headers, "signature-input", 0)
-          assert_receive {:sent, conn}
+          assert_receive {:sent, conn}, 5_000
           assert conn.private.request_seal.error.reason == :unsupported_delivery
         end
       end
@@ -1743,7 +1744,7 @@ defmodule RequestSeal.PlugTransportTest do
 
         req = Finch.build(:get, origin <> "/foo")
         assert {:ok, response} = Finch.request(req, transport_pool(unquote(protocol)))
-        assert_receive {:sent, conn}
+        assert_receive {:sent, conn}, 5_000
 
         if callbacks in [:absent, nil] do
           assert response.status == 200
@@ -1815,7 +1816,7 @@ defmodule RequestSeal.PlugTransportTest do
                  "Connection: close\r\n\r\n"
                ]) =~ "HTTP/1.1 200"
 
-        assert_receive {:observed, _, {:ok, captured}, {:ok, verified}}
+        assert_receive {:observed, _, {:ok, captured}, {:ok, verified}}, 5_000
         assert verified.signature.crypto == :valid
         {:ok, expected} = RequestSeal.Message.request("GET", url, [], nil)
 

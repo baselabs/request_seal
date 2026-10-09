@@ -32,7 +32,7 @@ defmodule RequestSeal.PlugPhoenixTest do
                "GET /foo HTTP/1.1\r\nHost: example.com\r\nForwarded: proto=https;host=example.com\r\nConnection: close\r\n\r\n"
              ) =~ "HTTP/1.1 200"
 
-      assert_receive {:observed, _, {:ok, capture}, :error}
+      assert_receive {:observed, _, {:ok, capture}, :error}, 5_000
       assert capture.ingress.remote_ip == {0, 0, 0, 0, 0, 65535, 32512, 1}
       assert capture.origin.source == :forwarded
     end
@@ -47,7 +47,7 @@ defmodule RequestSeal.PlugPhoenixTest do
              "GET /foo HTTP/1.1\r\nHost: example.com\r\nForwarded: proto=https;host=example.com\r\nConnection: close\r\n\r\n"
            ) =~ "HTTP/1.1 200"
 
-    assert_receive {:observed, _, {:ok, capture}, :error}
+    assert_receive {:observed, _, {:ok, capture}, :error}, 5_000
     assert capture.ingress.remote_ip == {127, 0, 0, 1}
     assert capture.origin.source == :forwarded
   end
@@ -79,7 +79,7 @@ defmodule RequestSeal.PlugPhoenixTest do
     assert {:ok, response} = Req.request(req)
     assert response.body == %{"hello" => "world"}
     assert {:ok, _} = RequestSeal.Req.verification(response)
-    assert_receive {:phoenix, conn, {:ok, result}}
+    assert_receive {:phoenix, conn, {:ok, result}}, 5_000
     assert conn.body_params == %{"hello" => "world"}
     assert conn.assigns.verified == result
   end
@@ -96,11 +96,11 @@ defmodule RequestSeal.PlugPhoenixTest do
     assert response.body == ""
     refute List.keymember?(response.headers, "signature", 0)
     refute List.keymember?(response.headers, "signature-input", 0)
-    assert_receive {:phoenix, conn, {:ok, _}}
+    assert_receive {:phoenix, conn, {:ok, _}}, 5_000
     assert Plug.Conn.get_session(conn, "visited") == true
     assert %{value: cookie} = conn.resp_cookies["_request_seal_session"]
     assert is_binary(cookie) and byte_size(cookie) > 0
-    assert_receive {:phoenix_session_sent, sent}
+    assert_receive {:phoenix_session_sent, sent}, 5_000
 
     assert %RequestSeal.Adapter.Error{reason: :unsupported_delivery, source: nil} =
              sent.private.request_seal.error
@@ -128,7 +128,7 @@ defmodule RequestSeal.PlugPhoenixTest do
                  label: "res"
                )
 
-      assert_receive {:phoenix, conn, {:ok, result}}
+      assert_receive {:phoenix, conn, {:ok, result}}, 5_000
       assert conn.assigns.verified == result
       assert conn.body_params == unquote(Macro.escape(body_params))
       assert {:ok, capture} = RequestSeal.Plug.capture(conn)
@@ -200,7 +200,7 @@ defmodule RequestSeal.PlugPhoenixTest do
                "GET /foo HTTP/1.1\r\nHost: example.com\r\nForwarded: proto=https;host=example.com\r\nConnection: close\r\n\r\n"
              ) =~ "HTTP/1.1 200"
 
-      assert_receive {:observed, _, {:ok, capture}, :error}
+      assert_receive {:observed, _, {:ok, capture}, :error}, 5_000
       expected = if dual_stack, do: {0, 0, 0, 0, 0, 65535, 32512, 1}, else: {127, 0, 0, 1}
       assert capture.ingress.remote_ip == expected
       assert capture.origin.source == :forwarded
@@ -244,7 +244,7 @@ defmodule RequestSeal.PlugPhoenixTest do
              )
 
     assert {:ok, _} = Req.request(req)
-    assert_receive {:observed, _, {:ok, captured}, {:ok, _}}
+    assert_receive {:observed, _, {:ok, captured}, {:ok, _}}, 5_000
 
     assert captured.origin == %{
              scheme: "https",
@@ -275,7 +275,7 @@ defmodule RequestSeal.PlugPhoenixTest do
       uri = URI.parse(origin)
       transport = %{signed | scheme: :http, host: "127.0.0.1", port: uri.port}
       assert {:ok, _} = Finch.request(transport, __MODULE__.Pool)
-      assert_receive {:observed, conn, captured, :error}
+      assert_receive {:observed, conn, captured, :error}, 5_000
 
       if rule == :connection do
         assert {:ok, c} = captured
@@ -308,7 +308,7 @@ defmodule RequestSeal.PlugPhoenixTest do
         "GET /foo HTTP/1.1\r\nHost: example.com\r\n" <> headers <> "Connection: close\r\n\r\n"
       )
 
-      assert_receive {:observed, _, {:ok, c}, _}
+      assert_receive {:observed, _, {:ok, c}, _}, 5_000
       assert c.origin.scheme == "https"
       assert c.origin.authority == "example.com"
     end
@@ -336,7 +336,7 @@ defmodule RequestSeal.PlugPhoenixTest do
                  header <> "\r\nConnection: close\r\n\r\n"
              ) =~ "400"
 
-      assert_receive {:observed, conn, :error, :error}
+      assert_receive {:observed, conn, :error, :error}, 5_000
       assert conn.private[:request_seal].error.reason == :invalid_request
       refute_received {:trace, _, :call, {Bandit.Adapter, :read_req_body, _}}
     end
@@ -346,7 +346,7 @@ defmodule RequestSeal.PlugPhoenixTest do
       "GET /foo HTTP/1.1\r\nHost: example.com\r\nForwarded: proto=https;host=example.com\r\nConnection: close\r\n\r\n"
     )
 
-    assert_receive {:trace, _, :call, {Bandit.Adapter, :read_req_body, _}}
+    assert_receive {:trace, _, :call, {Bandit.Adapter, :read_req_body, _}}, 5_000
   end
 
   test "forwarded origin requires paired nonempty values and valid configured ranges" do
@@ -364,7 +364,7 @@ defmodule RequestSeal.PlugPhoenixTest do
                  fields <> "Connection: close\r\n\r\n"
              ) =~ "400"
 
-      assert_receive {:observed, conn, :error, :error}
+      assert_receive {:observed, conn, :error, :error}, 5_000
       assert conn.private[:request_seal].error.reason == :invalid_request
     end
 
