@@ -66,4 +66,23 @@ defmodule RequestSeal.ProfileSignatureInputTest do
       refute Profile.valid_signature_input?(input)
     end
   end
+
+  for kind <- [:error, :throw, :exit] do
+    test "returns false when a parameter enumerable raises #{kind}" do
+      parameters =
+        Stream.map([:parameter], fn _ ->
+          case unquote(kind) do
+            :error -> raise "invalid parameter enumeration"
+            :throw -> throw(:invalid_parameter_enumeration)
+            :exit -> exit(:invalid_parameter_enumeration)
+          end
+        end)
+
+      assert Profile.valid_signature_input?(%Value{
+               type: :inner_list,
+               value: [],
+               parameters: parameters
+             }) == false
+    end
+  end
 end

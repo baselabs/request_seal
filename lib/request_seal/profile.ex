@@ -71,6 +71,8 @@ defmodule RequestSeal.Profile do
     SignatureFields.valid_inner?(input)
   rescue
     _ -> false
+  catch
+    _, _ -> false
   end
 
   @doc "Parse paired signature dictionaries in encounter order under a member limit."

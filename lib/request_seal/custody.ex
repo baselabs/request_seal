@@ -219,11 +219,15 @@ defmodule RequestSeal.Custody do
   are both monitored; either dying cancels the callback, including blocked
   callbacks that trap exits. Nested runs monitor their immediate caller as well
   as their context owner, so cancellation propagates through nested operations.
+  An already-dead context owner prevents the callback from starting. Owner death
+  returns `{:error, %RequestSeal.Custody.Error{reason: :custodian_failure, retryable: false}}`.
 
   The callback and its supervising middle process set sensitivity before work.
   Neither is linked to the caller. The runner is terminated and its exit awaited
   before the middle process sends a result; the caller awaits the middle process's
   exit before returning. Deadline expiry cancels the runner and awaits cleanup.
+  Work inside a dirty NIF cannot be preempted: cancellation waits for the runner's
+  exit, so a long native call can overshoot the deadline.
   Replies use a revocable process alias: queued replies are drained and later
   replies to that alias are discarded, without consuming unrelated caller messages.
 
@@ -251,10 +255,10 @@ defmodule RequestSeal.Custody do
           {:ok, term()} | {:error, term()}
   def run(%Context{deadline: deadline, owner: owner} = context, callback)
       when is_integer(deadline) and is_pid(owner) and is_function(callback, 0) do
-    if Context.remaining(context) == 0 do
-      {:error, Error.new(:deadline_exceeded)}
-    else
-      run_worker(context, callback)
+    cond do
+      Context.remaining(context) <= 0 -> {:error, Error.new(:deadline_exceeded)}
+      owner_dead?(owner) -> {:error, Error.new(:custodian_failure)}
+      true -> run_worker(context, callback)
     end
   end
 
@@ -290,7 +294,7 @@ defmodule RequestSeal.Custody do
       {:DOWN, ^monitor, :process, ^worker, _} ->
         {:error, Error.new(:custodian_failure)}
     after
-      min(Context.remaining(context), 4_294_967_295) ->
+      context |> Context.remaining() |> max(0) |> min(4_294_967_295) ->
         if Context.remaining(context) > 0 do
           receive_result(context, worker, monitor, reply)
         else
@@ -314,19 +318,36 @@ defmodule RequestSeal.Custody do
     owner_ref = if context.owner == caller, do: caller_ref, else: Process.monitor(context.owner)
     middle = self()
 
-    if Context.remaining(context) == 0 do
-      send(reply, {reply, {:error, Error.new(:deadline_exceeded)}})
-    else
-      runner =
-        spawn_link(fn ->
-          Process.flag(:sensitive, true)
-          result = Support.safe(callback, :custodian_failure) |> run_result()
-          send(middle, {reply, result})
-        end)
+    cond do
+      Context.remaining(context) <= 0 ->
+        send(reply, {reply, {:error, Error.new(:deadline_exceeded)}})
 
-      watch_runner(caller, caller_ref, owner_ref, reply, context, runner)
+      owner_dead?(context.owner) ->
+        send(reply, {reply, {:error, Error.new(:custodian_failure)}})
+
+      true ->
+        receive do
+          {:DOWN, ^owner_ref, :process, _, _} ->
+            send(reply, {reply, {:error, Error.new(:custodian_failure)}})
+
+          {:DOWN, ^caller_ref, :process, ^caller, _} ->
+            :ok
+        after
+          0 ->
+            runner =
+              spawn_link(fn ->
+                Process.flag(:sensitive, true)
+                result = Support.safe(callback, :custodian_failure) |> run_result()
+                send(middle, {reply, result})
+              end)
+
+            watch_runner(caller, caller_ref, owner_ref, reply, context, runner)
+        end
     end
   end
+
+  defp owner_dead?(owner) when node(owner) == node(), do: not Process.alive?(owner)
+  defp owner_dead?(_), do: false
 
   defp watch_runner(caller, caller_ref, owner_ref, reply, context, runner) do
     receive do
@@ -347,7 +368,7 @@ defmodule RequestSeal.Custody do
       {:EXIT, ^runner, _} ->
         :ok
     after
-      min(Context.remaining(context), 4_294_967_295) ->
+      context |> Context.remaining() |> max(0) |> min(4_294_967_295) ->
         if Context.remaining(context) > 0 do
           watch_runner(caller, caller_ref, owner_ref, reply, context, runner)
         else

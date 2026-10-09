@@ -5,6 +5,13 @@
 - Document `RequestSeal.Custody.run/2` as a public deadline and cancellation
   boundary, with sensitive workers, caller and context-owner monitoring,
   nested cancellation, bounded failures, and revocable replies with cleanup.
+- Change the formerly undocumented `Custody.run/2` return contract: bare `:ok`
+  returns `{:ok, :ok}`; other bare returns become `:custodian_failure`; non-Context
+  arguments return `:invalid_options` instead of raising; context-owner death
+  returns a nonretryable `:custodian_failure` error instead of silence. An owner
+  already dead at entry prevents callback execution.
+- Document the dirty-NIF cancellation limit: cleanup waits for the runner's exit,
+  so a long native call can overshoot the deadline.
 - Add `RequestSeal.Profile.valid_signature_input?/1` for parsed RFC 9421
   Signature-Input Inner List semantics, delegating to the shared validator.
 - Document `RequestSeal.Replay.Claim.valid?/1` without changing its validation.

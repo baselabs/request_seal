@@ -44,6 +44,29 @@ defmodule RequestSeal.CustodyRunnerTest do
     refute_receive :started
   end
 
+  test "an already-dead context owner never starts the callback" do
+    test_pid = self()
+
+    callback = fn ->
+      send(test_pid, :started)
+      {:ok, :completed}
+    end
+
+    assert {:ok, :completed} = Custody.run(context(), callback)
+    assert_received :started
+
+    {owner, monitor} = spawn_monitor(fn -> :ok end)
+    assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+    refute Process.alive?(owner)
+
+    for _ <- 1..10_000 do
+      assert {:error, %Error{reason: :custodian_failure, retryable: false}} =
+               Custody.run(%{context() | owner: owner}, callback)
+    end
+
+    refute_received :started
+  end
+
   test "deadline kills a blocked callback even if it traps exits" do
     owner = self()
 
@@ -118,7 +141,7 @@ defmodule RequestSeal.CustodyRunnerTest do
     assert_receive {:runner, runner}
     refs = monitor_all([runner])
     Process.exit(owner, :kill)
-    assert {:error, %Error{reason: :custodian_failure}} = Task.await(caller)
+    assert {:error, %Error{reason: :custodian_failure, retryable: false}} = Task.await(caller)
     assert_down(refs)
   end
 

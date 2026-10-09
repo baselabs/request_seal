@@ -11,6 +11,61 @@ defmodule RequestSeal.CustodyUnwrapTest do
     {:ok, private: :public_key.generate_key({:rsa, 2048, 65537})}
   end
 
+  test "non-RSA key management uses an unwrap callback and refuses custody handles", %{
+    private: private
+  } do
+    assert {:ok, handle} = Local.new({:jwe, "RSA-OAEP-256"}, {:rsa, private})
+
+    try do
+      for alg <- ~w(dir A128GCMKW A256GCMKW) do
+        key = :crypto.strong_rand_bytes(if alg == "A128GCMKW", do: 16, else: 32)
+        material = if alg == "dir", do: {:cek, key}, else: {:aes, key}
+
+        wrap = fn algorithm, cek ->
+          KeyManagement.wrap(
+            algorithm,
+            cek,
+            %{},
+            if(alg == "dir", do: {:cek, cek}, else: material)
+          )
+        end
+
+        # Direct encryption provisions its fresh CEK in caller-owned custody.
+        wrapping_owner = self()
+
+        wrap = fn algorithm, cek ->
+          if alg == "dir", do: send(wrapping_owner, {:direct_cek, cek})
+          wrap.(algorithm, cek)
+        end
+
+        assert {:ok, compact} = JWE.encrypt([{"alg", alg}, {"enc", "A256GCM"}], "payload", wrap)
+
+        material =
+          if alg == "dir",
+            do:
+              (
+                assert_receive {:direct_cek, cek}
+                {:cek, cek}
+              ),
+            else: material
+
+        unwrap = fn bytes, header -> KeyManagement.unwrap(alg, bytes, header, material) end
+        p = policy(handle, alg)
+
+        assert {:ok, %{plaintext: "payload"}} =
+                 JWE.decrypt(compact, %{
+                   p
+                   | key_resolver: fn _ -> {:ok, %{algorithm: alg, unwrap: unwrap}} end
+                 })
+
+        assert JWE.decrypt(compact, p) ==
+                 {:error, RequestSeal.JOSE.Error.new(:decryption_failed, :crypto)}
+      end
+    after
+      Local.release(handle)
+    end
+  end
+
   test "every handle-path CEK recipient is sensitive and send receive traces hide the CEK", %{
     private: private
   } do

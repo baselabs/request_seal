@@ -89,12 +89,22 @@ defmodule RequestSeal.JOSE.JWS do
     or `{:ok, %{algorithm: same_wire_name, key: public_key_or_verify_function}}`,
     with exactly those two entry keys. The verification function has arity three,
     receives `({:jws, wire_name}, exact_base_bytes, signature_bytes)`, and returns
-    `:ok` on validity. Use it for HMAC so secrets remain in caller-owned custody.
+    exactly `:ok` on validity. Any other return, including `{:ok, value}`, is
+    `:invalid_signature`. Use it for HMAC so secrets remain in caller-owned custody.
 
   Returns `{:ok, RequestSeal.JOSE.JWS.Result.t()}` only after verification,
-  otherwise `{:error, RequestSeal.JOSE.Error.t()}`. Malformed policies return
-  `:invalid_policy`; rejected algorithms return `:algorithm_not_permitted`;
-  invalid signatures return `:invalid_signature`; callback failures are bounded.
+  otherwise `{:error, RequestSeal.JOSE.Error.t()}`. Error reasons are
+  `:invalid_policy`, `:invalid_serialization`, `:unsupported_serialization`,
+  `:limit`, `:invalid_base64`, `:invalid_header`, `:duplicate_member`,
+  `:unsupported_critical_header`, `:compression_unsupported`, `:unsupported_header`,
+  `:algorithm_not_permitted`, `:detached_payload`, `:unknown_key`,
+  `:algorithm_mismatch`, `:key_resolver_failed`, `:invalid_signature`, and
+  `:deadline_exceeded`. Resolver exceptions or invalid entries return
+  `:key_resolver_failed`; resolver `:error` returns `:unknown_key`; verification
+  callback failures return `:invalid_signature`. Only `:deadline_exceeded` is
+  retryable. Protected header `"crit"` rejects as `:unsupported_critical_header`,
+  `"zip"` as `:compression_unsupported`, and `"jku"`, `"x5u"`, `"jwk"`, and
+  `"b64"` as `:unsupported_header`, regardless of their values.
   Resolver and verification callbacks execute in a sensitive worker with deadline
   and caller cancellation. Input is bounded to 1,048,576 bytes. Empty or detached
   payloads and noncompact serializations reject. Protected bytes are never

@@ -58,7 +58,9 @@ defmodule RequestSeal.JOSE.JWE do
   `header` is an ordered list of `{string_name, json_value}` pairs with `"alg"`
   selected from `"RSA-OAEP-256"`, `"RSA-OAEP"`, `"A128GCMKW"`, `"A256GCMKW"`,
   or `"dir"`, and `"enc"` selected from `"A128GCM"` or `"A256GCM"`.
-  Members must be unique; unsupported critical headers and compression reject.
+  Members must be unique. `"crit"` rejects as `:unsupported_critical_header`,
+  `"zip"` as `:compression_unsupported`, and `"jku"`, `"x5u"`, `"jwk"`, and
+  `"b64"` as `:unsupported_header`, regardless of their values.
   Plaintext and the resulting compact envelope are bounded to 1,048,576 bytes.
 
   `recipient` is a compatible RSA `RequestSeal.PublicKey` or an arity-two function
@@ -73,8 +75,15 @@ defmodule RequestSeal.JOSE.JWE do
   This function accepts no policy map; decryption selects its own explicit policy.
   Wrapping and encryption run in a sensitive worker with deadline and caller
   cancellation. Returns `{:ok, compact_binary}` or
-  `{:error, RequestSeal.JOSE.Error.t()}`. Invalid options return `:invalid_options`;
-  callback failures return `:signer_failed`; expiry returns `:deadline_exceeded`.
+  `{:error, RequestSeal.JOSE.Error.t()}`. Error reasons are `:invalid_options`,
+  `:invalid_serialization`, `:limit`, `:invalid_header`, `:duplicate_member`,
+  `:unsupported_critical_header`, `:compression_unsupported`, `:unsupported_header`,
+  `:algorithm_not_permitted`, `:algorithm_mismatch`, `:invalid_base64`,
+  `:invalid_iv`, `:invalid_tag`, `:decryption_failed`, `:entropy_failure`,
+  `:signer_failed`, and `:deadline_exceeded`. Callback failure or an invalid wrap
+  result returns `:signer_failed`; malformed encrypted-key bytes return
+  `:decryption_failed`. This function has no key resolver and does not return
+  `:key_resolver_failed`. Only `:deadline_exceeded` is retryable.
   See the module documentation for protected JSON serialization order.
 
   This example uses actual RFC 7518 AES GCM key wrapping and content encryption:
@@ -170,8 +179,11 @@ defmodule RequestSeal.JOSE.JWE do
     It returns `:error`, `{:ok, %{algorithm: same_name, unwrap: arity_two_function}}`,
     or `{:ok, %{algorithm: same_name, key: custody_handle}}`, with exactly two
     entry keys. Unwrap receives `(encrypted_key_bytes, header)` and returns
-    `{:ok, cek_bytes}` or `{:error, term}`. A handle binds `{:jwe, same_name}`
-    with only `:unwrap` capability; RSA private operations stay in custody.
+    `{:ok, cek_bytes}` or `{:error, term}`. The `key:` handle form works only for
+    `"RSA-OAEP"` and `"RSA-OAEP-256"`, binding `{:jwe, same_name}` with only
+    `:unwrap` capability; RSA private operations stay in custody. `"dir"`,
+    `"A128GCMKW"`, and `"A256GCMKW"` require the `unwrap:` callback. A handle
+    supplied for one of those algorithms returns `:decryption_failed`.
 
   Resolution, unwrapping, and authentication share one absolute deadline with
   sensitive workers and caller cancellation. No plaintext leaves the worker
