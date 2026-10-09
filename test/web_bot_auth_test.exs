@@ -762,11 +762,21 @@ defmodule RequestSeal.WebBotAuthTest do
   test "real TLS directory refresh preserves replay commitment facts" do
     Peer.public_jwk()
     fetches = :atomics.new(1, [])
+    # The cache checks the directory proof against this clock, so the peer signs
+    # with it too; a wall-clock second ticking between capture and fetch would
+    # otherwise date the proof in the cache's future.
+    time = :atomics.new(1, [])
+    :atomics.put(time, 1, System.system_time(:second))
 
     p =
       Peer.start(fn socket, req ->
         suffix = if :atomics.add_get(fetches, 1, 1) == 1, do: "", else: "\n"
-        Peer.signed(socket, req, Peer.directory() <> suffix)
+        created = :atomics.get(time, 1)
+
+        Peer.signed(socket, req, Peer.directory() <> suffix, nil,
+          created: created,
+          expires: created + 60
+        )
       end)
 
     on_exit(fn -> Peer.stop(p) end)
@@ -780,8 +790,6 @@ defmodule RequestSeal.WebBotAuthTest do
         permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}]
       })
 
-    time = :atomics.new(1, [])
-    :atomics.put(time, 1, System.system_time(:second))
     cache = start_supervised!({Cache, clock: fn -> :atomics.get(time, 1) end})
     store = start_supervised!({ETS, max_entries: 10})
     owner = self()
