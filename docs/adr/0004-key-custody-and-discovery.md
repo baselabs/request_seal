@@ -87,6 +87,10 @@ yield the forged-message error in JWE, so operators check
 header algorithm in both callback and handle branches. Deadline expiration
 remains a separate bounded failure.
 
+A header naming the other permitted OAEP algorithm fails before any RSA operation
+and can therefore be faster than a padding failure; the complete error is identical,
+and the timing reveals only which variant the handle binds.
+
 Acceptance requires actual OTP round trips, independent published OAEP vectors,
 Node WebCrypto encryption to the handle's public key, wrong/released handle
 rejection, suspended-holder timeout/cancellation, and private-key canary checks

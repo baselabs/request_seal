@@ -174,16 +174,13 @@ defmodule RequestSeal.JOSE.JWE do
      }}
   end
 
-  defp unwrapper(%{algorithm: _, unwrap: fun} = entry, alg, _)
+  defp unwrapper(%{algorithm: _, unwrap: fun} = entry, _, _)
        when map_size(entry) == 2 and is_function(fun, 2) do
-    ensure(entry.algorithm == alg, :key_resolver_failed, :key)
     fun
   end
 
   defp unwrapper(%{algorithm: _, key: %KeyHandle{} = handle} = entry, alg, deadline)
        when map_size(entry) == 2 do
-    ensure(entry.algorithm == alg, :key_resolver_failed, :key)
-
     fn bytes, _header ->
       ensure(handle.algorithm == {:jwe, alg}, :decryption_failed, :crypto)
       ensure(handle.capabilities == [:unwrap], :decryption_failed, :crypto)

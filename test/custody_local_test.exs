@@ -776,6 +776,7 @@ defmodule RequestSeal.CustodyLocalTest do
         original = Path.join(@root, id <> "_private.pem")
         encrypted = Path.join(dir, id <> "-encrypted.pem")
         converted = Path.join(dir, id <> "-pkcs8.pem")
+        converted_der = Path.join(dir, id <> "-pkcs8.der")
 
         assert {_, 0} =
                  System.cmd(
@@ -804,9 +805,33 @@ defmodule RequestSeal.CustodyLocalTest do
                    stderr_to_stdout: true
                  )
 
-        assert {:ok, handle} = Local.import(algorithm, File.read!(converted), :pem)
-        assert {:ok, sig} = Custody.sign(handle, "sample")
-        assert :ok = Custody.verify(handle, "sample", sig)
+        assert {_, 0} =
+                 System.cmd(
+                   "openssl",
+                   [
+                     "pkcs8",
+                     "-topk8",
+                     "-nocrypt",
+                     "-outform",
+                     "DER",
+                     "-in",
+                     original,
+                     "-out",
+                     converted_der
+                   ],
+                   stderr_to_stdout: true
+                 )
+
+        der = File.read!(converted_der)
+
+        for {format, input} <- [pem: File.read!(converted), der: der] do
+          assert {:ok, handle} = Local.import(algorithm, input, format)
+          assert {:ok, sig} = Custody.sign(handle, "sample")
+          assert :ok = Custody.verify(handle, "sample", sig)
+          assert :ok = Local.release(handle)
+        end
+
+        assert_error(Local.import(algorithm, der <> <<0>>, :der), :invalid_key)
       end
     after
       File.rm_rf!(dir)

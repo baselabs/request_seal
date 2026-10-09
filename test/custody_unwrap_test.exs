@@ -94,6 +94,21 @@ defmodule RequestSeal.CustodyUnwrapTest do
       assert Custody.unwrap(handle, wrapped.encrypted_key) ==
                {:error, Custody.Error.new(:decryption_failed)}
 
+      assert {:ok, compact} = JWE.encrypt([{"alg", alg}, {"enc", "A256GCM"}], "text", public)
+      p = policy(handle, alg)
+      assert {:ok, result} = JWE.decrypt(compact, p)
+      assert result.plaintext == "text"
+      [h, ek, iv, ct, tag] = String.split(compact, ".")
+      <<first, rest::binary>> = Support.decode(tag)
+
+      forged =
+        Enum.join([h, ek, iv, ct, Support.b64(<<Bitwise.bxor(first, 1), rest::binary>>)], ".")
+
+      assert {:error, error} = JWE.decrypt(forged, p)
+      assert error == RequestSeal.JOSE.Error.new(:decryption_failed, :crypto)
+      empty_key = Enum.join([h, Support.b64(wrapped.encrypted_key), iv, ct, tag], ".")
+      assert JWE.decrypt(empty_key, p) == {:error, error}
+
       assert :ok = Local.release(handle)
     end
   end
