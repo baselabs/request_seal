@@ -9,8 +9,9 @@ defmodule RequestSeal.ReplayTest do
   @created 1_618_884_473
 
   setup do
-    {:ok, pid} = ETS.start_link(max_entries: 256)
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    # Supervised so ExUnit stops it after the test process exits; an alive check followed by
+    # GenServer.stop races the linked exit.
+    pid = start_supervised!({ETS, max_entries: 256})
     %{pid: pid, store: ETS.store(pid)}
   end
 

@@ -55,8 +55,7 @@ defmodule RequestSeal.ReplayETSPropertyTest do
   @runs 300
 
   property "64-task same and distinct nonce storms lose no claims and sweep bounds memory" do
-    {:ok, pid} = ETS.start_link(max_entries: 65)
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    pid = start_supervised!({ETS, max_entries: 65})
     store = ETS.store(pid)
     table = :sys.get_state(pid).table
     baseline = :ets.info(table, :memory)

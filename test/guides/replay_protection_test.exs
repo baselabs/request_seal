@@ -159,7 +159,12 @@ defmodule RequestSeal.GuideReplayProtectionTest do
     on_exit(fn ->
       RequestSeal.Custody.Local.release(Keyword.fetch!(binding, :handle))
       pid = Keyword.fetch!(binding, :replay_pid)
-      if Process.alive?(pid), do: GenServer.stop(pid)
+      # The guide's store is linked to the test process and may already be exiting with it.
+      try do
+        GenServer.stop(pid)
+      catch
+        :exit, _ -> :ok
+      end
     end)
 
     %{binding: binding, executed: executed}
