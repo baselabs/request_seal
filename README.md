@@ -3,7 +3,7 @@
 # RequestSeal
 
 RequestSeal signs and verifies HTTP requests and responses in Elixir with RFC 9421 HTTP Message Signatures, including Web Bot Auth for AI agents and crawlers.
-Drop-in integrations support Plug and Phoenix, Req and Finch, and Ash; JOSE supports JWS signing and JWE encryption.
+Integrations support Req, Finch, and Ash; Phoenix uses the Plug integration; JOSE supports JWS signing and JWE encryption.
 
 Use it to:
 
@@ -13,15 +13,33 @@ Use it to:
 - Turn a verified caller into an Ash actor and tenant.
 - Protect against replayed requests.
 
-## Why RequestSeal
+## Hello world
 
-- Match the standard's bytes: published RFC 9421 signature bases and cryptographic vectors are checked against the original bytes.
-- Decide what to accept: you explicitly select trusted keys, algorithms, covered fields, freshness, body integrity, and replay rules.
-- Reject repeated signed requests with replay protection backed by ETS or optional PostgreSQL storage.
-- Keep private keys in isolated, sensitive processes or sign through your OpenSSH agent without exporting its keys.
-- Bound input processing: parsers enforce byte, count, and depth limits.
-- Start only what you choose: loading RequestSeal starts no processes, pools, connections, or background fetches.
-- Add frameworks when you need them: optional transport adapters and the Ash protocol compile only when their dependencies are present.
+```elixir
+{_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, key} = RequestSeal.Custody.public_key(handle)
+components = ~s[("@method" "@authority" "@path")]
+{:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+spec = %{label: "sig", algorithm: "ed25519", components: components, expires_in: 60}
+{:ok, signed} = RequestSeal.sign(message, spec, handle)
+resolve = fn _ -> {:ok, %{algorithm: "ed25519", key: key}} end
+clock = fn -> System.system_time(:second) end
+
+{:ok, policy} =
+  RequestSeal.Policy.new(%{
+    algorithms: ["ed25519"],
+    components: components,
+    key_resolver: resolve,
+    freshness: %{clock: clock, max_age: 60, skew: 5, require_expires: true},
+    content: :not_required,
+    replay: :not_required
+  })
+
+{:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
+# :valid
+IO.inspect(verification.signature.crypto)
+```
 
 ## Installation
 
@@ -31,132 +49,163 @@ Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 {:request_seal, git: "https://github.com/baselabs/request_seal.git"}
 ```
 
-The repository is private until the first release, so the Git dependency requires access. The first release will be published to Hex. For reproducible builds, pin the Git dependency to a commit with `ref:`.
+The repository is private until the first Hex release, so the Git dependency requires access. For reproducible builds, pin the Git dependency to a commit with `ref:`.
 
 Add the optional dependencies for the integrations you use. The JSON pipeline examples also use Jason (`~> 1.0`), already included by Req and Ash; add it explicitly in a Plug-only application:
 
 | Dependency | Requirement | Use |
 | --- | --- | --- |
-| `:plug` | `~> 1.20.3` | Plug and Phoenix pipelines |
+| `:plug` | `~> 1.20.3` | Plug pipelines, also used by Phoenix |
+| `:bandit` | `~> 1.12.5` | To run the example receiver |
+| `:phoenix` | `~> 1.8.15` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.23.0 and < 0.25.0` | Finch transport and caller-started pools |
 | `:ash` | `~> 3.34` | Ash scope protocol and authorization-enabled actions |
 | `:postgrex` | `~> 0.22.4` | PostgreSQL replay storage using your existing connection |
 
-## Quick start
-
-### Sign and verify a request
-
-No HTTP client or server is needed. Generate an Ed25519 key for this example; in your application, reuse a key handle owned by a long-lived process and share its public key with the verifier through a trusted channel.
+For the webhook script, add these alongside RequestSeal (Jason decodes JSON):
 
 ```elixir
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
-{:ok, key} = RequestSeal.Custody.public_key(handle)
-{:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
-signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+[
+  {:req, "~> 0.7.4"},
+  {:finch, ">= 0.23.0 and < 0.25.0"},
+  {:plug, "~> 1.20.3"},
+  {:bandit, "~> 1.12.5"},
+  {:jason, "~> 1.0"}
+]
 ```
 
-Build the request from its exact body bytes. The signing spec adds its content digest and generates a 60-second validity window and random nonce:
+## Send and receive a signed webhook
+
+Save this entire script as `webhook.exs` in a fresh `mix new` project with the dependencies above, run `mix deps.get`, then `mix run webhook.exs`. It starts a receiver on an available local port, sends a signed request, and checks unsigned rejection.
+
+In a real deployment, the receiver gets the sender's public key out of band or from a trusted JWKS URL or key directory; see [key discovery](docs/guides/key-discovery.md).
 
 ```elixir
-components = ~s[("@method" "@authority" "@path" "content-digest")]
-{:ok, message} = RequestSeal.Message.request("POST", "https://api.example.com/webhooks", [], ~s({"event":"created"}))
-signing = %{
-  label: "sig", algorithm: "ed25519", components: components,
-  parameters: %{created: true, expires_in: 60, nonce: :random, alg: true, keyid: "demo-key", tag: nil},
-  digest: ["sha-256"], field_schemas: %{}
-}
-{:ok, signed} = RequestSeal.sign(message, signing, handle)
-```
+defmodule WebhookReceiver do
+  use Plug.Router
 
-The verifier explicitly chooses trusted keys, algorithms, coverage, freshness, body integrity, and replay rules:
-
-```elixir
-{:ok, policy} = RequestSeal.Policy.new(%{
-  algorithms: ["ed25519"], components: components,
-  key_resolver: fn %{keyid: "demo-key"} -> {:ok, %{algorithm: "ed25519", key: key}}; _ -> :error end,
-  freshness: %{clock: fn -> System.system_time(:second) end, max_age: 60, skew: 5, require_expires: true},
-  content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
-  replay: :not_required
-})
-{:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
-verification.signature.crypto # => :valid
-```
-
-A valid signature does not authorize an action; `verification.authorization` remains `:not_evaluated`. [Signing and verifying](docs/guides/signing-and-verifying.md) explains results, errors, response builders, and exact control with hand-built messages.
-
-### Sign outgoing requests with Req
-
-Reuse the key handle above. Req constructs the message and digest for you; choose how each finalized request is signed:
-
-```elixir
-signing = %{
-  label: "sig",
-  algorithm: "ed25519",
-  components: ~s[("@method" "@authority" "@path" "content-digest")],
-  parameters: %{
-    created: true,
-    expires_in: 60,
-    nonce: :random,
-    alg: true,
-    keyid: "demo-key",
-    tag: nil
-  },
-  digest: ["sha-256"],
-  field_schemas: %{}
-}
-```
-
-Set `:webhook_url` in your application configuration to your receiving endpoint. Start a Finch pool and send the request:
-
-```elixir
-url = Application.fetch_env!(:my_app, :webhook_url)
-{:ok, _pool} = Finch.start_link(name: MyApp.Finch)
-
-request =
-  Req.new(
-    url: url,
-    method: :post,
-    json: %{"event" => "created"},
-    finch: [name: MyApp.Finch],
-    retry: false
+  plug(RequestSeal.Plug.Capture,
+    origin: :connection,
+    max_body_bytes: 1_048_576,
+    read_timeout: 5_000
   )
 
-{:ok, request} = RequestSeal.Req.attach(request, sign: signing, signer: handle, verify: :none)
-{:ok, response} = Req.request(request)
-```
+  plug(Plug.Parsers,
+    parsers: [:json],
+    pass: ["*/*"],
+    json_decoder: Jason,
+    body_reader: {RequestSeal.Plug.Capture, :read_body, []}
+  )
 
-Supervise and reuse the pool in your application. `verify: :none` explicitly leaves the response unverified; [Req and Finch](docs/guides/req-and-finch.md) shows how to require signed responses.
+  plug(RequestSeal.Plug.Verify,
+    policy: {Application, :fetch_env!, [:webhook_demo, :signature_policy]},
+    label: "sig",
+    on_reject: {:halt, 401}
+  )
 
-### Verify incoming requests in Phoenix or Plug
+  plug(:match)
+  plug(:dispatch)
 
-Configure `:my_app, :http_signature_policy` with the `policy` above on your receiving application. Install this pipeline before the endpoint's existing parsers: capture the bytes, parse with the RequestSeal body reader, then verify before the controller.
-
-```elixir
-defmodule MyApp.VerifySignature do
-  def init(options), do: options
-
-  def call(conn, _options) do
-    policy = Application.fetch_env!(:my_app, :http_signature_policy)
-
-    options =
-      RequestSeal.Plug.Verify.init(
-        policy: policy,
-        label: "sig",
-        assign: :verified,
-        on_reject: {:halt, 401}
-      )
-
-    RequestSeal.Plug.Verify.call(conn, options)
+  post "/webhooks" do
+    {:ok, verified} = RequestSeal.Plug.verification(conn)
+    send_resp(conn, 200, "#{verified.signature.crypto}: #{conn.body_params["event"]}")
   end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+end
+
+# The sender owns the private key; the receiver gets only its public key.
+{_public, webhook_seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, webhook_handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, webhook_seed})
+{:ok, webhook_key} = RequestSeal.Custody.public_key(webhook_handle)
+webhook_components = ~s[("@method" "@authority" "@path" "content-digest")]
+
+{:ok, webhook_policy} =
+  RequestSeal.Policy.new(%{
+    algorithms: ["ed25519"],
+    components: webhook_components,
+    key_resolver: fn
+      %{keyid: "sender-key"} -> {:ok, %{algorithm: "ed25519", key: webhook_key}}
+      _ -> :error
+    end,
+    freshness: %{
+      clock: fn -> System.system_time(:second) end,
+      max_age: 60,
+      skew: 5,
+      require_expires: true
+    },
+    content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
+    replay: :not_required
+  })
+
+webhook_signing = %{
+  label: "sig",
+  algorithm: "ed25519",
+  components: webhook_components,
+  expires_in: 60,
+  keyid: "sender-key",
+  digest: ["sha-256"]
+}
+
+Application.put_env(:webhook_demo, :signature_policy, webhook_policy)
+{:ok, webhook_apps} = Application.ensure_all_started(:req)
+{:ok, webhook_pool} = Finch.start_link(name: WebhookFinch)
+
+{:ok, receiver} =
+  Bandit.start_link(
+    plug: WebhookReceiver,
+    ip: {127, 0, 0, 1},
+    port: 0,
+    http_options: [compress: false]
+  )
+
+{:ok, {_, port}} = ThousandIsland.listener_info(receiver)
+
+try do
+  request =
+    Req.new(
+      url: "http://127.0.0.1:#{port}/webhooks",
+      method: :post,
+      json: %{"event" => "created"},
+      finch: [name: WebhookFinch],
+      retry: false
+    )
+
+  {:ok, request} =
+    RequestSeal.Req.attach(request, sign: webhook_signing, signer: webhook_handle, verify: :none)
+
+  {:ok, response} = Req.request(request)
+  # {200, "valid: created"}
+  IO.inspect({response.status, response.body})
+
+  unsigned =
+    Req.post!("http://127.0.0.1:#{port}/webhooks", json: %{"event" => "created"}, retry: false)
+
+  # 401
+  IO.inspect(unsigned.status)
+
+  unless response.status == 200 and response.body == "valid: created" and unsigned.status == 401,
+    do: raise("webhook verification failed")
+after
+  Supervisor.stop(receiver)
+  Application.delete_env(:webhook_demo, :signature_policy)
+  Supervisor.stop(webhook_pool)
+  RequestSeal.Custody.Local.release(webhook_handle)
+  Enum.each(Enum.reverse(webhook_apps), &Application.stop/1)
 end
 ```
 
-Capture and parse the body before calling the verifier:
+`verify: :none` leaves the response unverified; the receiver verifies the request. [Req and Finch](docs/guides/req-and-finch.md) covers signed responses and retries. Supervise and reuse keys and pools in your application.
+
+### In Phoenix
+
+Phoenix uses the same Plug integration. Configure your trusted policy under `:my_app, :http_signature_policy` during application startup; the verifier resolves it for each request. Put this pipeline before the endpoint's existing parsers and router (`plug MyAppWeb.SignedWebhookPipeline`). Route `POST /webhooks` to `WebhookController.create/2`.
 
 ```elixir
-defmodule MyApp.WebhookPipeline do
+defmodule MyAppWeb.SignedWebhookPipeline do
   use Plug.Builder
 
   plug(RequestSeal.Plug.Capture,
@@ -172,14 +221,14 @@ defmodule MyApp.WebhookPipeline do
     body_reader: {RequestSeal.Plug.Capture, :read_body, []}
   )
 
-  plug(MyApp.VerifySignature)
+  plug(RequestSeal.Plug.Verify,
+    policy: {Application, :fetch_env!, [:my_app, :http_signature_policy]},
+    label: "sig",
+    on_reject: {:halt, 401}
+  )
 end
-```
 
-Route `POST /webhooks` to this controller. Only requests that pass verification reach it:
-
-```elixir
-defmodule MyApp.WebhookController do
+defmodule MyAppWeb.WebhookController do
   use Phoenix.Controller, formats: [:json]
 
   def create(conn, params) do
@@ -189,13 +238,17 @@ defmodule MyApp.WebhookController do
 end
 ```
 
-This verifies RFC 9421 webhook signatures; use the sender's documented scheme for other signing formats. [Phoenix and Plug](docs/guides/phoenix-and-plug.md) covers proxies, response signing, and supported components.
+[Phoenix and Plug](docs/guides/phoenix-and-plug.md) covers trusted proxies and response signing. [Signing and verifying](docs/guides/signing-and-verifying.md) explains core results, errors, and exact wire control.
 
-### Sign and verify with Web Bot Auth
+## More examples
 
-Web Bot Auth identifies signed requests from agents and crawlers. Sign the `message` above with protocol-00:
+### Web Bot Auth
+
+Web Bot Auth identifies signed requests from agents and crawlers. Sign the `message` from Hello world with protocol-00:
 
 ```elixir
+{:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
+signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
 now = System.system_time(:second)
 
 {:ok, agent_request} =
@@ -239,9 +292,9 @@ verification = envelope.signatures["agent"]
 
 To authenticate an agent URL, resolve it through a source you trust. [Web Bot Auth](docs/guides/web-bot-auth.md) shows discovery, nested signatures, and draft-specific errors.
 
-### Turn a verified caller into an Ash actor and tenant
+### Ash
 
-The Web Bot Auth `verification` above identifies the held key. Map that principal to an actor and tenant, then read your `MyApp.Document` resource. This example assumes the resource has attribute-based multitenancy and a read policy for `%{role: :reader}`; the [Ash guide](docs/guides/ash.md) includes the resource definition.
+The Web Bot Auth `verification` above identifies the held key. Map that principal to an actor and tenant, then read your `AshApp.Document` resource. This example assumes the resource has attribute-based multitenancy and a read policy for `%{role: :reader}`; the [Ash guide](docs/guides/ash.md) includes the resource definition.
 
 ```elixir
 {:ok, scope} =
@@ -254,14 +307,14 @@ The Web Bot Auth `verification` above identifies the held key. Map that principa
     unattributed: :reject
   })
 
-documents = Ash.read!(MyApp.Document, scope: scope, authorize?: true)
+documents = Ash.read!(AshApp.Document, scope: scope, authorize?: true)
 ```
 
 Your mapping chooses the actor and tenant; Ash policies decide access. Generic RFC 9421 verification does not attribute an identity. Choose `unattributed: :anonymous` explicitly for anonymous access, or reject it.
 
-### Add replay protection
+### Replay protection
 
-Accept the `signed` request from the first example only once. If its 60-second validity window has elapsed, rerun that example's signing step. The original policy checks cryptography and body integrity; this policy also claims its nonce, the random value identifying the request:
+Accept the `signed` request from the hello world only once. If its 60-second validity window has elapsed, rerun that example's signing step. The Hello world policy checks the signature and freshness; it does not require body integrity. This policy also claims its nonce, the random value identifying the request:
 
 ```elixir
 {:ok, replay_pid} = RequestSeal.Replay.ETS.start_link(max_entries: 10_000)
@@ -303,7 +356,7 @@ Here one trusted key uses one namespace. Define your own commitment for your tru
 
 | Integration | Optional dependency | Entry module | What it does |
 | --- | --- | --- | --- |
-| Plug and Phoenix | `:plug` | `RequestSeal.Plug` | Capture request bytes, verify before controllers, sign final responses |
+| Plug (including Phoenix) | `:plug` | `RequestSeal.Plug` | Capture request bytes, verify before controllers, sign final responses |
 | Req | `:req`, `:finch` | `RequestSeal.Req` | Sign each finalized attempt and verify responses before decoding or delivery |
 | Finch | `:finch` | `RequestSeal.Finch` | Sign requests and verify responses against the exact sent request |
 | Ash | `:ash` | `RequestSeal.Ash` | Map verified facts to actors, tenants, and scopes with authorization enabled |
@@ -319,6 +372,8 @@ A valid signature proves which key signed which covered bytes; a trusted associa
 
 ## Documentation
 
+### Guides
+
 - [Sign and verify without a framework](docs/guides/signing-and-verifying.md), including verification results and quorum
 - [Req and Finch](docs/guides/req-and-finch.md)
 - [Phoenix and Plug](docs/guides/phoenix-and-plug.md)
@@ -328,10 +383,12 @@ A valid signature proves which key signed which covered bytes; a trusted associa
 - [Key discovery](docs/guides/key-discovery.md)
 - [JOSE: JWS and JWE](docs/guides/jose.md)
 - [Key custody](docs/guides/key-custody.md)
-- [Local development](docs/guides/getting-started.md), [testing](docs/guides/testing.md), and [Livebooks](livebooks/README.md)
-- [Architecture](docs/design/architecture.md), [threat model](docs/design/threat-model.md), [ADRs](docs/adr/0001-library-boundary.md), [glossary](docs/reference/glossary.md), and [standards](docs/reference/standards.md)
+- [Livebooks](livebooks/README.md)
 
-## Contributing
+### Contributing
+
+- [Develop RequestSeal](docs/guides/getting-started.md) and [testing](docs/guides/testing.md)
+- [Architecture](docs/design/architecture.md), [threat model](docs/design/threat-model.md), [ADRs](docs/adr/0001-library-boundary.md), [glossary](docs/reference/glossary.md), and [standards](docs/reference/standards.md)
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Run the declared gate: `python3 scripts/check.py`.
 

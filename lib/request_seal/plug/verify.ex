@@ -3,6 +3,14 @@ if Code.ensure_loaded?(Plug.Conn) do
     @moduledoc """
     Verify the immutable captured request under an explicit policy and label.
 
+    `:policy` accepts a valid `RequestSeal.Policy`, a zero-arity function, or an
+    exported `{module, function, args}`. Functions and MFAs return a policy directly
+    and run once per eligible request, after capture and parser checks, before
+    key resolution. Their returned policy is validated; invalid policies reject
+    with `:invalid_options`. Exceptions, throws, and exits reject with the bounded
+    `:response_rejected` error. No callback diagnostics are retained. Resolution
+    runs synchronously; callers own deadlines for external work.
+
     Requires `:policy`, `:label`, and `:on_reject` (`:continue` or
     `{:halt, status}` with final status in 200..599). Optional `:assign` is an atom
     or nil; only success is assigned. Private state retains `{:ok, verification}`
@@ -33,7 +41,7 @@ if Code.ensure_loaded?(Plug.Conn) do
              Signing.options(opts, [:policy, :label, :on_reject, :assign])
 
              Signing.ensure(
-               Policy.valid?(opts[:policy]) and SignatureFields.label?(opts[:label]) and
+               policy_source?(opts[:policy]) and SignatureFields.label?(opts[:label]) and
                  is_atom(opts[:assign]) and rejection?(opts[:on_reject]),
                :invalid_options
              )
@@ -43,6 +51,29 @@ if Code.ensure_loaded?(Plug.Conn) do
         {:error, error} -> raise %{error | stage: :verify}
         opts -> opts
       end
+    end
+
+    defp policy_source?(%Policy{} = policy), do: Policy.valid?(policy)
+    defp policy_source?(policy) when is_function(policy, 0), do: true
+
+    defp policy_source?({module, function, args})
+         when is_atom(module) and is_atom(function) and is_list(args) do
+      Code.ensure_loaded?(module) and function_exported?(module, function, length(args))
+    end
+
+    defp policy_source?(_), do: false
+
+    defp resolve_policy(%Policy{} = policy), do: policy
+
+    defp resolve_policy(source) do
+      policy =
+        case source do
+          function when is_function(function, 0) -> function.()
+          {module, function, args} -> apply(module, function, args)
+        end
+
+      Signing.ensure(Policy.valid?(policy), :invalid_options)
+      policy
     end
 
     defp rejection?(:continue), do: true
@@ -72,16 +103,19 @@ if Code.ensure_loaded?(Plug.Conn) do
                 not Delivery.replay_matches?(conn.adapter, state.capture.message.body.bytes) ->
               {:error, Error.new(:parser_order, :plug, :verify, 0)}
 
-            not Target.verification_supported?(state.capture.message, opts[:policy], opts[:label]) ->
-              {:error, Error.new(:unsupported_component, :plug, :verify, 0)}
-
             true ->
-              case RequestSeal.verify(state.capture.message, opts[:policy], label: opts[:label]) do
-                {:ok, _} = result ->
-                  result
+              policy = resolve_policy(opts[:policy])
 
-                {:error, source} ->
-                  {:error, Error.new(:request_rejected, :plug, :verify, 0, source)}
+              if Target.verification_supported?(state.capture.message, policy, opts[:label]) do
+                case RequestSeal.verify(state.capture.message, policy, label: opts[:label]) do
+                  {:ok, _} = result ->
+                    result
+
+                  {:error, source} ->
+                    {:error, Error.new(:request_rejected, :plug, :verify, 0, source)}
+                end
+              else
+                {:error, Error.new(:unsupported_component, :plug, :verify, 0)}
               end
           end
         end)

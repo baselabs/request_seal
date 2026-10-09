@@ -3,7 +3,22 @@ defmodule RequestSeal.Signing do
   alias RequestSeal.{Body, Custody, Digest, KeyHandle, Policy, SignatureBase, SignatureFields}
   alias RequestSeal.Adapter.Error
 
-  @type spec :: RequestSeal.signing_spec()
+  @type spec :: RequestSeal.signing_spec() | full_spec()
+  @type full_spec :: %{
+          label: binary(),
+          components: binary(),
+          algorithm: RequestSeal.Crypto.algorithm(),
+          parameters: %{
+            created: boolean(),
+            expires_in: pos_integer() | nil,
+            nonce: :random | nil,
+            keyid: binary() | nil,
+            tag: binary() | nil,
+            alg: boolean()
+          },
+          digest: [binary()] | nil,
+          field_schemas: map()
+        }
 
   def protect(adapter, stage, attempt, fun) do
     fun.()
@@ -179,12 +194,12 @@ defmodule RequestSeal.Signing do
   def core_sign(message, spec, signer, opts) do
     options(opts, [:clock, :signing_timeout, :nonce])
 
+    spec = core_spec!(spec)
+
     case RequestSeal.Message.validate(message) do
       :ok -> {:ok, sign(message, spec, signer, opts, related: message.kind == :response)}
       _ -> {:error, RequestSeal.Error.new(:invalid_message, :input)}
     end
-  rescue
-    _ -> {:error, RequestSeal.Error.new(:invalid_options, :input)}
   catch
     {:adapter, _, %RequestSeal.Error{} = source} ->
       {:error, source}
@@ -201,11 +216,67 @@ defmodule RequestSeal.Signing do
     {:adapter, :limit, _} ->
       {:error, RequestSeal.Error.new(:limit, :input)}
 
-    _, _ ->
-      {:error, RequestSeal.Error.new(:invalid_options, :input)}
+    {:adapter, reason, _}
+    when reason in [:invalid_options, :unsupported_component, :invalid_request] ->
+      {:error, RequestSeal.Error.new(reason, :input)}
+  end
+
+  def normalize_spec!(spec) do
+    # Preserve the complete adapter contract, including explicitly absent expiry.
+    case spec do
+      %{parameters: parameters, digest: _, field_schemas: _} when is_map(parameters) ->
+        if Enum.all?(
+             [:created, :expires_in, :nonce, :alg, :keyid, :tag],
+             &Map.has_key?(parameters, &1)
+           ),
+           do: spec,
+           else: core_spec!(spec)
+
+      _ ->
+        core_spec!(spec)
+    end
+  end
+
+  defp core_spec!(spec) do
+    ensure(is_map(spec), :invalid_options)
+    base_keys = [:label, :algorithm, :components, :digest, :field_schemas]
+    parameter_keys = [:created, :expires_in, :nonce, :alg, :keyid, :tag]
+    nested? = Map.has_key?(spec, :parameters)
+    allowed = base_keys ++ if(nested?, do: [:parameters], else: parameter_keys)
+    ensure(Enum.all?(Map.keys(spec), &(&1 in allowed)), :invalid_options)
+
+    ensure(
+      Enum.all?([:label, :algorithm, :components], &Map.has_key?(spec, &1)),
+      :invalid_options
+    )
+
+    params = if nested?, do: spec.parameters, else: Map.take(spec, parameter_keys)
+
+    ensure(
+      is_map(params) and Enum.all?(Map.keys(params), &(&1 in parameter_keys)),
+      :invalid_options
+    )
+
+    ensure(
+      is_integer(params[:expires_in]) and params[:expires_in] in 1..999_999_999_999_999,
+      :invalid_options
+    )
+
+    params =
+      Map.merge(
+        %{created: true, nonce: :random, alg: not is_tuple(spec.algorithm), keyid: nil, tag: nil},
+        params
+      )
+
+    spec
+    |> Map.take(base_keys)
+    |> Map.put_new(:digest, nil)
+    |> Map.put_new(:field_schemas, %{})
+    |> Map.put(:parameters, params)
   end
 
   def sign(message, spec, signer, opts, mode \\ []) do
+    spec = normalize_spec!(spec)
     input = spec!(spec, mode)
     timeout = sign_options!(opts)
     ensure(is_function(signer, 2) or match?(%KeyHandle{}, signer), :invalid_options)
@@ -273,19 +344,19 @@ defmodule RequestSeal.Signing do
 
     now =
       if p.created,
-        do: Keyword.get(opts, :clock, fn -> System.system_time(:second) end).(),
+        do: clock!(Keyword.get(opts, :clock, fn -> System.system_time(:second) end)),
         else: nil
 
     ensure(
       (not p.created and now == nil) or
-        (is_integer(now) and now in -999_999_999_999_999..999_999_999_999_999),
+        (is_integer(now) and now in 0..999_999_999_999_999),
       :invalid_options
     )
 
     expires = if p.expires_in, do: now + p.expires_in, else: nil
 
     ensure(
-      expires == nil or expires in -999_999_999_999_999..999_999_999_999_999,
+      expires == nil or expires in 0..999_999_999_999_999,
       :invalid_options
     )
 
@@ -307,6 +378,14 @@ defmodule RequestSeal.Signing do
       {"tag", string(p.tag)}
     ]
     |> Enum.reject(&(elem(&1, 1) == nil))
+  end
+
+  defp clock!(clock) do
+    clock.()
+  rescue
+    _ -> fail(:invalid_options)
+  catch
+    _, _ -> fail(:invalid_options)
   end
 
   defp integer(nil), do: nil
@@ -350,7 +429,7 @@ defmodule RequestSeal.Signing do
     if covered?(input, "content-length") do
       value = Integer.to_string(byte_size(m.body.bytes))
       values = for f <- m.fields, String.downcase(f.name) == "content-length", do: f.value
-      ensure(values == [] or values == [value], :unsupported_component)
+      ensure(values == [] or values == [value], :invalid_request)
       if values == [], do: %{m | fields: m.fields ++ [field("content-length", value)]}, else: m
     else
       m

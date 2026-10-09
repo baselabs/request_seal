@@ -81,20 +81,36 @@ defmodule RequestSeal do
           signature_input: binary() | RequestSeal.StructuredFields.Value.t(),
           algorithm: RequestSeal.Crypto.algorithm()
         }
-  @type signing_spec :: %{
-          label: binary(),
-          components: binary(),
-          algorithm: RequestSeal.Crypto.algorithm(),
-          parameters: %{
-            created: boolean(),
-            expires_in: pos_integer() | nil,
-            nonce: :random | nil,
-            alg: boolean(),
-            keyid: binary() | nil,
-            tag: binary() | nil
+  @type signing_spec ::
+          %{
+            required(:label) => binary(),
+            required(:components) => binary(),
+            required(:algorithm) => RequestSeal.Crypto.algorithm(),
+            required(:expires_in) => pos_integer(),
+            optional(:created) => boolean(),
+            optional(:nonce) => :random | nil,
+            optional(:alg) => boolean(),
+            optional(:keyid) => binary() | nil,
+            optional(:tag) => binary() | nil,
+            optional(:digest) => [binary()] | nil,
+            optional(:field_schemas) => map()
+          }
+          | parameterized_signing_spec()
+
+  @type parameterized_signing_spec :: %{
+          required(:label) => binary(),
+          required(:components) => binary(),
+          required(:algorithm) => RequestSeal.Crypto.algorithm(),
+          required(:parameters) => %{
+            required(:expires_in) => pos_integer(),
+            optional(:created) => boolean(),
+            optional(:nonce) => :random | nil,
+            optional(:alg) => boolean(),
+            optional(:keyid) => binary() | nil,
+            optional(:tag) => binary() | nil
           },
-          digest: [binary()] | nil,
-          field_schemas: map()
+          optional(:digest) => [binary()] | nil,
+          optional(:field_schemas) => map()
         }
 
   @doc """
@@ -141,12 +157,14 @@ defmodule RequestSeal do
   @doc """
   Append one signature through caller-owned custody or an arity-two signer.
 
-  A `t:signing_spec/0` uses the same spec-to-input implementation as Req and Finch:
-  serialized `:components`, explicit `:parameters`, `:digest`, `:field_schemas`,
-  `:label`, and `:algorithm`. Every parameter key is required. Created and alg
-  are booleans; expires_in is a positive number of seconds or nil (requires
-  created); nonce is `:random` or nil; keyid and tag are strings or nil. Parameter
-  order is created, expires, nonce, alg, keyid, tag. JWS requires alg false.
+  A `t:signing_spec/0` requires `:label`, `:algorithm`, serialized `:components`,
+  and `:expires_in` (a positive integer of seconds). Defaults are `created: true`,
+  `nonce: :random`, `alg: true` (false for JWS algorithm tuples), `keyid: nil`,
+  `tag: nil`, `digest: nil`, and `field_schemas: %{}`. A negative clock rejects.
+  Req and Finch accept the same defaults through shared signing construction.
+  Explicit full adapter specs remain supported; core signing requires a positive
+  integer expires_in in that shape.
+  Parameter order is created, expires, nonce, alg, keyid, tag. JWS requires alg false.
   Digest is nil or a unique SHA-256/SHA-512 list. Existing digests are checked
   against retained bytes; covered Content-Length is supplied from those bytes.
   Host and trailer components reject; related-request components need a response.
@@ -173,12 +191,11 @@ defmodule RequestSeal do
       iex> RequestSeal.Custody.Local.release(handle)
       :ok
   """
-  @spec sign(
-          Message.t(),
-          signature_spec() | signing_spec(),
-          Policy.signer() | RequestSeal.KeyHandle.t(),
-          keyword()
-        ) ::
+  @spec sign(Message.t(), signature_spec(), Policy.signer(), keyword()) ::
+          {:ok, Message.t()} | {:error, Error.t()}
+  @spec sign(Message.t(), signing_spec(), Policy.signer(), keyword()) ::
+          {:ok, Message.t()} | {:error, Error.t()}
+  @spec sign(Message.t(), signing_spec(), RequestSeal.KeyHandle.t(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}
   def sign(message, spec, signer, opts \\ [])
 

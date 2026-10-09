@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Req and Finch accept the same defaulted signing specs as `RequestSeal.sign/4`, with fresh nonces per attempt and unchanged full-spec wire bytes.
+- Plug verification accepts zero-arity policy functions and policy MFAs, validates their results per request, and contains callback failures.
+- Req and Finch reject the `:nonce` option; selected nonces regenerate per attempt or invocation.
+- Spec signing preserves `:unsupported_component` and `:invalid_request` errors and bounds callback faults without hiding internal exceptions.
+- Core spec signing defaults metadata and requires a positive integer expiry; negative clocks reject.
+- `sign/4` documents separate types for explicit-input function signing and spec function or key-handle signing.
+- The request builder lowercases scheme/host, omits default ports, and rejects fragments and invalid UTF-8 before URL parsing.
+
+
 - Added lossless request/response builders and framework-free spec signing shared with the Req and Finch adapters. The quick start uses exact body bytes and an explicit verification policy.
 - Custody runners and middle processes now set sensitivity before every operation. JWE handle-binding failures follow the same random-CEK authentication path and complete error as OAEP/GCM failures; direct unwrap rejects empty OAEP plaintext with `:decryption_failed`. Added recipient-handle guides and startup health checks.
 - Added algorithm-bound local RSA-OAEP and RSA-OAEP-256 decryption custody, private PEM/PKCS #8 DER/JWK import, and `RequestSeal.Custody.unwrap/3`; JWE resolvers accept unwrap handles while retaining random-CEK fallback and identical OAEP/GCM failure errors.

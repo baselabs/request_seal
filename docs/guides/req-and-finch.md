@@ -4,23 +4,20 @@
 
 **What you will build:** A Req client that signs outgoing JSON requests and verifies signed responses, followed by the equivalent Finch calls. Install Req (`~> 0.7.4`) and Finch (`>= 0.23.0 and < 0.25.0`), and configure `:my_app, :webhook_url` with your receiving endpoint. These examples use [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) and [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html).
 
-## Set up the key and trust policy
+## Shared setup and outgoing coverage
 
-Generate an example Ed25519 key. In your application, reuse a long-lived key handle and configure trust in its public key independently.
+Generate a key and select acceptance rules once. Req and Finch share the defaults of `RequestSeal.sign/4`: creation time, a fresh random nonce per attempt, and the algorithm parameter (omitted for JWS tuples). Key ID, tag, and digest default to nil; field schemas default to `%{}`. Full explicit specs remain supported.
 
 ```elixir
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
+{_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
 {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
 {:ok, key} = RequestSeal.Custody.public_key(handle)
-```
+components = ~s[("@method" "@authority" "@path" "content-digest")]
 
-Select the trusted key, required coverage, freshness, body integrity, and replay rules:
-
-```elixir
 {:ok, policy} =
   RequestSeal.Policy.new(%{
     algorithms: ["ed25519"],
-    components: ~s[("@method" "@authority" "@path" "content-digest")],
+    components: components,
     key_resolver: fn
       %{keyid: "demo-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
       _ -> :error
@@ -34,25 +31,14 @@ Select the trusted key, required coverage, freshness, body integrity, and replay
     content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
     replay: :not_required
   })
-```
 
-## 1. Choose outgoing coverage
-
-```elixir
 signing = %{
   label: "sig",
   algorithm: "ed25519",
-  components: ~s[("@method" "@authority" "@path" "content-digest")],
-  parameters: %{
-    created: true,
-    expires_in: 60,
-    nonce: :random,
-    alg: true,
-    keyid: "demo-key",
-    tag: nil
-  },
-  digest: ["sha-256"],
-  field_schemas: %{}
+  components: components,
+  expires_in: 60,
+  keyid: "demo-key",
+  digest: ["sha-256"]
 }
 ```
 

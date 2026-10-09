@@ -5,6 +5,7 @@ defmodule RequestSeal.Adapter.Signing do
   defdelegate ensure(value, reason), to: RequestSeal.Signing
   def fail(reason, source \\ nil), do: RequestSeal.Signing.fail(reason, source)
   defdelegate options(opts, allowed), to: RequestSeal.Signing
+  defdelegate normalize_spec!(spec), to: RequestSeal.Signing
   def spec!(spec, opts \\ []), do: RequestSeal.Signing.spec!(spec, opts)
   defdelegate sign_options!(opts), to: RequestSeal.Signing
   defdelegate body_option!(option), to: RequestSeal.Signing

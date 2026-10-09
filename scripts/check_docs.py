@@ -156,47 +156,123 @@ def content_errors(root, relative, source, paths):
     return errors
 
 
+# Architecture fences are declaration-only types/specs/callbacks, including a
+# proposed API; evaluating them as scripts would misrepresent their purpose.
+FENCE_EXEMPTIONS = {
+    "docs/design/architecture.md": "declaration-only types/specs/callbacks, including a proposed API",
+}
+
+
 def elixir_fences(source):
-    """Retain exact code bytes, including the final newline, in Markdown order."""
-    blocks = []
-    opening = None
-    body = []
-    language = None
+    """Exact bytes in document order; reject container fences rather than skip."""
+    blocks, body = [], []
+    opening = language = None
     for line in source.splitlines(keepends=True):
         if opening is None:
-            match = re.fullmatch(r" {0,3}(`{3,}|~{3,})([^\r\n]*)\r?\n?", line)
-            if match:
-                opening = match.group(1)
-                language = match.group(2).strip()
-                body = []
+            # Recognize info words even with a comma, title, or other suffix.
+            candidate = re.match(r"^([ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?)(`{3,}|~{3,})([^\r\n]*)", line)
+            if candidate:
+                prefix, marker, info = candidate.groups()
+                elixir = re.match(r"elixir(?:\b|$)", info.strip()) is not None
+                if elixir and (prefix.strip() or len(prefix) > 3):
+                    raise ValueError("indented/list or blockquoted Elixir fence is unsupported; use a top-level fence")
+                if not prefix.strip() and len(prefix) <= 3:
+                    opening, language, body = marker, elixir, []
         elif re.fullmatch(r" {0,3}" + re.escape(opening[0]) + "{" + str(len(opening)) + r",}\s*", line):
-            if language == "elixir":
+            if language:
                 blocks.append("".join(body))
             opening = None
         else:
             body.append(line)
-    if opening is not None and language == "elixir":
+    if opening is not None and language:
         raise ValueError("unclosed Elixir fence")
     return blocks
 
 
-def fence_errors(root, relative, source):
+def paired_test(relative):
     if relative == "README.md":
-        test = Path("test/readme_test.exs")
-    elif Path(relative).parent.as_posix() == "docs/guides":
-        test = Path("test/guides") / (Path(relative).stem.replace("-", "_") + "_test.exs")
-    else:
+        return Path("test/readme_test.exs")
+    if Path(relative).parent.as_posix() == "docs/guides":
+        return Path("test/guides") / (Path(relative).stem.replace("-", "_") + "_test.exs")
+    return Path("test/docs") / (relative.removesuffix(".md").replace("/", "_").replace("-", "_") + "_test.exs")
+
+
+def evaluated_blocks(source):
+    """Read direct helper calls, skipping comments, strings, and other sigils.
+
+    The paired-test contract deliberately uses literal document/index arguments
+    and unindented ~S heredocs. A substring in another literal is never a call.
+    """
+    call = re.compile(r"E\.eval\(\s*~S'''\r?\n(.*?)^([ \t]*)'''\s*,\s*binding\s*,\s*\"([^\"]+)\"\s*,\s*(\d+)\s*\)", re.MULTILINE | re.DOTALL)
+    finish = re.compile(r'E\.assert_fences\("([^"\n]+)",\s*(\d+)\)')
+    blocks, finishes, i = [], [], 0
+    while i < len(source):
+        match = call.match(source, i)
+        if match:
+            indent = match[2]
+            code = "".join(line[len(indent):] if line.startswith(indent) else line for line in match[1].splitlines(keepends=True))
+            blocks.append((match[3], int(match[4]), code))
+            i = match.end()
+            continue
+        match = finish.match(source, i)
+        if match:
+            finishes.append((match[1], int(match[2])))
+            i = match.end()
+            continue
+        if source[i] == "#":
+            end = source.find("\n", i)
+            i = len(source) if end < 0 else end + 1
+            continue
+        # Skip full Elixir sigils and quoted strings, including triple quotes.
+        sigil = re.match(r"~[a-zA-Z]([\"'/{\[(<|])", source[i:])
+        delimiter = sigil[1] if sigil else source[i] if source[i] in "\"'" else None
+        if delimiter:
+            begin = i + (2 if sigil else 0)
+            triple = source.startswith(delimiter * 3, begin)
+            closing = delimiter * 3 if triple else {"{": "}", "[": "]", "(": ")", "<": ">"}.get(delimiter, delimiter)
+            cursor = begin + (3 if triple else 1)
+            depth = 1
+            while cursor < len(source):
+                if source[cursor] == "\\":
+                    cursor += 2
+                elif not triple and delimiter in "{[(<" and source[cursor] == delimiter:
+                    depth += 1
+                    cursor += 1
+                elif source.startswith(closing, cursor):
+                    depth -= 1
+                    cursor += len(closing)
+                    if depth == 0:
+                        break
+                else:
+                    cursor += 1
+            i = cursor
+        else:
+            i += 1
+    return blocks, finishes
+
+
+def fence_errors(root, relative, source):
+    if Path(relative).suffix != ".md":
+        return []  # Livebooks have their separate importer/exporter/execution gate.
+    try:
+        examples = elixir_fences(source)
+    except ValueError as error:
+        return [f"{relative}: {error}"]
+    if relative in FENCE_EXEMPTIONS or not examples:
         return []
-    examples = elixir_fences(source)
-    if not examples:
-        return []
+    test = paired_test(relative)
     target = root / test
     copies = target.read_bytes().decode("utf-8") if target.is_file() and not target.is_symlink() else ""
-    return [
-        f"{relative}: Elixir fence {index} has no byte-identical copy in {test}"
-        for index, example in enumerate(examples, 1)
-        if not example or example not in copies
-    ]
+    blocks, finishes = evaluated_blocks(copies)
+    expected = [(relative, index, example) for index, example in enumerate(examples, 1)]
+    errors = []
+    if blocks != expected:
+        errors.append(f"{relative}: Elixir fences require one-to-one byte-identical evaluated blocks in {test}")
+    if finishes != [(relative, len(examples))]:
+        errors.append(f"{relative}: {test} must assert execution of all {len(examples)} fences exactly once")
+    if "alias RequestSeal.DocsExamples, as: E" not in copies:
+        errors.append(f"{relative}: {test} must use the recording evaluation helper")
+    return errors
 
 
 def check(root=ROOT):
@@ -222,4 +298,6 @@ if __name__ == "__main__":
         print("\n".join(errors))
         sys.exit(1)
     print(f"PASS: {len(approved)} approved public documents, metadata, disclosure tripwires, and links")
-    print("Scope: explicit inventory and named content/link checks; newly approved prose still needs review")
+    print("Scope: every approved Markdown Elixir fence is paired and executed; Livebooks use their dedicated execution gate")
+    for path, reason in FENCE_EXEMPTIONS.items():
+        print(f"Fence exemption: {path}: {reason}")

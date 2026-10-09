@@ -98,10 +98,11 @@ class PublicDocsTest(unittest.TestCase):
             root = Path(directory)
             (root / "test/guides").mkdir(parents=True)
             source = '```elixir\nvalue = 1\ntrue = value > 0\n```\n'
-            example = '    code = ~S"""\nvalue = 1\ntrue = value > 0\n"""\n    Code.eval_string(code)\n'
+            example_code = 'value = 1\ntrue = value > 0\n'
             for document, test in (("README.md", "test/readme_test.exs"), ("docs/guides/example.md", "test/guides/example_test.exs")):
                 with self.subTest(document=document):
                     self.assertTrue(docs.fence_errors(root, document, source))
+                    example = EvaluatedFenceTest().paired(example_code, document)
                     (root / test).write_text(example)
                     self.assertEqual([], docs.fence_errors(root, document, source))
                     self.assertTrue(docs.fence_errors(root, document, source.replace("value = 1", "value = 2")))
@@ -422,6 +423,40 @@ class ToolchainTest(unittest.TestCase):
                 inputs[path] = inputs[path].replace(old, new)
                 self.assertTrue(gate.toolchain_errors(inputs), path)
 
+
+
+class EvaluatedFenceTest(unittest.TestCase):
+    def check_pair(self, document, source, paired):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / ('test/readme_test.exs' if document == 'README.md' else 'test/docs/' + document.removesuffix('.md').replace('/', '_').replace('-', '_') + '_test.exs')
+            target.parent.mkdir(parents=True)
+            target.write_text(paired)
+            return docs.fence_errors(root, document, source)
+
+    def paired(self, code, document='README.md', count=1):
+        return 'alias RequestSeal.DocsExamples, as: E\n' + "binding = E.eval(~S'''\n" + code + "''', binding, \"" + document + '\", 1)\n' + f'E.assert_fences("{document}", {count})\n'
+
+    def test_a_comments_duplicates_and_nested_copies_are_not_execution(self):
+        source = '```elixir\nx = 1\n```\n'
+        valid = self.paired('x = 1\n')
+        self.assertEqual([], self.check_pair('README.md', source, valid))
+        self.assertTrue(self.check_pair('README.md', source, '# x = 1\n'))
+        self.assertTrue(self.check_pair('README.md', source * 2, valid))
+        self.assertTrue(self.check_pair('README.md', source, "other = ~S'''\n" + valid + "'''\n"))
+        self.assertTrue(self.check_pair('README.md', source, valid + valid))
+
+    def test_b_alternate_fences_cannot_escape(self):
+        for opening, closing in [('```elixir title=example', '```'), ('```elixir,iex', '```'), ('    ```elixir', '    ```'), ('> ```elixir', '> ```'), ('- ```elixir', '  ```'), ('  1. ```elixir', '     ```')]:
+            with self.subTest(opening=opening):
+                self.assertTrue(self.check_pair('README.md', opening + '\nx = 1\n' + closing + '\n', ''))
+
+    def test_c_approved_design_reference_and_operations_cannot_escape(self):
+        for document in ['docs/design/example.md', 'docs/reference/example.md', 'docs/operations/example.md']:
+            with self.subTest(document=document):
+                source = '```elixir\nx = 1\n```\n'
+                self.assertTrue(self.check_pair(document, source, ''))
+                self.assertEqual([], self.check_pair(document, source, self.paired('x = 1\n', document)))
 
 if __name__ == "__main__":
     unittest.main()

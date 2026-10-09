@@ -16,39 +16,17 @@ Generate an example Ed25519 key. In your application, reuse a long-lived key han
 signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
 ```
 
-Retain a JSON request body and include its digest header. The held-key example below verifies the signing key; its policy leaves body integrity unchecked:
+Build the request once, retaining its exact JSON bytes and digest. This held-key policy leaves body integrity unchecked:
 
 ```elixir
-{:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: ~s({"event":"created"})})
-{:ok, digest} = RequestSeal.Digest.compute(body, ["sha-256"])
-{:ok, digest_wire} = RequestSeal.Digest.serialize(digest)
-
-{:ok, digest_field} =
-  RequestSeal.FieldOccurrence.new(%{
-    name: "content-digest",
-    value: digest_wire,
-    section: :headers
-  })
-```
-
-Construct the request message:
-
-```elixir
-{:ok, transport} = RequestSeal.TransportFacts.new(%{})
-
 {:ok, message} =
-  RequestSeal.Message.new(%{
-    kind: :request,
-    method: "POST",
-    raw_target: "/webhooks",
-    target_form: :origin,
-    scheme: "https",
-    authority: "api.example.com",
-    fields: [digest_field],
-    trailers: :unavailable,
-    body: body,
-    transport: transport
-  })
+  RequestSeal.Message.request(
+    "POST",
+    "https://api.example.com/webhooks",
+    [],
+    ~s({"event":"created"}),
+    digest: ["sha-256"]
+  )
 ```
 
 Sign the request as an agent:

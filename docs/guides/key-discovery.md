@@ -2,15 +2,11 @@
 
 # Discover trusted public keys over HTTPS
 
-**What you will build:** An HTTPS JWKS fetcher, an explicit verification policy using its keys, and a caller-owned cache with key removal. Install RequestSeal and configure `:my_app` with `:jwks_url` (your trusted publisher), `:trusted_key_thumbprint` (the public key ID you expect), `:jwks_ca_roots` (`:os` or DER CA certificates), and `:jwks_permitted_addresses` (`[]` for public hosts or explicit IP tuples for a trusted private deployment). Sources: [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), [Web Bot Auth protocol-00](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html), and [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html).
+**What you will build:** An HTTPS JWKS fetcher, an explicit verification policy using its keys, and a caller-owned cache with key removal. Install RequestSeal and choose a trusted HTTPS publisher. Set `jwks_url` to its HTTPS URL, `trust_roots` to `:os` or its trusted DER CA certificates, and `permitted_addresses` to `[]` for public hosts (or the approved IP tuples for your private publisher), once in your caller. Select the source independently of message-supplied key IDs. Sources: [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), [Web Bot Auth protocol-00](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html), and [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html).
 
 ## 1. Fetch only your configured source
 
 ```elixir
-jwks_url = Application.fetch_env!(:my_app, :jwks_url)
-thumbprint = Application.fetch_env!(:my_app, :trusted_key_thumbprint)
-trust_roots = Application.fetch_env!(:my_app, :jwks_ca_roots)
-permitted_addresses = Application.fetch_env!(:my_app, :jwks_permitted_addresses)
 {:ok, _apps} = Application.ensure_all_started(:ssl)
 
 {:ok, source} =
@@ -28,6 +24,7 @@ permitted_addresses = Application.fetch_env!(:my_app, :jwks_permitted_addresses)
 Use the fetched keys in a resolver and select the rest of your acceptance policy explicitly:
 
 ```elixir
+{thumbprint, _entry} = Enum.at(key_set.keys, 0)
 resolver = RequestSeal.Discovery.resolver(key_set, algorithms: ["ed25519"])
 {:ok, %{key: discovered_key}} = resolver.(%{keyid: thumbprint})
 
@@ -47,7 +44,7 @@ resolver = RequestSeal.Discovery.resolver(key_set, algorithms: ["ed25519"])
   })
 ```
 
-This example expects the publisher to publish the matching key. In your app, configure the source and accepted key IDs independently. No message-supplied ID selects a URL. `fetch/2` performs one bounded operation; you start SSL and choose addresses, roots, redirects, and byte/key/time limits.
+This example uses an Ed25519 JWKS publisher. Selecting a fetched key demonstrates resolution; application policy chooses which publisher and keys to trust. In your app, configure the source and accepted key IDs independently. No message-supplied ID selects a URL. `fetch/2` performs one bounded operation; you start SSL and choose addresses, roots, redirects, and byte/key/time limits.
 
 ## 2. Cache explicitly and remove a key
 

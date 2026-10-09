@@ -58,6 +58,8 @@ defmodule RequestSeal.Error do
     (base construction rejects), `:verifier_failed` (verification callback fault,
     malformed result or invalid key), `:signer_failed` (signer fault, error,
     malformed result, empty signature or more than 1,024 bytes).
+  * Spec signing `:input`: `:unsupported_component` (unavailable covered component),
+    `:invalid_request` (covered Content-Length conflicts with retained bytes).
   * `:content`: `:digest_not_covered` (exact complete selected digest not signed),
     `:digest_unsupported` (no usable selected digest or invalid digest field),
     `:digest_mismatch` (checksum disagrees), `:body_unavailable` (required body or

@@ -16,39 +16,16 @@ Generate an example Ed25519 key. In your application, reuse a long-lived key han
 signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
 ```
 
-Retain the body and compute the digest that the signature covers:
+Build the request from its exact body bytes:
 
 ```elixir
-{:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: ~s({"event":"created"})})
-{:ok, digest} = RequestSeal.Digest.compute(body, ["sha-256"])
-{:ok, digest_wire} = RequestSeal.Digest.serialize(digest)
-
-{:ok, digest_field} =
-  RequestSeal.FieldOccurrence.new(%{
-    name: "content-digest",
-    value: digest_wire,
-    section: :headers
-  })
-```
-
-Construct the request message:
-
-```elixir
-{:ok, transport} = RequestSeal.TransportFacts.new(%{})
-
 {:ok, message} =
-  RequestSeal.Message.new(%{
-    kind: :request,
-    method: "POST",
-    raw_target: "/webhooks",
-    target_form: :origin,
-    scheme: "https",
-    authority: "api.example.com",
-    fields: [digest_field],
-    trailers: :unavailable,
-    body: body,
-    transport: transport
-  })
+  RequestSeal.Message.request(
+    "POST",
+    "https://api.example.com/webhooks",
+    [],
+    ~s({"event":"created"})
+  )
 ```
 
 Select the trusted key, required coverage, freshness, body integrity, and replay rules:
@@ -76,29 +53,16 @@ Select the trusted key, required coverage, freshness, body integrity, and replay
 Sign the request with a fresh nonce and a 60-second validity window:
 
 ```elixir
-now = System.system_time(:second)
-nonce = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
+signing = %{
+  label: "sig",
+  algorithm: "ed25519",
+  components: ~s[("@method" "@authority" "@path" "content-digest")],
+  expires_in: 60,
+  keyid: "demo-key",
+  digest: ["sha-256"]
+}
 
-input =
-  Enum.join(
-    [
-      ~s[("@method" "@authority" "@path" "content-digest")],
-      "created=#{now}",
-      "expires=#{now + 60}",
-      ~s[nonce="#{nonce}"],
-      ~s[keyid="demo-key"],
-      ~s[alg="ed25519"]
-    ],
-    ";"
-  )
-
-{:ok, signed} =
-  RequestSeal.sign(
-    message,
-    %{label: "sig", signature_input: input, algorithm: "ed25519"},
-    signer,
-    []
-  )
+{:ok, signed} = RequestSeal.sign(message, signing, handle)
 ```
 
 ## 1. Start a store and require a nonce

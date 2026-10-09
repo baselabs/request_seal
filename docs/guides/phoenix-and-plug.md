@@ -41,26 +41,10 @@ Store `policy` under `:my_app, :http_signature_policy` during application startu
 ## 2. Capture, parse, then verify
 
 ```elixir
-defmodule WebhookApp.VerifySignature do
-  def init(options), do: options
-
-  def call(conn, _options) do
-    policy = Application.fetch_env!(:my_app, :http_signature_policy)
-
-    options =
-      RequestSeal.Plug.Verify.init(
-        policy: policy,
-        label: "sig",
-        assign: :verified,
-        on_reject: {:halt, 401}
-      )
-
-    RequestSeal.Plug.Verify.call(conn, options)
-  end
-end
+Application.put_env(:my_app, :http_signature_policy, policy)
 ```
 
-Capture and parse the body before calling the verifier:
+Capture and parse the body, then use the verifier directly. Its policy MFA returns the current policy on each request:
 
 ```elixir
 defmodule WebhookApp.WebhookPipeline do
@@ -79,7 +63,12 @@ defmodule WebhookApp.WebhookPipeline do
     body_reader: {RequestSeal.Plug.Capture, :read_body, []}
   )
 
-  plug(WebhookApp.VerifySignature)
+  plug(RequestSeal.Plug.Verify,
+    policy: {Application, :fetch_env!, [:my_app, :http_signature_policy]},
+    label: "sig",
+    assign: :verified,
+    on_reject: {:halt, 401}
+  )
 end
 ```
 
@@ -98,7 +87,7 @@ defmodule WebhookApp.WebhookController do
 end
 ```
 
-Route `POST /webhooks` to this controller. Verification also assigns `conn.assigns.verified`; the private result remains accessible through `RequestSeal.Plug.verification/1`. Failure with `on_reject: {:halt, 401}` halts before the controller.
+Route `POST /webhooks` to this controller. Verification also assigns `conn.assigns.verified`; the private result remains accessible through `RequestSeal.Plug.verification/1`. Failure with `on_reject: {:halt, 401}` halts before the controller. `policy:` also accepts a valid policy directly or a zero-arity function returning a policy. Function and MFA results are validated; invalid results and callback failures reject the request.
 
 ## 4. Sign a buffered response
 

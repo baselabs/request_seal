@@ -3,16 +3,16 @@ defmodule RequestSeal.DXBuilderTest do
   doctest RequestSeal
   alias RequestSeal.{Body, Crypto, Digest, FieldOccurrence, Message, PublicKey, TransportFacts}
 
-  test "request builder equals hand construction without normalizing wire bytes" do
+  test "request builder normalizes origins while preserving target and field bytes" do
     headers = [{"X-Repeat", " first "}, {"x-repeat", <<255>>}, {"X-Repeat", "third"}]
 
     for method <- ["GET", "post", "M-SEARCH", "OPTIONS"],
         {url, scheme, authority, target} <- [
-          {"https://Example.COM/a%2Fb?x=1&x=2", "https", "Example.COM", "/a%2Fb?x=1&x=2"},
-          {"http://example.com:080?", "http", "example.com:080", "/?"},
+          {"https://Example.COM/a%2Fb?x=1&x=2", "https", "example.com", "/a%2Fb?x=1&x=2"},
+          {"http://example.com:080?", "http", "example.com", "/?"},
           {"https://[2001:db8::1]:8443/", "https", "[2001:db8::1]:8443", "/"},
           {"http://example.com:0", "http", "example.com:0", "/"},
-          {"HTTPS://Example.COM:443?x=%2f", "HTTPS", "Example.COM:443", "/?x=%2f"}
+          {"HTTPS://Example.COM:443?x=%2f", "https", "example.com", "/?x=%2f"}
         ],
         bytes <- [nil, "", <<0, 255, 1>>],
         algorithms <- [nil, ["sha-256"], ["sha-512", "sha-256"]] do
@@ -171,8 +171,17 @@ defmodule RequestSeal.DXBuilderTest do
         }
     }
 
+    message = %{
+      message
+      | fields: [%FieldOccurrence{name: "content-length", value: "4", section: :headers}]
+    }
+
     assert {:ok, signed} =
-             RequestSeal.sign(message, spec, signer, clock: fn -> raise "unused clock" end)
+             RequestSeal.sign(
+               message,
+               %{label: spec.label, algorithm: spec.algorithm, signature_input: spec.components},
+               signer
+             )
 
     assert Enum.find(signed.fields, &(&1.name == "content-length")).value == "4"
 
@@ -190,7 +199,13 @@ defmodule RequestSeal.DXBuilderTest do
              ~s[sig=("@method" "content-length")]
 
     {:ok, response} = Message.response(200, [], "response", request: message)
-    response_spec = %{spec | components: ~s[("@status" "@method";req)]}
+
+    response_spec = %{
+      spec
+      | parameters: %{spec.parameters | created: true, expires_in: 60},
+        components: ~s[("@status" "@method";req)]
+    }
+
     assert {:ok, signed_response} = RequestSeal.sign(response, response_spec, signer)
 
     {:ok, policy} =
@@ -214,15 +229,15 @@ defmodule RequestSeal.DXBuilderTest do
     assert {:ok, _} = RequestSeal.verify(signed_response, policy, label: "sig")
   end
 
-  test "spec signing matches Finch and Req signature bytes for explicit clock and nonce" do
+  test "spec signing matches Finch and Req signature bytes without nonce metadata" do
     {public, seed} = :crypto.generate_key(:eddsa, :ed25519)
     {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
     on_exit(fn -> RequestSeal.Custody.Local.release(handle) end)
     headers = [{"x-repeat", "one"}, {"x-repeat", "two"}]
     url = "https://example.com:8443/a%2Fb?x=1&x=2"
     spec = spec("ed25519")
-    nonce = :crypto.strong_rand_bytes(32)
-    opts = [clock: fn -> 1_700_000_000 end, nonce: nonce]
+    spec = %{spec | parameters: %{spec.parameters | nonce: nil}}
+    opts = [clock: fn -> 1_700_000_000 end]
     {:ok, message} = Message.request("POST", url, headers, "body")
     assert {:ok, signed} = RequestSeal.sign(message, spec, handle, opts)
 
@@ -241,7 +256,7 @@ defmodule RequestSeal.DXBuilderTest do
     assert signature_headers(req.headers) == signature_headers(finch.headers)
     {:ok, key} = PublicKey.import({:ed25519, public}, :raw)
     assert {:ok, result} = RequestSeal.verify(signed, policy("ed25519", key), label: "sig")
-    assert result.signature.parameters["nonce"] == Base.url_encode64(nonce, padding: false)
+    refute Map.has_key?(result.signature.parameters, "nonce")
     assert result.signature.parameters["created"] == 1_700_000_000
     assert result.signature.parameters["expires"] == 1_700_000_060
     assert result.signature.parameters["tag"] == "example"

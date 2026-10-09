@@ -40,6 +40,114 @@ defmodule RequestSeal.ClientAdaptersTest do
     )
   end
 
+  test "short signing specs default metadata on every Req retry", %{handle: h} do
+    {origin, task} = Peer.start([%{status: 503}, %{}], h)
+
+    spec = %{
+      label: "sig",
+      algorithm: "hmac-sha256",
+      components: Peer.components(),
+      expires_in: 60,
+      digest: ["sha-256"]
+    }
+
+    assert {:ok, req} =
+             request(
+               origin,
+               h,
+               [retry: :transient, retry_delay: 0, max_retries: 1, retry_log_level: false],
+               sign: spec
+             )
+
+    assert {:ok, response} = Req.request(req)
+    assert {:ok, _} = RequestSeal.Req.verification(response)
+    assert_receive {:wire_request, first, {:ok, _}}
+    assert_receive {:wire_request, second, {:ok, _}}
+    assert params(first)["nonce"] != params(second)["nonce"]
+    assert params(second)["expires"] - params(second)["created"] == 60
+    assert params(second)["alg"] == "hmac-sha256"
+    refute Map.has_key?(params(second), "keyid")
+    refute Map.has_key?(params(second), "tag")
+    Peer.finish(task)
+  end
+
+  test "short and full specs produce identical bytes with explicit metadata", %{handle: h} do
+    {origin, task} = Peer.start([%{}, %{}], h)
+    full = put_in(Peer.spec().parameters.nonce, nil)
+    short = full |> Map.delete(:parameters) |> Map.merge(full.parameters)
+    clock = fn -> 123 end
+
+    sent =
+      for spec <- [full, short] do
+        assert {:ok, req} = request(origin, h, [], sign: spec, clock: clock)
+        assert {:ok, _} = Req.request(req)
+        assert_receive {:wire_request, message, {:ok, _}}
+        message
+      end
+
+    assert Enum.at(sent, 0) == Enum.at(sent, 1)
+    Peer.finish(task)
+
+    request = Finch.build(:get, origin <> "/foo?param=Value", [{"accept", "text/plain"}])
+    assert {:ok, full_request} = RequestSeal.Finch.sign(request, full, h, clock: clock)
+    assert {:ok, short_request} = RequestSeal.Finch.sign(request, short, h, clock: clock)
+    assert full_request == short_request
+    {:ok, message} = RequestSeal.Finch.request_message(short_request)
+    assert {:ok, _} = RequestSeal.verify(message, Peer.policy(Peer.components(), h), label: "sig")
+  end
+
+  test "minimal Finch specs generate fresh metadata and reject invalid defaults", %{handle: h} do
+    request = Finch.build(:get, "https://example.com/")
+    spec = %{label: "sig", algorithm: "hmac-sha256", components: ~s[("@method")], expires_in: 60}
+    assert {:ok, first} = RequestSeal.Finch.sign(request, spec, h)
+    assert {:ok, second} = RequestSeal.Finch.sign(request, spec, h)
+    {:ok, first} = RequestSeal.Finch.request_message(first)
+    {:ok, second} = RequestSeal.Finch.request_message(second)
+    assert params(first)["nonce"] != params(second)["nonce"]
+    assert params(second)["expires"] - params(second)["created"] == 60
+    assert params(second)["alg"] == "hmac-sha256"
+    refute Map.has_key?(params(second), "keyid")
+    refute Map.has_key?(params(second), "tag")
+
+    {:ok, policy} =
+      RequestSeal.Policy.new(%{
+        algorithms: ["hmac-sha256"],
+        components: spec.components,
+        key_resolver: fn _ ->
+          {:ok,
+           %{
+             algorithm: "hmac-sha256",
+             key: fn _, base, sig ->
+               RequestSeal.Custody.verify(h, base, sig)
+             end
+           }}
+        end,
+        freshness: :not_evaluated,
+        content: :not_required,
+        replay: :not_required
+      })
+
+    assert {:ok, _} = RequestSeal.verify(second, policy, label: "sig")
+
+    for bad <- [
+          Map.delete(spec, :expires_in),
+          %{spec | expires_in: nil},
+          Map.put(spec, :created, false),
+          Map.put(spec, :nonce, "fixed"),
+          Map.put(spec, :unknown, true)
+        ] do
+      assert {:error, %Error{reason: :invalid_options}} = RequestSeal.Finch.sign(request, bad, h)
+
+      assert {:error, %Error{reason: :invalid_options}} =
+               RequestSeal.Req.attach(
+                 Req.new(url: "https://example.com/"),
+                 sign: bad,
+                 signer: h,
+                 verify: :none
+               )
+    end
+  end
+
   test "final JSON and compressed bytes verify at the actual listener", %{handle: h} do
     {origin, task} = Peer.start([%{}], h)
 
@@ -578,7 +686,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:error, %Error{reason: :invalid_request}} =
              RequestSeal.Finch.request_message(%{r | body: :invalid})
 
-    assert {:error, %Error{reason: :unsupported_component}} =
+    assert {:error, %Error{reason: :invalid_request}} =
              RequestSeal.Finch.sign(
                %{r | headers: r.headers ++ [{"content-length", "1"}]},
                Peer.spec(),
@@ -1470,7 +1578,7 @@ defmodule RequestSeal.ClientAdaptersTest do
   end
 
   defp params(message) do
-    value = Enum.find(message.fields, &(&1.name == "signature-input")).value
+    value = Enum.find(message.fields, &(String.downcase(&1.name) == "signature-input")).value
     [_, inner] = String.split(value, "=", parts: 2)
     {:ok, input} = SignatureFields.inner(inner)
     SignatureFields.parameters(input)

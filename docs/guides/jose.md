@@ -87,11 +87,13 @@ Encrypt to the handle's public key and return the handle from the resolver:
 ```elixir
 private = :public_key.generate_key({:rsa, 2048, 65537})
 pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPrivateKey, private)])
+
 {:ok, recipient_handle} =
   RequestSeal.Custody.Local.import({:jwe, "RSA-OAEP-256"}, pem, :pem)
 
 # Run this health check at startup, before accepting encrypted messages.
 {:ok, recipient_public} = RequestSeal.Custody.public_key(recipient_handle)
+
 {:ok, recipient_jwe} =
   RequestSeal.JOSE.JWE.encrypt(
     [{"alg", "RSA-OAEP-256"}, {"enc", "A256GCM"}],

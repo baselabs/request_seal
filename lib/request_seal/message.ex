@@ -35,7 +35,7 @@ defmodule RequestSeal.Message do
   Success establishes a well-formed value, not HTTP framing, component availability,
   cryptographic validity, or authentication. Signature-base derivation is provided by `RequestSeal.SignatureBase`.
   Generic signing and verification are provided by `RequestSeal`; optional Req/Finch
-  adapters, Plug/Phoenix adapters, Ash scope mapping, and Web Bot Auth protocol-00
+  adapters, Plug integration (also used by Phoenix), Ash scope mapping, and Web Bot Auth protocol-00
   are implemented. Other named application profiles use `RequestSeal.Profile`
   in extension packages. This module starts no process and reads no stream.
   Default inspection is redacted.
@@ -97,7 +97,8 @@ defmodule RequestSeal.Message do
   @doc """
   Build a request from an absolute HTTP(S) URL, ordered headers, and exact body bytes.
 
-  Scheme, authority (including an explicit port), percent escapes, and query bytes
+  Scheme and host are lowercased; default ports (HTTPS 443 and HTTP 80)
+  are omitted, matching Finch and Req. Percent escapes and query bytes
   are preserved. An absent path becomes `/`; an empty query retains its `?`.
   Header case, order, and repeats remain unchanged. `nil` and `""` both retain
   empty content. Transport declarations stay unknown and trailers unavailable.
@@ -170,14 +171,31 @@ defmodule RequestSeal.Message do
   end
 
   defp request_parts(url) when is_binary(url) and byte_size(url) <= 17_480 do
-    # Split raw bytes instead of URI normalization (which can discard explicit ports).
-    case Regex.run(~r/\A((?i:https?)):\/\/([^\/?]+)((?:[\/?].*)?)\z/, url) do
-      [_, scheme, authority, tail] ->
-        target = if tail == "" or String.starts_with?(tail, "?"), do: "/" <> tail, else: tail
-        {:ok, scheme, authority, target}
+    # Preserve path/query octets; normalize only the transport origin.
+    if String.valid?(url) and not String.contains?(url, "#") do
+      case Regex.run(~r/\A((?i:https?)):\/\/([^\/?]+)((?:[\/?].*)?)\z/, url) do
+        [_, scheme, authority, tail] ->
+          scheme = String.downcase(scheme)
+          authority = String.downcase(authority)
+          default_port = if scheme == "https", do: 443, else: 80
 
-      _ ->
-        Validation.error(:invalid_message)
+          authority =
+            case Regex.run(~r/\A(\[[^\]]+\]|[^:]+):([0-9]+)\z/, authority) do
+              [_, host, port] ->
+                if String.to_integer(port) == default_port, do: host, else: authority
+
+              _ ->
+                authority
+            end
+
+          target = if tail == "" or String.starts_with?(tail, "?"), do: "/" <> tail, else: tail
+          {:ok, scheme, authority, target}
+
+        _ ->
+          Validation.error(:invalid_message)
+      end
+    else
+      Validation.error(:invalid_message)
     end
   end
 

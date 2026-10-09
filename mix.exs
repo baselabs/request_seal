@@ -58,7 +58,7 @@ defmodule RequestSeal.MixProject do
       name: "RequestSeal",
       source_url: "https://github.com/baselabs/request_seal",
       description:
-        "Sign and verify HTTP requests and responses in Elixir: RFC 9421 HTTP Message Signatures, Web Bot Auth for AI agents, JWS/JWE, digests and replay protection, with Plug, Phoenix, Req, Finch and Ash integrations.",
+        "Sign and verify HTTP requests and responses in Elixir: RFC 9421 HTTP Message Signatures, Web Bot Auth for AI agents, JWS/JWE, digests and replay protection, with Plug (including Phoenix), Req, Finch and Ash integrations.",
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: dependencies(),
       package: [
@@ -74,12 +74,18 @@ defmodule RequestSeal.MixProject do
             path -> path
           end),
         groups_for_extras: [
-          "Start here": ["README.md", "docs/guides/getting-started.md"],
+          "Start here": ["README.md"],
           Guides: ~r/docs\/guides\//,
           Reference: ~r/docs\/reference\//,
           "Design and decisions": [~r/docs\/design\//, ~r/docs\/adr\//],
           Livebooks: ~r/livebooks\//,
-          Maintenance: ["CONTRIBUTING.md", "SECURITY.md", ~r/docs\/operations\//]
+          Contributing: [
+            "CONTRIBUTING.md",
+            "SECURITY.md",
+            "docs/guides/getting-started.md",
+            "docs/guides/testing.md",
+            ~r/docs\/operations\//
+          ]
         ],
         groups_for_modules: [
           Core: [

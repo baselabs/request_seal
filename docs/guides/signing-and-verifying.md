@@ -19,11 +19,18 @@ Reuse the handle in a long-lived owner in your application; see [key custody](ke
 ## 2. Build the request
 
 ```elixir
-{:ok, message} = RequestSeal.Message.request("POST", "https://api.example.com/webhooks", [], ~s({"event":"created"}), digest: ["sha-256"])
+{:ok, message} =
+  RequestSeal.Message.request(
+    "POST",
+    "https://api.example.com/webhooks",
+    [],
+    ~s({"event":"created"}),
+    digest: ["sha-256"]
+  )
 ```
 
-The builder preserves header order, repeats, case, explicit ports, percent escapes,
-and query bytes. `nil` and `""` both retain empty content. Its optional `digest:`
+The builder preserves header order, repeats, case, nondefault ports, percent escapes,
+and query bytes. It lowercases scheme and host and omits HTTP port 80 and HTTPS port 443, matching Req and Finch. `nil` and `""` both retain empty content. Its optional `digest:`
 adds Content-Digest over those exact bytes. Transport declarations remain unknown
 and trailers unavailable; it does not establish a connection. Invalid values
 return `RequestSeal.Message.Error` through the same validation as `Message.new/1`.
@@ -33,7 +40,11 @@ when generating a digest; omit `digest:` to preserve them.
 For a response, retain its exact body and optionally link the request:
 
 ```elixir
-{:ok, response} = RequestSeal.Message.response(200, [{"content-type", "text/plain"}], "accepted", request: message, digest: ["sha-256"])
+{:ok, response} =
+  RequestSeal.Message.response(200, [{"content-type", "text/plain"}], "accepted",
+    request: message,
+    digest: ["sha-256"]
+  )
 ```
 
 The linked request supplies components selected with `req`; no request is inferred.
@@ -69,19 +80,20 @@ signing = %{
   label: "sig",
   algorithm: "ed25519",
   components: ~s[("@method" "@authority" "@path" "content-digest")],
-  parameters: %{created: true, expires_in: 60, nonce: :random, alg: true, keyid: "demo-key", tag: nil},
-  digest: ["sha-256"],
-  field_schemas: %{}
+  expires_in: 60,
+  keyid: "demo-key",
+  digest: ["sha-256"]
 }
+
 {:ok, signed} = RequestSeal.sign(message, signing, handle)
 ```
 
-This is the same six-key spec accepted by Req and Finch. All six parameter keys
-are explicit. The signer's `clock:` defaults to system seconds; `created: true`
-records it, and `expires_in: 60` adds 60 seconds. `nonce: :random` generates 32
-CSPRNG bytes encoded as unpadded Base64url. `alg: true` records the selected HTTP
-algorithm; JWS algorithms require `alg: false`. Nil `keyid`, `tag`, expiration,
-or nonce omit that parameter. The shared pipeline adds or checks Content-Digest
+Core signing requires label, algorithm, components, and a positive integer
+expires_in. Defaults are created true, nonce random, alg true (false for JWS
+algorithm tuples), keyid/tag/digest nil, and field_schemas an empty map.
+The signer's clock defaults to nonnegative system seconds. Req and Finch accept
+the same defaulted signing spec; see [Req and Finch](req-and-finch.md).
+The shared pipeline adds or checks Content-Digest
 and supplies covered Content-Length only over retained bytes. Existing conflicting
 digests reject. It refuses `host` and trailer components; cover `@authority`
 instead. Responses can cover related-request components.
@@ -172,10 +184,18 @@ signature fields without generating parameters. This example intentionally omits
 freshness; the earlier freshness policy would reject it:
 
 ```elixir
-{:ok, low_level_signed} = RequestSeal.sign(message, %{
-  label: "manual", algorithm: "ed25519",
-  signature_input: ~s[("@method" "@authority" "@path" "content-digest");alg="ed25519";keyid="demo-key"]
-}, signer, field_schemas: %{})
+{:ok, low_level_signed} =
+  RequestSeal.sign(
+    message,
+    %{
+      label: "manual",
+      algorithm: "ed25519",
+      signature_input:
+        ~s[("@method" "@authority" "@path" "content-digest");alg="ed25519";keyid="demo-key"]
+    },
+    signer,
+    field_schemas: %{}
+  )
 ```
 
 The explicit-input path retains its synchronous callback contract; callers bound

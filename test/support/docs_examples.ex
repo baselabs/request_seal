@@ -7,7 +7,7 @@ defmodule RequestSeal.DocsEndpoint do
 
   defp pipeline(conn, _) do
     options = Application.fetch_env!(:request_seal, :docs_endpoint)
-    options.pipeline.call(conn, options.pipeline.init([]))
+    options.pipeline.call(conn, options.pipeline.init(policy: options.policy))
   end
 
   defp sign_response(conn, _) do
@@ -37,7 +37,33 @@ defmodule RequestSeal.DocsExamples do
   @moduledoc false
   import ExUnit.Assertions
 
-  def eval(code, binding), do: elem(Code.eval_string(code, binding), 1)
+  def eval(code, binding, document, index) do
+    # These examples intentionally recompile resources loaded by test support.
+    # Restore compiler settings before evaluating any other example.
+    {result, binding} =
+      if String.starts_with?(code, "defmodule AshApp.") do
+        previous =
+          Code.compiler_options(ignore_module_conflict: true, ignore_already_consolidated: true)
+
+        try do
+          Code.eval_string(code, binding)
+        after
+          Code.compiler_options(previous)
+        end
+      else
+        Code.eval_string(code, binding)
+      end
+
+    key = {__MODULE__, document}
+    executed = Process.get(key, [])
+    assert index not in executed, "document fence executed more than once"
+    Process.put(key, executed ++ [index])
+    Keyword.put(binding, :example_result, result)
+  end
+
+  def assert_fences(document, count) do
+    assert Process.get({__MODULE__, document}, []) == Enum.to_list(1..count)
+  end
 
   def configure(app, key, value) do
     previous = Application.fetch_env(app, key)
@@ -53,7 +79,7 @@ defmodule RequestSeal.DocsExamples do
 
   def endpoint(binding, pipeline, controller, response_signer \\ nil) do
     policy = Keyword.fetch!(binding, :policy)
-    signing = Keyword.fetch!(binding, :signing)
+    signing = RequestSeal.Signing.normalize_spec!(Keyword.fetch!(binding, :signing))
     handle = Keyword.fetch!(binding, :handle)
     configure(:my_app, :http_signature_policy, policy)
 
@@ -74,6 +100,7 @@ defmodule RequestSeal.DocsExamples do
 
     configure(:request_seal, :docs_endpoint, %{
       pipeline: pipeline,
+      policy: policy,
       controller: controller,
       response_options: options,
       owner: self(),
@@ -180,6 +207,8 @@ defmodule RequestSeal.DocsExamples do
   end
 
   def seed_documents(resource) do
+    :ok = Ash.DataLayer.Ets.stop(resource)
+    ExUnit.Callbacks.on_exit(fn -> Ash.DataLayer.Ets.stop(resource) end)
     # Insert the other tenant first so a lost tenant filter changes the result.
     Ash.Seed.seed!(resource, %{}, tenant: "other")
     Ash.Seed.seed!(resource, %{}, tenant: "demo")

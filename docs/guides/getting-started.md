@@ -1,6 +1,6 @@
 <!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
 
-# Develop and explore RequestSeal
+# Develop RequestSeal
 
 
 **What you will build:** A local development environment for RequestSeal, with the full verification gate and generated documentation. You will run the same commands on macOS and Linux (or WSL2), then explore the tested APIs and notebooks before making changes.

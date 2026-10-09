@@ -2,243 +2,399 @@ defmodule RequestSeal.ReadmeTest do
   use ExUnit.Case, async: false
   alias RequestSeal.DocsExamples, as: E
 
-  test "documented examples execute against real cryptography and integrations" do
+  test "README examples execute with real cryptography and HTTP" do
     binding = []
-    code = ~S'
-{:request_seal, git: "https://github.com/baselabs/request_seal.git"}
-'
-    binding = E.eval(code, binding)
-    code = ~S'
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
-{:ok, key} = RequestSeal.Custody.public_key(handle)
-{:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
-signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
-'
-    binding = E.eval(code, binding)
-    code = ~S'
-components = ~s[("@method" "@authority" "@path" "content-digest")]
-{:ok, message} = RequestSeal.Message.request("POST", "https://api.example.com/webhooks", [], ~s({"event":"created"}))
-signing = %{
-  label: "sig", algorithm: "ed25519", components: components,
-  parameters: %{created: true, expires_in: 60, nonce: :random, alg: true, keyid: "demo-key", tag: nil},
-  digest: ["sha-256"], field_schemas: %{}
-}
-{:ok, signed} = RequestSeal.sign(message, signing, handle)
-'
-    binding = E.eval(code, binding)
-    code = ~S'
-{:ok, policy} = RequestSeal.Policy.new(%{
-  algorithms: ["ed25519"], components: components,
-  key_resolver: fn %{keyid: "demo-key"} -> {:ok, %{algorithm: "ed25519", key: key}}; _ -> :error end,
-  freshness: %{clock: fn -> System.system_time(:second) end, max_age: 60, skew: 5, require_expires: true},
-  content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
-  replay: :not_required
-})
-{:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
-verification.signature.crypto # => :valid
-'
-    binding = E.eval(code, binding)
-    verification = Keyword.fetch!(binding, :verification)
-    assert verification.signature.crypto == :valid
-    assert verification.authorization == :not_evaluated
-    code = ~S'
-signing = %{
-  label: "sig",
-  algorithm: "ed25519",
-  components: ~s[("@method" "@authority" "@path" "content-digest")],
-  parameters: %{
-    created: true,
-    expires_in: 60,
-    nonce: :random,
-    alg: true,
-    keyid: "demo-key",
-    tag: nil
-  },
-  digest: ["sha-256"],
-  field_schemas: %{}
-}
-'
-    binding = E.eval(code, binding)
-    binding = E.endpoint(binding, RequestSeal.DocsPipeline, RequestSeal.DocsController)
-    code = ~S'
-url = Application.fetch_env!(:my_app, :webhook_url)
-{:ok, _pool} = Finch.start_link(name: MyApp.Finch)
 
-request =
-  Req.new(
-    url: url,
-    method: :post,
-    json: %{"event" => "created"},
-    finch: [name: MyApp.Finch],
-    retry: false
-  )
+    binding =
+      E.eval(
+        ~S'''
+        {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+        {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+        {:ok, key} = RequestSeal.Custody.public_key(handle)
+        components = ~s[("@method" "@authority" "@path")]
+        {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+        spec = %{label: "sig", algorithm: "ed25519", components: components, expires_in: 60}
+        {:ok, signed} = RequestSeal.sign(message, spec, handle)
+        resolve = fn _ -> {:ok, %{algorithm: "ed25519", key: key}} end
+        clock = fn -> System.system_time(:second) end
 
-{:ok, request} = RequestSeal.Req.attach(request, sign: signing, signer: handle, verify: :none)
-{:ok, response} = Req.request(request)
-'
-    binding = E.eval(code, binding)
-    assert Keyword.fetch!(binding, :response).status == 200
-    E.assert_received_request()
-    code = ~S'
-defmodule MyApp.VerifySignature do
-  def init(options), do: options
+        {:ok, policy} =
+          RequestSeal.Policy.new(%{
+            algorithms: ["ed25519"],
+            components: components,
+            key_resolver: resolve,
+            freshness: %{clock: clock, max_age: 60, skew: 5, require_expires: true},
+            content: :not_required,
+            replay: :not_required
+          })
 
-  def call(conn, _options) do
-    policy = Application.fetch_env!(:my_app, :http_signature_policy)
-
-    options =
-      RequestSeal.Plug.Verify.init(
-        policy: policy,
-        label: "sig",
-        assign: :verified,
-        on_reject: {:halt, 401}
+        {:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
+        # :valid
+        IO.inspect(verification.signature.crypto)
+        ''',
+        binding,
+        "README.md",
+        1
       )
 
-    RequestSeal.Plug.Verify.call(conn, options)
-  end
-end
-'
-    binding = E.eval(code, binding)
-    code = ~S'
-defmodule MyApp.WebhookPipeline do
-  use Plug.Builder
+    assert Keyword.fetch!(binding, :verification).signature.crypto == :valid
 
-  plug(RequestSeal.Plug.Capture,
-    origin: :connection,
-    max_body_bytes: 1_048_576,
-    read_timeout: 5_000
-  )
+    binding =
+      E.eval(
+        ~S'''
+        {:request_seal, git: "https://github.com/baselabs/request_seal.git"}
+        ''',
+        binding,
+        "README.md",
+        2
+      )
 
-  plug(Plug.Parsers,
-    parsers: [:json],
-    pass: ["*/*"],
-    json_decoder: Jason,
-    body_reader: {RequestSeal.Plug.Capture, :read_body, []}
-  )
+    binding =
+      E.eval(
+        ~S'''
+        [
+          {:req, "~> 0.7.4"},
+          {:finch, ">= 0.23.0 and < 0.25.0"},
+          {:plug, "~> 1.20.3"},
+          {:bandit, "~> 1.12.5"},
+          {:jason, "~> 1.0"}
+        ]
+        ''',
+        binding,
+        "README.md",
+        3
+      )
 
-  plug(MyApp.VerifySignature)
-end
-'
-    binding = E.eval(code, binding)
-    code = ~S'
-defmodule MyApp.WebhookController do
-  use Phoenix.Controller, formats: [:json]
+    binding =
+      E.eval(
+        ~S'''
+        defmodule WebhookReceiver do
+          use Plug.Router
 
-  def create(conn, params) do
-    {:ok, verified} = RequestSeal.Plug.verification(conn)
-    json(conn, %{signature_label: verified.label, event: params["event"]})
-  end
-end
-'
-    binding = E.eval(code, binding)
-    endpoint = Application.fetch_env!(:request_seal, :docs_endpoint)
+          plug(RequestSeal.Plug.Capture,
+            origin: :connection,
+            max_body_bytes: 1_048_576,
+            read_timeout: 5_000
+          )
 
-    E.configure(:request_seal, :docs_endpoint, %{
-      endpoint
-      | pipeline: MyApp.WebhookPipeline,
-        controller: MyApp.WebhookController
-    })
+          plug(Plug.Parsers,
+            parsers: [:json],
+            pass: ["*/*"],
+            json_decoder: Jason,
+            body_reader: {RequestSeal.Plug.Capture, :read_body, []}
+          )
 
-    {:ok, response} = Req.request(Keyword.fetch!(binding, :request))
+          plug(RequestSeal.Plug.Verify,
+            policy: {Application, :fetch_env!, [:webhook_demo, :signature_policy]},
+            label: "sig",
+            on_reject: {:halt, 401}
+          )
+
+          plug(:match)
+          plug(:dispatch)
+
+          post "/webhooks" do
+            {:ok, verified} = RequestSeal.Plug.verification(conn)
+            send_resp(conn, 200, "#{verified.signature.crypto}: #{conn.body_params["event"]}")
+          end
+
+          match _ do
+            send_resp(conn, 404, "not found")
+          end
+        end
+
+        # The sender owns the private key; the receiver gets only its public key.
+        {_public, webhook_seed} = :crypto.generate_key(:eddsa, :ed25519)
+        {:ok, webhook_handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, webhook_seed})
+        {:ok, webhook_key} = RequestSeal.Custody.public_key(webhook_handle)
+        webhook_components = ~s[("@method" "@authority" "@path" "content-digest")]
+
+        {:ok, webhook_policy} =
+          RequestSeal.Policy.new(%{
+            algorithms: ["ed25519"],
+            components: webhook_components,
+            key_resolver: fn
+              %{keyid: "sender-key"} -> {:ok, %{algorithm: "ed25519", key: webhook_key}}
+              _ -> :error
+            end,
+            freshness: %{
+              clock: fn -> System.system_time(:second) end,
+              max_age: 60,
+              skew: 5,
+              require_expires: true
+            },
+            content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
+            replay: :not_required
+          })
+
+        webhook_signing = %{
+          label: "sig",
+          algorithm: "ed25519",
+          components: webhook_components,
+          expires_in: 60,
+          keyid: "sender-key",
+          digest: ["sha-256"]
+        }
+
+        Application.put_env(:webhook_demo, :signature_policy, webhook_policy)
+        {:ok, webhook_apps} = Application.ensure_all_started(:req)
+        {:ok, webhook_pool} = Finch.start_link(name: WebhookFinch)
+
+        {:ok, receiver} =
+          Bandit.start_link(
+            plug: WebhookReceiver,
+            ip: {127, 0, 0, 1},
+            port: 0,
+            http_options: [compress: false]
+          )
+
+        {:ok, {_, port}} = ThousandIsland.listener_info(receiver)
+
+        try do
+          request =
+            Req.new(
+              url: "http://127.0.0.1:#{port}/webhooks",
+              method: :post,
+              json: %{"event" => "created"},
+              finch: [name: WebhookFinch],
+              retry: false
+            )
+
+          {:ok, request} =
+            RequestSeal.Req.attach(request, sign: webhook_signing, signer: webhook_handle, verify: :none)
+
+          {:ok, response} = Req.request(request)
+          # {200, "valid: created"}
+          IO.inspect({response.status, response.body})
+
+          unsigned =
+            Req.post!("http://127.0.0.1:#{port}/webhooks", json: %{"event" => "created"}, retry: false)
+
+          # 401
+          IO.inspect(unsigned.status)
+
+          unless response.status == 200 and response.body == "valid: created" and unsigned.status == 401,
+            do: raise("webhook verification failed")
+        after
+          Supervisor.stop(receiver)
+          Application.delete_env(:webhook_demo, :signature_policy)
+          Supervisor.stop(webhook_pool)
+          RequestSeal.Custody.Local.release(webhook_handle)
+          Enum.each(Enum.reverse(webhook_apps), &Application.stop/1)
+        end
+        ''',
+        binding,
+        "README.md",
+        4
+      )
+
+    binding =
+      E.eval(
+        ~S'''
+        defmodule MyAppWeb.SignedWebhookPipeline do
+          use Plug.Builder
+
+          plug(RequestSeal.Plug.Capture,
+            origin: :connection,
+            max_body_bytes: 1_048_576,
+            read_timeout: 5_000
+          )
+
+          plug(Plug.Parsers,
+            parsers: [:json],
+            pass: ["*/*"],
+            json_decoder: Jason,
+            body_reader: {RequestSeal.Plug.Capture, :read_body, []}
+          )
+
+          plug(RequestSeal.Plug.Verify,
+            policy: {Application, :fetch_env!, [:my_app, :http_signature_policy]},
+            label: "sig",
+            on_reject: {:halt, 401}
+          )
+        end
+
+        defmodule MyAppWeb.WebhookController do
+          use Phoenix.Controller, formats: [:json]
+
+          def create(conn, params) do
+            {:ok, verified} = RequestSeal.Plug.verification(conn)
+            json(conn, %{signature_label: verified.label, event: params["event"]})
+          end
+        end
+        ''',
+        binding,
+        "README.md",
+        5
+      )
+
+    phoenix_binding =
+      Keyword.merge(binding,
+        policy: Keyword.fetch!(binding, :webhook_policy),
+        handle: Keyword.fetch!(binding, :handle),
+        signing: Keyword.fetch!(binding, :webhook_signing)
+      )
+
+    # The script released its separate sender; use the hello-world key for this endpoint.
+    key = Keyword.fetch!(binding, :key)
+
+    {:ok, policy} =
+      RequestSeal.Policy.new(%{
+        Map.from_struct(Keyword.fetch!(binding, :webhook_policy))
+        | key_resolver: fn
+            %{keyid: "sender-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
+            _ -> :error
+          end
+      })
+
+    phoenix_binding = Keyword.put(phoenix_binding, :policy, policy)
+
+    phoenix_binding =
+      E.endpoint(phoenix_binding, MyAppWeb.SignedWebhookPipeline, MyAppWeb.WebhookController)
+
+    {:ok, pool} = Finch.start_link(name: ReadmePhoenixFinch)
+
+    request =
+      Req.new(
+        url: Keyword.fetch!(phoenix_binding, :url),
+        method: :post,
+        json: %{"event" => "created"},
+        finch: [name: ReadmePhoenixFinch],
+        retry: false
+      )
+
+    {:ok, request} =
+      RequestSeal.Req.attach(request,
+        sign: Keyword.fetch!(binding, :webhook_signing),
+        signer: Keyword.fetch!(binding, :handle),
+        verify: :none
+      )
+
+    {:ok, response} = Req.request(request)
     assert response.status == 200
     E.assert_received_request()
-    E.assert_rejected_request(binding)
-    code = ~S'
-now = System.system_time(:second)
 
-{:ok, agent_request} =
-  RequestSeal.WebBotAuth.sign(
-    message,
-    %{
-      label: "agent",
-      agent: %{location: "https://agent.example", type: :directory},
-      key: key,
-      algorithm: "ed25519",
-      created: now,
-      expires: now + 60,
-      nonce: Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
-    },
-    signer
-  )
-'
-    binding = E.eval(code, binding)
-    code = ~S'
-{:ok, agent_policy} =
-  RequestSeal.WebBotAuth.Policy.new(%{
-    algorithms: ["ed25519"],
-    agents: fn _ -> :error end,
-    cache: nil,
-    unresolved:
-      {:held_keys,
-       fn
-         %{keyid: ^thumbprint} -> {:ok, %{algorithm: "ed25519", key: key}}
-         _ -> :error
-       end},
-    freshness: %{clock: fn -> System.system_time(:second) end, max_age: 60, skew: 5},
-    content: :not_required,
-    replay: :not_required
-  })
+    assert Req.post!(Keyword.fetch!(phoenix_binding, :url),
+             finch: [name: ReadmePhoenixFinch],
+             json: %{"event" => "created"},
+             retry: false
+           ).status == 401
 
-{:ok, envelope} = RequestSeal.WebBotAuth.verify(agent_request, agent_policy)
-verification = envelope.signatures["agent"]
-'
-    binding = E.eval(code, binding)
+    Supervisor.stop(pool)
 
-    assert Keyword.fetch!(binding, :verification).principal == %{
-             kind: :key,
-             thumbprint: Keyword.fetch!(binding, :thumbprint)
-           }
+    binding =
+      E.eval(
+        ~S'''
+        {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
+        signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+        now = System.system_time(:second)
 
-    record = E.seed_documents(MyApp.Document)
-    code = ~S'
-{:ok, scope} =
-  RequestSeal.Ash.scope(verification, %{
-    actor: fn
-      %{kind: :key, thumbprint: ^thumbprint} -> {:ok, %{role: :reader}}
-      _ -> :error
-    end,
-    tenant: {:value, "demo"},
-    unattributed: :reject
-  })
+        {:ok, agent_request} =
+          RequestSeal.WebBotAuth.sign(
+            message,
+            %{
+              label: "agent",
+              agent: %{location: "https://agent.example", type: :directory},
+              key: key,
+              algorithm: "ed25519",
+              created: now,
+              expires: now + 60,
+              nonce: Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
+            },
+            signer
+          )
+        ''',
+        binding,
+        "README.md",
+        6
+      )
 
-documents = Ash.read!(MyApp.Document, scope: scope, authorize?: true)
-'
-    binding = E.eval(code, binding)
+    binding =
+      E.eval(
+        ~S'''
+        {:ok, agent_policy} =
+          RequestSeal.WebBotAuth.Policy.new(%{
+            algorithms: ["ed25519"],
+            agents: fn _ -> :error end,
+            cache: nil,
+            unresolved:
+              {:held_keys,
+               fn
+                 %{keyid: ^thumbprint} -> {:ok, %{algorithm: "ed25519", key: key}}
+                 _ -> :error
+               end},
+            freshness: %{clock: fn -> System.system_time(:second) end, max_age: 60, skew: 5},
+            content: :not_required,
+            replay: :not_required
+          })
+
+        {:ok, envelope} = RequestSeal.WebBotAuth.verify(agent_request, agent_policy)
+        verification = envelope.signatures["agent"]
+        ''',
+        binding,
+        "README.md",
+        7
+      )
+
+    record = E.seed_documents(AshApp.Document)
+
+    binding =
+      E.eval(
+        ~S'''
+        {:ok, scope} =
+          RequestSeal.Ash.scope(verification, %{
+            actor: fn
+              %{kind: :key, thumbprint: ^thumbprint} -> {:ok, %{role: :reader}}
+              _ -> :error
+            end,
+            tenant: {:value, "demo"},
+            unattributed: :reject
+          })
+
+        documents = Ash.read!(AshApp.Document, scope: scope, authorize?: true)
+        ''',
+        binding,
+        "README.md",
+        8
+      )
+
     E.assert_ash_read(binding, record)
-    E.assert_ash_denial(binding, MyApp.Document)
-    assert Protocol.consolidated?(Ash.ToTenant)
-    assert Protocol.consolidated?(Ash.Scope.ToOpts)
-    code = ~S'
-{:ok, replay_pid} = RequestSeal.Replay.ETS.start_link(max_entries: 10_000)
+    E.assert_ash_denial(binding, AshApp.Document)
 
-replay = %{
-  identifier: :nonce,
-  namespace: "demo-api",
-  commitment: fn facts -> {:ok, facts.identifier} end,
-  store: RequestSeal.Replay.ETS.store(replay_pid),
-  timeout: 5_000
-}
+    binding =
+      E.eval(
+        ~S'''
+        {:ok, replay_pid} = RequestSeal.Replay.ETS.start_link(max_entries: 10_000)
 
-{:ok, replay_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: replay})
-{:ok, accepted} = RequestSeal.verify(signed, replay_policy, label: "sig")
-'
-    binding = E.eval(code, binding)
-    assert %RequestSeal.Replay.Receipt{} = Keyword.fetch!(binding, :accepted).replay
-    code = ~S'
-RequestSeal.verify(signed, replay_policy, label: "sig")
-# => {:error, %RequestSeal.Error{reason: :replayed, ...}}
-'
-    binding = E.eval(code, binding)
+        replay = %{
+          identifier: :nonce,
+          namespace: "demo-api",
+          commitment: fn facts -> {:ok, facts.identifier} end,
+          store: RequestSeal.Replay.ETS.store(replay_pid),
+          timeout: 5_000
+        }
 
-    assert {:error, %RequestSeal.Error{reason: :replayed}} =
-             RequestSeal.verify(
-               Keyword.fetch!(binding, :signed),
-               Keyword.fetch!(binding, :replay_policy),
-               label: "sig"
-             )
+        {:ok, replay_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: replay})
+        {:ok, accepted} = RequestSeal.verify(signed, replay_policy, label: "sig")
+        ''',
+        binding,
+        "README.md",
+        9
+      )
 
-    E.assert_rejected_signature(binding)
-    assert is_list(binding)
+    binding =
+      E.eval(
+        ~S'''
+        RequestSeal.verify(signed, replay_policy, label: "sig")
+        # => {:error, %RequestSeal.Error{reason: :replayed, ...}}
+        ''',
+        binding,
+        "README.md",
+        10
+      )
+
+    assert {:error, %{reason: :replayed}} = Keyword.fetch!(binding, :example_result)
+    E.assert_fences("README.md", 10)
+    RequestSeal.Custody.Local.release(Keyword.fetch!(binding, :handle))
   end
 end
