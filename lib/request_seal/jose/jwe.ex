@@ -26,9 +26,21 @@ defmodule RequestSeal.JOSE.JWE do
   RSA-OAEP private operations stay inside its sensitive local holder. The
   existing callback path can still use caller-owned raw key material.
   Unwrap receives `(encrypted_key_bytes, header)` and returns `{:ok, cek}` or
-  `{:error, term}`. Resolver and unwrap execute within one sensitive custody
-  worker and one absolute deadline. Unwrap failure uses a fresh random CEK and
+  `{:error, term}`. Resolver and callback unwrap execute in JWE's sensitive worker.
+  On the handle path, the CEK passes from the sensitive local holder through a
+  separate sensitive custody runner and middle process to that JWE worker.
+  These four processes see the CEK; JWE's outer middle process and the decrypt
+  caller receive only the authenticated result. All work shares one absolute
+  deadline. Unwrap failure uses a fresh random CEK and
   still attempts tag authentication; both paths return `:decryption_failed`.
+
+  A released or unavailable resolved handle makes decryption fail with the same
+  complete error as a forged message, by design. Check
+  `RequestSeal.Custody.public_key(handle)` at startup: `{:ok, public_key}` confirms
+  public resolution; `{:error, error}` reports custody availability separately
+  from message processing. Handle algorithm/capability mismatch also follows the
+  unwrap-failure path. Resolver algorithm mismatch remains a key-selection error,
+  and deadline expiration remains distinct.
 
   CEK/IV use the real CSPRNG. Decrypted data stays in the private worker until
   full authentication succeeds; no partial result is returned. IVs are 12 bytes,
@@ -162,16 +174,19 @@ defmodule RequestSeal.JOSE.JWE do
      }}
   end
 
-  defp unwrapper(%{algorithm: _, unwrap: fun} = entry, _, _)
-       when map_size(entry) == 2 and is_function(fun, 2),
-       do: fun
+  defp unwrapper(%{algorithm: _, unwrap: fun} = entry, alg, _)
+       when map_size(entry) == 2 and is_function(fun, 2) do
+    ensure(entry.algorithm == alg, :key_resolver_failed, :key)
+    fun
+  end
 
   defp unwrapper(%{algorithm: _, key: %KeyHandle{} = handle} = entry, alg, deadline)
        when map_size(entry) == 2 do
-    ensure(handle.algorithm == {:jwe, alg}, :algorithm_mismatch, :key)
-    ensure(handle.capabilities == [:unwrap], :algorithm_mismatch, :key)
+    ensure(entry.algorithm == alg, :key_resolver_failed, :key)
 
     fn bytes, _header ->
+      ensure(handle.algorithm == {:jwe, alg}, :decryption_failed, :crypto)
+      ensure(handle.capabilities == [:unwrap], :decryption_failed, :crypto)
       remaining = deadline - System.monotonic_time(:millisecond)
       ensure(remaining > 0, :deadline_exceeded, :crypto)
       Custody.unwrap(handle, bytes, timeout: remaining)

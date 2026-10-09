@@ -71,11 +71,21 @@ and deadline contract. The holder performs the private RSA operation and
 returns only unwrapped bytes. A JWE resolver may return
 `{:ok, %{algorithm: wire_algorithm, key: handle}}`; its request receives the
 remaining envelope deadline. The raw-key unwrap callback remains supported.
-The CEK leaves the holder only for authenticated content decryption in the
-sensitive JWE worker and never becomes public metadata. Unwrap rejection uses
+The CEK passes from the sensitive holder through the sensitive custody runner
+and middle process to the sensitive JWE worker for authenticated content
+decryption; all four processes see it. JWE's outer middle process and the decrypt
+caller receive only the authenticated result. Every custody runner and middle
+process sets sensitivity before work, including signing operations. Direct
+`Custody.unwrap/3` callers receive unwrapped bytes and own their protection;
+the bytes never become public metadata. Unwrap rejection uses
 a fresh random CEK and still attempts GCM authentication; OAEP padding failure
-and GCM tag failure return the same complete error. Deadline expiration remains
-a separate bounded failure.
+and GCM tag failure return the same complete error. A handle bound to the other
+permitted OAEP algorithm follows that same failure path; an empty OAEP plaintext
+is a direct custody `:decryption_failed`. Released or unavailable handles also
+yield the forged-message error in JWE, so operators check
+`Custody.public_key(handle)` at startup. Resolver entries must match the selected
+header algorithm in both callback and handle branches. Deadline expiration
+remains a separate bounded failure.
 
 Acceptance requires actual OTP round trips, independent published OAEP vectors,
 Node WebCrypto encryption to the handle's public key, wrong/released handle

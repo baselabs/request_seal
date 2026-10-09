@@ -642,10 +642,9 @@ defmodule RequestSeal.CustodyLocalTest do
       try do
         assert_receive {:queued_runner, runner}, 1_000
         monitor = Process.monitor(runner)
-        :erlang.trace(runner, true, [:send])
+        {:message_queue_len, queued} = Process.info(holder, :message_queue_len)
         send(runner, :continue)
-        assert_receive {:trace, ^runner, :send, {:request, _, ^runner, _, _, _}, ^holder}, 1_000
-        :erlang.trace(runner, false, [:send])
+        await_queued_request(holder, queued)
 
         if mode == :deadline do
           assert_error(Task.await(caller, 1_000), :deadline_exceeded)
@@ -720,6 +719,18 @@ defmodule RequestSeal.CustodyLocalTest do
       assert length(cancellation_monitors) == 1
       [middle] = cancellation_monitors
       assert {:links, [^middle]} = Process.info(runner, :links)
+
+      for pid <- [middle, runner] do
+        assert :erlang.suspend_process(pid)
+
+        try do
+          send(pid, {:sensitivity_probe, make_ref()})
+          assert Process.info(pid, :messages) == {:messages, []}
+        after
+          :erlang.resume_process(pid)
+        end
+      end
+
       assert {:trap_exit, true} = Process.info(middle, :trap_exit)
       assert {:monitors, monitors} = Process.info(middle, :monitors)
       assert {:process, caller} in monitors
@@ -956,6 +967,18 @@ defmodule RequestSeal.CustodyLocalTest do
 
       packet ->
         packet
+    end
+  end
+
+  defp await_queued_request(holder, queued, attempts \\ 100)
+  defp await_queued_request(_, _, 0), do: flunk("holder did not receive the real signing request")
+
+  defp await_queued_request(holder, queued, attempts) do
+    if Process.info(holder, :message_queue_len) == {:message_queue_len, queued} do
+      Process.sleep(1)
+      await_queued_request(holder, queued, attempts - 1)
+    else
+      assert Process.info(holder, :message_queue_len) == {:message_queue_len, queued + 1}
     end
   end
 

@@ -62,10 +62,14 @@ defmodule RequestSeal.Custody.Local do
       RequestSeal.JOSE.JWE.decrypt(compact, policy)
 
   The resolver's work and the holder request share the JWE deadline. Private RSA
-  material stays in the holder; only the CEK leaves it for authenticated content
-  decryption in JWE's sensitive worker. OAEP padding and GCM tag failures return
-  the same complete `RequestSeal.JOSE.Error`. Release the handle with `release/1`
-  when its owner no longer needs it.
+  material stays in the holder. The CEK passes through the sensitive custody
+  runner and middle process to JWE's sensitive worker for authenticated content
+  decryption. OAEP padding and GCM tag failures return the same complete
+  `RequestSeal.JOSE.Error`. A released or unavailable handle produces that same
+  error as a forged message, by design; use
+  `RequestSeal.Custody.public_key(handle)` as a startup health check to expose
+  custody availability independently. Deadline expiration remains distinct.
+  Release the handle with `release/1` when its owner no longer needs it.
   """
   @behaviour RequestSeal.Custody
   alias RequestSeal.{Crypto, KeyHandle, KeyIdentity, PublicKey}

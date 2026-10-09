@@ -295,12 +295,11 @@ defmodule RequestSeal.CustodySSHAgentTest do
     provisional = %{
       handle
       | ref: fn ->
+          send(parent, {:socket_runner, self()})
           {algorithm, _, public, _} = original.()
           {algorithm, path, public, false}
         end
     }
-
-    :erlang.trace_pattern({:gen_tcp, :send, 2}, [{:_, [], [{:return_trace}]}], [])
 
     caller =
       Task.async(fn ->
@@ -309,17 +308,17 @@ defmodule RequestSeal.CustodySSHAgentTest do
         end
       end)
 
-    :erlang.trace(caller.pid, true, [:call, :set_on_spawn])
-
     try do
       start = System.monotonic_time(:millisecond)
       send(caller.pid, :start)
+      assert_receive {:socket_runner, runner}, 1_000
       assert_receive :nonreading_peer_accepted, 1_000
-      # Observe the actual adapter socket, including its runtime close option.
-      assert_receive {:trace, runner, :call, {:gen_tcp, :send, [socket, <<13, _::binary>>]}},
-                     1_000
+      # Sensitive runners suppress call traces; observe their actual owned socket.
+      assert eventually(fn ->
+               Enum.any?(socket_ports(), &(Port.info(&1, :connected) == {:connected, runner}))
+             end)
 
-      assert_receive {:trace, ^runner, :return_from, {:gen_tcp, :send, 2}, :ok}, 1_000
+      [socket] = Enum.filter(socket_ports(), &(Port.info(&1, :connected) == {:connected, runner}))
       close_option = :inet.getopts(socket, [:send_timeout_close])
       assert :ok = :inet.setopts(socket, send_timeout: 80)
 
@@ -344,7 +343,6 @@ defmodule RequestSeal.CustodySSHAgentTest do
       send(peer.pid, :stop)
       assert :ok = Task.await(peer, 1_000)
     after
-      :erlang.trace_pattern({:gen_tcp, :send, 2}, false, [])
       Task.shutdown(caller, :brutal_kill)
       Task.shutdown(peer, :brutal_kill)
       :gen_tcp.close(listener)

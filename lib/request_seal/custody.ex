@@ -5,7 +5,8 @@ defmodule RequestSeal.Custody do
   Each callback runs in a fresh runner, never linked to the caller. A monitored
   middle process traps exits, monitors the caller before linking the runner, and
   terminates the runner when the caller dies, even
-  when a callback is blocked. Runner exceptions are reduced to
+  when a callback is blocked. Both processes set `Process.flag(:sensitive, true)`
+  before any custody work, for every operation. Runner exceptions are reduced to
   `:custodian_failure` without logging exception text.
   Deadline expiry kills the runner and drains its
   uniquely tagged result. Loading the library starts no process, store, or
@@ -49,6 +50,18 @@ defmodule RequestSeal.Custody do
   private key. OAEP failures return `:decryption_failed`; callers must authenticate
   content before exposing plaintext. `RequestSeal.JOSE.JWE` performs that step
   with a random fallback CEK on unwrap failure.
+
+  Unwrapped bytes pass from the sensitive local holder through the sensitive
+  custody runner and middle process to the caller. On the JWE handle path that
+  caller is JWE's sensitive worker, which authenticates content before returning
+  plaintext. A direct `unwrap/3` caller receives the bytes and owns their protection.
+  An empty OAEP plaintext returns `:decryption_failed`.
+
+  JWE deliberately maps a released or unavailable handle to the same error as a
+  forged message. Operators should check `RequestSeal.Custody.public_key(handle)`
+  at startup to distinguish custody availability from message rejection;
+  `{:ok, public_key}` confirms public resolution, while `{:error, error}` exposes
+  the custody failure. Deadline expiration remains a distinct JWE error.
   """
   @spec unwrap(KeyHandle.t(), binary(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
   def unwrap(handle, encrypted_key, opts \\ []) do
@@ -170,6 +183,8 @@ defmodule RequestSeal.Custody do
   defp normalize(:unwrap, {:ok, bytes}) when is_binary(bytes) and byte_size(bytes) in 1..1024,
     do: {:ok, bytes}
 
+  defp normalize(:unwrap, {:ok, <<>>}), do: {:error, Error.new(:decryption_failed)}
+
   defp normalize(:public_key, {:ok, %PublicKey{} = public}) do
     PublicKey.validate!(public)
     {:ok, public}
@@ -195,7 +210,11 @@ defmodule RequestSeal.Custody do
     owner = self()
     tag = make_ref()
 
-    {worker, monitor} = spawn_monitor(fn -> watch_owner(owner, tag, callback) end)
+    {worker, monitor} =
+      spawn_monitor(fn ->
+        Process.flag(:sensitive, true)
+        watch_owner(owner, tag, callback)
+      end)
 
     receive do
       {^tag, result} ->
@@ -229,6 +248,7 @@ defmodule RequestSeal.Custody do
 
     runner =
       spawn_link(fn ->
+        Process.flag(:sensitive, true)
         send(middle, {tag, Support.safe(callback, :custodian_failure)})
       end)
 
