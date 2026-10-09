@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased 0.2.0
+## 0.2.0 - 2026-10-09
 
 - Document `RequestSeal.Custody.run/2` as a public deadline and cancellation
   boundary, with sensitive workers, caller and context-owner monitoring,

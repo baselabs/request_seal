@@ -51,7 +51,7 @@ defmodule RequestSeal.MixProject do
 
     [
       app: :request_seal,
-      version: "0.1.0",
+      version: "0.2.0",
       # Libraries declare a consumer range; development and notebook tools stay pinned.
       # OTP 27 supplies :json; both supported CI lanes are recorded in ADR 0008.
       elixir: "~> 1.18",

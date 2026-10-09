@@ -51,7 +51,7 @@ The headless gate verifies code; it does not certify interactive browser accessi
 
 ## Install from Hex
 
-In another Elixir project, add `{:request_seal, "~> 0.1.0"}` to your `mix.exs`
+In another Elixir project, add `{:request_seal, "~> 0.2.0"}` to your `mix.exs`
 dependency list and run `mix deps.get`. The `RequestSeal.Message` module documentation contains executable request construction
 and validation examples. `FieldOccurrence` retains exact name/value bytes and section;
 `Body` records caller-owned availability without reading streams; `TransportFacts`
