@@ -113,8 +113,9 @@ def content_errors(root, relative, source, paths):
     path = root / relative
     record = relative in ("AGENTS.md", "CHANGELOG.md", "LICENSE", "NOTICE") or relative.startswith("docs/adr/")
     if not record:
-        line = next((x for x in source.splitlines() if x.startswith("**Status:**")), "")
-        if not all(f"**{field}:**" in line for field in FIELDS):
+        comment = re.match(r"\A<!--\s*(.*?)\s*-->", source, re.DOTALL)
+        line = comment.group(1) if comment else ""
+        if not all(f"{field}:" in line for field in FIELDS):
             errors.append(f"{relative}: incomplete status metadata")
     if MACHINE_PATH.search(source):
         errors.append(f"{relative}: machine or private file URL")
@@ -155,6 +156,49 @@ def content_errors(root, relative, source, paths):
     return errors
 
 
+def elixir_fences(source):
+    """Retain exact code bytes, including the final newline, in Markdown order."""
+    blocks = []
+    opening = None
+    body = []
+    language = None
+    for line in source.splitlines(keepends=True):
+        if opening is None:
+            match = re.fullmatch(r" {0,3}(`{3,}|~{3,})([^\r\n]*)\r?\n?", line)
+            if match:
+                opening = match.group(1)
+                language = match.group(2).strip()
+                body = []
+        elif re.fullmatch(r" {0,3}" + re.escape(opening[0]) + "{" + str(len(opening)) + r",}\s*", line):
+            if language == "elixir":
+                blocks.append("".join(body))
+            opening = None
+        else:
+            body.append(line)
+    if opening is not None and language == "elixir":
+        raise ValueError("unclosed Elixir fence")
+    return blocks
+
+
+def fence_errors(root, relative, source):
+    if relative == "README.md":
+        test = Path("test/readme_test.exs")
+    elif Path(relative).parent.as_posix() == "docs/guides":
+        test = Path("test/guides") / (Path(relative).stem.replace("-", "_") + "_test.exs")
+    else:
+        return []
+    examples = elixir_fences(source)
+    if not examples:
+        return []
+    target = root / test
+    copies = target.read_bytes().decode("utf-8") if target.is_file() and not target.is_symlink() else ""
+    return [
+        f"{relative}: Elixir fence {index} has no byte-identical copy in {test}"
+        for index, example in enumerate(examples, 1)
+        if not example or example not in copies
+    ]
+
+
 def check(root=ROOT):
     approved = public_documents(root)
     paths = public_paths(root)
@@ -162,7 +206,9 @@ def check(root=ROOT):
     for relative in sorted(approved):
         path = root / relative
         if path.is_file() and not path.is_symlink():
-            errors.extend(content_errors(root, relative, path.read_text(), paths))
+            source = path.read_bytes().decode("utf-8")
+            errors.extend(content_errors(root, relative, source, paths))
+            errors.extend(fence_errors(root, relative, source))
     return approved, errors
 
 

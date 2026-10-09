@@ -25,6 +25,15 @@ defmodule RequestSeal.MixProject do
     "docs/design/architecture.md",
     "docs/design/threat-model.md",
     "docs/guides/getting-started.md",
+    "docs/guides/signing-and-verifying.md",
+    "docs/guides/phoenix-and-plug.md",
+    "docs/guides/req-and-finch.md",
+    "docs/guides/ash.md",
+    "docs/guides/web-bot-auth.md",
+    "docs/guides/replay-protection.md",
+    "docs/guides/key-discovery.md",
+    "docs/guides/jose.md",
+    "docs/guides/key-custody.md",
     "docs/guides/testing.md",
     "docs/operations/releases.md",
     "docs/reference/glossary.md",
@@ -48,7 +57,8 @@ defmodule RequestSeal.MixProject do
       elixir: "~> 1.18",
       name: "RequestSeal",
       source_url: "https://github.com/baselabs/request_seal",
-      description: "HTTP message signatures and agent authentication for Elixir.",
+      description:
+        "Sign and verify HTTP requests and responses in Elixir: RFC 9421 HTTP Message Signatures, Web Bot Auth for AI agents, JWS/JWE, digests and replay protection, with Plug, Phoenix, Req, Finch and Ash integrations.",
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: dependencies(),
       package: [
@@ -64,12 +74,38 @@ defmodule RequestSeal.MixProject do
             path -> path
           end),
         groups_for_extras: [
-          "Start here": ["README.md", ~r/docs\/guides\//],
+          "Start here": ["README.md", "docs/guides/getting-started.md"],
+          Guides: ~r/docs\/guides\//,
           Reference: ~r/docs\/reference\//,
-          Design: ~r/docs\/design\//,
-          Decisions: ~r/docs\/adr\//,
+          "Design and decisions": [~r/docs\/design\//, ~r/docs\/adr\//],
           Livebooks: ~r/livebooks\//,
           Maintenance: ["CONTRIBUTING.md", "SECURITY.md", ~r/docs\/operations\//]
+        ],
+        groups_for_modules: [
+          Core: [
+            RequestSeal,
+            RequestSeal.Message,
+            RequestSeal.Body,
+            RequestSeal.FieldOccurrence,
+            RequestSeal.TransportFacts,
+            RequestSeal.Policy,
+            RequestSeal.Verification,
+            RequestSeal.Error,
+            RequestSeal.SignatureBase,
+            ~r/^RequestSeal\.(StructuredFields|Digest|Crypto|Quorum|AcceptSignature)(\.|$)/
+          ],
+          "Keys and custody": [
+            RequestSeal.PublicKey,
+            RequestSeal.KeyHandle,
+            RequestSeal.KeyIdentity,
+            ~r/^RequestSeal\.Custody(\.|$)/
+          ],
+          Discovery: ~r/^RequestSeal\.Discovery(\.|$)/,
+          Replay: ~r/^RequestSeal\.Replay(\.|$)/,
+          JOSE: ~r/^RequestSeal\.JOSE(\.|$)/,
+          "Web Bot Auth": ~r/^RequestSeal\.WebBotAuth(\.|$)/,
+          Integrations: ~r/^RequestSeal\.(Req|Finch|Plug|Ash|Adapter)(\.|$)/,
+          Profiles: [RequestSeal.Profile]
         ]
       ]
     ]

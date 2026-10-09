@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-06 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+
 # Executable Livebooks
 
-**Status:** current · **Kind:** guide · **Updated:** 2026-10-06 · **Governed by:** public architecture and accepted ADRs · **Review when:** the referenced contract or implementation changes
 
 Open the `.livemd` files in Livebook, or execute their code through the repository gate:
 

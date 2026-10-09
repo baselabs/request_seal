@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-07 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+
 # Inspect the local library
 
-**Status:** current · **Kind:** guide · **Updated:** 2026-10-07 · **Governed by:** public architecture and accepted ADRs · **Review when:** the referenced contract or implementation changes
 
 This notebook installs the real local RequestSeal checkout. It checks the module's
 public function exports and actual runtime. Protocol verification is exercised by the

@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: design · Updated: 2026-10-08 · Governed by: accepted ADRs 0001–0011 and 0013 · Review when: a supported standard, profile, public contract, or trust boundary changes -->
+
 # RequestSeal architecture
 
-**Status:** current · **Kind:** design · **Updated:** 2026-10-08 · **Governed by:** accepted ADRs 0001–0011 and 0013 · **Review when:** a supported standard, profile, public contract, or trust boundary changes
 
 RequestSeal is one framework-independent, Elixir-only library for signing and verifying HTTP messages and generic compact JOSE, with Web Bot Auth protocol-00 and an explicit named-profile extension surface. The TypeScript counterpart is deferred, not planned for the current release. The lossless message value model (the Message/occurrence/body/transport portion of
 ADR 0002) is implemented by `RequestSeal.Message`, `FieldOccurrence`,

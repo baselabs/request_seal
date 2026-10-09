@@ -1,14 +1,9 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture, threat model, and accepted ADRs · Review when: an advertised capability, test runner, or evidence source changes -->
+
 # Testing and evidence
 
-**Status:** current · **Kind:** guide · **Updated:** 2026-10-08 · **Governed by:** public architecture, threat model, and accepted ADRs · **Review when:** an advertised capability, test runner, or evidence source changes
 
-RequestSeal's checks distinguish mathematical validity, protocol behavior, and
-acceptance by another implementation. The current library contains lossless HTTP message values and
-generic RFC 9421 signing and single-label verification with explicit freshness and
-optional nonce replay, explicit quorum verification, caller-owned custody, bounded
-discovery, optional Req/Finch and Plug/Phoenix adapters, Ash scope mapping, generic
-compact JWS/JWE, one-level JWS-in-JWE nesting, and two learning notebooks.
-Web Bot Auth protocol-00 identity attribution and the bounded named-profile extension surface are implemented.
+**What you will build:** A verification workflow that distinguishes cryptographic validity, protocol behavior, and acceptance by another implementation. You will run the default gate, choose focused checks for properties and integrations, and identify when a deployed peer or caller-provisioned database is needed to establish a claim.
 
 ## Run the current gate
 

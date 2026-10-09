@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: reference · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+
 # Domain glossary
 
-**Status:** current · **Kind:** reference · **Updated:** 2026-10-08 · **Governed by:** public architecture and accepted ADRs · **Review when:** the referenced contract or implementation changes
 
 | Term | Meaning |
 |---|---|

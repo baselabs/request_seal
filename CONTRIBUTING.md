@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-06 · Governed by: public architecture and accepted ADRs · Review when: the public contract or implementation changes -->
+
 # Contributing
 
-**Status:** current · **Kind:** guide · **Updated:** 2026-10-06 · **Governed by:** public architecture and accepted ADRs · **Review when:** the public contract or implementation changes
 
 Read the [architecture](docs/design/architecture.md),
 [threat model](docs/design/threat-model.md), [technical decisions](docs/adr/0001-library-boundary.md),

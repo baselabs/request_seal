@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: reference · Updated: 2026-10-08 · Governed by: draft-ietf-webbotauth-httpsig-protocol-00 · Review when: source bytes or signing inputs change -->
+
 # Web Bot Auth fixture provenance
 
-**Status:** current · **Kind:** reference · **Updated:** 2026-10-08 · **Governed by:** draft-ietf-webbotauth-httpsig-protocol-00 · **Review when:** source bytes or signing inputs change
 
 Retrieved and generated October 8, 2026.
 

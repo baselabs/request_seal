@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: design · Updated: 2026-10-08 · Governed by: architecture and ADRs 0002–0007 · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
+
 # RequestSeal threat model
 
-**Status:** current · **Kind:** design · **Updated:** 2026-10-08 · **Governed by:** architecture and ADRs 0002–0007 · **Review when:** a trust boundary, profile, adapter, data shape, or external effect changes
 
 RequestSeal processes attacker-controlled wire data at an authentication boundary. Its primary security goal is to report exactly what was cryptographically established, by which trusted association, under which profile, without granting caller authorization or payment authority.
 

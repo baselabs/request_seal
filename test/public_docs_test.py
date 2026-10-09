@@ -82,6 +82,49 @@ class PublicDocsTest(unittest.TestCase):
     def test_missing_metadata(self):
         self.assertTrue(any("metadata" in e for e in docs.content_errors(ROOT, "docs/guides/input.md", "# Input\n", self.paths)))
 
+    def test_metadata_is_hidden_in_a_leading_comment(self):
+        metadata = "<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: RFC 9421 · Review when: API changes -->\n"
+        self.assertEqual([], docs.content_errors(ROOT, "docs/guides/input.md", metadata + "# Input\n", self.paths))
+        for source in (
+            metadata.replace("Kind:", "Category:"),
+            "# Input\n" + metadata,
+            "**Status:** current · **Kind:** guide · **Updated:** 2026-10-08 · **Governed by:** RFC 9421 · **Review when:** API changes\n",
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(any("metadata" in e for e in docs.content_errors(ROOT, "docs/guides/input.md", source, self.paths)))
+
+    def test_fences_require_exact_executed_copies_in_their_own_test(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "test/guides").mkdir(parents=True)
+            source = '```elixir\nvalue = 1\ntrue = value > 0\n```\n'
+            example = '    code = ~S"""\nvalue = 1\ntrue = value > 0\n"""\n    Code.eval_string(code)\n'
+            for document, test in (("README.md", "test/readme_test.exs"), ("docs/guides/example.md", "test/guides/example_test.exs")):
+                with self.subTest(document=document):
+                    self.assertTrue(docs.fence_errors(root, document, source))
+                    (root / test).write_text(example)
+                    self.assertEqual([], docs.fence_errors(root, document, source))
+                    self.assertTrue(docs.fence_errors(root, document, source.replace("value = 1", "value = 2")))
+                    (root / test).write_text(example.replace("value = 1", "value = 2"))
+                    self.assertTrue(docs.fence_errors(root, document, source))
+
+    def test_fence_extraction_preserves_bytes_and_ignores_other_languages(self):
+        self.assertEqual(["x = 1\n\n"], docs.elixir_fences('```sh\nx = 2\n```\n```elixir\nx = 1\n\n```\n'))
+        self.assertEqual(["x = 1\n"], docs.elixir_fences('~~~elixir\nx = 1\n~~~\n'))
+        self.assertEqual(["  x = 1\n"], docs.elixir_fences('  ```elixir\n  x = 1\n  ```\n'))
+        self.assertEqual([], docs.elixir_fences('````text\n```elixir\nx = 1\n```\n````\n'))
+        with self.assertRaisesRegex(ValueError, "unclosed"):
+            docs.elixir_fences('```elixir\nx = 1\n')
+
+    def test_copy_comparison_preserves_line_endings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "test").mkdir()
+            (root / "test/readme_test.exs").write_bytes(b"value = 1\n")
+            self.assertTrue(docs.fence_errors(root, "README.md", "```elixir\r\nvalue = 1\r\n```\r\n"))
+            (root / "test/readme_test.exs").write_bytes(b"value = 1\r\n")
+            self.assertTrue(docs.fence_errors(root, "README.md", "```elixir\nvalue = 1\n```\n"))
+
     def test_unapproved_file_and_symlink_use_real_git_inventory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

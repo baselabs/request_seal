@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: reference · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+
 # Standards and counterpart contracts
 
-**Status:** current · **Kind:** reference · **Updated:** 2026-10-08 · **Governed by:** public architecture and accepted ADRs · **Review when:** the referenced contract or implementation changes
 
 These are primary technical inputs read for the design on October 6, 2026. Recheck the
 relevant source before implementing its surface. No linked example alone proves peer acceptance.

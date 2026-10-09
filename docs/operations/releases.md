@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+
 # Release and maintenance runbook
 
-**Status:** current · **Kind:** guide · **Updated:** 2026-10-08 · **Governed by:** public architecture and accepted ADRs · **Review when:** the referenced contract or implementation changes
 
 ## Release conditions
 

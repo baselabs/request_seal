@@ -1,6 +1,7 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-06 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+
 # Security and disclosure
 
-**Status:** current · **Kind:** guide · **Updated:** 2026-10-06 · **Governed by:** public architecture and accepted ADRs · **Review when:** the referenced contract or implementation changes
 
 The current scaffold does not implement authentication. The security contract for the
 intended library is in [the threat model](docs/design/threat-model.md).

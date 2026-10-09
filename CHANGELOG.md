@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added executable installation and integration examples, task-oriented guides, and grouped API documentation. Documentation metadata is retained in hidden HTML comments; the documentation check requires byte-identical tested Elixir examples.
+- The TypeScript counterpart and npm package remain deferred; this release targets the Elixir library.
+
 - JOSE protected headers now use compact JSON with top-level members in caller order.
 - Feature-adaptive public-key encoding supports Elixir 1.18 or newer on OTP 27 or newer, tested in CI on Elixir/OTP pairs 1.18.4/27, 1.19.5/28, and 1.20.4/29. PKCS #8 v2 (OneAsymmetricKey) containers reject. CI validates all three pairs and optional client floors on the floor toolchain.
 - Added fixed-seed parser, signature, and replay properties with 300 runs per property, real cryptography, and caller-provisioned PostgreSQL storm checks.
