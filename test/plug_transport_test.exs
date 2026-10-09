@@ -48,6 +48,12 @@ defmodule RequestSeal.PlugTransportTest do
     end
   end
 
+  for source <- [:forwarded, :x_forwarded, :declared] do
+    test "#{source} origins normalize and verify builder and Finch signatures", %{handle: handle} do
+      assert_normalized_origin(unquote(source), handle)
+    end
+  end
+
   test "published requests preserve bytes; exact query coverage refuses missing evidence" do
     for section <- ["B.2.3", "B.2.6", "B.3"] do
       {origin, _} =
@@ -1757,6 +1763,64 @@ defmodule RequestSeal.PlugTransportTest do
 
           assert byte_size(Exception.message(error)) < 100
         end
+      end
+    end
+  end
+
+  defp assert_normalized_origin(source, handle) do
+    components = ~s[("@method" "@scheme" "@authority" "@path")]
+    spec = %{T.spec(components) | digest: nil}
+    policy = T.policy(components, content: :not_required)
+
+    for {scheme, default} <- [{"http", 80}, {"https", 443}],
+        host <- [
+          "ExAmPlE.COM",
+          "ExAmPlE.COM:#{default}",
+          "ExAmPlE.COM:8443",
+          "[2001:DB8::1]:#{default}"
+        ],
+        proto <- [scheme, String.upcase(scheme)] do
+      rule =
+        if source == :declared,
+          do: {:declared, proto, host},
+          else: {:forwarded, %{trusted_peers: [{{127, 0, 0, 1}, 32}], field: source}}
+
+      {backend, _} = T.start(owner: self(), origin: rule, policy: policy)
+      url = "#{scheme}://#{host}/path"
+
+      for client <- [:builder, :finch] do
+        headers =
+          if client == :builder do
+            {:ok, message} = RequestSeal.Message.request("GET", url, [], nil)
+            {:ok, signed} = RequestSeal.sign(message, spec, handle)
+            Enum.map(signed.fields, &{&1.name, &1.value})
+          else
+            {:ok, signed} = RequestSeal.Finch.sign(Finch.build(:get, url), spec, handle)
+            signed.headers
+          end
+
+        forwarded =
+          case source do
+            :forwarded -> [{"forwarded", "proto=#{proto};host=\"#{host}\""}]
+            :x_forwarded -> [{"x-forwarded-proto", proto}, {"x-forwarded-host", host}]
+            :declared -> []
+          end
+
+        wire_headers =
+          Enum.map(headers ++ forwarded, fn {name, value} -> "#{name}: #{value}\r\n" end)
+
+        assert T.raw(backend, [
+                 "GET /path HTTP/1.1\r\nHost: ingress.example\r\n",
+                 wire_headers,
+                 "Connection: close\r\n\r\n"
+               ]) =~ "HTTP/1.1 200"
+
+        assert_receive {:observed, _, {:ok, captured}, {:ok, verified}}
+        assert verified.signature.crypto == :valid
+        {:ok, expected} = RequestSeal.Message.request("GET", url, [], nil)
+
+        assert {captured.message.scheme, captured.message.authority} ==
+                 {expected.scheme, expected.authority}
       end
     end
   end

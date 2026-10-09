@@ -5,13 +5,16 @@ if Code.ensure_loaded?(Plug.Conn) do
     alias RequestSeal.Adapter.Signing
     alias RequestSeal.Message.Validation
 
-    def validate!(:connection), do: :ok
+    def validate!(:connection), do: :connection
 
     def validate!({:declared, scheme, authority}) do
       Signing.ensure(
         Validation.scheme?(scheme) and Validation.authority?(authority),
         :invalid_options
       )
+
+      {scheme, authority} = normalize(scheme, authority)
+      {:declared, scheme, authority}
     end
 
     def validate!({:forwarded, %{trusted_peers: peers, field: field} = opts}) do
@@ -20,6 +23,8 @@ if Code.ensure_loaded?(Plug.Conn) do
           length(peers) in 1..1024 and Enum.all?(peers, &cidr?/1),
         :invalid_options
       )
+
+      {:forwarded, opts}
     end
 
     def validate!(_), do: Signing.fail(:invalid_options)
@@ -33,19 +38,20 @@ if Code.ensure_loaded?(Plug.Conn) do
            do: "[" <> normalized_host <> "]",
            else: normalized_host
 
-      default_port? =
-        (conn.scheme == :http and conn.port == 80) or
-          (conn.scheme == :https and conn.port == 443)
+      {scheme, authority} =
+        normalize(to_string(conn.scheme), host <> ":" <> Integer.to_string(conn.port))
 
       %{
-        scheme: to_string(conn.scheme),
-        authority: if(default_port?, do: host, else: host <> ":" <> Integer.to_string(conn.port)),
+        scheme: scheme,
+        authority: authority,
         source: :connection
       }
     end
 
-    def select!(_, {:declared, scheme, authority}),
-      do: %{scheme: scheme, authority: authority, source: :declared}
+    def select!(_, {:declared, scheme, authority}) do
+      {scheme, authority} = normalize(scheme, authority)
+      %{scheme: scheme, authority: authority, source: :declared}
+    end
 
     def select!(conn, {:forwarded, %{trusted_peers: peers, field: field}}) do
       # Use the socket peer, not conn.remote_ip, which middleware may have rewritten.
@@ -63,7 +69,28 @@ if Code.ensure_loaded?(Plug.Conn) do
         :invalid_request
       )
 
+      {scheme, authority} = normalize(scheme, authority)
       %{scheme: scheme, authority: authority, source: :forwarded}
+    end
+
+    # RFC 9421 Section 2.2.3: the selected origin has the same normalization
+    # regardless of its source. Validate untrusted values before calling this.
+    defp normalize(scheme, authority) do
+      scheme = String.downcase(scheme, :ascii)
+      authority = String.downcase(authority, :ascii)
+
+      authority =
+        case Regex.run(~r/\A(\[[^\]]+\]|[^:]+):([0-9]+)\z/, authority) do
+          [_, host, port] ->
+            if {scheme, String.to_integer(port)} in [{"https", 443}, {"http", 80}],
+              do: host,
+              else: authority
+
+          _ ->
+            authority
+        end
+
+      {scheme, authority}
     end
 
     defp cidr?({ip, prefix}) do

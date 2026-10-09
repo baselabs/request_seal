@@ -81,7 +81,7 @@ defmodule RequestSeal.GuideKeyDiscoveryTest do
         {:ok, discovered_policy} =
           RequestSeal.Policy.new(%{
             algorithms: ["ed25519"],
-            components: ~s[("@method" "@authority" "@path" "content-digest")],
+            components: ~s[("@method" "@scheme" "@authority" "@path" "content-digest")],
             key_resolver: resolver,
             freshness: %{
               clock: fn -> System.system_time(:second) end,

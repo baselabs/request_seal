@@ -113,7 +113,10 @@ defmodule RequestSeal.Signing do
   end
 
   defp string?(nil), do: true
-  defp string?(s), do: is_binary(s) and byte_size(s) <= 1024
+  defp string?(s), do: is_binary(s) and byte_size(s) <= 1024 and string_bytes?(s)
+  defp string_bytes?(<<>>), do: true
+  defp string_bytes?(<<c, rest::binary>>) when c in 32..126, do: string_bytes?(rest)
+  defp string_bytes?(_), do: false
 
   def sign_options!(opts) do
     options(opts, [:signing_timeout, :clock, :body, :nonce])
@@ -200,8 +203,6 @@ defmodule RequestSeal.Signing do
       :ok -> {:ok, sign(message, spec, signer, opts, related: message.kind == :response)}
       _ -> {:error, RequestSeal.Error.new(:invalid_message, :input)}
     end
-  rescue
-    _ -> {:error, RequestSeal.Error.new(:invalid_options, :input)}
   catch
     {:adapter, _, %RequestSeal.Error{} = source} ->
       {:error, source}

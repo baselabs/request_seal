@@ -1,3 +1,5 @@
+Code.require_file("support/plug_transport_helper.exs", __DIR__)
+
 defmodule RequestSeal.ReadmeTest do
   use ExUnit.Case, async: false
   alias RequestSeal.DocsExamples, as: E
@@ -11,7 +13,7 @@ defmodule RequestSeal.ReadmeTest do
         {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
         {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
         {:ok, key} = RequestSeal.Custody.public_key(handle)
-        components = ~s[("@method" "@authority" "@path")]
+        components = ~s[("@method" "@scheme" "@authority" "@path")]
         {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
         spec = %{label: "sig", algorithm: "ed25519", components: components, expires_in: 60}
         {:ok, signed} = RequestSeal.sign(message, spec, handle)
@@ -29,7 +31,6 @@ defmodule RequestSeal.ReadmeTest do
           })
 
         {:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
-        # :valid
         IO.inspect(verification.signature.crypto)
         ''',
         binding,
@@ -109,7 +110,7 @@ defmodule RequestSeal.ReadmeTest do
         {_public, webhook_seed} = :crypto.generate_key(:eddsa, :ed25519)
         {:ok, webhook_handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, webhook_seed})
         {:ok, webhook_key} = RequestSeal.Custody.public_key(webhook_handle)
-        webhook_components = ~s[("@method" "@authority" "@path" "content-digest")]
+        webhook_components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]
 
         {:ok, webhook_policy} =
           RequestSeal.Policy.new(%{
@@ -193,6 +194,9 @@ defmodule RequestSeal.ReadmeTest do
 
     original_binding = binding
 
+    {outgoing_url, _} = RequestSeal.PlugTransport.start(owner: self())
+    E.configure(:my_app, :outgoing_url, outgoing_url <> "/")
+
     binding =
       E.eval(
         ~S'''
@@ -201,8 +205,8 @@ defmodule RequestSeal.ReadmeTest do
         {:ok, apps} = Application.ensure_all_started(:req)
         {:ok, pool} = Finch.start_link(name: OutgoingFinch)
         try do
-          request = Req.new(url: "http://example.com/", finch: [name: OutgoingFinch], retry: false)
-          spec = %{label: "sig", algorithm: "ed25519", components: ~s[("@method" "@authority" "@path")], expires_in: 60}
+          request = Req.new(url: Application.fetch_env!(:my_app, :outgoing_url), finch: [name: OutgoingFinch], retry: false)
+          spec = %{label: "sig", algorithm: "ed25519", components: ~s[("@method" "@scheme" "@authority" "@path")], expires_in: 60}
           # verify: :none skips verification of this unsigned response.
           {:ok, request} = RequestSeal.Req.attach(request, sign: spec, signer: handle, verify: :none)
           {:ok, response} = Req.request(request)
@@ -219,6 +223,25 @@ defmodule RequestSeal.ReadmeTest do
       )
 
     assert Keyword.fetch!(binding, :example_result) == 200
+    assert_receive {:observed, _, {:ok, captured}, _}
+
+    {:ok, outgoing_key} =
+      RequestSeal.PublicKey.import({:ed25519, Keyword.fetch!(binding, :_public)}, :raw)
+
+    {:ok, outgoing_policy} =
+      RequestSeal.Policy.new(%{
+        algorithms: ["ed25519"],
+        components: Keyword.fetch!(binding, :spec).components,
+        key_resolver: fn _ -> {:ok, %{algorithm: "ed25519", key: outgoing_key}} end,
+        freshness: :not_evaluated,
+        content: :not_required,
+        replay: :not_required
+      })
+
+    assert {:ok, outgoing_verification} =
+             RequestSeal.verify(captured.message, outgoing_policy, label: "sig")
+
+    assert outgoing_verification.signature.crypto == :valid
     binding = original_binding
 
     # The webhook script released its sender. Use the live hello-world key here.

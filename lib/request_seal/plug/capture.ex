@@ -71,8 +71,7 @@ if Code.ensure_loaded?(Plug.Conn) do
                :invalid_options
              )
 
-             Origin.validate!(opts[:origin])
-             opts
+             Keyword.put(opts, :origin, Origin.validate!(opts[:origin]))
            end) do
         {:error, error} -> raise %{error | stage: :capture}
         opts -> opts

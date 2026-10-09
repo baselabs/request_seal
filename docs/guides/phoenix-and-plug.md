@@ -20,7 +20,7 @@ Select the trusted key, required coverage, freshness, body integrity, and replay
 {:ok, policy} =
   RequestSeal.Policy.new(%{
     algorithms: ["ed25519"],
-    components: ~s[("@method" "@authority" "@path" "content-digest")],
+    components: ~s[("@method" "@scheme" "@authority" "@path" "content-digest")],
     key_resolver: fn
       %{keyid: "demo-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
       _ -> :error
@@ -89,6 +89,10 @@ end
 
 Route `POST /webhooks` to this controller. Verification also assigns `conn.assigns.verified`; the private result remains accessible through `RequestSeal.Plug.verification/1`. Failure with `on_reject: {:halt, 401}` halts before the controller. `policy:` also accepts a valid policy directly or a zero-arity function returning a policy. Function and MFA results are validated; invalid results and callback failures reject the request.
 
+Start your Phoenix endpoint with its development default port 4000. The companion
+[Req and Finch guide](req-and-finch.md) targets `http://127.0.0.1:4000/webhooks`;
+configure `:my_app, :webhook_url` when your receiver uses a different address.
+
 ## 4. Sign a buffered response
 
 Choose the response status, related request method/path, and body digest as the signed coverage:
@@ -136,7 +140,15 @@ Cover the final bytes: disable server compression after signing. File and chunke
 
 `origin: :connection` ignores forwarded fields. Behind a proxy, choose an explicit `{:declared, "https", "api.example.com"}` or `{:forwarded, %{trusted_peers: [{ip_tuple, prefix}], field: :forwarded}}` based on your actual deployment. Forwarded mode checks the actual peer and uses the last element; it preserves ingress facts separately. Do not derive trust from a sender-controlled forwarded header.
 
-Cover `@method`, `@authority`, `@path`, headers, and retained content. Plug cannot preserve the exact consumed request target: `@request-target`, `@target-uri`, and `@query` reject, including with a nonempty query. This also applies to response request components. Request trailers are unavailable. See `RequestSeal.Plug` for the measured Bandit HTTP/1 and HTTP/2 transport behavior.
+All three origin modes lowercase scheme and host and omit default ports per
+[RFC 9421 Section 2.2.3](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.2.3).
+Coverage of `@authority` without `@scheme` or `@target-uri` can accept the same
+signature across `http://example.com`, `http://example.com:80`,
+`https://example.com`, and `https://example.com:443` when other covered values
+match. Require `@scheme` whenever scheme matters. `@target-uri` also binds the
+scheme where exact target evidence is available; Plug cannot provide that evidence.
+
+Cover `@method`, `@scheme`, `@authority`, `@path`, headers, and retained content. Plug cannot preserve the exact consumed request target: `@request-target`, `@target-uri`, and `@query` reject, including with a nonempty query. This also applies to response request components. Request trailers are unavailable. See `RequestSeal.Plug` for the measured Bandit HTTP/1 and HTTP/2 transport behavior.
 
 ## Errors
 

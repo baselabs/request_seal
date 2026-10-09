@@ -38,7 +38,7 @@ if Code.ensure_loaded?(AshHooks.Provider) do
           {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
           {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
           {:ok, key} = RequestSeal.Custody.public_key(handle)
-          components = ~s[("@method" "@authority" "@path" "content-digest" "content-type" "webhook-id")]
+          components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest" "content-type" "webhook-id")]
           spec = %{
             label: "sig",
             algorithm: "ed25519",

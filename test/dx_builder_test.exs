@@ -75,8 +75,8 @@ defmodule RequestSeal.DXBuilderTest do
       created: [nil, 1, "true", [], %{}],
       nonce: [true, 1, "random", [], %{}],
       alg: [nil, 1, "true", [], %{}],
-      keyid: [true, 1, :key, [], %{}],
-      tag: [true, 1, :tag, [], %{}],
+      keyid: [true, 1, :key, [], %{}, <<255>>, "é", "a\n", <<0>>, <<127>>],
+      tag: [true, 1, :tag, [], %{}, <<255>>, "é", "a\n", <<0>>, <<127>>],
       digest: [true, 1, "sha-256", %{}, [1]],
       field_schemas: [nil, true, 1, "schemas", [], %{1 => :bad}, %{"x" => :bad}]
     }
@@ -116,6 +116,87 @@ defmodule RequestSeal.DXBuilderTest do
 
     assert {:error, %RequestSeal.Error{reason: :invalid_options}} =
              RequestSeal.sign(message, %{short | expires_in: nil}, signer)
+  end
+
+  test "authority coverage preserves default-port equivalence while scheme coverage binds the origin" do
+    secret = :crypto.strong_rand_bytes(32)
+    signer = fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
+    key = fn alg, base, signature -> Crypto.verify(alg, base, signature, {:hmac, secret}) end
+
+    for components <- [
+          ~s[("@method" "@authority" "@path")],
+          ~s[("@method" "@scheme" "@authority" "@path")],
+          ~s[("@method" "@target-uri")]
+        ] do
+      {:ok, original} = Message.request("GET", "https://example.com/", [], nil)
+      signing = %{label: "sig", algorithm: "hmac-sha256", components: components, expires_in: 60}
+      {:ok, signed} = RequestSeal.sign(original, signing, signer)
+
+      {:ok, policy} =
+        RequestSeal.Policy.new(%{
+          algorithms: ["hmac-sha256"],
+          components: components,
+          key_resolver: fn _ -> {:ok, %{algorithm: "hmac-sha256", key: key}} end,
+          freshness: :not_evaluated,
+          content: :not_required,
+          replay: :not_required
+        })
+
+      for url <- [
+            "https://example.com/",
+            "https://example.com:443/",
+            "http://example.com/",
+            "http://example.com:80/",
+            "https://example.com:80/",
+            "http://example.com:443/"
+          ] do
+        {:ok, message} = Message.request("GET", url, [], nil)
+        candidate = %{message | fields: signed.fields}
+
+        if message.authority == "example.com" and
+             (components == ~s[("@method" "@authority" "@path")] or message.scheme == "https") do
+          assert {:ok, verified} = RequestSeal.verify(candidate, policy, label: "sig")
+          assert verified.signature.crypto == :valid
+        else
+          assert {:error, %RequestSeal.Error{reason: :invalid_signature}} =
+                   RequestSeal.verify(candidate, policy, label: "sig")
+        end
+      end
+    end
+  end
+
+  test "printable ASCII signing strings round-trip including quotes, backslashes and empty values" do
+    secret = :crypto.strong_rand_bytes(32)
+    signer = fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
+    key = fn alg, base, signature -> Crypto.verify(alg, base, signature, {:hmac, secret}) end
+    {:ok, message} = Message.request("GET", "https://example.com/", [], nil)
+    components = ~s[("@method")]
+
+    {:ok, policy} =
+      RequestSeal.Policy.new(%{
+        algorithms: ["hmac-sha256"],
+        components: components,
+        key_resolver: fn _ -> {:ok, %{algorithm: "hmac-sha256", key: key}} end,
+        freshness: :not_evaluated,
+        content: :not_required,
+        replay: :not_required
+      })
+
+    for value <- ["", " ", <<34, 92>>, :binary.list_to_bin(Enum.to_list(32..126))] do
+      signing = %{
+        label: "sig",
+        algorithm: "hmac-sha256",
+        components: components,
+        expires_in: 60,
+        keyid: value,
+        tag: value
+      }
+
+      assert {:ok, signed} = RequestSeal.sign(message, signing, signer)
+      assert {:ok, verified} = RequestSeal.verify(signed, policy, label: "sig")
+      assert verified.signature.parameters["keyid"] == value
+      assert verified.signature.parameters["tag"] == value
+    end
   end
 
   test "response builder preserves related request and validates through Message.new" do

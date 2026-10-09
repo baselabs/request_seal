@@ -6,6 +6,14 @@
 
 ## 1. Generate an example key
 
+RFC 9421 [Section 2.2.3](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.2.3)
+lowercases the authority host and omits default ports (HTTP 80 and HTTPS 443).
+Covering `@authority` without `@scheme` or `@target-uri` can accept the same
+signature across `http://example.com`, `http://example.com:80`,
+`https://example.com`, and `https://example.com:443` when other covered values
+match. Cover `@scheme` (or `@target-uri`) whenever scheme matters; the examples
+below cover `@scheme`.
+
 ```elixir
 {_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
 {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
@@ -55,7 +63,7 @@ The linked request supplies components selected with `req`; no request is inferr
 {:ok, policy} =
   RequestSeal.Policy.new(%{
     algorithms: ["ed25519"],
-    components: ~s[("@method" "@authority" "@path" "content-digest")],
+    components: ~s[("@method" "@scheme" "@authority" "@path" "content-digest")],
     key_resolver: fn
       %{keyid: "demo-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
       _ -> :error
@@ -79,7 +87,7 @@ All six choices are required: algorithms, components, key resolver, freshness, c
 signing = %{
   label: "sig",
   algorithm: "ed25519",
-  components: ~s[("@method" "@authority" "@path" "content-digest")],
+  components: ~s[("@method" "@scheme" "@authority" "@path" "content-digest")],
   expires_in: 60,
   keyid: "demo-key",
   digest: ["sha-256"]
@@ -191,7 +199,7 @@ freshness; the earlier freshness policy would reject it:
       label: "manual",
       algorithm: "ed25519",
       signature_input:
-        ~s[("@method" "@authority" "@path" "content-digest");alg="ed25519";keyid="demo-key"]
+        ~s[("@method" "@scheme" "@authority" "@path" "content-digest");alg="ed25519";keyid="demo-key"]
     },
     signer,
     field_schemas: %{}

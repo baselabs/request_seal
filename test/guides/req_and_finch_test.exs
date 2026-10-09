@@ -11,7 +11,7 @@ defmodule RequestSeal.GuideReqAndFinchTest do
         {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
         {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
         {:ok, key} = RequestSeal.Custody.public_key(handle)
-        components = ~s[("@method" "@authority" "@path" "content-digest")]
+        components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]
 
         {:ok, policy} =
           RequestSeal.Policy.new(%{
@@ -45,13 +45,12 @@ defmodule RequestSeal.GuideReqAndFinchTest do
         1
       )
 
-    binding = Keyword.put(binding, :endpoint_port, 4000)
     binding = E.endpoint(binding, RequestSeal.DocsPipeline, RequestSeal.DocsController)
 
     binding =
       E.eval(
         ~S'''
-        url = "http://localhost:4000/webhooks"
+        url = Application.get_env(:my_app, :webhook_url, "http://127.0.0.1:4000/webhooks")
         {:ok, _pool} = Finch.start_link(name: MyApp.Finch)
 
         request =

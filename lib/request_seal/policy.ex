@@ -2,6 +2,14 @@ defmodule RequestSeal.Policy do
   @moduledoc """
   Explicit generic RFC 9421 acceptance policy; no implicit profile or required choices.
 
+  RFC 9421 Section 2.2.3 lowercases the authority host and omits default ports
+  (HTTP 80 and HTTPS 443). Coverage of `@authority` alone can accept the same
+  signature across `http://example.com`, `http://example.com:80`,
+  `https://example.com`, and `https://example.com:443` when all other covered
+  values match. Require `@scheme` (or `@target-uri`) whenever scheme matters.
+  Plug supports `@scheme`; its unavailable exact target evidence prevents
+  coverage of `@target-uri`.
+
   `new/1` requires all six keys:
 
   * `:algorithms` — nonempty unique list of exact `RequestSeal.Crypto` HTTP tokens

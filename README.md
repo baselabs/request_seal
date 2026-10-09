@@ -24,11 +24,15 @@ Use it to:
 
 ## Hello world
 
+The examples cover `@scheme` as well as `@authority`: default HTTP port 80 and
+HTTPS port 443 are omitted from the authority, so authority alone does not bind
+the scheme. See [coverage choices](docs/guides/signing-and-verifying.md).
+
 ```elixir
 {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
 {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
 {:ok, key} = RequestSeal.Custody.public_key(handle)
-components = ~s[("@method" "@authority" "@path")]
+components = ~s[("@method" "@scheme" "@authority" "@path")]
 {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
 spec = %{label: "sig", algorithm: "ed25519", components: components, expires_in: 60}
 {:ok, signed} = RequestSeal.sign(message, spec, handle)
@@ -46,7 +50,6 @@ clock = fn -> System.system_time(:second) end
   })
 
 {:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
-# :valid
 IO.inspect(verification.signature.crypto)
 ```
 
@@ -140,7 +143,7 @@ end
 {_public, webhook_seed} = :crypto.generate_key(:eddsa, :ed25519)
 {:ok, webhook_handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, webhook_seed})
 {:ok, webhook_key} = RequestSeal.Custody.public_key(webhook_handle)
-webhook_components = ~s[("@method" "@authority" "@path" "content-digest")]
+webhook_components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]
 
 {:ok, webhook_policy} =
   RequestSeal.Policy.new(%{
@@ -229,7 +232,13 @@ Expected output (Bandit may first log one `[info] Running WebhookReceiver ...` l
 
 ## Sign outgoing requests with Req
 
-Save as `req.exs` and run `mix run req.exs` with the dependency list above. No earlier variables are needed. The literal URL requests the public example.com page, which returns HTML without verifying signatures. Replace it with your receiver's HTTPS URL in your application; the webhook example shows receiver verification.
+Save as `req.exs` and run `mix run req.exs` with the dependency list above.
+The webhook example shows how a receiver verifies a signed request.
+
+Configure `:my_app, :outgoing_url` in `config/config.exs` with the URL of a
+receiver you own, for example `config :my_app, :outgoing_url, "https://your-receiver.example/"`.
+Start that receiver first; the expected status below assumes it returns 200.
+The example sends an actual HTTP request to your configured URL.
 
 ```elixir
 {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
@@ -237,8 +246,8 @@ Save as `req.exs` and run `mix run req.exs` with the dependency list above. No e
 {:ok, apps} = Application.ensure_all_started(:req)
 {:ok, pool} = Finch.start_link(name: OutgoingFinch)
 try do
-  request = Req.new(url: "http://example.com/", finch: [name: OutgoingFinch], retry: false)
-  spec = %{label: "sig", algorithm: "ed25519", components: ~s[("@method" "@authority" "@path")], expires_in: 60}
+  request = Req.new(url: Application.fetch_env!(:my_app, :outgoing_url), finch: [name: OutgoingFinch], retry: false)
+  spec = %{label: "sig", algorithm: "ed25519", components: ~s[("@method" "@scheme" "@authority" "@path")], expires_in: 60}
   # verify: :none skips verification of this unsigned response.
   {:ok, request} = RequestSeal.Req.attach(request, sign: spec, signer: handle, verify: :none)
   {:ok, response} = Req.request(request)

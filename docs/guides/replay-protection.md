@@ -34,7 +34,7 @@ Select the trusted key, required coverage, freshness, body integrity, and replay
 {:ok, policy} =
   RequestSeal.Policy.new(%{
     algorithms: ["ed25519"],
-    components: ~s[("@method" "@authority" "@path" "content-digest")],
+    components: ~s[("@method" "@scheme" "@authority" "@path" "content-digest")],
     key_resolver: fn
       %{keyid: "demo-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
       _ -> :error
@@ -56,7 +56,7 @@ Sign the request with a fresh nonce and a 60-second validity window:
 signing = %{
   label: "sig",
   algorithm: "ed25519",
-  components: ~s[("@method" "@authority" "@path" "content-digest")],
+  components: ~s[("@method" "@scheme" "@authority" "@path" "content-digest")],
   expires_in: 60,
   keyid: "demo-key",
   digest: ["sha-256"]
