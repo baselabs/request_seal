@@ -12,6 +12,11 @@ defmodule RequestSeal.CorpusValidationTest do
 
     try do
       File.cp_r!("corpus", root)
+      # Start from the tracked corpus only: Finder may have written .DS_Store into a
+      # macOS checkout, and each test plants its own.
+      for path <- Path.wildcard(Path.join(root, "**/.DS_Store"), match_dot: true),
+          do: File.rm_rf!(path)
+
       index = C.json(File.read!(Path.join(root, "index.json")))
       index = fun.(root, index)
 

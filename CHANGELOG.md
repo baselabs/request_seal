@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 - 2026-10-09
 
 - Tighten corpus validators to skip `.DS_Store` only for empty regular files or
   files starting with Finder metadata magic; reject other contents and directories.
