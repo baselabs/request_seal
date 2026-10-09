@@ -30,6 +30,9 @@ defmodule RequestSeal.Message do
   only IPv6address or IPvFuture literals accept. Bracketed IPv4, shortened,
   decimal or hexadecimal IPv4 forms, and zone identifiers (including `%25`)
   reject. IPv6 with a full dotted-decimal IPv4 tail remains valid.
+  The IPvFuture version flag accepts `[vV]` case-insensitively because quoted
+  ABNF literals are case-insensitive under
+  [RFC 5234 Section 2.3](https://www.rfc-editor.org/rfc/rfc5234.html#section-2.3).
 
   Responses require integer `:status` in 100..599. Optional `:related_request`
   is a validated request (not another response); absent context remains `nil`.

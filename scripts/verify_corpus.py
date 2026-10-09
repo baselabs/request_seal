@@ -1,15 +1,29 @@
 """Verify canonical corpus metadata and the complete file digest inventory."""
 import hashlib
 from pathlib import Path
+import stat
 import sys
 from corpus_json import canonical, decode
 
 
+def os_metadata(path):
+    if path.name != ".DS_Store" or not stat.S_ISREG(path.lstat().st_mode):
+        return False
+    try:
+        with path.open("rb") as stream:
+            return stream.read(8) in (b"", b"\x00\x00\x00\x01Bud1")
+    except OSError:
+        return False
+
+
 def verify(root):
-    # macOS Finder writes .DS_Store into any folder it displays; only that exact name is skipped.
-    if sorted(p.name for p in root.iterdir() if p.name != ".DS_Store") != ["cases", "index.json", "sources"]:
+    # Only empty regular files or Finder's metadata header qualify for the skip.
+    tree = list(root.rglob("*"))
+    if any(p.name == ".DS_Store" and not os_metadata(p) for p in tree):
         raise ValueError("unlisted_file")
-    if any(p.is_symlink() for p in root.rglob("*")):
+    if sorted(p.name for p in root.iterdir() if not os_metadata(p)) != ["cases", "index.json", "sources"]:
+        raise ValueError("unlisted_file")
+    if any(p.is_symlink() for p in tree):
         raise ValueError("unsafe_path")
     raw = (root / "index.json").read_bytes()
     index = decode(raw)
@@ -17,7 +31,7 @@ def verify(root):
         raise ValueError("invalid_index")
     paths = [v["path"] for v in index["files"]]
     actual = sorted(str(p.relative_to(root)) for folder in ("sources", "cases")
-                    for p in (root / folder).rglob("*") if p.is_file() and p.name != ".DS_Store")
+                    for p in (root / folder).rglob("*") if p.is_file() and not os_metadata(p))
     if paths != actual or len(set(paths)) != len(paths):
         raise ValueError("file_inventory")
     for entry in index["files"]:

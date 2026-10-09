@@ -156,10 +156,9 @@ defmodule RequestSeal.Conformance do
       :file_inventory
     )
 
-    # macOS Finder writes `.DS_Store` into any folder it displays; it is OS metadata, not a corpus
-    # file. Only that exact name is skipped; every other unlisted file still refuses.
+    # Only empty regular files or Finder's metadata header qualify for the skip.
     require!(
-      root |> File.ls!() |> Enum.reject(&os_metadata?/1) |> Enum.sort() ==
+      root |> File.ls!() |> Enum.reject(&os_metadata?(Path.join(root, &1))) |> Enum.sort() ==
         ["cases", "index.json", "sources"],
       :unlisted_file
     )
@@ -173,13 +172,19 @@ defmodule RequestSeal.Conformance do
     )
 
     tree = Path.wildcard(Path.join([root, "**", "*"]), match_dot: true)
+
+    require!(
+      Enum.all?(tree, &(Path.basename(&1) != ".DS_Store" or os_metadata?(&1))),
+      :unlisted_file
+    )
+
     require!(Enum.all?(tree, &(File.lstat!(&1).type != :symlink)), :unsafe_path)
 
     actual =
       for folder <- ["sources", "cases"],
           file <- Path.wildcard(Path.join([root, folder, "**", "*"]), match_dot: true),
           not File.dir?(file),
-          not os_metadata?(Path.basename(file)),
+          not os_metadata?(file),
           do: Path.relative_to(file, root)
 
     require!(Enum.all?(paths, &(&1 in actual)), :missing_file)
@@ -379,5 +384,20 @@ defmodule RequestSeal.Conformance do
       Atom.to_string(reason)
   end
 
-  defp os_metadata?(name), do: name == ".DS_Store"
+  defp os_metadata?(path) do
+    Path.basename(path) == ".DS_Store" and
+      case File.lstat(path) do
+        {:ok, %File.Stat{type: :regular}} ->
+          File.open(path, [:read, :binary], fn file ->
+            case IO.binread(file, 8) do
+              :eof -> true
+              <<0, 0, 0, 1, "Bud1">> -> true
+              _ -> false
+            end
+          end) == {:ok, true}
+
+        _ ->
+          false
+      end
+  end
 end

@@ -68,3 +68,6 @@ files.
 The runner's own pin changes with the corpus in the same reviewed change; it
 protects local inventory integrity. Cross-language protection is the consumer's pin
 to the release tag, source commit, and index digest in its independent repository.
+
+A self-consistent re-pinned corpus passes the Elixir runner by design; the
+cross-language tamper seal is the TypeScript consumer's pin plus review of pin changes.

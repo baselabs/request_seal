@@ -57,6 +57,78 @@ defmodule RequestSeal.CorpusValidationTest do
     end
   end
 
+  test "both consumers reject nonmetadata .DS_Store files" do
+    for folder <- ["", "sources", "cases"],
+        content <- [
+          "unverified content",
+          <<0, 0, 0, 1, "Bud">>,
+          "prefix" <> <<0, 0, 0, 1, "Bud1">>
+        ] do
+      assert {:error, :unlisted_file} =
+               changed(fn root, index ->
+                 File.write!(Path.join([root, folder, ".DS_Store"]), content)
+                 assert {:error, :unlisted_file} = C.run(root)
+                 assert_python_rejects(root, "unlisted_file")
+                 index
+               end)
+    end
+  end
+
+  test "both consumers reject .DS_Store directories" do
+    for folder <- ["", "sources", "cases"] do
+      assert {:error, :unlisted_file} =
+               changed(fn root, index ->
+                 path = Path.join([root, folder, ".DS_Store"])
+                 File.mkdir_p!(path)
+                 File.write!(Path.join(path, "unverified.txt"), "unverified content")
+                 assert {:error, :unlisted_file} = C.run(root)
+                 assert_python_rejects(root, "unlisted_file")
+                 index
+               end)
+    end
+  end
+
+  test "both consumers reject .DS_Store symlinks" do
+    for folder <- ["", "sources", "cases"] do
+      assert {:error, :unlisted_file} =
+               changed(fn root, index ->
+                 path = Path.join([root, folder, ".DS_Store"])
+                 File.ln_s!(Path.join(root, "index.json"), path)
+                 assert {:error, :unlisted_file} = C.run(root)
+                 assert_python_rejects(root, "unlisted_file")
+                 index
+               end)
+    end
+  end
+
+  test "both consumers skip only empty files or Finder magic .DS_Store files" do
+    for content <- ["", <<0, 0, 0, 1, "Bud1">>, <<0, 0, 0, 1, "Bud1", 0, 1, 2>>] do
+      assert {:ok, _} =
+               changed(fn root, index ->
+                 for folder <- ["", "sources", "cases"] do
+                   File.write!(Path.join([root, folder, ".DS_Store"]), content)
+                 end
+
+                 {output, status} =
+                   System.cmd("python3", ["scripts/verify_corpus.py", root],
+                     stderr_to_stdout: true
+                   )
+
+                 assert status == 0, output
+                 assert output =~ "PASS: corpus canonical metadata"
+                 index
+               end)
+    end
+  end
+
+  defp assert_python_rejects(root, reason) do
+    {output, status} =
+      System.cmd("python3", ["scripts/verify_corpus.py", root], stderr_to_stdout: true)
+
+    assert status != 0, output
+    assert output =~ reason
+  end
+
   test "positive references require an existing other case and reviewed derivation" do
     for positive <- ["missing", "sign/signer-failed"] do
       assert {:error, :positive_reference} =

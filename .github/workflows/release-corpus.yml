@@ -41,9 +41,14 @@ jobs:
           mix test test/corpus_test.exs --warnings-as-errors
       - name: Verify corpus and create deterministic assets
         run: |
+          metadata=$(find corpus -name .DS_Store -print)
+          if [ -n "$metadata" ]; then
+            echo "Refusing to package corpus containing .DS_Store" >&2
+            exit 1
+          fi
           python3 scripts/verify_corpus.py
           umask 022
-          tar -C corpus --format=gnu --sort=name --mtime='2000-01-01 00:00Z' --owner=0 --group=0 --numeric-owner --mode='u=rwX,go=rX' -cf - index.json sources cases | gzip -n > corpus.tar.gz
+          tar -C corpus --format=gnu --sort=name --mtime='2000-01-01 00:00Z' --owner=0 --group=0 --numeric-owner --mode='u=rwX,go=rX' --exclude=.DS_Store -cf - index.json sources cases | gzip -n > corpus.tar.gz
           sha256sum corpus.tar.gz > corpus.sha256
       - name: Publish assets on the verified tag
         env:

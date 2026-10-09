@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Tighten corpus validators to skip `.DS_Store` only for empty regular files or
+  files starting with Finder metadata magic; reject other contents and directories.
+  Refuse release packaging if any `.DS_Store` exists and exclude the name from tar
+  as a second guard.
+
 ## 0.3.0 - 2026-10-09
 
 - Reject Structured Fields byte sequences with nonzero unused base64 pad bits

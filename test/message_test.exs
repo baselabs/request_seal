@@ -47,6 +47,7 @@ defmodule RequestSeal.MessageTest do
     for host <- [
           "[::1]",
           "[2001:db8::1]",
+          "[2001:0db8::1]",
           "[2001:db8:0:0:0:0:2:1]",
           "[::ffff:192.0.2.1]",
           "[v1.a:b]",

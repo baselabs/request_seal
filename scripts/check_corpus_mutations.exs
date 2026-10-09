@@ -62,6 +62,11 @@ mutations = [
      File.write!(Path.join(root, "unlisted.txt"), "unlisted")
      index
    end},
+  {"ds_store_content", :unlisted_file,
+   fn root, index ->
+     File.write!(Path.join([root, "sources", ".DS_Store"]), "unverified content")
+     index
+   end},
   {"known_positive", :known_positive, fn _, index -> Map.delete(index, "known_positive") end},
   {"batch_count", :batch_count,
    fn root, index ->
@@ -265,4 +270,4 @@ for {name, expected, mutate} <- mutations do
   end
 end
 
-IO.puts("PASS: 11 corpus mutations rejected for their named reasons")
+IO.puts("PASS: 12 corpus mutations rejected for their named reasons")
