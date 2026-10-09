@@ -4,3 +4,8 @@
 
 # Keep captured HTTP CRLF and raw octets identical in every checkout.
 test/fixtures/http/*.http binary
+
+# Corpus sources are upstream bytes; never normalize them.
+corpus/sources/** binary
+corpus/cases/** -text
+corpus/index.json -text

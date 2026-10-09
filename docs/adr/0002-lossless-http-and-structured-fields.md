@@ -39,3 +39,10 @@ Adapters have a stricter capture contract and may reject when a framework has al
 ## Amendment
 
 October 8, 2026: the TypeScript counterpart is deferred; RequestSeal is Elixir only. The cross-language corpus format remains a design for later use.
+
+
+## Amendment — October 9, 2026
+
+The October 8 deferral is superseded. The TypeScript counterpart is designed and
+in progress as a separate native npm package named `request-seal`. It shares
+the language-neutral corpus and semantic contracts with the Elixir library.

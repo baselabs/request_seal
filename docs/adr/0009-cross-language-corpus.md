@@ -40,3 +40,31 @@ Corpus changes are compatibility-sensitive reviews. A source correction may chan
 ## Amendment
 
 October 8, 2026: the TypeScript counterpart is deferred; RequestSeal is Elixir only. The cross-language corpus format remains a design for later use.
+
+## Amendment — October 9, 2026
+
+The October 8 deferral is superseded. The TypeScript counterpart is designed and
+in progress as a separate native npm package named `request-seal`. It shares
+corpus data and semantic contracts with the Elixir library, not runtime code.
+
+The corpus lives in `corpus/`: immutable provenance and licensed source bytes in
+`sources/<origin>/`, canonical single and batch manifests in `cases/<surface>/`,
+and `index.json` with every file SHA-256, unique case identities, surface/class,
+batch counts and an executed known-positive marker. Single manifests carry source,
+evidence, inputs, explicit policy/clock when needed, and independent bytes,
+verification facts or stable kind-prefixed rejection rule IDs. Named batch formats
+cover HTTP WG Structured Fields, Wycheproof and RFC 9421 signature bases. Numbers
+are tagged decimal strings; bytes are unpadded base64url objects. Verification
+facts use fixed members, canonical object encoding and ordered covered-component
+and wire-parameter arrays. The [format reference](../reference/corpus-format.md)
+defines the complete schema and consumer refusal rules.
+
+From `v0.3.0` onward, every release tag publishes deterministic `corpus.tar.gz` and `corpus.sha256`
+GitHub release assets after digest verification. The TypeScript repository vendors
+`conformance/` from one tag and pins tag, commit and index SHA-256 in one source
+constant. Updating it is a reviewed commit. Neither runtime package ships corpus
+files.
+
+The runner's own pin changes with the corpus in the same reviewed change; it
+protects local inventory integrity. Cross-language protection is the consumer's pin
+to the release tag, source commit, and index digest in its independent repository.

@@ -19,7 +19,7 @@ defmodule RequestSeal.Profile do
 
   Profile maps contain at most eight atom keys and require
   `name: {package, kind}`, where both values are atoms and `package` is not
-  `:request_seal`, `:rfc9421`, or `:web_bot_auth`. Use a compile-time constant
+  `:request_seal`, `:"request-seal"`, `:rfc9421`, `:web_bot_auth`, or `:"web-bot-auth"`. Use a compile-time constant
   in the extension module, never a name derived from wire input. Bare atom names, including the core-owned names
   `:rfc9421` and `:web_bot_auth`, reject as `:invalid_profile` at the `:input` layer.
   Other values must be atoms, integers from -999,999,999,999,999 through
@@ -137,7 +137,8 @@ defmodule RequestSeal.Profile do
   defp profile?(%{name: {package, kind}} = profile),
     do:
       not is_struct(profile) and is_atom(package) and is_atom(kind) and
-        package not in [:request_seal, :rfc9421, :web_bot_auth] and map_size(profile) <= 8 and
+        package not in [:request_seal, :"request-seal", :rfc9421, :web_bot_auth, :"web-bot-auth"] and
+        map_size(profile) <= 8 and
         Enum.all?(profile, fn
           {:name, _} -> true
           {key, value} -> is_atom(key) and profile_value?(value)

@@ -267,6 +267,7 @@ if __name__ == "__main__":
             run(["mix", "format", "--check-formatted"])
             run(["mix", "compile", "--warnings-as-errors"])
             run(["mix", "test", "--warnings-as-errors"])
+            run(["mix", "run", "scripts/check_corpus_mutations.exs"], extra_env={"MIX_ENV": "test"})
             run([sys.executable, "scripts/check_optional_clients.py"])
             run([sys.executable, "-m", "unittest", "discover", "-s", "test", "-p", "*_test.py"])
             run([sys.executable, "scripts/check_docs.py"])

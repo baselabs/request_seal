@@ -3,6 +3,26 @@ defmodule RequestSeal.DXBuilderTest do
   doctest RequestSeal
   alias RequestSeal.{Body, Crypto, Digest, FieldOccurrence, Message, PublicKey, TransportFacts}
 
+  test "signing clock accepts the last second of year 9999 and rejects the next" do
+    {:ok, message} = Message.request("GET", "https://example.com/", [], nil)
+    key = {:hmac, :binary.copy(<<0x42>>, 32)}
+    signer = fn alg, base -> Crypto.sign(alg, base, key) end
+
+    spec = %{
+      label: "s",
+      algorithm: "hmac-sha256",
+      components: ~s[("@method")],
+      parameters: %{created: true, expires_in: nil, nonce: nil, alg: false, keyid: nil, tag: nil},
+      digest: nil,
+      field_schemas: %{}
+    }
+
+    assert {:ok, _} = RequestSeal.sign(message, spec, signer, clock: fn -> 253_402_300_799 end)
+
+    assert {:error, %{reason: :invalid_options, layer: :input}} =
+             RequestSeal.sign(message, spec, signer, clock: fn -> 253_402_300_800 end)
+  end
+
   test "request builder normalizes origins while preserving target and field bytes" do
     headers = [{"X-Repeat", " first "}, {"x-repeat", <<255>>}, {"X-Repeat", "third"}]
 

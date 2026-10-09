@@ -20,6 +20,7 @@ if Code.ensure_loaded?(Postgrex) do
     `sweep/3` accepts explicit Unix seconds. For production, the caller obtains
     this value from its trusted store clock and reconciles it with verification
     clocks; injected historical verification clocks require matching sweep times.
+    Sweep inputs range from 0 through 253,402,300,799 Unix seconds.
     Sweep deletes only entries whose exclusive retention end is at or before now.
     Multi-node operators sweep at `now - max_internode_skew` to preserve claims
     while any verifier still accepts the authenticated input.
@@ -69,7 +70,7 @@ if Code.ensure_loaded?(Postgrex) do
     def claim(_, _, _), do: {:error, :failure}
 
     @impl RequestSeal.Replay
-    def sweep({conn, table}, now, context) when is_integer(now) do
+    def sweep({conn, table}, now, context) when is_integer(now) and now in 0..253_402_300_799 do
       if table?(table) do
         case query(conn, "DELETE FROM \"#{table}\" WHERE retain_until <= $1", [now], context) do
           {:ok, %{num_rows: count}} -> {:ok, count}

@@ -87,8 +87,9 @@ defmodule RequestSeal.Message.Validation do
     if :binary.last(rest) == ?] do
       address = binary_part(rest, 0, byte_size(rest) - 1)
 
-      match?({:ok, _}, :inet.parse_ipv6_address(:binary.bin_to_list(address))) or
-        Regex.match?(~r/\Av[0-9A-Fa-f]+\.[A-Za-z0-9._~!$&'()*+,;=:-]+\z/, address)
+      not String.contains?(address, "%") and
+        (strict_ipv6?(address) or
+           Regex.match?(~r/\A[vV][0-9A-Fa-f]+\.[A-Za-z0-9._~!$&'()*+,;=:-]+\z/, address))
     else
       false
     end
@@ -98,4 +99,11 @@ defmodule RequestSeal.Message.Validation do
 
   defp host?(host),
     do: Regex.match?(~r/\A(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f]{2})+\z/, host)
+
+  defp strict_ipv6?(address) do
+    case :inet.parse_strict_address(:binary.bin_to_list(address)) do
+      {:ok, tuple} when tuple_size(tuple) == 8 -> true
+      _ -> false
+    end
+  end
 end

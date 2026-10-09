@@ -1,15 +1,15 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
 
 # Inspect RequestSeal
 
 
-This notebook installs RequestSeal 0.2.0 from Hex. It checks the module's public
+This notebook installs RequestSeal 0.3.0 from Hex. It checks the module's public
 function exports and actual runtime. Protocol verification is exercised by the
 library's published-vector tests; this notebook checks installation and prerequisites.
 Use the pinned Elixir/OTP runtime below. No provider key is required.
 
 ```elixir
-Mix.install([{:request_seal, "~> 0.2.0"}])
+Mix.install([{:request_seal, "~> 0.3.0"}])
 ```
 
 ## Inspect actual capabilities

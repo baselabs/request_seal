@@ -160,7 +160,8 @@ defmodule RequestSeal do
   A `t:signing_spec/0` requires `:label`, `:algorithm`, serialized `:components`,
   and `:expires_in` (a positive integer of seconds). Defaults are `created: true`,
   `nonce: :random`, `alg: true` (false for JWS algorithm tuples), `keyid: nil`,
-  `tag: nil`, `digest: nil`, and `field_schemas: %{}`. A negative clock rejects.
+  `tag: nil`, `digest: nil`, and `field_schemas: %{}`. Caller clocks range from 0 through 253,402,300,799 Unix seconds. Wire
+  `created` and `expires` retain the Structured Fields integer range.
   Req and Finch accept the same defaults through shared signing construction.
   Complete full specs (all parameter keys, digest, and field_schemas) also support
   expires_in nil. The short form requires a positive integer.

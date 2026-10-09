@@ -2,21 +2,31 @@ defmodule RequestSeal.ReplayClaimTest do
   use ExUnit.Case, async: true
   alias RequestSeal.Replay.Claim
 
-  test "validates byte and signed integer bounds without clock evaluation" do
+  test "validates byte and sweepable retention bounds without clock evaluation" do
     for bytes <- [<<255>>, :binary.copy(<<0>>, 256)],
-        until <- [-9_223_372_036_854_775_808, -1, 0, 9_223_372_036_854_775_807] do
+        until <- [-9_223_372_036_854_775_808, -1, 0, 253_402_300_799] do
       assert Claim.valid?(%Claim{namespace: bytes, key: bytes, retain_until: until})
     end
   end
 
-  test "rejects malformed claims without changing the existing predicate" do
+  test "rejects malformed and unsweepable claims" do
     claim = %Claim{namespace: "scope", key: "nonce", retain_until: 0}
 
     for field <- [:namespace, :key], invalid <- ["", :binary.copy(<<0>>, 257), nil, [], :scope] do
       refute Claim.valid?(Map.put(claim, field, invalid))
     end
 
-    for until <- [-9_223_372_036_854_775_809, 9_223_372_036_854_775_808, nil, 0.0, "0"] do
+    # The 0.3.0 retention contract supersedes the former signed-64-bit upper
+    # bound: no accepted sweep clock can evict a claim ending after year 9999.
+    for until <- [
+          -9_223_372_036_854_775_809,
+          253_402_300_800,
+          9_223_372_036_854_775_807,
+          9_223_372_036_854_775_808,
+          nil,
+          0.0,
+          "0"
+        ] do
       refute Claim.valid?(%{claim | retain_until: until})
     end
 

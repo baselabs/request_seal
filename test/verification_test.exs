@@ -806,7 +806,14 @@ defmodule RequestSeal.VerificationTest do
           %{max_signatures: 0},
           %{max_signatures: 65},
           %{key_resolver: fn -> :error end},
-          %{freshness: %{clock: fn -> 0 end, max_age: nil, skew: 86401, require_expires: false}},
+          %{
+            freshness: %{
+              clock: fn -> 0 end,
+              max_age: nil,
+              skew: 86_401,
+              require_expires: false
+            }
+          },
           %{freshness: %{clock: fn -> 0 end, max_age: 0, skew: 0, require_expires: false}},
           %{content: %{content() | algorithms: []}},
           %{content: %{content() | section: :unknown}},
@@ -822,7 +829,7 @@ defmodule RequestSeal.VerificationTest do
                  freshness: %{
                    clock: fn -> 0 end,
                    max_age: nil,
-                   skew: 86400,
+                   skew: 86_400,
                    require_expires: false
                  }
                })

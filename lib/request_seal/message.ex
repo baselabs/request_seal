@@ -26,6 +26,11 @@ defmodule RequestSeal.Message do
   a CONNECT target must match the declared authority. No normalization is used
   to reconcile conflicting declarations.
 
+  Bracketed hosts follow [RFC 3986 Section 3.2.2](https://www.rfc-editor.org/rfc/rfc3986.html#section-3.2.2):
+  only IPv6address or IPvFuture literals accept. Bracketed IPv4, shortened,
+  decimal or hexadecimal IPv4 forms, and zone identifiers (including `%25`)
+  reject. IPv6 with a full dotted-decimal IPv4 tail remains valid.
+
   Responses require integer `:status` in 100..599. Optional `:related_request`
   is a validated request (not another response); absent context remains `nil`.
   Request-only fields must be `nil` on responses. Requests cannot carry status

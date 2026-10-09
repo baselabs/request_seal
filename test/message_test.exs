@@ -4,6 +4,71 @@ defmodule RequestSeal.MessageTest do
 
   @capture Path.join(__DIR__, "fixtures/http")
 
+  for authority <- [
+        "[1.2.3.4]",
+        "[127.1]",
+        "[2130706433]",
+        "[0x7f.1]",
+        "[fe80::1%25en0]",
+        "[fe80::1%en0]",
+        "[127.1]:443",
+        "[::ffff:127.1]",
+        "[::ffff:192.000.2.1]"
+      ] do
+    @authority authority
+    test "RFC 3986 IP-literal rejects #{@authority} across message boundaries" do
+      {:ok, valid} = Message.new(request_attrs())
+
+      for mutation <- [
+            %{scheme: "https", authority: @authority},
+            %{target_form: :absolute, raw_target: "https://" <> @authority <> "/"},
+            %{
+              method: "CONNECT",
+              target_form: :authority,
+              raw_target:
+                if(String.ends_with?(@authority, ":443"),
+                  do: @authority,
+                  else: @authority <> ":443"
+                )
+            }
+          ] do
+        assert {:error, %{reason: :invalid_message}} =
+                 Message.new(Map.merge(request_attrs(), mutation))
+
+        assert {:error, %{reason: :invalid_message}} = Message.validate(struct(valid, mutation))
+      end
+
+      assert {:error, %{reason: :invalid_message}} =
+               Message.request("GET", "https://" <> @authority <> "/", [], "")
+    end
+  end
+
+  test "RFC 3986 IPv6 and IPvFuture literals accept across message boundaries" do
+    for host <- [
+          "[::1]",
+          "[2001:db8::1]",
+          "[2001:db8:0:0:0:0:2:1]",
+          "[::ffff:192.0.2.1]",
+          "[v1.a:b]",
+          "[VF.a-._~!$&'()*+,;=:]"
+        ],
+        port <- ["", ":443"] do
+      authority = host <> port
+
+      for attrs <- [
+            %{scheme: "https", authority: authority},
+            %{target_form: :absolute, raw_target: "https://" <> authority <> "/"},
+            %{method: "CONNECT", target_form: :authority, raw_target: host <> ":443"}
+          ] do
+        assert {:ok, message} = Message.new(request_attrs(attrs))
+        assert Message.validate(message) == :ok
+      end
+
+      assert {:ok, message} = Message.request("GET", "https://" <> authority <> "/", [], "")
+      assert Message.validate(message) == :ok
+    end
+  end
+
   test "real captured HTTP bytes round-trip with ordered repeats and response linkage" do
     request_bytes = File.read!(Path.join(@capture, "request.http"))
     response_bytes = File.read!(Path.join(@capture, "response.http"))

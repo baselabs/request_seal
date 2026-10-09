@@ -16,7 +16,13 @@ INTERNAL_PROCESS = re.compile(
     r"private (?:review records|planning records)",
     re.IGNORECASE,
 )
-SOURCE_DOCUMENTS = {"AGENTS.md", "test/fixtures/web_bot_auth/PROVENANCE.md"}
+SOURCE_DOCUMENTS = {"AGENTS.md", "test/fixtures/web_bot_auth/PROVENANCE.md"} | {
+    "corpus/sources/" + origin + "/PROVENANCE.md" for origin in (
+        "rfc9421", "rfc6979", "rfc8032", "rfc7515", "rfc7516", "rfc7520",
+        "rfc7517", "rfc8037", "wycheproof", "httpwg-structured-fields",
+        "web-bot-auth", "local-http",
+    )
+} | {"corpus/sources/web-bot-auth/upstream-PROVENANCE.md"}
 GIT_INSTALL = re.compile(
     r"\bgit\s*:\s*[\"'][^\"']*github\.com[/:]baselabs/request_seal(?:\.git)?[\"']|"
     r"\bgithub\s*:\s*(?:[\"'](?:[^\"']*/)?request_seal(?:\.git)?[\"']|:request_seal\b)",

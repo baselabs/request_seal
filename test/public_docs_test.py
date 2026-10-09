@@ -24,6 +24,16 @@ class PublicDocsTest(unittest.TestCase):
     def errors(self, mutation=""):
         return docs.content_errors(ROOT, "README.md", self.source + mutation, self.paths)
 
+    def test_corpus_provenance_is_source_documentation_only(self):
+        path = "corpus/sources/rfc9421/PROVENANCE.md"
+        self.assertIn(path, docs.SOURCE_DOCUMENTS)
+        configuration = docs.public_configuration(ROOT)
+        self.assertNotIn(path, configuration["documents"])
+        self.assertNotIn(path, configuration["files"])
+        text = (ROOT / path).read_text()
+        self.assertEqual([], docs.content_errors(ROOT, path, text, self.paths))
+        self.assertTrue(docs.content_errors(ROOT, path, text + "\nfile:///home/person/key", self.paths))
+
     def test_current_readme_is_public(self):
         self.assertEqual([], self.errors())
 

@@ -352,7 +352,7 @@ defmodule RequestSeal.Signing do
 
     ensure(
       (not p.created and now == nil) or
-        (is_integer(now) and now in 0..999_999_999_999_999),
+        (is_integer(now) and now in 0..253_402_300_799),
       :invalid_options
     )
 

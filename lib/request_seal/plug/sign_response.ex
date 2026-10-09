@@ -138,6 +138,7 @@ if Code.ensure_loaded?(Plug.Conn) do
             if Signing.covered?(input, "date") and
                  not Enum.any?(fields, &(String.downcase(&1.name) == "date")) do
               now = opts[:clock].()
+              Signing.ensure(is_integer(now) and now in 0..253_402_300_799, :invalid_options)
 
               {fields ++ [Signing.field("date", date!(now))],
                Keyword.put(opts, :clock, fn -> now end)}

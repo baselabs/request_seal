@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
 
 # Executable Livebooks
 
@@ -11,7 +11,7 @@ python3 scripts/check.py --notebooks-only
 
 - [Verify a published HTTP signature](rfc-ed25519.livemd) runs the real OTP primitive against
   RFC 9421's independent Ed25519 vector, then rejects altered message and signature bytes.
-- [Inspect RequestSeal](environment.livemd) installs `{:request_seal, "~> 0.2.0"}`
+- [Inspect RequestSeal](environment.livemd) installs `{:request_seal, "~> 0.3.0"}`
   from Hex and inspects its module, toolchain, and cryptographic prerequisites.
 
 The repository gate checks the exported install cell, then substitutes the real checkout

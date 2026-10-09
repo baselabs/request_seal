@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # RequestSeal
 
@@ -64,10 +64,10 @@ Expected output:
 Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 
 ```elixir
-{:request_seal, "~> 0.2.0"}
+{:request_seal, "~> 0.3.0"}
 ```
 
-RequestSeal 0.2.0 is available from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
+Install RequestSeal 0.3.0 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
 
 Add optional dependencies for the integrations you use. The table is a reference; the complete webhook dependency list follows.
 
@@ -87,7 +87,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 
 ```elixir
 [
-  {:request_seal, "~> 0.2.0"},
+  {:request_seal, "~> 0.3.0"},
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.23.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},
@@ -526,3 +526,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor checks.
 ## License
 
 [Apache-2.0](LICENSE). RFC code components use BSD-3-Clause under [NOTICE](NOTICE); external vectors retain their attribution there.
+
+## Conformance corpus
+
+The TypeScript counterpart is designed and in progress as a separate npm package
+named `request-seal`. Both implementations use the independently sourced
+[conformance corpus format](docs/reference/corpus-format.md). Corpus data lives in
+`corpus/` and is published as a checksummed release asset.

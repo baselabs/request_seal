@@ -84,6 +84,8 @@ defmodule RequestSeal.Error do
     callback faults, returns :error, malformed data, or a nil actor),
     `:tenant_unbound` (tenant callback faults, returns :error, or malformed data).
   * `:replay`: `:missing_replay_identifier` (absent or empty authenticated nonce),
+    `:retention_exceeded` (derived claim retention end above 253,402,300,799;
+    rejected before commitment or storage),
     `:commitment_failed` (callback fault, error, malformed or oversized key),
     `:replayed`, `:store_unavailable`, `:store_timeout`, `:store_failed` (capacity,
     adapter fault, or contract violation). Store timeouts are indeterminate.

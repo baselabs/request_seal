@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.0 - 2026-10-09
+
+- Reject Structured Fields byte sequences with nonzero unused base64 pad bits
+  under RFC 4648 Section 3.5; retain missing-padding recovery under RFC 8941
+  Section 4.2.7. Pin the affected HTTP WG cases to rejection.
+- Enforce RFC 3986 Section 3.2.2 IP-literal grammar for message authorities:
+  accept IPv6 and IPvFuture, reject bracketed IPv4 forms and zone identifiers.
+- Add a canonical conformance corpus, source provenance, digest inventory, full
+  batch execution, rejection rule mapping, and mutation checks.
+- Execute all twelve RFC 9421 signature bases and five Appendix B.4
+  transformations independently; correct rejection inputs to isolate one defect.
+- Publish deterministic checksummed corpus assets from release tags.
+- Bound caller clocks and replay sweeps at 253,402,300,799 Unix seconds;
+  retain the Structured Fields wire integer range. ETS and Postgres sweeps now
+  reject negative inputs. Generic verification rejects negative caller clocks.
+- Reject replay claims whose retention end exceeds 253,402,300,799; no accepted
+  sweep clock can evict them. Stores return their existing invalid-claim failure.
+- Reject generic and Web Bot Auth verification whose derived replay retention
+  end exceeds 253,402,300,799 with `:retention_exceeded` at `:replay` before
+  commitment or storage. Bound policy `max_age` at the same maximum;
+  larger values reject with `:invalid_policy`. Skew retains its existing
+  0..86,400-second range.
+- Upgrade note: Postgres replay rows written before 0.3.0 with `retain_until`
+  above 253,402,300,799 are never swept by `sweep/3`. Operators can remove them
+  manually (replace `replay_claims` with the caller-selected table name):
+  `DELETE FROM "replay_claims" WHERE retain_until > 253402300799;`
+- Reserve hyphenated core profile package names.
+- Document the separate TypeScript package in progress and corpus vendoring.
+
 ## 0.2.0 - 2026-10-09
 
 - Document `RequestSeal.Custody.run/2` as a public deadline and cancellation

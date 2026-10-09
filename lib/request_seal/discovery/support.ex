@@ -42,7 +42,7 @@ defmodule RequestSeal.Discovery.Support do
         _, _ -> ensure(false, :invalid_options)
       end
 
-    ensure(is_integer(value) and value in 0..999_999_999_999_999, :invalid_options)
+    ensure(is_integer(value) and value in 0..253_402_300_799, :invalid_options)
     value
   end
 

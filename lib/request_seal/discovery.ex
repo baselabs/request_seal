@@ -8,7 +8,7 @@ defmodule RequestSeal.Discovery do
 
   `fetch/2` performs one discovery operation with no cache. Options are `:timeout`
   (1–300,000 milliseconds, capped by the source timeout) and `:clock` (arity-zero
-  Unix-seconds function, default system time). Unknown/duplicate options reject.
+  Unix-seconds function, 0 through 253,402,300,799, default system time). Unknown/duplicate options reject.
   The caller starts SSL; the library starts no application, listener, store,
   timer or background refresh. A monitored worker enforces a single absolute
   deadline across DNS, TLS, redirects and CIMD's optional JWKS subresource, and
@@ -162,7 +162,7 @@ defmodule RequestSeal.Discovery do
 
       ensure(is_binary(bytes), :invalid_response)
       ensure(byte_size(bytes) <= source.max_bytes, :limit)
-      ensure(is_integer(now) and now in 0..999_999_999_999_999, :invalid_options)
+      ensure(is_integer(now) and now in 0..253_402_300_799, :invalid_options)
       document = body_document(bytes, source)
       origin = Source.origin(URI.parse(source.location))
       {:ok, keys(document, source, origin, source.location, now)}

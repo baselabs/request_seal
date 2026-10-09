@@ -448,7 +448,7 @@ defmodule RequestSeal.Authentication do
     now = callback(policy.clock, :invalid_clock, :freshness)
 
     ensure(
-      is_integer(now) and now >= -999_999_999_999_999 and now <= 999_999_999_999_999,
+      is_integer(now) and now >= 0 and now <= 253_402_300_799,
       :invalid_clock,
       :freshness
     )
@@ -494,6 +494,7 @@ defmodule RequestSeal.Authentication do
         else: bounds
 
     retain_until = Enum.min(bounds)
+    ensure(retain_until <= 253_402_300_799, :retention_exceeded, :replay)
 
     case RequestSeal.Replay.commit(policy, facts, retain_until) do
       {:ok, receipt} -> receipt

@@ -62,3 +62,11 @@ ADR 0011. Undocumented internals do not become part of this public surface.
 - A package-namespaced profile verifies selected bytes and stamps the result.
 - Ash rejects an extension result before invoking caller bindings.
 - Caller commitments can separate the same nonce by profile name and reject duplicates.
+
+
+## Amendment — October 9, 2026
+
+The core additionally reserves the hyphenated package names `:"request-seal"`
+and `:"web-bot-auth"`. These join the original reserved names to prevent
+extensions from impersonating the published core package and named profile.
+The remaining extension contract is unchanged.

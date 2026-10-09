@@ -31,8 +31,10 @@ defmodule RequestSeal.Policy do
     integer Unix seconds), `:max_age` (positive integer or nil), `:skew` (0..86,400),
     `:require_expires` (Boolean). Max-age requires created; expiration is exclusive,
     max-age inclusive. All checks must pass for some integer clock within
-    `[now - skew, now + skew]`. Clock and max-age magnitudes are at most
-    999,999,999,999,999; RFC integer bounds apply to signature timestamps.
+    `[now - skew, now + skew]`. Caller clocks are integers from 0 through
+    253,402,300,799 Unix seconds. Max-age is at most 253,402,300,799;
+    larger values reject with `:invalid_policy`.
+    RFC integer bounds apply to signature timestamps.
   * `:content` — `:not_required` or a map with `:kind` (`:content` or
     `:representation`), nonempty unique `:algorithms` (`"sha-256"`, `"sha-512"`),
     and `:section` (`:headers` or `:trailers`). Require full coverage of precisely
@@ -46,7 +48,9 @@ defmodule RequestSeal.Policy do
     After validation the function receives exactly `identifier`, `algorithm`,
     `keyid`, `tag`, `created`, `expires`, and `profile: %{name: :rfc9421}`
     or a package-namespaced extension stamp; never a signature label. Its result
-    is claimed once under the caller namespace.
+    is claimed once under the caller namespace. A derived retention end above
+    253,402,300,799 rejects with `:retention_exceeded` at `:replay` before
+    commitment or storage, even if the authenticated wire timestamp is valid.
     RequestSeal supplies no application commitment recipe. Nonce is an authenticated
     RFC 9421 signature parameter, limited to 1,024 bytes; absent/empty nonce rejects.
     Retention ends at the first rejected second: minimum of `expires + skew`
@@ -145,7 +149,7 @@ defmodule RequestSeal.Policy do
   defp freshness?(%{clock: clock, max_age: age, skew: skew, require_expires: req} = f),
     do:
       map_size(f) == 4 and is_function(clock, 0) and
-        (age == nil or (is_integer(age) and age in 1..999_999_999_999_999)) and is_integer(skew) and
+        (age == nil or (is_integer(age) and age in 1..253_402_300_799)) and is_integer(skew) and
         skew in 0..86_400 and is_boolean(req)
 
   defp freshness?(_), do: false

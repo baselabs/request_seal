@@ -82,7 +82,7 @@ defmodule RequestSeal.ProfileTest do
   end
 
   test "core profile atoms are reserved as extension package names", c do
-    for package <- [:rfc9421, :web_bot_auth] do
+    for package <- [:request_seal, :"request-seal", :rfc9421, :web_bot_auth, :"web-bot-auth"] do
       assert {:error, %Error{reason: :invalid_profile, layer: :input}} =
                verify(c, %{name: {package, :synthetic}})
     end

@@ -14,6 +14,19 @@ defmodule RequestSeal.ReplayTest do
     %{pid: pid, store: ETS.store(pid)}
   end
 
+  test "sweep bounds protect claims through both public and direct entry points", ctx do
+    claim = claim("scope", "bound", 253_402_300_799)
+    assert :claimed = ETS.claim(ctx.pid, claim, context())
+
+    for now <- [-1, 253_402_300_800] do
+      assert {:error, :failure} = ETS.sweep(ctx.pid, now, context())
+      assert {:error, :failure} = GenServer.call(ctx.pid, {:sweep, now, context()})
+      assert :already_claimed = ETS.claim(ctx.pid, claim, context())
+    end
+
+    assert {:ok, 1} = ETS.sweep(ctx.pid, 253_402_300_799, context())
+  end
+
   test "64 concurrent claims have one winner and namespaces are independent", %{store: store} do
     claim = claim("scope", "identifier", 100)
 

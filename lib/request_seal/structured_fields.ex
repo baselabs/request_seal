@@ -18,6 +18,11 @@ defmodule RequestSeal.StructuredFields do
   optional inner list, item; inner lists cannot nest. Numeric syntax has the
   RFC's 15-digit integer and 12+3-digit decimal bounds, including leading zeros.
 
+  Byte sequences reject nonzero unused base64 pad bits under the canonical
+  encoding rule in [RFC 4648 Section 3.5](https://www.rfc-editor.org/rfc/rfc4648.html#section-3.5).
+  Missing padding is synthesized before decoding; invalid encodings fail parsing
+  as described in [RFC 8941 Section 4.2.7](https://www.rfc-editor.org/rfc/rfc8941.html#section-4.2.7).
+
   `parse_field/5` consumes the existing lossless `RequestSeal.Message` model,
   combining matching occurrences in one explicitly selected section in order
   with comma-space. It never merges headers with trailers or reads a body.
@@ -414,6 +419,7 @@ defmodule RequestSeal.StructuredFields do
     ensure(String.match?(encoded, ~r/\A[A-Za-z0-9+\/]*={0,2}\z/), :syntax)
     ensure(match?(":" <> _, tail), :syntax)
     encoded = encoded <> String.duplicate("=", rem(4 - rem(byte_size(encoded), 4), 4))
+    ensure(zero_pad_bits?(encoded), :syntax)
 
     case Base.decode64(encoded) do
       {:ok, value} ->
@@ -432,6 +438,23 @@ defmodule RequestSeal.StructuredFields do
   end
 
   defp parse_bare(_, _), do: fail(:syntax)
+
+  defp zero_pad_bits?(encoded) do
+    size = byte_size(encoded)
+
+    cond do
+      size >= 4 and binary_part(encoded, size - 2, 2) == "==" ->
+        # One output byte: the second sextet has four unused low bits.
+        :binary.at(encoded, size - 3) in ~c"AQgw"
+
+      size >= 4 and :binary.last(encoded) == ?= ->
+        # Two output bytes: the third sextet has two unused low bits.
+        :binary.at(encoded, size - 2) in ~c"AEIMQUYcgkosw048"
+
+      true ->
+        true
+    end
+  end
 
   defp number(bytes) do
     {sign, bytes} =

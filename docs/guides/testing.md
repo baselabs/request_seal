@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture, threat model, and accepted ADRs · Review when: an advertised capability, test runner, or evidence source changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture, threat model, and accepted ADRs · Review when: an advertised capability, test runner, or evidence source changes -->
 
 # Testing and evidence
 
@@ -199,3 +199,15 @@ floor and middle test lanes and a latest full-gate lane; each channel has a drif
 commits resolved from their official repositories. Dependency audit evidence covers
 Hex-reported retirements and advisories; it does not claim every advisory database was
 queried independently.
+
+## Conformance corpus
+
+`corpus/` holds unchanged public source bytes and canonical manifests. See the
+[format reference](../reference/corpus-format.md) for schemas, evidence classes,
+number/byte tags and vendoring rules. `mix test test/corpus_test.exs` verifies the
+index pin and every file digest, executes singles and batch items exactly once,
+and compares bytes, canonical verification facts and rejection rule IDs.
+`MIX_ENV=test mix run scripts/check_corpus_mutations.exs` requires each named
+inventory, count and expectation mutation to fail. Both checks run in the declared
+gate. The corpus uses injected source bodies and a real caller-owned ETS store;
+PostgreSQL integration checks still require the explicit database URL.

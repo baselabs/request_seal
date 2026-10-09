@@ -6,6 +6,31 @@ defmodule RequestSeal.StructuredFieldsTest do
   @root Path.join(__DIR__, "fixtures/structured_fields")
   @types [:integer, :decimal, :string, :token, :bytes, :boolean, :date, :display_string]
 
+  for wire <- [":iZ==:", ":iZ=:", ":iZ:", ":QR:", ":QUJ=:", ":uuueGVsbG8=:"] do
+    @wire wire
+    test "nonzero base64 pad bits reject in #{@wire}" do
+      for revision <- [:rfc8941, :rfc9651] do
+        assert {:error, %{reason: :syntax}} = SF.parse(@wire, schema("item", revision))
+      end
+    end
+  end
+
+  test "zero base64 pad bits accept with complete, partial, or absent padding" do
+    for revision <- [:rfc8941, :rfc9651],
+        {wire, bytes} <- [
+          {":iQ==:", <<137>>},
+          {":iQ=:", <<137>>},
+          {":iQ:", <<137>>},
+          {":QQ:", "A"},
+          {":QUI=:", "AB"},
+          {":QUI:", "AB"},
+          {":QUJD:", "ABC"},
+          {"::", ""}
+        ] do
+      assert {:ok, %Value{value: {:bytes, ^bytes}}} = SF.parse(wire, schema("item", revision))
+    end
+  end
+
   for file <- Path.wildcard(Path.join(@root, "**/*.json")) do
     @fixture_path file
     test "HTTP WG #{Path.relative_to(file, @root)}" do

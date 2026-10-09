@@ -3,6 +3,12 @@ defmodule RequestSeal.Replay do
   Atomic whole-envelope replay port with caller-owned stores and commitments.
 
   Adapters implement `claim/3` and `sweep/3`. Claiming never evicts entries.
+  Sweep inputs are integers from 0 through 253,402,300,799 Unix seconds.
+  Generic and Web Bot Auth verification reject a derived retention end above
+  that maximum with `RequestSeal.Error` reason `:retention_exceeded` at `:replay`
+  before commitment or storage. Such claims cannot be swept. Direct store callers
+  still receive the existing invalid-claim failure; `Claim.valid?/1` rejects them.
+  Negative retention ends are already expired.
   A single monotonic deadline covers the commitment and store operation; caller
   death or deadline expiry kills the operation worker. Cancellation cannot undo
   an already committed claim. No error permits automatic retry.
@@ -15,7 +21,8 @@ defmodule RequestSeal.Replay do
 
   @callback claim(term(), Claim.t(), Context.t()) ::
               :claimed | :already_claimed | {:error, :unavailable | :timeout | :full | :failure}
-  @callback sweep(term(), integer(), Context.t()) :: {:ok, non_neg_integer()} | {:error, atom()}
+  @callback sweep(term(), 0..253_402_300_799, Context.t()) ::
+              {:ok, non_neg_integer()} | {:error, atom()}
 
   @doc "Submit one atomic claim under a bounded operation deadline."
   @spec claim(Store.t(), Claim.t(), keyword()) ::

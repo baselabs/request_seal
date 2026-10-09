@@ -49,3 +49,13 @@ The Decision's qualified JOSE dependency was not selected. OBSERVED in
 `lib/request_seal/public_key.ex`: compact JOSE and public-key handling use the
 owned bounded machinery over OTP cryptographic primitives. The portable corpus
 remains a design; published vector fixtures run in the Elixir test suite.
+
+## Amendment — October 9, 2026
+
+The October 8 deferral is superseded. The TypeScript counterpart is designed and
+in progress as a separate native npm package named `request-seal`. It shares
+corpus data and semantic contracts with the Elixir library, not runtime code.
+
+The October 8 implementation amendment's statement that the portable corpus
+remains a design is superseded on October 9: `corpus/` and the Elixir consumer
+implement the published format; native TypeScript consumption remains in progress.

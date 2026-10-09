@@ -4,7 +4,12 @@ defmodule RequestSeal.WebBotAuth.Policy do
 
   `new/1` requires `:algorithms`, `:agents`, `:cache` (PID or nil),
   `:freshness` (clock, skew, max_age), `:content`, and `:replay`.
-  Freshness always requires expiration. Content and replay use the generic
+  Freshness always requires expiration. Max-age is nil or an integer in
+  1..253,402,300,799 seconds; skew is an integer in 0..86,400 seconds.
+  Values outside these ranges reject with `:invalid_policy`.
+  A derived replay retention end above 253,402,300,799 rejects with
+  `:retention_exceeded` at `:replay` before commitment or storage.
+  Content and replay use the generic
   `RequestSeal.Policy` contracts; HMAC algorithms are forbidden.
 
   The arity-one `:agents` trust function receives `identifier`, `location`, and

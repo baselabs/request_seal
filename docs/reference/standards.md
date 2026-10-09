@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-10-09 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
 
 # Standards and counterpart contracts
 
@@ -48,3 +48,9 @@ Store immutable public captures with original source URL, retrieval time, conten
 license and source revision before deriving corpus cases. Store release receipts separately
 from human guides. Independent published vectors and local examples have distinct labels.
 No secret, customer payload, or private source belongs in the public corpus.
+
+## Conformance corpus
+
+`corpus/` preserves the cited standards and provider bytes alongside independent
+expectations. See [the corpus format](corpus-format.md) for the index, manifests,
+canonical results and checksummed release assets.

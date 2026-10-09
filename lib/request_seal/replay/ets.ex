@@ -10,6 +10,7 @@ defmodule RequestSeal.Replay.ETS do
   or distributed store. Importing the module starts nothing.
   Multi-node operators sweep at `now - max_internode_skew` to preserve claims
   while any verifier still accepts the authenticated input.
+  Sweep inputs range from 0 through 253,402,300,799 Unix seconds.
   One namespace should use one freshness bound because duplicates never extend retention.
   """
   use GenServer
@@ -49,7 +50,7 @@ defmodule RequestSeal.Replay.ETS do
       })
 
   @impl RequestSeal.Replay
-  def sweep(pid, now, %Context{} = context) when is_integer(now),
+  def sweep(pid, now, %Context{} = context) when is_integer(now) and now in 0..253_402_300_799,
     do: call(pid, {:sweep, now, context}, context)
 
   def sweep(_, _, _), do: {:error, :failure}
@@ -60,6 +61,9 @@ defmodule RequestSeal.Replay.ETS do
 
     result =
       cond do
+        not Claim.valid?(claim) ->
+          {:error, :failure}
+
         Context.remaining(context) == 0 ->
           {:error, :timeout}
 
@@ -84,7 +88,8 @@ defmodule RequestSeal.Replay.ETS do
   end
 
   @impl GenServer
-  def handle_call({:sweep, now, %Context{} = context}, _from, state) when is_integer(now) do
+  def handle_call({:sweep, now, %Context{} = context}, _from, state)
+      when is_integer(now) and now in 0..253_402_300_799 do
     if Context.remaining(context) == 0 do
       {:reply, {:error, :timeout}, state}
     else

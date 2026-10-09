@@ -3,6 +3,8 @@ defmodule RequestSeal.WebBotAuth do
   Source-bound HTTP request signing and verification for
   [draft-ietf-webbotauth-httpsig-protocol-00](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html).
 
+  Caller clocks range from 0 through 253,402,300,799 Unix seconds.
+
   `verify/3` validates every `web-bot-auth` signature independently. It requires
   created/expires, a SHA-256 JWK thumbprint key ID, authority or target URI coverage,
   and a matching dictionary Signature-Agent member when present. Legacy strings
@@ -434,7 +436,7 @@ defmodule RequestSeal.WebBotAuth do
         _, _ -> nil
       end
 
-    ensure(is_integer(value) and value in 0..999_999_999_999_999, :invalid_clock, :freshness)
+    ensure(is_integer(value) and value in 0..253_402_300_799, :invalid_clock, :freshness)
     value
   end
 
@@ -549,6 +551,7 @@ defmodule RequestSeal.WebBotAuth do
       end)
       |> Enum.min()
 
+    ensure(retain <= 253_402_300_799, :retention_exceeded, :replay)
     unwrap(Replay.commit(policy, %{profile: @profile, signatures: facts}, retain))
   end
 

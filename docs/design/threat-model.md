@@ -1,11 +1,11 @@
-<!-- Status: current · Kind: design · Updated: 2026-10-08 · Governed by: architecture and ADRs 0002–0007 · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
+<!-- Status: current · Kind: design · Updated: 2026-10-09 · Governed by: architecture and ADRs 0002–0007 · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
 
 # RequestSeal threat model
 
 
 RequestSeal processes attacker-controlled wire data at an authentication boundary. Its primary security goal is to report exactly what was cryptographically established, by which trusted association, under which profile, without granting caller authorization or payment authority.
 
-RequestSeal is Elixir only. The TypeScript counterpart is deferred, not planned for the current release; the cross-language corpus format remains a design for later use.
+The TypeScript counterpart is designed and in progress as a separate npm package named `request-seal`. Both implementations share the independently sourced conformance corpus and its digest and cardinality checks.
 
 ## Assets and trust boundaries
 
