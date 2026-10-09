@@ -1,17 +1,15 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-07 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
 
-# Inspect the local library
+# Inspect RequestSeal
 
 
-This notebook installs the real local RequestSeal checkout. It checks the module's
-public function exports and actual runtime. Protocol verification is exercised by the
+This notebook installs RequestSeal 0.1.0 from Hex. It checks the module's public
+function exports and actual runtime. Protocol verification is exercised by the
 library's published-vector tests; this notebook checks installation and prerequisites.
-Set `REQUESTSEAL_PATH` to your clone or extracted package before starting the runtime.
-The path dependency installs in the runtime's production environment without clone-only config or lockfile paths. The checks reject a different runtime or unexpected public function exports. No provider key is required.
+Use the pinned Elixir/OTP runtime below. No provider key is required.
 
 ```elixir
-requestseal_path = System.fetch_env!("REQUESTSEAL_PATH")
-Mix.install([{:request_seal, path: requestseal_path}])
+Mix.install([{:request_seal, "~> 0.1.0"}])
 ```
 
 ## Inspect actual capabilities
@@ -25,7 +23,7 @@ true = :ed25519 in Keyword.fetch!(:crypto.supports(), :curves)
 {:docs_v1, _, :elixir, _, %{"en" => module_docs}, _, _} = Code.fetch_docs(RequestSeal)
 true = is_binary(module_docs)
 [sign: 3, sign: 4, verify: 3, verify_quorum: 3] = RequestSeal.__info__(:functions)
-IO.puts("Local RequestSeal module loaded; pinned runtime and Ed25519 available")
+IO.puts("RequestSeal module loaded; pinned runtime and Ed25519 available")
 ```
 
 The result proves installation and prerequisites only. See [testing and evidence](../docs/guides/testing.md)

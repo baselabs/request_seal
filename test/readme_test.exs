@@ -43,7 +43,7 @@ defmodule RequestSeal.ReadmeTest do
     binding =
       E.eval(
         ~S'''
-        {:request_seal, git: "https://github.com/baselabs/request_seal.git"}
+        {:request_seal, "~> 0.1.0"}
         ''',
         binding,
         "README.md",
@@ -54,7 +54,7 @@ defmodule RequestSeal.ReadmeTest do
       E.eval(
         ~S'''
         [
-          {:request_seal, git: "https://github.com/baselabs/request_seal.git"},
+          {:request_seal, "~> 0.1.0"},
           {:req, "~> 0.7.4"},
           {:finch, ">= 0.23.0 and < 0.25.0"},
           {:plug, "~> 1.20.3"},

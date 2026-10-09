@@ -64,10 +64,10 @@ Expected output:
 Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 
 ```elixir
-{:request_seal, git: "https://github.com/baselabs/request_seal.git"}
+{:request_seal, "~> 0.1.0"}
 ```
 
-The repository is private until the first Hex release, so the Git dependency requires access. For reproducible builds, pin the Git dependency to a commit with `ref:`.
+RequestSeal 0.1.0 is available from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
 
 Add optional dependencies for the integrations you use. The table is a reference; the complete webhook dependency list follows.
 
@@ -87,7 +87,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 
 ```elixir
 [
-  {:request_seal, git: "https://github.com/baselabs/request_seal.git"},
+  {:request_seal, "~> 0.1.0"},
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.23.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},

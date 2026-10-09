@@ -49,10 +49,10 @@ Open `doc/index.html` for the generated documentation. Open the files linked in
 [the notebook guide](../../livebooks/README.md) in Livebook for interactive reading.
 The headless gate verifies code; it does not certify interactive browser accessibility.
 
-## Consume the local checkout
+## Install from Hex
 
-In another Elixir project, use a local path dependency named `:request_seal`. The path
-must point to your clone. The `RequestSeal.Message` module documentation contains executable request construction
+In another Elixir project, add `{:request_seal, "~> 0.1.0"}` to your `mix.exs`
+dependency list and run `mix deps.get`. The `RequestSeal.Message` module documentation contains executable request construction
 and validation examples. `FieldOccurrence` retains exact name/value bytes and section;
 `Body` records caller-owned availability without reading streams; `TransportFacts`
 records declarations without promoting them to observed connection evidence. Their

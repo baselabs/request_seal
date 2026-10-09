@@ -143,7 +143,9 @@ and signature conformance remain separate acceptance.
 The [RFC Ed25519 notebook](../../livebooks/rfc-ed25519.livemd) checks OTP against
 independently published signature bytes and rejects altered path/signature bytes.
 The [environment notebook](../../livebooks/environment.livemd) checks installation
-and prerequisites. Neither establishes RequestSeal parser, profile, or peer support.
+and prerequisites against the real checkout; the runner validates the published
+Hex install cell before substituting that checkout. The release runbook checks
+registry installation separately. Neither establishes RequestSeal parser, profile, or peer support.
 
 ## Web Bot Auth evidence
 

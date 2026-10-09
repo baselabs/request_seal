@@ -51,6 +51,25 @@ defmodule RequestSeal.NotebookCheck do
     {source, length(cells)}
   end
 
+  def local_source!(source, root) do
+    if String.contains?(source, "Mix.install") and String.contains?(source, ":request_seal") do
+      [_, version] = Regex.run(~r/\bversion: "([^"]+)"/, File.read!(Path.join(root, "mix.exs")))
+      install = "Mix.install([" <> inspect({:request_seal, "~> " <> version}) <> "])"
+
+      unless length(String.split(source, install)) == 2 do
+        raise "Notebook must contain exactly one matching Hex install cell"
+      end
+
+      String.replace(
+        source,
+        install,
+        "Mix.install([" <> inspect({:request_seal, [path: root]}) <> "])"
+      )
+    else
+      source
+    end
+  end
+
   def rejects!(name, expectation, operation) do
     try do
       operation.()
@@ -135,6 +154,26 @@ if "--self-test" in System.argv() do
   RequestSeal.NotebookCheck.self_test!(
     File.read!(Path.join(root, "livebooks/rfc-ed25519.livemd"))
   )
+
+  {source, _} =
+    RequestSeal.NotebookCheck.export!(File.read!(Path.join(root, "livebooks/environment.livemd")))
+
+  local = RequestSeal.NotebookCheck.local_source!(source, root)
+
+  unless local != source and String.contains?(local, inspect({:request_seal, [path: root]})),
+    do: raise("Local notebook execution must select the actual checkout")
+
+  for {name, changed} <- [
+        {"duplicate install", source <> source},
+        {"install version drift", String.replace(source, "~> ", "== ")},
+        {"missing install cell", String.replace(source, "Mix.install([", "Mix.install( [")}
+      ] do
+    RequestSeal.NotebookCheck.rejects!(name, "matching Hex install cell", fn ->
+      RequestSeal.NotebookCheck.local_source!(changed, root)
+    end)
+  end
+
+  IO.puts("PASS: Hex install cell validation and explicit local execution selection")
 else
   for file <- files do
     {source, count} = RequestSeal.NotebookCheck.export!(File.read!(file))
@@ -151,15 +190,15 @@ else
     try do
       script = Path.join(temporary, "notebook.exs")
       completion = "REQUESTSEAL_COMPLETED_" <> Base.encode16(:crypto.strong_rand_bytes(24))
-      File.write!(script, source <> "\nIO.puts(" <> inspect("\n" <> completion) <> ")\n")
+      local_source = RequestSeal.NotebookCheck.local_source!(source, root)
+      File.write!(script, local_source <> "\nIO.puts(" <> inspect("\n" <> completion) <> ")\n")
 
       {output, status} =
         System.cmd(
           System.get_env("REQUESTSEAL_PYTHON") || System.find_executable("python3") ||
             raise("Python interpreter unavailable"),
           [Path.join(root, "scripts/check.py"), "--execute-notebook", script, completion],
-          stderr_to_stdout: true,
-          env: [{"REQUESTSEAL_PATH", root}]
+          stderr_to_stdout: true
         )
 
       lines = String.split(output, "\n")

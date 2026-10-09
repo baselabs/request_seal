@@ -9,7 +9,6 @@ defmodule RequestSeal.MixProject do
     "CHANGELOG.md",
     "LICENSE",
     "NOTICE",
-    "test/fixtures/web_bot_auth/PROVENANCE.md",
     "docs/adr/0001-library-boundary.md",
     "docs/adr/0002-lossless-http-and-structured-fields.md",
     "docs/adr/0003-source-bound-profiles.md",
@@ -52,7 +51,7 @@ defmodule RequestSeal.MixProject do
 
     [
       app: :request_seal,
-      version: "0.1.0-dev",
+      version: "0.1.0",
       # Libraries declare a consumer range; development and notebook tools stay pinned.
       # OTP 27 supplies :json; both supported CI lanes are recorded in ADR 0008.
       elixir: "~> 1.18",

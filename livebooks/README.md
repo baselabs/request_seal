@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-06 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
 
 # Executable Livebooks
 
@@ -11,11 +11,12 @@ python3 scripts/check.py --notebooks-only
 
 - [Verify a published HTTP signature](rfc-ed25519.livemd) runs the real OTP primitive against
   RFC 9421's independent Ed25519 vector, then rejects altered message and signature bytes.
-- [Inspect the local library](environment.livemd) installs this actual checkout and inspects
-  its module, toolchain and cryptographic prerequisites without claiming an unbuilt API.
+- [Inspect RequestSeal](environment.livemd) installs `{:request_seal, "~> 0.1.0"}`
+  from Hex and inspects its module, toolchain, and cryptographic prerequisites.
 
-For local installation, set `REQUESTSEAL_PATH` to your clone. The gate sets it to the checkout
-it is testing. No author-machine path is embedded. The shipped notebooks need no secret,
+The repository gate checks the exported install cell, then substitutes the real checkout
+for local execution. It verifies local code; the release runbook separately verifies
+the published Hex install in a clean consumer. No author-machine path is embedded. The shipped notebooks need no secret,
 service, provider registration or payment data. Their source cells are the actual executed
 inputs, not copied success output.
 

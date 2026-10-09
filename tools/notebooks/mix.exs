@@ -4,7 +4,7 @@ defmodule RequestSealNotebooks.MixProject do
   def project do
     [
       app: :request_seal_notebooks,
-      version: "0.1.0-dev",
+      version: "0.1.0",
       elixir: "1.20.4",
       # The Livebook Hex release pins earmark_parser; isolate it from ExDoc.
       # Exact Livebook identity binds the internal importer/exporter we execute.

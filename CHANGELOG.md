@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-10-08
+
+First public release: RFC 9421 HTTP Message Signatures, source-selected Web Bot Auth,
+compact and nested JOSE, caller-owned key custody and discovery, replay protection,
+and optional Plug/Phoenix, Req, Finch, Ash, ash_hooks, and ash_onetime integrations.
+Includes executable guides, published-vector checks, and Livebooks.
+
 - Cover webhook URL queries, generate a new nonce per attempt, reject duplicate
   signed fields, and preserve transport exceptions with distinct signing errors.
 - Bind inbound webhook policy resolution to tenant and key reference.

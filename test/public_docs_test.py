@@ -27,6 +27,77 @@ class PublicDocsTest(unittest.TestCase):
     def test_current_readme_is_public(self):
         self.assertEqual([], self.errors())
 
+    def test_git_installs_are_rejected_in_public_text(self):
+        for install in (
+            '{:request_seal, git: "https://github.com/baselabs/request_seal.git"}',
+            '{:request_seal,\n git: "git@github.com:baselabs/request_seal.git"}',
+            '{:request_seal, github: "baselabs/request_seal"}',
+            'github: "request_seal"',
+            'github: :request_seal',
+        ):
+            with self.subTest(install=install):
+                self.assertTrue(any("Hex install" in e for e in self.errors("\n" + install)))
+
+    def test_unpublished_repository_wording_is_rejected(self):
+        for wording in (
+            "The repository is private until the first Hex release.",
+            "The repository is currently private.",
+            "Access to the private repository is required.",
+            "RequestSeal is not yet published on Hex.",
+            "RequestSeal is not published on Hex yet.",
+            "A Hex release is coming.",
+            "The Git dependency requires access.",
+        ):
+            with self.subTest(wording=wording):
+                self.assertTrue(any("release wording" in e for e in self.errors("\n" + wording)))
+
+    def test_install_requirement_tracks_the_package_version(self):
+        for version in ("0.1.0", "0.2.3"):
+            install = '{:request_seal, "~> ' + version + '"}'
+            self.assertEqual([], docs.release_errors("README.md", install, version))
+            for requirement in ("~> 0.1", "~> 0.1.0-dev", "== " + version, "~> 0.9.9"):
+                with self.subTest(version=version, requirement=requirement):
+                    source = install.replace("~> " + version, requirement)
+                    self.assertTrue(any("install requirement" in e for e in docs.release_errors("README.md", source, version)))
+        for source in ('{:request_seal, path: "../request_seal"}', '{:request_seal, github: "baselabs/request_seal"}'):
+            self.assertTrue(docs.release_errors("livebooks/environment.livemd", source, "0.1.0"))
+
+    def test_release_checks_keep_public_links_and_key_custody_text(self):
+        source = '\n'.join((
+            'source_url: "https://github.com/baselabs/request_seal"',
+            'Keep private keys in caller-owned custody.',
+            'Verify the private security-reporting channel.',
+            '{:request_seal,\n "~> 0.1.0", optional: true}',
+            '{:other_package, git: "https://github.com/example/other.git"}',
+        ))
+        self.assertEqual([], docs.release_errors("mix.exs", source, "0.1.0"))
+
+    def test_actual_package_configuration_and_file_mutations(self):
+        configuration = docs.public_configuration(ROOT)
+        self.assertRegex(configuration["version"], r"^\d+\.\d+\.\d+$")
+        self.assertEqual([], docs.package_errors(ROOT, configuration))
+        for path in ("test/fixtures/web_bot_auth/PROVENANCE.md", ".env", ".kimosabe/release-files.txt", "scripts/check.py"):
+            with self.subTest(path=path):
+                changed = dict(configuration)
+                changed["files"] = configuration["files"] | {path}
+                changed["patterns"] = configuration["patterns"] + [path]
+                self.assertTrue(docs.package_errors(ROOT, changed))
+        changed = dict(configuration)
+        changed["files"] = configuration["files"] - {"lib/request_seal.ex"}
+        self.assertTrue(any("required package file" in e for e in docs.package_errors(ROOT, changed)))
+        changed = dict(configuration)
+        path = "test/fixtures/web_bot_auth/PROVENANCE.md"
+        changed["documents"] = configuration["documents"] | {path}
+        changed["files"] = configuration["files"] | {path}
+        changed["patterns"] = configuration["patterns"] + [path]
+        self.assertTrue(any("outside the package allowlist" in e for e in docs.package_errors(ROOT, changed)))
+
+    def test_package_source_is_checked_for_install_references(self):
+        source = (ROOT / "lib/request_seal.ex").read_text()
+        self.assertEqual([], docs.release_errors("lib/request_seal.ex", source, "0.1.0"))
+        for mutation in ('{:request_seal, "~> 0.0.1"}', 'github: "baselabs/request_seal"', 'RequestSeal is not yet published.'):
+            self.assertTrue(docs.release_errors("lib/request_seal.ex", source + "\n" + mutation, "0.1.0"))
+
     def test_testing_guide_property_counts_match_sources(self):
         suites = {
             "Structured Fields": "RequestSeal.StructuredFieldsPropertyTest",

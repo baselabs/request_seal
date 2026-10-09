@@ -249,7 +249,7 @@ def notebooks():
     run(["mix", "format", "--check-formatted"], tooling)
     run(["mix", "run", "--no-start", "check.exs", "--self-test"], tooling)
     run(["mix", "run", "--no-start", "check.exs"], tooling,
-        extra_env={"REQUESTSEAL_PATH": str(ROOT), "REQUESTSEAL_PYTHON": sys.executable})
+        extra_env={"REQUESTSEAL_PYTHON": sys.executable})
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

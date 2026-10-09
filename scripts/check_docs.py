@@ -16,6 +16,22 @@ INTERNAL_PROCESS = re.compile(
     r"private (?:review records|planning records)",
     re.IGNORECASE,
 )
+SOURCE_DOCUMENTS = {"AGENTS.md", "test/fixtures/web_bot_auth/PROVENANCE.md"}
+GIT_INSTALL = re.compile(
+    r"\bgit\s*:\s*[\"'][^\"']*github\.com[/:]baselabs/request_seal(?:\.git)?[\"']|"
+    r"\bgithub\s*:\s*(?:[\"'](?:[^\"']*/)?request_seal(?:\.git)?[\"']|:request_seal\b)",
+    re.IGNORECASE,
+)
+UNPUBLISHED = re.compile(
+    r"\bprivate[\s-]+(?:git(?:hub)?\s+)?(?:repository|repo)\b|"
+    r"\b(?:repository|repo)\s+(?:is|remains)\s+(?:(?:currently|still)\s+)?private\b|"
+    r"\bnot\s+yet\s+published\b|"
+    r"\bnot\s+published\s+(?:on\s+Hex\s+)?yet\b|"
+    r"\b(?:first\s+)?Hex\s+release\s+(?:is\s+)?(?:coming|planned|forthcoming)\b|"
+    r"\bgit\s+dependency\s+(?:requires?|needs?)\s+access\b",
+    re.IGNORECASE,
+)
+INSTALL = re.compile(r"\{\s*:request_seal\s*,\s*([^}]*)\}", re.DOTALL)
 LINKS = (
     re.compile(r"\[[^\]]*\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+['\"][^)]*['\"])?\s*\)"),
     re.compile(r"^\s*\[[^\]]+\]:\s*(<[^>]+>|\S+)", re.MULTILINE),
@@ -41,13 +57,18 @@ def public_paths(root):
     return paths
 
 
-def public_documents(root):
+def public_configuration(root):
     # Read Mix's actual project configuration without compiling or starting the app.
     marker = "REQUEST_SEAL_PUBLIC_DOCUMENT\t"
     expression = (
         'for entry <- Keyword.fetch!(Keyword.fetch!(Mix.Project.config(), :docs), :extras) do '
         'path = case entry do {path, _options} -> path; path -> path end; '
-        'IO.puts("REQUEST_SEAL_PUBLIC_DOCUMENT\\t" <> path) end'
+        'IO.puts("REQUEST_SEAL_PUBLIC_DOCUMENT\\t" <> path) end; '
+        'IO.puts("REQUEST_SEAL_VERSION\\t" <> Mix.Project.config()[:version]); '
+        'for pattern <- Mix.Project.config()[:package][:files] do '
+        'IO.puts("REQUEST_SEAL_PACKAGE_PATTERN\\t" <> pattern); '
+        'for path <- Path.wildcard(pattern, match_dot: true), File.regular?(path), '
+        'do: IO.puts("REQUEST_SEAL_PACKAGE_FILE\\t" <> path) end'
     )
     result = subprocess.run(
         ["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression],
@@ -58,7 +79,63 @@ def public_documents(root):
         raise ValueError("invalid or empty public document configuration")
     if any(not safe_document_path(p) for p in entries):
         raise ValueError("public document configuration contains an unsafe path")
-    return set(entries) | {"AGENTS.md"}
+    def values(marker):
+        return [line[len(marker):] for line in result.stdout.splitlines() if line.startswith(marker)]
+    versions = values("REQUEST_SEAL_VERSION\t")
+    if len(versions) != 1:
+        raise ValueError("invalid package version configuration")
+    return {
+        "documents": set(entries),
+        "version": versions[0],
+        "patterns": values("REQUEST_SEAL_PACKAGE_PATTERN\t"),
+        "files": set(values("REQUEST_SEAL_PACKAGE_FILE\t")),
+    }
+
+
+def package_errors(root, configuration):
+    documents = configuration["documents"]
+    patterns = configuration["patterns"]
+    files = configuration["files"]
+    allowed_patterns = documents | {"lib/**/*.ex", "mix.exs"}
+    errors = []
+    for path in sorted(documents):
+        if path in SOURCE_DOCUMENTS or not (
+            path in {"README.md", "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md", "LICENSE", "NOTICE"}
+            or path.startswith(("docs/", "livebooks/"))
+        ):
+            errors.append(f"{path}: document is outside the package allowlist")
+    if set(patterns) != allowed_patterns or len(patterns) != len(set(patterns)):
+        errors.append("package file list must contain only lib/**/*.ex, mix.exs, and explicit public documents")
+    expected = documents | {"mix.exs"} | {
+        path.relative_to(root).as_posix() for path in (root / "lib").rglob("*.ex")
+    }
+    if not any(path.startswith("lib/") for path in files):
+        errors.append("package file list did not find its library positive control")
+    for path in sorted(files - expected):
+        errors.append(f"{path}: file is outside the package allowlist")
+    for path in sorted(expected - files):
+        errors.append(f"{path}: required package file is missing")
+    for path in sorted(files):
+        if not safe_document_path(path) or has_symlink(root, path):
+            errors.append(f"{path}: package file must have a safe path and no symlink")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", configuration["version"]):
+        errors.append("package version must be a published MAJOR.MINOR.PATCH release")
+    return errors
+
+
+def release_errors(relative, source, version=None):
+    errors = []
+    if GIT_INSTALL.search(source):
+        errors.append(f"{relative}: RequestSeal requires a Hex install, not a Git dependency")
+    if UNPUBLISHED.search(source):
+        errors.append(f"{relative}: outdated release wording")
+    for install in INSTALL.finditer(source):
+        requirement = re.match(r'[\"\']([^\"\']+)[\"\']\s*(?:,|$)', install[1].strip())
+        if not requirement:
+            errors.append(f"{relative}: RequestSeal requires a versioned Hex install")
+        elif version is not None and requirement[1] != f"~> {version}":
+            errors.append(f"{relative}: RequestSeal install requirement must be ~> {version}")
+    return errors
 
 
 def safe_document_path(path):
@@ -107,7 +184,7 @@ def inventory_errors(root, approved, paths):
     return errors
 
 
-def content_errors(root, relative, source, paths):
+def content_errors(root, relative, source, paths, version=None):
     root = root.resolve()
     errors = []
     path = root / relative
@@ -121,6 +198,7 @@ def content_errors(root, relative, source, paths):
         errors.append(f"{relative}: machine or private file URL")
     if INTERNAL_PROCESS.search(source):
         errors.append(f"{relative}: internal process material is not public documentation")
+    errors.extend(release_errors(relative, source, version))
     targets = [match.group(1).strip("<>") for pattern in LINKS for match in pattern.finditer(source)]
     targets.extend(
         unescape(next(value for value in match.groups() if value is not None))
@@ -276,15 +354,21 @@ def fence_errors(root, relative, source):
 
 
 def check(root=ROOT):
-    approved = public_documents(root)
+    configuration = public_configuration(root)
+    approved = configuration["documents"] | SOURCE_DOCUMENTS
     paths = public_paths(root)
     errors = inventory_errors(root, approved, paths)
+    errors.extend(package_errors(root, configuration))
     for relative in sorted(approved):
         path = root / relative
         if path.is_file() and not path.is_symlink():
             source = path.read_bytes().decode("utf-8")
-            errors.extend(content_errors(root, relative, source, paths))
+            errors.extend(content_errors(root, relative, source, paths, configuration["version"]))
             errors.extend(fence_errors(root, relative, source))
+    for relative in sorted(configuration["files"] - approved):
+        path = root / relative
+        if path.is_file() and not path.is_symlink():
+            errors.extend(release_errors(relative, path.read_text(), configuration["version"]))
     return approved, errors
 
 
