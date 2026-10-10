@@ -30,10 +30,16 @@ defmodule RequestSeal.Custody.Support do
     opts
   end
 
-  def timeout(opts) do
-    options(opts, [:timeout])
+  def timeout(opts, allowed \\ [:timeout]) do
+    options(opts, allowed)
     value = Keyword.get(opts, :timeout, 5_000)
     ensure(is_integer(value) and value in 1..300_000, :invalid_options)
+    value
+  end
+
+  def max_bytes(opts) do
+    value = Keyword.get(opts, :max_bytes, 1_048_576)
+    ensure(is_integer(value) and value in 1..16_777_216, :invalid_options)
     value
   end
 end

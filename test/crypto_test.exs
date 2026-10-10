@@ -334,6 +334,83 @@ defmodule RequestSeal.CryptoTest do
     assert_error(Crypto.verify("ed25519", "", <<0::512>>, struct(PublicKey)), :invalid_key)
   end
 
+  for operation <- [:sign, :verify] do
+    @tag :max_bytes
+    test "#{operation} accepts 1,235,403 bytes with an explicit larger bound" do
+      bytes = :binary.copy(<<0>>, 1_235_403)
+      {:ed25519, seed} = key = signing_key("ed25519")
+      signature = :crypto.sign(:eddsa, :none, bytes, [seed, :ed25519])
+
+      case unquote(operation) do
+        :sign ->
+          assert {:ok, ^signature} = Crypto.sign("ed25519", bytes, key, max_bytes: 2_097_152)
+
+        :verify ->
+          assert :ok =
+                   Crypto.verify("ed25519", bytes, signature, verification_key("ed25519"),
+                     max_bytes: 2_097_152
+                   )
+      end
+    end
+  end
+
+  @tag :max_bytes
+  test "max_bytes validates options and accepts the inclusive range endpoints" do
+    key = signing_key("ed25519")
+    public = verification_key("ed25519")
+
+    for max <- [1, 16_777_216] do
+      assert {:ok, signature} = Crypto.sign("ed25519", <<0>>, key, max_bytes: max)
+      assert :ok = Crypto.verify("ed25519", <<0>>, signature, public, max_bytes: max)
+    end
+
+    for opts <- [
+          [max_bytes: 0],
+          [max_bytes: -1],
+          [max_bytes: 16_777_217],
+          [max_bytes: "x"],
+          [max_bytes: 1.0],
+          [max_bytes: nil],
+          [max_bytes: 1, max_bytes: 2],
+          [timeout: 100],
+          nil,
+          %{},
+          [1]
+        ] do
+      assert_error(Crypto.sign("ed25519", <<0>>, key, opts), :invalid_options)
+      assert_error(Crypto.verify("ed25519", <<0>>, <<0>>, public, opts), :invalid_options)
+    end
+  end
+
+  @tag :max_bytes
+  test "max_bytes rejects bytes above the caller's value" do
+    key = signing_key("ed25519")
+    public = verification_key("ed25519")
+    bytes = :binary.copy(<<0>>, 10)
+    assert {:ok, signature} = Crypto.sign("ed25519", bytes, key, max_bytes: 10)
+    assert :ok = Crypto.verify("ed25519", bytes, signature, public, max_bytes: 10)
+    assert_error(Crypto.sign("ed25519", bytes <> <<0>>, key, max_bytes: 10), :invalid_data)
+
+    assert_error(
+      Crypto.verify("ed25519", bytes <> <<0>>, signature, public, max_bytes: 10),
+      :invalid_data
+    )
+  end
+
+  @tag :max_bytes
+  test "default and explicit one-megabyte primitive bounds reject the next byte" do
+    key = signing_key("ed25519")
+    public = verification_key("ed25519")
+    bytes = :binary.copy(<<0>>, 1_048_577)
+    assert_error(Crypto.sign("ed25519", bytes, key), :invalid_data)
+    assert_error(Crypto.verify("ed25519", bytes, <<0::512>>, public), :invalid_data)
+
+    for opts <- [[], [max_bytes: 1_048_576]] do
+      assert_error(Crypto.sign("ed25519", bytes, key, opts), :invalid_data)
+      assert_error(Crypto.verify("ed25519", bytes, <<0::512>>, public, opts), :invalid_data)
+    end
+  end
+
   test "published SPKI bytes survive import and export on the active runtime" do
     for id <- ~w(rsa_pss p256 ed25519) do
       pem = File.read!(Path.join(@root, id <> "_public.pem"))

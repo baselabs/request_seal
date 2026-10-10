@@ -359,7 +359,7 @@ defmodule RequestSeal.Custody.Local do
   defp holder_operation({:sign, algorithm, bytes}, {bound, material, _, _, capabilities}) do
     ensure(algorithm == bound, :key_mismatch)
     ensure(:sign in capabilities, :unsupported_operation)
-    Crypto.sign(algorithm, bytes, material)
+    Crypto.sign(algorithm, bytes, material, max_bytes: 16_777_216)
   end
 
   defp holder_operation(
@@ -368,7 +368,7 @@ defmodule RequestSeal.Custody.Local do
        ) do
     ensure(algorithm == bound, :key_mismatch)
     ensure(:verify in capabilities, :unsupported_operation)
-    Crypto.verify(algorithm, bytes, signature, public || material)
+    Crypto.verify(algorithm, bytes, signature, public || material, max_bytes: 16_777_216)
   end
 
   defp holder_operation(:public_key, {_, _, nil, _, _}), do: {:error, :no_public_key}

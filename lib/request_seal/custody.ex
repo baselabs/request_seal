@@ -12,10 +12,13 @@ defmodule RequestSeal.Custody do
   uniquely tagged result. Loading the library starts no process, store, or
   background work. Local handle construction explicitly starts its key holder.
 
-  `sign/3`, `verify/4`, and `unwrap/3` accept only `timeout: milliseconds` (default 5,000;
-  1–300,000, no infinity). Unknown and duplicate options reject. Public-key and
-  identity resolution use the default deadline. Exact input bytes are limited to
-  1,048,576; signatures and public container inputs are bounded to 16,384 bytes.
+  `sign/3`, `verify/4`, and `unwrap/3` accept `timeout: milliseconds` (default 5,000;
+  1–300,000, no infinity). Signing and verification also accept per-call
+  `max_bytes:` (integer 1–16,777,216, default 1,048,576). Bytes exceeding that
+  value return `:invalid_data` before custody work. Out-of-range, non-integer,
+  unknown, and duplicate options return `:invalid_options`. `unwrap/3` refuses
+  `max_bytes:`. Public-key and identity resolution use the default deadline.
+  Signatures and public container inputs are bounded to 16,384 bytes.
   Signing returns bytes; verification establishes mathematical validity only.
   Neither establishes identity attribution, authorization, or replay protection.
 
@@ -71,24 +74,51 @@ defmodule RequestSeal.Custody do
     end)
   end
 
-  @doc "Sign exact bounded bytes with the algorithm bound to a handle."
+  @doc """
+  Sign exact bounded bytes with the algorithm bound to a handle.
+
+  Opt into a larger input bound on each signing and verification call. This
+  local example uses actual Ed25519 cryptography under RFC 8032; it is not an
+  external conformance vector.
+
+      iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> bytes = :binary.copy(<<0>>, 1_235_403)
+      iex> {:ok, signature} = RequestSeal.Custody.sign(handle, bytes, max_bytes: 2_097_152)
+      iex> RequestSeal.Custody.verify(handle, bytes, signature, max_bytes: 2_097_152)
+      :ok
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+  """
   @spec sign(KeyHandle.t(), binary(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
   def sign(handle, bytes, opts \\ []) do
-    operation(handle, :sign, opts, fn ->
-      data!(bytes)
-      [bytes]
-    end)
+    operation(
+      handle,
+      :sign,
+      opts,
+      fn ->
+        data!(bytes, Support.max_bytes(opts))
+        [bytes]
+      end,
+      [:timeout, :max_bytes]
+    )
   end
 
   @doc "Verify exact bytes through secret custody or the custodian's public key."
   @spec verify(KeyHandle.t(), binary(), binary(), keyword()) :: :ok | {:error, Error.t()}
   def verify(handle, bytes, signature, opts \\ []) do
-    operation(handle, :verify, opts, fn ->
-      data!(bytes)
-      ensure(is_binary(signature), :invalid_signature)
-      ensure(byte_size(signature) <= 16_384, :limit)
-      [bytes, signature]
-    end)
+    operation(
+      handle,
+      :verify,
+      opts,
+      fn ->
+        data!(bytes, Support.max_bytes(opts))
+        ensure(is_binary(signature), :invalid_signature)
+        ensure(byte_size(signature) <= 16_384, :limit)
+        [bytes, signature]
+      end,
+      [:timeout, :max_bytes]
+    )
   end
 
   @doc "Resolve validated public-only material; symmetric keys return :no_public_key."
@@ -99,10 +129,10 @@ defmodule RequestSeal.Custody do
   @spec identity(KeyHandle.t()) :: {:ok, KeyIdentity.t()} | {:error, Error.t()}
   def identity(handle), do: operation(handle, :identity, [], fn -> [] end)
 
-  defp operation(handle, op, opts, args) do
+  defp operation(handle, op, opts, args, allowed \\ [:timeout]) do
     Support.safe(
       fn ->
-        timeout = Support.timeout(opts)
+        timeout = Support.timeout(opts, allowed)
         handle!(handle)
 
         ensure(
@@ -154,7 +184,7 @@ defmodule RequestSeal.Custody do
   end
 
   defp handle!(_), do: ensure(false, :invalid_handle)
-  defp data!(bytes), do: ensure(is_binary(bytes) and byte_size(bytes) <= 1_048_576, :invalid_data)
+  defp data!(bytes, max), do: ensure(is_binary(bytes) and byte_size(bytes) <= max, :invalid_data)
 
   defp invoke(handle, :verify, [bytes, signature], context) do
     result =
@@ -162,7 +192,10 @@ defmodule RequestSeal.Custody do
         handle.custodian.verify(handle.ref, handle.algorithm, bytes, signature, context)
       else
         public = handle.custodian.public_key(handle.ref) |> Support.unwrap()
-        RequestSeal.Crypto.verify(handle.algorithm, bytes, signature, public)
+
+        RequestSeal.Crypto.verify(handle.algorithm, bytes, signature, public,
+          max_bytes: 16_777_216
+        )
       end
 
     normalize(:verify, result)

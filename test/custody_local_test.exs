@@ -266,6 +266,91 @@ defmodule RequestSeal.CustodyLocalTest do
     assert_error(Local.import("ed25519", "bad", :unknown), :unsupported_format)
   end
 
+  for operation <- [:sign, :verify] do
+    @tag :max_bytes
+    test "#{operation} accepts 1,235,403 bytes with an explicit larger bound" do
+      bytes = :binary.copy(<<0>>, 1_235_403)
+      {:ed25519, seed} = key = material("ed25519")
+      assert {:ok, handle} = Local.new("ed25519", key)
+      signature = :crypto.sign(:eddsa, :none, bytes, [seed, :ed25519])
+
+      case unquote(operation) do
+        :sign -> assert {:ok, ^signature} = Custody.sign(handle, bytes, max_bytes: 2_097_152)
+        :verify -> assert :ok = Custody.verify(handle, bytes, signature, max_bytes: 2_097_152)
+      end
+    end
+  end
+
+  @tag :max_bytes
+  test "max_bytes validates values and duplicates while accepting both endpoints" do
+    assert {:ok, handle} = Local.new("ed25519", material("ed25519"))
+
+    for max <- [1, 16_777_216] do
+      assert {:ok, signature} = Custody.sign(handle, <<0>>, max_bytes: max)
+      assert :ok = Custody.verify(handle, <<0>>, signature, max_bytes: max)
+    end
+
+    for opts <- [
+          [max_bytes: 0],
+          [max_bytes: -1],
+          [max_bytes: 16_777_217],
+          [max_bytes: "x"],
+          [max_bytes: 1.0],
+          [max_bytes: nil],
+          [max_bytes: 1, max_bytes: 2]
+        ] do
+      assert_error(Custody.sign(handle, <<0>>, opts), :invalid_options)
+      assert_error(Custody.verify(handle, <<0>>, <<0>>, opts), :invalid_options)
+    end
+  end
+
+  @tag :max_bytes
+  test "max_bytes rejects excess bytes before reading the actual private reference" do
+    assert {:ok, handle} = Local.new("ed25519", material("ed25519"))
+    owner = self()
+    original = handle.ref
+
+    observed = %{
+      handle
+      | ref: fn ->
+          send(owner, :private_reference_read)
+          original.()
+        end
+    }
+
+    bytes = :binary.copy(<<0>>, 10)
+    assert {:ok, signature} = Custody.sign(observed, bytes, max_bytes: 10)
+    assert_receive :private_reference_read
+    assert :ok = Custody.verify(observed, bytes, signature, max_bytes: 10)
+    assert_receive :private_reference_read
+
+    assert_error(Custody.sign(observed, bytes <> <<0>>, max_bytes: 10), :invalid_data)
+
+    assert_error(
+      Custody.verify(observed, bytes <> <<0>>, signature, max_bytes: 10),
+      :invalid_data
+    )
+
+    refute_receive :private_reference_read, 50
+  end
+
+  @tag :max_bytes
+  test "default and explicit one-megabyte bounds reject the next byte" do
+    assert {:ok, handle} = Local.new("ed25519", material("ed25519"))
+    bytes = :binary.copy(<<0>>, 1_048_577)
+
+    for opts <- [[], [max_bytes: 1_048_576]] do
+      assert_error(Custody.sign(handle, bytes, opts), :invalid_data)
+      assert_error(Custody.verify(handle, bytes, <<0::512>>, opts), :invalid_data)
+    end
+  end
+
+  @tag :max_bytes
+  test "unwrap refuses max_bytes on an actual unwrap handle" do
+    assert {:ok, handle} = Local.new({:jwe, "RSA-OAEP-256"}, material("rsa"))
+    assert_error(Custody.unwrap(handle, <<0>>, max_bytes: 2), :invalid_options)
+  end
+
   test "encrypted containers are rejected and secret canaries never escape inspection errors or logs" do
     secret = "custody-private-canary-with-enough-entropy"
     {:ok, handle} = Local.new("hmac-sha256", {:hmac, secret})

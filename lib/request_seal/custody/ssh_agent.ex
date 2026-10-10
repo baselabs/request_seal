@@ -17,11 +17,16 @@ defmodule RequestSeal.Custody.SSHAgent do
   Supports HTTP Ed25519, RSA-v1_5-SHA256 (agent flag 2), P-256, and P-384,
   plus explicit JWS `EdDSA`, `RS256`, `ES256`, and `ES384`. PSS and HMAC reject.
   Each sign uses one new connection; replies cannot spill into another operation.
-  Identity lists are bounded to 256 keys, frames to 1,048,576 bytes, key blobs and
+  Identity lists are bounded to 256 keys, receive frames to 1,048,576 bytes, key blobs and
   comments to 16,384 bytes. Selection uses exact public components, never a comment
   or key ID. ECDSA mpints convert to fixed-width r || s, and every returned signature
   must verify with `Crypto` before release. Verification uses the trusted public
   key locally; it does not assert current agent possession or authorization.
+
+  `Custody.sign/3` and `Custody.verify/4` accept per-call `max_bytes:` (integer
+  1–16,777,216, default 1,048,576). Outgoing request frames have no additional
+  library bound; OpenSSH agents reject messages over 256 KiB with
+  `:custodian_protocol`. A larger custody bound does not raise the agent's limit.
 
   Unknown keys at construction yield `:custodian_rejected`; removed keys during
   signing yield `:key_not_found`. Connect and pre-send connection failures yield
@@ -104,7 +109,7 @@ defmodule RequestSeal.Custody.SSHAgent do
   def verify(ref, algorithm, bytes, signature, _context) do
     {bound, _, public, _} = ref.()
     ensure(algorithm == bound, :key_mismatch)
-    Crypto.verify(algorithm, bytes, signature, public)
+    Crypto.verify(algorithm, bytes, signature, public, max_bytes: 16_777_216)
   end
 
   @impl true

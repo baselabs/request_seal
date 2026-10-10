@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-10 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # RequestSeal
 
@@ -64,10 +64,10 @@ Expected output:
 Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 
 ```elixir
-{:request_seal, "~> 0.4.0"}
+{:request_seal, "~> 0.4.1"}
 ```
 
-Install RequestSeal 0.4.0 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
+Install RequestSeal 0.4.1 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
 
 Add optional dependencies for the integrations you use. The table is a reference; the complete webhook dependency list follows.
 
@@ -87,7 +87,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 
 ```elixir
 [
-  {:request_seal, "~> 0.4.0"},
+  {:request_seal, "~> 0.4.1"},
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.23.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},

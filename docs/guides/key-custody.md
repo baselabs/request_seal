@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-10 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Keep signing keys behind a handle
 
@@ -105,6 +105,16 @@ integrity alone does not establish sender identity or authorization.
 ## Deadlines and secrets
 
 `Custody.sign/3` and `verify/4` bound work with `timeout:` (default 5,000 ms). Monitored workers terminate on deadlines and caller cancellation; cancellation cannot revoke external work already accepted by a peer. HMAC secret verification stays inside custody; key equivalence for shared secrets is an explicit nonsecret custodian value, never derived by RequestSeal. Public-key resolution does not expose private material. Custodians are trusted code and must propagate deadlines and keep secrets out of logs.
+
+Signing and verification also accept per-call `max_bytes:`: an integer from 1
+through 16,777,216, with the existing 1,048,576-byte default. Bytes over the
+selected value return `:invalid_data` before the private reference is read.
+Invalid values and duplicate options return `:invalid_options`; `unwrap/3`
+does not accept this option. `RequestSeal.Crypto.sign/4` and `verify/5` expose
+the same option for direct primitive calls. `RequestSeal.SignatureBase` retains
+its separate 1,048,576-byte ceiling. Larger SSH-agent requests remain subject
+to the agent's own limit: OpenSSH rejects messages over 256 KiB with
+`:custodian_protocol`.
 
 ## Errors
 

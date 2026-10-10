@@ -29,7 +29,11 @@ defmodule RequestSeal.Crypto do
   key-equivalence derivation. HMAC compares
   with OTP `:crypto.hash_equals/2`. HMAC proves shared-secret possession only.
 
-  Bases are binaries of at most 1,048,576 bytes. ECDSA uses fixed-width r || s
+  Bases are binaries of at most 1,048,576 bytes by default. `sign/4` and `verify/5`
+  accept per-call `max_bytes:` (integer 1–16,777,216). Bytes exceeding the selected
+  value return `:invalid_data`; out-of-range, non-integer, unknown, and duplicate
+  options return `:invalid_options`. This does not change `RequestSeal.SignatureBase`'s
+  separate 1,048,576-byte ceiling. ECDSA uses fixed-width r || s
   (64/96 bytes), never DER on the wire. RSA-PSS fixes MGF1 to the selected digest
   and salt length to its digest width (64 for HTTP SHA-512). Ed25519 has no prehash
   and rejects noncanonical S. RSA signatures have the exact modulus width.
@@ -44,22 +48,24 @@ defmodule RequestSeal.Crypto do
   def algorithms, do: Algorithm.http()
 
   @doc "Sign exact bytes using operation-local material within the caller's custodian."
-  @spec sign(algorithm(), binary(), tuple()) :: {:ok, binary()} | {:error, Error.t()}
-  def sign(algorithm, bytes, material) do
+  @spec sign(algorithm(), binary(), tuple(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
+  def sign(algorithm, bytes, material, opts \\ []) do
     Support.safe(:invalid_key, fn ->
+      max = max_bytes(opts)
       {_, spec} = Algorithm.resolve(algorithm)
-      ensure(bounded_binary?(bytes, 0, 1_048_576), :invalid_data)
+      ensure(bounded_binary?(bytes, 0, max), :invalid_data)
       {:ok, sign_bytes(spec, bytes, material)}
     end)
   end
 
   @doc "Verify exact bytes; :ok establishes cryptographic validity only."
-  @spec verify(algorithm(), binary(), binary(), PublicKey.t() | tuple()) ::
+  @spec verify(algorithm(), binary(), binary(), PublicKey.t() | tuple(), keyword()) ::
           :ok | {:error, Error.t()}
-  def verify(algorithm, bytes, signature, key) do
+  def verify(algorithm, bytes, signature, key, opts \\ []) do
     Support.safe(:invalid_key, fn ->
+      max = max_bytes(opts)
       resolved = {_, spec} = Algorithm.resolve(algorithm)
-      ensure(bounded_binary?(bytes, 0, 1_048_576), :invalid_data)
+      ensure(bounded_binary?(bytes, 0, max), :invalid_data)
 
       material =
         case key do
@@ -79,6 +85,15 @@ defmodule RequestSeal.Crypto do
       :ok
     end)
   end
+
+  defp max_bytes([]), do: 1_048_576
+
+  defp max_bytes(max_bytes: value) do
+    ensure(is_integer(value) and value in 1..16_777_216, :invalid_options)
+    value
+  end
+
+  defp max_bytes(_), do: ensure(false, :invalid_options)
 
   defp sign_bytes({:rsa, digest, padding, salt}, bytes, {:rsa, key}) do
     validate_rsa_private!(key)

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- `RequestSeal.Custody.sign/3`, `verify/4`, `RequestSeal.Crypto.sign/4` and `verify/5` accept `max_bytes:` (1–16,777,216, default 1,048,576). The default and the existing `:invalid_data` rejection are unchanged. Out-of-range or non-integer values reject with `:invalid_options`. `unwrap/3` does not accept it. The SSH-agent custodian forwards larger requests unchanged; OpenSSH agents reject messages over 256 KiB with `:custodian_protocol`.
+
 ## 0.4.0 - 2026-10-10
 
 - Accept an algorithm-bound `RequestSeal.KeyHandle` in the explicit

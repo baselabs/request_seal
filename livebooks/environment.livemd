@@ -1,15 +1,15 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-10 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
 
 # Inspect RequestSeal
 
 
-This notebook installs RequestSeal 0.4.0 from Hex. It checks the module's public
-function exports and actual runtime. Protocol verification is exercised by the
+This notebook installs RequestSeal 0.4.1 from Hex. It checks the module's public
+function exports, installed version, request construction, and actual runtime. Protocol verification is exercised by the
 library's published-vector tests; this notebook checks installation and prerequisites.
 Use the pinned Elixir/OTP runtime below. No provider key is required.
 
 ```elixir
-Mix.install([{:request_seal, "~> 0.4.0"}])
+Mix.install([{:request_seal, "~> 0.4.1"}])
 ```
 
 ## Inspect actual capabilities
@@ -23,6 +23,10 @@ true = :ed25519 in Keyword.fetch!(:crypto.supports(), :curves)
 {:docs_v1, _, :elixir, _, %{"en" => module_docs}, _, _} = Code.fetch_docs(RequestSeal)
 true = is_binary(module_docs)
 [sign: 3, sign: 4, verify: 3, verify_quorum: 3] = RequestSeal.__info__(:functions)
+"0.4.1" = Application.spec(:request_seal, :vsn) |> to_string()
+{:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+"GET" = message.method
+IO.puts("PASS: RequestSeal 0.4.1 clean-consumer install and request construction")
 IO.puts("RequestSeal module loaded; pinned runtime and Ed25519 available")
 ```
 
