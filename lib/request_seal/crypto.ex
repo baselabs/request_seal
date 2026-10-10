@@ -32,7 +32,9 @@ defmodule RequestSeal.Crypto do
   Bases are binaries of at most 1,048,576 bytes by default. `sign/4` and `verify/5`
   accept per-call `max_bytes:` (integer 1–16,777,216). Bytes exceeding the selected
   value return `:invalid_data`; out-of-range, non-integer, unknown, and duplicate
-  options return `:invalid_options`. This does not change `RequestSeal.SignatureBase`'s
+  options return `:invalid_options`. Options are validated before resolving the
+  algorithm, so invalid options take precedence over an unsupported algorithm.
+  This does not change `RequestSeal.SignatureBase`'s
   separate 1,048,576-byte ceiling. ECDSA uses fixed-width r || s
   (64/96 bytes), never DER on the wire. RSA-PSS fixes MGF1 to the selected digest
   and salt length to its digest width (64 for HTTP SHA-512). Ed25519 has no prehash
@@ -47,7 +49,16 @@ defmodule RequestSeal.Crypto do
   @spec algorithms() :: [binary()]
   def algorithms, do: Algorithm.http()
 
-  @doc "Sign exact bytes using operation-local material within the caller's custodian."
+  @doc "The inclusive byte ceiling shared by cryptographic and custody operations."
+  @spec max_bytes_ceiling() :: pos_integer()
+  def max_bytes_ceiling, do: 16_777_216
+
+  @doc """
+  Sign exact bytes using operation-local material within the caller's custodian.
+
+  Accepts `max_bytes:` (integer 1–16,777,216; default 1,048,576).
+  Oversized inputs return `:invalid_data`; invalid options return `:invalid_options`.
+  """
   @spec sign(algorithm(), binary(), tuple(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
   def sign(algorithm, bytes, material, opts \\ []) do
     Support.safe(:invalid_key, fn ->
@@ -58,7 +69,12 @@ defmodule RequestSeal.Crypto do
     end)
   end
 
-  @doc "Verify exact bytes; :ok establishes cryptographic validity only."
+  @doc """
+  Verify exact bytes; `:ok` establishes cryptographic validity only.
+
+  Accepts `max_bytes:` (integer 1–16,777,216; default 1,048,576).
+  Oversized inputs return `:invalid_data`; invalid options return `:invalid_options`.
+  """
   @spec verify(algorithm(), binary(), binary(), PublicKey.t() | tuple(), keyword()) ::
           :ok | {:error, Error.t()}
   def verify(algorithm, bytes, signature, key, opts \\ []) do
@@ -89,7 +105,7 @@ defmodule RequestSeal.Crypto do
   defp max_bytes([]), do: 1_048_576
 
   defp max_bytes(max_bytes: value) do
-    ensure(is_integer(value) and value in 1..16_777_216, :invalid_options)
+    ensure(is_integer(value) and value in 1..max_bytes_ceiling(), :invalid_options)
     value
   end
 

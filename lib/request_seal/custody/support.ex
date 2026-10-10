@@ -38,8 +38,14 @@ defmodule RequestSeal.Custody.Support do
   end
 
   def max_bytes(opts) do
+    options(opts, [:timeout, :max_bytes])
     value = Keyword.get(opts, :max_bytes, 1_048_576)
-    ensure(is_integer(value) and value in 1..16_777_216, :invalid_options)
+
+    ensure(
+      is_integer(value) and value in 1..RequestSeal.Crypto.max_bytes_ceiling(),
+      :invalid_options
+    )
+
     value
   end
 end

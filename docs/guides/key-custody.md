@@ -112,9 +112,15 @@ selected value return `:invalid_data` before the private reference is read.
 Invalid values and duplicate options return `:invalid_options`; `unwrap/3`
 does not accept this option. `RequestSeal.Crypto.sign/4` and `verify/5` expose
 the same option for direct primitive calls. `RequestSeal.SignatureBase` retains
-its separate 1,048,576-byte ceiling. Larger SSH-agent requests remain subject
-to the agent's own limit: OpenSSH rejects messages over 256 KiB with
-`:custodian_protocol`.
+its separate 1,048,576-byte ceiling. `RequestSeal.Message`, `Body`, JWS, and the
+Plug keep their 1 MiB defaults; this release does not propagate the new
+custody/crypto opt-in to those APIs.
+
+[OpenSSH caps the whole agent message at 256 KiB](https://github.com/openssh/openssh-portable/blob/V_9_9_P1/ssh-agent.c),
+including protocol overhead, so payloads slightly under 262,144 bytes are the
+practical limit. Observed with OpenSSH 9.9 and Ed25519: 262,000 bytes signed
+successfully; 262,200 returned `:custodian_protocol`. Raising `max_bytes:` does
+not raise the agent's limit.
 
 ## Errors
 

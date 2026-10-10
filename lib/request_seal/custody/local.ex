@@ -82,6 +82,7 @@ defmodule RequestSeal.Custody.Local do
   @pss {1, 2, 840, 113_549, 1, 1, 10}
   @ec {1, 2, 840, 10045, 2, 1}
   @ed {1, 3, 101, 112}
+  @max_bytes_ceiling Crypto.max_bytes_ceiling()
 
   @doc "Construct an algorithm-bound signing or RSA-OAEP unwrap capability from OTP material."
   @spec new(RequestSeal.Custody.algorithm(), tuple(), keyword()) ::
@@ -201,12 +202,18 @@ defmodule RequestSeal.Custody.Local do
   end
 
   @impl true
-  def sign(ref, algorithm, bytes, context),
-    do: request(ref, {:sign, algorithm, bytes}, context)
+  def sign(ref, algorithm, bytes, context)
+      when is_binary(bytes) and byte_size(bytes) <= @max_bytes_ceiling,
+      do: request(ref, {:sign, algorithm, bytes}, context)
+
+  def sign(_, _, _, _), do: {:error, :invalid_data}
 
   @impl true
-  def verify(ref, algorithm, bytes, signature, context),
-    do: request(ref, {:verify, algorithm, bytes, signature}, context)
+  def verify(ref, algorithm, bytes, signature, context)
+      when is_binary(bytes) and byte_size(bytes) <= @max_bytes_ceiling,
+      do: request(ref, {:verify, algorithm, bytes, signature}, context)
+
+  def verify(_, _, _, _, _), do: {:error, :invalid_data}
 
   @impl true
   def unwrap(ref, algorithm, bytes, context),
@@ -359,7 +366,7 @@ defmodule RequestSeal.Custody.Local do
   defp holder_operation({:sign, algorithm, bytes}, {bound, material, _, _, capabilities}) do
     ensure(algorithm == bound, :key_mismatch)
     ensure(:sign in capabilities, :unsupported_operation)
-    Crypto.sign(algorithm, bytes, material, max_bytes: 16_777_216)
+    Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling())
   end
 
   defp holder_operation(
@@ -368,7 +375,10 @@ defmodule RequestSeal.Custody.Local do
        ) do
     ensure(algorithm == bound, :key_mismatch)
     ensure(:verify in capabilities, :unsupported_operation)
-    Crypto.verify(algorithm, bytes, signature, public || material, max_bytes: 16_777_216)
+
+    Crypto.verify(algorithm, bytes, signature, public || material,
+      max_bytes: Crypto.max_bytes_ceiling()
+    )
   end
 
   defp holder_operation(:public_key, {_, _, nil, _, _}), do: {:error, :no_public_key}

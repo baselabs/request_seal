@@ -25,8 +25,11 @@ defmodule RequestSeal.Custody.SSHAgent do
 
   `Custody.sign/3` and `Custody.verify/4` accept per-call `max_bytes:` (integer
   1–16,777,216, default 1,048,576). Outgoing request frames have no additional
-  library bound; OpenSSH agents reject messages over 256 KiB with
-  `:custodian_protocol`. A larger custody bound does not raise the agent's limit.
+  library bound. [OpenSSH caps the whole agent message at 256 KiB](https://github.com/openssh/openssh-portable/blob/V_9_9_P1/ssh-agent.c),
+  including protocol overhead, so payloads slightly under 262,144 bytes are the
+  practical limit. Observed with OpenSSH 9.9 and Ed25519: 262,000 bytes signed
+  successfully; 262,200 returned `:custodian_protocol`. A larger custody bound
+  does not raise the agent's limit.
 
   Unknown keys at construction yield `:custodian_rejected`; removed keys during
   signing yield `:key_not_found`. Connect and pre-send connection failures yield
@@ -42,6 +45,7 @@ defmodule RequestSeal.Custody.SSHAgent do
   alias RequestSeal.Custody.{Context, Support}
   alias RequestSeal.Custody.SSHAgent.Wire
   import Support, only: [ensure: 2, unwrap: 1]
+  @max_bytes_ceiling Crypto.max_bytes_ceiling()
 
   @doc "Bind a supported algorithm, explicit socket, and trusted public key after a real possession check."
   @spec new(Crypto.algorithm(), binary(), PublicKey.t(), keyword()) ::
@@ -106,11 +110,14 @@ defmodule RequestSeal.Custody.SSHAgent do
   end
 
   @impl true
-  def verify(ref, algorithm, bytes, signature, _context) do
+  def verify(ref, algorithm, bytes, signature, _context)
+      when is_binary(bytes) and byte_size(bytes) <= @max_bytes_ceiling do
     {bound, _, public, _} = ref.()
     ensure(algorithm == bound, :key_mismatch)
-    Crypto.verify(algorithm, bytes, signature, public, max_bytes: 16_777_216)
+    Crypto.verify(algorithm, bytes, signature, public, max_bytes: Crypto.max_bytes_ceiling())
   end
+
+  def verify(_, _, _, _, _), do: {:error, :invalid_data}
 
   @impl true
   def public_key(ref) do

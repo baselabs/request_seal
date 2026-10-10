@@ -26,6 +26,9 @@ defmodule RequestSeal.Custody do
   identities, never log secrets, and must propagate the context deadline and
   cancellation to any additional work they own. Killing the worker closes sockets
   it owns; it cannot revoke work already accepted by an external peer.
+  A custodian verifying with `RequestSeal.Crypto.verify/5` must pass
+  `max_bytes: RequestSeal.Crypto.max_bytes_ceiling()` because custody has already
+  enforced the caller's bound, which `RequestSeal.Custody.Context` does not carry.
   """
   alias RequestSeal.{KeyHandle, KeyIdentity, PublicKey}
   alias RequestSeal.Custody.{Context, Error, Support}
@@ -68,7 +71,7 @@ defmodule RequestSeal.Custody do
   """
   @spec unwrap(KeyHandle.t(), binary(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
   def unwrap(handle, encrypted_key, opts \\ []) do
-    operation(handle, :unwrap, opts, fn ->
+    operation(handle, :unwrap, opts, fn _max ->
       ensure(is_binary(encrypted_key) and byte_size(encrypted_key) in 1..1024, :invalid_data)
       [encrypted_key]
     end)
@@ -96,23 +99,29 @@ defmodule RequestSeal.Custody do
       handle,
       :sign,
       opts,
-      fn ->
-        data!(bytes, Support.max_bytes(opts))
+      fn max ->
+        data!(bytes, max)
         [bytes]
       end,
       [:timeout, :max_bytes]
     )
   end
 
-  @doc "Verify exact bytes through secret custody or the custodian's public key."
+  @doc """
+  Verify exact bytes through secret custody or the custodian's public key.
+
+  Accepts `max_bytes:` (integer 1–16,777,216; default 1,048,576) and `timeout:`
+  (1–300,000 milliseconds; default 5,000). Oversized inputs return `:invalid_data`;
+  invalid options return `:invalid_options` before handle or capability validation.
+  """
   @spec verify(KeyHandle.t(), binary(), binary(), keyword()) :: :ok | {:error, Error.t()}
   def verify(handle, bytes, signature, opts \\ []) do
     operation(
       handle,
       :verify,
       opts,
-      fn ->
-        data!(bytes, Support.max_bytes(opts))
+      fn max ->
+        data!(bytes, max)
         ensure(is_binary(signature), :invalid_signature)
         ensure(byte_size(signature) <= 16_384, :limit)
         [bytes, signature]
@@ -123,16 +132,17 @@ defmodule RequestSeal.Custody do
 
   @doc "Resolve validated public-only material; symmetric keys return :no_public_key."
   @spec public_key(KeyHandle.t()) :: {:ok, PublicKey.t()} | {:error, Error.t()}
-  def public_key(handle), do: operation(handle, :public_key, [], fn -> [] end)
+  def public_key(handle), do: operation(handle, :public_key, [], fn _max -> [] end)
 
   @doc "Resolve internal trusted equivalence; keep the value out of general results."
   @spec identity(KeyHandle.t()) :: {:ok, KeyIdentity.t()} | {:error, Error.t()}
-  def identity(handle), do: operation(handle, :identity, [], fn -> [] end)
+  def identity(handle), do: operation(handle, :identity, [], fn _max -> [] end)
 
   defp operation(handle, op, opts, args, allowed \\ [:timeout]) do
     Support.safe(
       fn ->
         timeout = Support.timeout(opts, allowed)
+        max = Support.max_bytes(opts)
         handle!(handle)
 
         ensure(
@@ -140,7 +150,7 @@ defmodule RequestSeal.Custody do
           :unsupported_operation
         )
 
-        args = args.()
+        args = args.(max)
         context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
 
         case run(context, fn -> invoke(handle, op, args, context) end) do
@@ -194,7 +204,7 @@ defmodule RequestSeal.Custody do
         public = handle.custodian.public_key(handle.ref) |> Support.unwrap()
 
         RequestSeal.Crypto.verify(handle.algorithm, bytes, signature, public,
-          max_bytes: 16_777_216
+          max_bytes: RequestSeal.Crypto.max_bytes_ceiling()
         )
       end
 

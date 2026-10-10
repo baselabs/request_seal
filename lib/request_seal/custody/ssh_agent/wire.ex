@@ -58,7 +58,9 @@ defmodule RequestSeal.Custody.SSHAgent.Wire do
           {jose, _} = Algorithm.resolve(algorithm)
           signature = signature_bytes(jose, type, raw, public)
 
-          case Crypto.verify(algorithm, bytes, signature, public, max_bytes: 16_777_216) do
+          case Crypto.verify(algorithm, bytes, signature, public,
+                 max_bytes: Crypto.max_bytes_ceiling()
+               ) do
             :ok -> {:ok, signature}
             {:error, _} -> {:error, :custodian_rejected}
           end

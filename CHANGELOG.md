@@ -1,8 +1,11 @@
 # Changelog
 
-## 0.4.1
+## 0.4.1 - Unreleased
 
-- `RequestSeal.Custody.sign/3`, `verify/4`, `RequestSeal.Crypto.sign/4` and `verify/5` accept `max_bytes:` (1–16,777,216, default 1,048,576). The default and the existing `:invalid_data` rejection are unchanged. Out-of-range or non-integer values reject with `:invalid_options`. `unwrap/3` does not accept it. The SSH-agent custodian forwards larger requests unchanged; OpenSSH agents reject messages over 256 KiB with `:custodian_protocol`.
+- `RequestSeal.Custody.sign/3`, `verify/4`, `RequestSeal.Crypto.sign/4` and `verify/5` accept `max_bytes:` (1–16,777,216, default 1,048,576). The default and the existing `:invalid_data` rejection are unchanged. Out-of-range or non-integer values reject with `:invalid_options` before handle, capability, or algorithm validation. `unwrap/3` does not accept it. `Crypto.max_bytes_ceiling/0` exposes the shared ceiling.
+- Direct `Custody.Local.sign/4`, `Local.verify/5`, and `Custody.SSHAgent.verify/5` callback calls now accept up to the 16,777,216-byte ceiling, instead of the previous 1 MiB bound. They reject larger or nonbinary inputs with `:invalid_data` before reading the key reference.
+- The SSH-agent custodian forwards larger requests unchanged. [OpenSSH caps the whole agent message at 256 KiB](https://github.com/openssh/openssh-portable/blob/V_9_9_P1/ssh-agent.c), including protocol overhead, so the practical payload limit is slightly under 262,144 bytes. Observed with OpenSSH 9.9 and Ed25519: 262,000 bytes signed successfully; 262,200 returned `:custodian_protocol`.
+- `RequestSeal.Message`, `Body`, JWS, and the Plug retain their 1 MiB defaults. This release does not propagate the new custody/crypto opt-in to those APIs. `RequestSeal.SignatureBase` retains its separate 1 MiB ceiling.
 
 ## 0.4.0 - 2026-10-10
 

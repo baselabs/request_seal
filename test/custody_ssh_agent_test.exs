@@ -72,6 +72,74 @@ defmodule RequestSeal.CustodySSHAgentTest do
     assert_error(SSHAgent.new("rsa-v1_5-sha256", ctx.socket, key), :key_mismatch)
   end
 
+  @tag :max_bytes_revision
+  test "direct SSH verification accepts 1,235,403 bytes and the full ceiling", ctx do
+    {handle, seed} = byte_limit_key(ctx)
+    context = byte_limit_context()
+
+    for size <- [1_235_403, 16_777_216] do
+      bytes = :binary.copy(<<0>>, size)
+      signature = :crypto.sign(:eddsa, :none, bytes, [seed, :ed25519])
+      assert :ok = SSHAgent.verify(handle.ref, "ed25519", bytes, signature, context)
+    end
+  end
+
+  @tag :max_bytes_revision
+  test "Wire signature validation accepts real signatures at 1,235,403 bytes and the ceiling",
+       ctx do
+    {handle, seed} = byte_limit_key(ctx)
+    {:ok, public} = Custody.public_key(handle)
+
+    for size <- [1_235_403, 16_777_216] do
+      bytes = :binary.copy(<<0>>, size)
+      signature = :crypto.sign(:eddsa, :none, bytes, [seed, :ed25519])
+
+      # Exercise the parser with actual OTP cryptography, not an OpenSSH size
+      # acceptance claim: OpenSSH will not sign an agent message this large.
+      reply = <<14>> <> Wire.string(Wire.string("ssh-ed25519") <> Wire.string(signature))
+      assert {:ok, ^signature} = Wire.signature(reply, "ed25519", bytes, public)
+    end
+  end
+
+  @tag :max_bytes_revision
+  test "direct SSH verification rejects excess bytes before reading the reference", ctx do
+    {handle, seed} = byte_limit_key(ctx)
+    owner = self()
+
+    observed = fn ->
+      send(owner, :reference_read)
+      handle.ref.()
+    end
+
+    signature = :crypto.sign(:eddsa, :none, "x", [seed, :ed25519])
+    assert :ok = SSHAgent.verify(observed, "ed25519", "x", signature, byte_limit_context())
+    assert_receive :reference_read
+
+    for bytes <- [:binary.copy(<<0>>, 16_777_217), :not_binary] do
+      assert {:error, error} =
+               SSHAgent.verify(observed, "ed25519", bytes, signature, byte_limit_context())
+
+      assert error == :invalid_data or match?(%{reason: :invalid_data}, error)
+      refute_receive :reference_read, 20
+    end
+  end
+
+  defp byte_limit_key(ctx) do
+    file = write_rfc_key(ctx.dir)
+    assert {_, 0} = System.cmd("ssh-add", [file], env: ctx.env, stderr_to_stdout: true)
+    assert {:ok, handle} = SSHAgent.new("ed25519", ctx.socket, public_file(file))
+    [entry] = :public_key.pem_decode(File.read!(Path.join(@root, "ed25519_private.pem")))
+    {:ECPrivateKey, _, seed, _, _, _} = :public_key.pem_entry_decode(entry)
+    {handle, seed}
+  end
+
+  defp byte_limit_context do
+    %RequestSeal.Custody.Context{
+      owner: self(),
+      deadline: System.monotonic_time(:millisecond) + 5_000
+    }
+  end
+
   test "generated RSA P-256 and P-384 sign against agent-reported public keys", ctx do
     for {type, bits, alg, jws} <- [
           {"rsa", "2048", "rsa-v1_5-sha256", "RS256"},
