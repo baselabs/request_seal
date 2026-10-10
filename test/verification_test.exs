@@ -1591,11 +1591,13 @@ defmodule RequestSeal.VerificationTest do
               layer: ^layer,
               retryable: false,
               detail: ^detail,
-              correlation: correlation
+              correlation: correlation,
+              message: nil,
+              source: nil
             } = e} = result
 
     assert Regex.match?(~r/\A[0-9a-f]{16}\z/, correlation)
-    assert map_size(e) == 6
+    assert map_size(e) == 8
     refute match?({:ok, _}, result)
 
     for canary <- ["CANARY", "test-key", "b3k2pp5k7z", "private"] do

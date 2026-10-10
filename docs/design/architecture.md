@@ -113,7 +113,12 @@ Its arity-two signer receives `(algorithm, base)` and returns
 `{:ok, signature_bytes}` or `{:error, term}`. The signature input is a serialized
 Inner List or a `RequestSeal.StructuredFields.Value`. Signing returns the message
 with appended `Signature-Input` and `Signature` header occurrences. Options
-default to `[]`, also exposing `sign/3`; `:field_schemas` is its only option.
+default to `[]`, also exposing `sign/3`. The explicit form additionally accepts
+an algorithm-matching `KeyHandle`; `:field_schemas` and `:signing_timeout` are
+its options. Custody signing uses the timeout (1–300,000 ms, default 5,000), while
+function signers remain synchronous. Handle/spec algorithm mismatch returns
+`:signer_algorithm_mismatch`; custody failures retain `:signing_failed` with a
+bounded custody source. See the key-custody guide for the exact error contract.
 Both APIs return bounded `RequestSeal.Error` values on rejection.
 
 `Message.request/5` and `Message.response/4` build validated messages from
@@ -122,7 +127,7 @@ Content-Digest without re-encoding. `RequestSeal.sign/4` also accepts the six-ke
 `t:RequestSeal.signing_spec/0` used by Req and Finch, through one shared internal
 pipeline. It generates explicit metadata with a caller clock and optional
 caller-owned nonce entropy, and accepts an opaque custody handle or function
-with bounded execution. The original explicit-input contract remains unchanged.
+with bounded execution. The explicit-input form preserves caller-supplied metadata.
 
 Composite verification returns `RequestSeal.Quorum.Verification`, including plural
 `signatures`, the qualifying label/slot set, counting facts, bindings, and negotiation:
@@ -134,8 +139,7 @@ Composite verification returns `RequestSeal.Quorum.Verification`, including plur
 ```
 
 Spec-list signing and `SignedMessage` remain **proposed extensions**. Current signing
-accepts one specification and a caller function, which may delegate exact bytes to
-`RequestSeal.Custody.sign/3` with an opaque handle; verification resolves public keys
+accepts one specification and a caller function or opaque handle; verification resolves public keys
 or caller-owned verification functions through `Policy.key_resolver`.
 
 ```elixir

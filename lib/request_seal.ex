@@ -51,11 +51,12 @@ defmodule RequestSeal do
 
   The explicit-input form of `sign/4` takes a map with exactly `:label`, `:signature_input` (serialized Inner
   List or `RequestSeal.StructuredFields.Value`), and `:algorithm`, plus an
-  arity-two caller signer `(algorithm, base)` returning `{:ok, signature_bytes}`
-  or `{:error, term}`. It appends two caller-provenance header occurrences and
+  `RequestSeal.KeyHandle` or arity-two caller signer `(algorithm, base)` returning
+  `{:ok, signature_bytes}` or `{:error, term}`. It appends two caller-provenance header occurrences and
   validates the resulting Message and dictionaries. Existing labels reject.
-  That form's only option is `:field_schemas`, default `%{}`, with the same schema rules
-  as Policy. Sign dictionaries have a 16-encounter ceiling and signatures must
+  Options are `:field_schemas`, default `%{}`, with the same schema rules as Policy,
+  and `:signing_timeout` (1–300,000 ms, default 5,000) for custody handles.
+  Sign dictionaries have a 16-encounter ceiling and signatures must
   be nonempty and at most 1,024 bytes. HTTP alg must equal the explicit algorithm;
   JWS selection requires no HTTP alg. Signing establishes local construction.
 
@@ -178,8 +179,14 @@ defmodule RequestSeal do
   custody's monitored deadline/cancellation workers. No framework is required.
 
   The original three-key specification (`:label`, `:signature_input`,
-  `:algorithm`) keeps its synchronous function signer and only `:field_schemas`
-  as an option. It never generates metadata. Both forms append ordered signature
+  `:algorithm`) accepts an algorithm-matching KeyHandle with `:signing_timeout`
+  (1–300,000 ms, default 5,000), or the existing synchronous function signer.
+  `:field_schemas` defaults to `%{}`. A valid timeout does not wrap or interrupt
+  the synchronous function. A handle algorithm mismatch returns
+  `:signer_algorithm_mismatch` at `:input`, with message
+  `"signer algorithm does not match signature specification"`. Custody failures
+  return `:signing_failed` at `:crypto` with a bounded `RequestSeal.Custody.Error` source.
+  It never generates metadata. Both forms append ordered signature
   headers and return bounded `RequestSeal.Error` on rejection.
 
       iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
@@ -193,6 +200,8 @@ defmodule RequestSeal do
       :ok
   """
   @spec sign(Message.t(), signature_spec(), Policy.signer(), keyword()) ::
+          {:ok, Message.t()} | {:error, Error.t()}
+  @spec sign(Message.t(), signature_spec(), RequestSeal.KeyHandle.t(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}
   @spec sign(Message.t(), signing_spec(), Policy.signer(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}

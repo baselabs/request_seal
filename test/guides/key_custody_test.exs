@@ -111,6 +111,63 @@ defmodule RequestSeal.GuideKeyCustodyTest do
              Keyword.fetch!(binding, :recipient_policy)
            ) == {:error, RequestSeal.JOSE.Error.new(:decryption_failed, :crypto)}
 
-    E.assert_fences("docs/guides/key-custody.md", 4)
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "request-seal-guide-seed-#{System.unique_integer([:positive])}"
+      )
+
+    {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+    File.write!(path, Base.url_encode64(seed, padding: false))
+    File.chmod!(path, 0o600)
+    on_exit(fn -> File.rm!(path) end)
+    E.configure(:my_app, :signing_seed_file, path)
+
+    binding =
+      E.eval(
+        ~S'''
+        alias RequestSeal.Custody.Local.Owner
+        seed_file = Application.fetch_env!(:my_app, :signing_seed_file)
+        children = [
+          {Owner,
+           name: MyApp.Custody,
+           keys: [signing: {"ed25519", {:file, seed_file, :base64url}}]}
+        ]
+        {:ok, supervisor} = Supervisor.start_link(children, strategy: :one_for_one)
+        Owner.status(MyApp.Custody)
+        # => %{signing: :ready}
+        Owner.ready?(MyApp.Custody, :signing)
+        # => true
+        ''',
+        binding,
+        "docs/guides/key-custody.md",
+        5
+      )
+
+    assert Keyword.fetch!(binding, :example_result)
+    assert RequestSeal.Custody.Local.Owner.status(MyApp.Custody) == %{signing: :ready}
+
+    binding =
+      E.eval(
+        ~S'''
+        {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+        spec = %{
+          label: "sig",
+          signature_input: ~s[("@method" "@scheme" "@authority" "@path");alg="ed25519"],
+          algorithm: "ed25519"
+        }
+        {:ok, handle} = RequestSeal.Custody.Local.Owner.fetch(MyApp.Custody, :signing)
+        {:ok, signed} = RequestSeal.sign(message, spec, handle, signing_timeout: 5_000)
+        Enum.map(signed.fields, & &1.name)
+        # => ["Signature-Input", "Signature"]
+        ''',
+        binding,
+        "docs/guides/key-custody.md",
+        6
+      )
+
+    assert Keyword.fetch!(binding, :example_result) == ["Signature-Input", "Signature"]
+    Supervisor.stop(Keyword.fetch!(binding, :supervisor))
+    E.assert_fences("docs/guides/key-custody.md", 6)
   end
 end

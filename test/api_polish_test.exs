@@ -135,7 +135,7 @@ defmodule RequestSeal.APIPolishTest do
     Code.Typespec.fetch_specs(RequestSeal)
     |> elem(1)
     |> Enum.find(fn {name, _} -> name == {:sign, 4} end)
-    |> then(fn {_, clauses} -> assert length(clauses) == 3 end)
+    |> then(fn {_, clauses} -> assert length(clauses) == 4 end)
   end
 
   @tag :a5

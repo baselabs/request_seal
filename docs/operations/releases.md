@@ -16,8 +16,10 @@ scope mapping, generic compact JWS/JWE, one-level JWS-in-JWE nesting, and
 source-selected Web Bot Auth protocol-00 signing and identity attribution.
 Other named application profiles belong in extension packages.
 
-1. Set the package version in `mix.exs` to `0.3.1`, update every install to
-   `{:request_seal, "~> 0.3.1"}`, and record the release in `CHANGELOG.md`.
+1. Set the package version in `mix.exs` to `0.4.0`, update every install to
+   `{:request_seal, "~> 0.4.0"}`, and record the release in `CHANGELOG.md`.
+   Keep the 0.4.0 changelog date as `Unreleased` until publishing; replace it with
+   the actual release date in that event.
    Confirm the public document allowlist, supported profiles, and accepted ADRs.
 2. Use Elixir 1.20.4 / OTP 29.1.1, the exact development pins. Run focused checks
    while editing, then run the declared gate once on the final source:
@@ -39,7 +41,7 @@ Other named application profiles belong in extension packages.
    mix run --no-start -e 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])' && mix hex.build
    ```
 
-   Inspect `contents.tar.gz` inside `request_seal-0.3.1.tar`. Its files must be only
+   Inspect `contents.tar.gz` inside `request_seal-0.4.0.tar`. Its files must be only
    `lib/**/*.ex`, `mix.exs`, and the public documents explicitly allowlisted in
    `mix.exs`, including README, CHANGELOG, LICENSE, and NOTICE. Exclude tests,
    scripts, local credentials, internal records, and key fixtures. Record the list
@@ -98,7 +100,7 @@ Other named application profiles belong in extension packages.
    This scans all fetched history, including deleted file contents. The term-file
    self-match is the scanner's positive control. An empty result establishes only
    that the configured terms were not found; inspect package/source disclosure too.
-6. Make GitHub public and publish Hex 0.3.1 in the same release event. From the
+6. Make GitHub public and publish Hex 0.4.0 in the same release event. From the
    pinned Elixir 1.20 checkout, load `HEX_API_KEY` from the project's gitignored
    `.env`; refer to the key by name and never print its value. Verify the security
    reporting channel and package ownership, then run:
@@ -111,12 +113,12 @@ Other named application profiles belong in extension packages.
    gh repo edit baselabs/request_seal --visibility public --accept-visibility-change-consequences
    mix hex.publish --yes
    gh repo view baselabs/request_seal --json visibility --jq .visibility
-   mix hex.info request_seal 0.3.1
-   curl --fail --location --silent --show-error --output /dev/null https://hexdocs.pm/request_seal/0.3.1/index.html
+   mix hex.info request_seal 0.4.0
+   curl --fail --location --silent --show-error --output /dev/null https://hexdocs.pm/request_seal/0.4.0/index.html
    ```
 
-   Confirm GitHub reports `PUBLIC`, Hex reports version 0.3.1, and
-   [HexDocs 0.3.1](https://hexdocs.pm/request_seal/0.3.1/index.html) serves the expected
+   Confirm GitHub reports `PUBLIC`, Hex reports version 0.4.0, and
+   [HexDocs 0.4.0](https://hexdocs.pm/request_seal/0.4.0/index.html) serves the expected
    guides and source links. Inspect actual registry checksums and optional metadata.
 7. Install from Hex in a clean consumer, without a path or Git override. Use an
    empty Mix install directory and verify the installed application version and
@@ -126,11 +128,11 @@ Other named application profiles belong in extension packages.
    consumer_dir=$(mktemp -d)
    trap 'rm -rf "$consumer_dir"' EXIT
    MIX_INSTALL_DIR="$consumer_dir" elixir -e '
-   Mix.install([{:request_seal, "~> 0.3.1"}])
-   "0.3.1" = Application.spec(:request_seal, :vsn) |> to_string()
+   Mix.install([{:request_seal, "~> 0.4.0"}])
+   "0.4.0" = Application.spec(:request_seal, :vsn) |> to_string()
    {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
    "GET" = message.method
-   IO.puts("PASS: Hex 0.3.1 clean-consumer install and request construction")
+   IO.puts("PASS: Hex 0.4.0 clean-consumer install and request construction")
    '
    ```
 

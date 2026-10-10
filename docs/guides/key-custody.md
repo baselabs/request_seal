@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Keep signing keys behind a handle
 
@@ -110,4 +110,95 @@ integrity alone does not establish sender identity or authorization.
 
 `RequestSeal.Custody.Error` uses bounded reasons. `:key_not_found` means the holder or agent key is gone. `:key_mismatch` means the material cannot serve the selected algorithm. `:unsupported_format` includes PKCS #8 v2 containers. `:deadline_exceeded` stops the operation. Agent `:custodian_unavailable` can describe a retryable pre-send connection failure; post-send `:custodian_protocol` is nonretryable because the signing request may already have reached the agent. Verification proves mathematical validity, not identity attribution or authority.
 
-Module docs: `RequestSeal.Custody`, `RequestSeal.Custody.Local`, `RequestSeal.Custody.SSHAgent`, `RequestSeal.KeyHandle`, `RequestSeal.PublicKey`, `RequestSeal.Custody.Error`.
+## Long-lived owner
+
+Add `RequestSeal.Custody.Local.Owner` to your application's supervision tree.
+It owns one local holder for each valid Ed25519 seed. Fetching a handle does not
+transfer ownership, so the handle survives the fetching process's exit.
+This uses Ed25519 as defined by [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html),
+with encoding tags from [RFC 4648](https://www.rfc-editor.org/rfc/rfc4648.html).
+
+Provision a seed file separately, set its mode to 0600 or 0400, and configure
+`:my_app, :signing_seed_file` with its path. Prefer `{:file, ...}` in production;
+environment seed values are inherited by OS child processes. The example file
+contains an unpadded Base64url encoding of exactly 32 seed bytes. Add the child
+to your existing tree; this standalone example starts a supervisor:
+
+```elixir
+alias RequestSeal.Custody.Local.Owner
+seed_file = Application.fetch_env!(:my_app, :signing_seed_file)
+children = [
+  {Owner,
+   name: MyApp.Custody,
+   keys: [signing: {"ed25519", {:file, seed_file, :base64url}}]}
+]
+{:ok, supervisor} = Supervisor.start_link(children, strategy: :one_for_one)
+Owner.status(MyApp.Custody)
+# => %{signing: :ready}
+Owner.ready?(MyApp.Custody, :signing)
+# => true
+```
+
+Source forms are explicit:
+
+| Source | Reads |
+| --- | --- |
+| `{:env, "SIGNING_SEED", encoding}` | The variable's value |
+| `{:file, path, encoding}` | The file at that path |
+| `{:file_from_env, "SIGNING_SEED_FILE", encoding}` | A path from the variable, then its file |
+
+Encodings are `:base64url` (padding optional), `:base64` (padded), `:hex` (either case),
+or `:raw`. Text encodings are trimmed; raw bytes are unchanged. No encoding is
+guessed. Input is limited to 4,096 bytes including whitespace; decoded seeds
+must contain exactly 32 bytes. Files must be regular, not symbolic links, with
+mode 0600 or stricter: execute, group, other, and special permission bits reject.
+Keep files and their parent directories under trusted control during startup.
+
+`status/1` reports each configured name as `:ready`, `:unconfigured` for a missing
+variable/file or stopped holder, or `{:error, :invalid_seed | :insecure_file | :unreadable}`.
+Bad keys leave the Owner running. `fetch/2` returns `{:ok, handle}` for a ready
+key, otherwise `{:error, :unconfigured}`; no signing handle is issued for a bad
+key. `ready?/2` returns a Boolean. No registration is supported after startup.
+Configuration descriptors contain variable names or paths, never literal seeds.
+
+The Owner sets process sensitivity before reading sources, passes each decoded
+seed directly into `Local.new/2`, retains only handles and bounded statuses, and
+garbage-collects after initialization. Its holders monitor the Owner. The Owner
+never deletes environment variables and rereads every source on restart.
+
+**Restart rule:** fetch per signing operation, as below. If you cache a handle,
+an Owner restart makes that old handle return custody `:key_not_found`; fetch a
+new handle and retry signing once. Releasing an Owner's handle also ends that
+holder and makes its status `:unconfigured` until restart; keep its lifetime
+under the supervision tree's control. Readiness is a snapshot, so signing can
+still encounter an unavailable holder after a successful fetch.
+
+The explicit signature form accepts a handle without generating or reordering
+your signature parameters. It follows
+[RFC 9421 Section 2.3](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.3):
+
+```elixir
+{:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+spec = %{
+  label: "sig",
+  signature_input: ~s[("@method" "@scheme" "@authority" "@path");alg="ed25519"],
+  algorithm: "ed25519"
+}
+{:ok, handle} = RequestSeal.Custody.Local.Owner.fetch(MyApp.Custody, :signing)
+{:ok, signed} = RequestSeal.sign(message, spec, handle, signing_timeout: 5_000)
+Enum.map(signed.fields, & &1.name)
+# => ["Signature-Input", "Signature"]
+```
+
+`signing_timeout` is 1–300,000 ms, default 5,000. `field_schemas` remains available.
+The existing arity-two function signer stays synchronous; a valid timeout option
+does not interrupt it. A handle's algorithm must equal `spec.algorithm`.
+Mismatch returns `RequestSeal.Error` with reason `:signer_algorithm_mismatch`,
+layer `:input`, and the exact message string
+`"signer algorithm does not match signature specification"`.
+Custody failures return `RequestSeal.Error` with reason `:signing_failed`, layer
+`:crypto`, and a bounded `RequestSeal.Custody.Error` in `source`. This preserves
+`:key_not_found` and `:deadline_exceeded` for explicit and generated signing specs.
+Function errors in the explicit form retain the existing `:signer_failed` reason.
+
+Module docs: `RequestSeal.Custody`, `RequestSeal.Custody.Local`, `RequestSeal.Custody.Local.Owner`, `RequestSeal.Custody.SSHAgent`, `RequestSeal.KeyHandle`, `RequestSeal.PublicKey`, `RequestSeal.Custody.Error`.

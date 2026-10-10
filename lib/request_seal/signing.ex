@@ -207,6 +207,9 @@ defmodule RequestSeal.Signing do
     {:adapter, _, %RequestSeal.Error{} = source} ->
       {:error, source}
 
+    {:adapter, :signing_failed, %Custody.Error{} = source} when is_struct(signer, KeyHandle) ->
+      {:error, RequestSeal.Error.new(:signing_failed, :crypto, nil, source)}
+
     {:adapter, :signing_failed, _} ->
       {:error, RequestSeal.Error.new(:signer_failed, :crypto)}
 

@@ -206,9 +206,11 @@ freshness; the earlier freshness policy would reject it:
   )
 ```
 
-The explicit-input path retains its synchronous callback contract; callers bound
-external work themselves or delegate to custody. Use the spec path for generated
-parameters and bounded signer execution.
+The explicit-input path retains its synchronous function callback contract. It
+also accepts a `RequestSeal.KeyHandle` directly, with `signing_timeout` from
+1–300,000 ms (default 5,000). See [key custody](key-custody.md) for algorithm
+binding, bounded errors, and supervised ownership. Use the spec path to generate
+parameters.
 
 ## Read the result
 

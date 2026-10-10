@@ -3,11 +3,13 @@ defmodule RequestSeal.Authentication do
   alias RequestSeal.{
     Body,
     Crypto,
+    Custody,
     Digest,
     Error,
     FieldOccurrence,
-    Message,
+    KeyHandle,
     KeyIdentity,
+    Message,
     Policy,
     PublicKey,
     SignatureBase,
@@ -163,9 +165,11 @@ defmodule RequestSeal.Authentication do
 
   def sign(message, spec, signer, opts) do
     protect(fn ->
-      opts = options(opts, [:field_schemas])
+      opts = options(opts, [:field_schemas, :signing_timeout])
       schemas = Map.get(opts, :field_schemas, %{})
       ensure(Policy.schemas?(schemas), :invalid_options, :input)
+      timeout = Map.get(opts, :signing_timeout, 5_000)
+      ensure(is_integer(timeout) and timeout in 1..300_000, :invalid_options, :input)
 
       ensure(
         is_map(spec) and map_size(spec) == 3 and
@@ -176,10 +180,13 @@ defmodule RequestSeal.Authentication do
 
       ensure(
         SignatureFields.label?(spec.label) and SignatureFields.algorithm?(spec.algorithm) and
-          is_function(signer, 2),
+          (is_function(signer, 2) or is_struct(signer, KeyHandle)),
         :invalid_options,
         :input
       )
+
+      if is_struct(signer, KeyHandle),
+        do: ensure(signer.algorithm == spec.algorithm, :signer_algorithm_mismatch, :input)
 
       ensure(Message.validate(message) == :ok, :invalid_message, :input)
       inputs = dictionary(message, "signature-input", 16, false)
@@ -203,11 +210,7 @@ defmodule RequestSeal.Authentication do
       match_algorithm(params, spec.algorithm, :input)
       bytes = build(message, input, schemas)
 
-      signature =
-        case callback(fn -> signer.(spec.algorithm, bytes) end, :signer_failed, :crypto) do
-          {:ok, sig} when is_binary(sig) and byte_size(sig) in 1..1024 -> sig
-          _ -> fail(:signer_failed, :crypto)
-        end
+      signature = sign_bytes(signer, spec.algorithm, bytes, timeout)
 
       {:ok, input_wire} =
         SF.serialize(
@@ -235,6 +238,21 @@ defmodule RequestSeal.Authentication do
       dictionary(output, "signature", 16)
       {:ok, output}
     end)
+  end
+
+  defp sign_bytes(%KeyHandle{} = handle, _, bytes, timeout) do
+    case Custody.sign(handle, bytes, timeout: timeout) do
+      {:ok, sig} when byte_size(sig) in 1..1024 -> sig
+      {:error, %Custody.Error{} = source} -> fail(:signing_failed, :crypto, nil, source)
+      _ -> fail(:signing_failed, :crypto, nil, Custody.Error.new(:invalid_signature))
+    end
+  end
+
+  defp sign_bytes(signer, algorithm, bytes, _) do
+    case callback(fn -> signer.(algorithm, bytes) end, :signer_failed, :crypto) do
+      {:ok, sig} when is_binary(sig) and byte_size(sig) in 1..1024 -> sig
+      _ -> fail(:signer_failed, :crypto)
+    end
   end
 
   defp options(opts, allowed) do
@@ -595,12 +613,13 @@ defmodule RequestSeal.Authentication do
   defp ensure(true, _, _), do: :ok
   defp ensure(_, reason, layer), do: fail(reason, layer)
 
-  defp fail(reason, layer, detail \\ nil),
-    do: throw({:authentication_error, reason, layer, detail})
+  defp fail(reason, layer, detail \\ nil, source \\ nil),
+    do: throw({:authentication_error, reason, layer, detail, source})
 
   defp protect(fun) do
     fun.()
   catch
-    {:authentication_error, reason, layer, detail} -> {:error, Error.new(reason, layer, detail)}
+    {:authentication_error, reason, layer, detail, source} ->
+      {:error, Error.new(reason, layer, detail, source)}
   end
 end

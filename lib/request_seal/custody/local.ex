@@ -45,6 +45,8 @@ defmodule RequestSeal.Custody.Local do
   or create handles once at startup and reuse them for its lifetime.
   Operations against a stopped holder return `:key_not_found`. No supervisor,
   registry, application callback, or process starts when the library is loaded.
+  For Ed25519 seeds from explicitly encoded environment or file sources, add
+  `RequestSeal.Custody.Local.Owner` to the consumer's supervision tree.
 
   ## Decryption custody
 

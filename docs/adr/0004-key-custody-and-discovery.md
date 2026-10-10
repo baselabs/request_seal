@@ -95,3 +95,27 @@ Acceptance requires actual OTP round trips, independent published OAEP vectors,
 Node WebCrypto encryption to the handle's public key, wrong/released handle
 rejection, suspended-holder timeout/cancellation, and private-key canary checks
 on values, inspection, BEAM serialization, process introspection, and diagnostics.
+
+## Supervised Ed25519 source ownership — October 9, 2026
+
+Add an optional `RequestSeal.Custody.Local.Owner` child to the consumer's tree.
+It reads explicitly tagged Ed25519 seed sources inside a sensitive process,
+constructs existing Local holders, then retains only handles and bounded statuses.
+Sources are environment values, direct files, or paths from environment variables;
+encoding tags are Base64url, Base64, hex, and raw. There is no literal-seed source,
+guess-decoding, global registration, or registration after startup. Files require
+regular-file metadata and mode 0600 or stricter. A failed key does not stop the
+Owner or issue a signing capability. Initialization costs are linear in configured
+keys, with a 4,096-byte source limit and one holder per ready key.
+
+The existing creator-monitor boundary now binds these holders to the supervised
+Owner. Restart rereads every descriptor and retires old handles. Consumers fetch
+per operation or fetch again and retry once on `:key_not_found`. Environment
+variables remain intact for restart; direct files are the production preference
+because environment seed values are inherited by OS child processes. Caller
+configuration paths and their parent directories must remain trusted at startup.
+
+The explicit HTTP signature form accepts an algorithm-matching handle and uses
+the custody deadline boundary. It retains synchronous function signers and exact
+wire construction. Public reason and message contracts belong in `RequestSeal.Error`
+and the key-custody guide. This decision adds no application profile or authority.

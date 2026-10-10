@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.0 - Unreleased
+
+- Accept an algorithm-bound `RequestSeal.KeyHandle` in the explicit
+  `RequestSeal.sign/4` form. `signing_timeout` accepts 1–300,000 ms, default 5,000.
+  The existing arity-two function signer stays synchronous and preserves its
+  existing errors and wire bytes.
+- A handle/spec algorithm mismatch in that form returns reason
+  `:signer_algorithm_mismatch`, layer `:input`, and the exact message string
+  `"signer algorithm does not match signature specification"`.
+- Preserve custody signing failures as `RequestSeal.Error` with reason
+  `:signing_failed`, layer `:crypto`, and a bounded `RequestSeal.Custody.Error`
+  in `source`, including generated signing specs. Core errors add `message`
+  and `source` fields, both nil for existing non-custody failures.
+- Add caller-supervised `RequestSeal.Custody.Local.Owner` for Ed25519 seeds
+  from tagged environment, file, and file-from-environment sources. Encodings
+  are `:base64url`, `:base64`, `:hex`, and `:raw`; source inputs are bounded to
+  4,096 bytes and decoded seeds to 32 bytes. Files require mode 0600 or stricter
+  and must be regular, not symbolic links. Bad keys report bounded statuses
+  and fail closed without preventing startup.
+- Owner restart rereads sources and retires cached handles. Fetch per operation
+  or fetch again and retry once on `:key_not_found`; prefer direct file sources
+  in production. Environment variables are never deleted by the Owner.
+- This is an additive minor release. Replace `Unreleased` with the release date
+  only when publishing 0.4.0.
+
 ## 0.3.1 - 2026-10-09
 
 - Tighten corpus validators to skip `.DS_Store` only for empty regular files or

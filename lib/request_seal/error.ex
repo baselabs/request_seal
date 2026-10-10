@@ -16,7 +16,10 @@ defmodule RequestSeal.Error do
     `:ambiguous_query_parameter` — query derivation rejects.
 
   No caller bytes, key identifiers, exception text, or partial verification value
-  are kept.
+  are kept. `source` is nil except for custody signing failures, which retain a
+  bounded `RequestSeal.Custody.Error`. `message` is nil except for
+  `:signer_algorithm_mismatch`, whose exact message is
+  `"signer algorithm does not match signature specification"`.
 
   Closed reasons by layer:
 
@@ -25,6 +28,8 @@ defmodule RequestSeal.Error do
     or missing options/specification), `:algorithm_mismatch` (signing `alg` differs
     from the explicit algorithm or accompanies JWS), `:limit` (wire/member/component
     bounds, including a decoded `Signature` member or nonce exceeding 1,024 bytes).
+    `:signer_algorithm_mismatch` means the explicit form's KeyHandle algorithm
+    differs from the specification's algorithm, before custody is invoked.
   * `:input` additionally includes `:invalid_quorum` (malformed composite policy)
     and `:invalid_profile` (invalid extension profile namespace, keys, values or size,
     or a generic verification `:profile` or `:principal` option).
@@ -58,6 +63,8 @@ defmodule RequestSeal.Error do
     (base construction rejects), `:verifier_failed` (verification callback fault,
     malformed result or invalid key), `:signer_failed` (signer fault, error,
     malformed result, empty signature or more than 1,024 bytes).
+    `:signing_failed` retains a bounded custody `source` for handle signing and
+    metadata-generating spec signing failures.
   * Spec signing `:input`: `:unsupported_component` (unavailable covered component),
     `:invalid_request` (covered Content-Length conflicts with retained bytes).
   * `:content`: `:digest_not_covered` (exact complete selected digest not signed),
@@ -90,7 +97,7 @@ defmodule RequestSeal.Error do
     `:replayed`, `:store_unavailable`, `:store_timeout`, `:store_failed` (capacity,
     adapter fault, or contract violation). Store timeouts are indeterminate.
   """
-  defstruct [:reason, :layer, :correlation, retryable: false, detail: nil]
+  defstruct [:reason, :layer, :correlation, :message, :source, retryable: false, detail: nil]
 
   @type t :: %__MODULE__{
           reason: atom(),
@@ -109,15 +116,24 @@ defmodule RequestSeal.Error do
             | :negotiation,
           retryable: false,
           detail: atom() | nil,
+          message: binary() | nil,
+          source: RequestSeal.Custody.Error.t() | nil,
           correlation: binary()
         }
   @doc false
-  def new(reason, layer, detail \\ nil) do
+  def new(reason, layer, detail \\ nil, source \\ nil) do
     %__MODULE__{
       reason: reason,
       layer: layer,
       detail: detail,
+      source: source,
+      message: message(reason),
       correlation: Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     }
   end
+
+  defp message(:signer_algorithm_mismatch),
+    do: "signer algorithm does not match signature specification"
+
+  defp message(_), do: nil
 end

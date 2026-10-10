@@ -9,6 +9,9 @@ defmodule RequestSeal.KeyHandle do
   including after handle transfer. Dropping a handle does not stop its holder.
   A long-lived owner such as a GenServer must release handles it no longer needs,
   or create handles once at startup and reuse them for its lifetime.
+  `RequestSeal.Custody.Local.Owner` supplies a caller-supervised owner for
+  explicitly encoded Ed25519 sources. Fetch a fresh handle for each operation,
+  or fetch again and retry once on `:key_not_found` after owner restart.
 
   Loading the library starts no process or store. Local construction starts one
   holder per handle. An asymmetric public key is obtained through
