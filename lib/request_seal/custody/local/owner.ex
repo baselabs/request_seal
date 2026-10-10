@@ -7,19 +7,23 @@ defmodule RequestSeal.Custody.Local.Owner do
   `name: {"ed25519", source}` entries. Sources are `{:env, variable, encoding}`,
   `{:file, path, encoding}`, or `{:file_from_env, variable, encoding}`; the last
   reads a file path from the variable. Encodings are `:base64url` (padding optional),
-  `:base64` (padded), `:hex` (either case), or `:raw`. Text encodings are trimmed;
-  raw bytes are unchanged. Decoded seeds must be exactly 32 bytes. Source inputs
-  are limited to 4,096 bytes, including whitespace. There is no guess-decoding.
+  `:base64` (padded), `:hex` (either case), or `:raw`. Only ASCII space, tab, CR,
+  and LF are trimmed from text encodings; raw bytes are unchanged. Base64
+  encodings must be canonical. Decoded seeds must be exactly 32 bytes. Source
+  inputs are limited to 4,096 bytes, including whitespace. There is no guess-decoding.
 
   Files must be regular, not symbolic links, with mode 0600 or stricter (no
   execute, group, other, or special permission bits). Use `{:file, ...}` in
-  production: environment seeds are inherited by OS child processes. Keep source
-  paths and their parent directories under trusted control during startup.
+  production: environment seeds are inherited by OS child processes. Avoid `:raw`
+  environment seeds; environment values cannot safely represent arbitrary binary
+  data. Keep source paths and their parent directories under trusted control during startup.
 
   Bad keys do not prevent startup. `status/1` reports `:ready`, `:unconfigured`
-  (missing variable/file or stopped holder), or `{:error, reason}` with `:invalid_seed`,
-  `:insecure_file`, or `:unreadable`. `fetch/2` returns `{:error, :unconfigured}`
-  for any unavailable key; no signing capability is issued for a bad source.
+  (missing or empty variable, missing file, or stopped holder), or `{:error, reason}`
+  with `:invalid_seed`, `:insecure_file`, or `:unreadable`. `fetch/2` returns `{:error, :unconfigured}`
+  for a missing or failed key. Calls to a stopped or busy owner return
+  `{:error, :owner_unavailable}` from `fetch/2` and `status/1`; `ready?/2` is false.
+  No signing capability is issued for a bad source.
   Key names, variable names, and paths are configuration, never seed values.
 
   The owner becomes sensitive before reading sources. Each decoded seed goes
@@ -28,6 +32,10 @@ defmodule RequestSeal.Custody.Local.Owner do
   Sources are read on every start and restart; environment variables are never
   deleted. Registration after startup is unsupported. Fetch per operation, or
   fetch again and retry once on custody `:key_not_found` after an owner restart.
+  During restart, `:owner_unavailable` means wait for the supervised owner to
+  become available before fetching again. A file that disappears or changes
+  identity after its initial checks reports `:insecure_file`.
+  Abnormal exits retain a bounded atom reason; private reason terms are discarded.
   Loading the library starts nothing.
   """
   use GenServer
@@ -66,17 +74,22 @@ defmodule RequestSeal.Custody.Local.Owner do
     end
   end
 
-  @doc "Fetch a handle; missing, failed, or unavailable keys return :unconfigured."
-  @spec fetch(GenServer.server(), atom()) :: {:ok, KeyHandle.t()} | {:error, :unconfigured}
+  @doc "Fetch a handle; distinguish an unconfigured key from an unavailable owner."
+  @spec fetch(GenServer.server(), atom()) ::
+          {:ok, KeyHandle.t()} | {:error, :unconfigured | :owner_unavailable}
   def fetch(owner, name) do
     GenServer.call(owner, {:fetch, name})
   catch
-    :exit, _ -> {:error, :unconfigured}
+    :exit, _ -> {:error, :owner_unavailable}
   end
 
   @doc "Return each configured key's bounded status."
-  @spec status(GenServer.server()) :: %{atom() => key_status()}
-  def status(owner), do: GenServer.call(owner, :status)
+  @spec status(GenServer.server()) :: %{atom() => key_status()} | {:error, :owner_unavailable}
+  def status(owner) do
+    GenServer.call(owner, :status)
+  catch
+    :exit, _ -> {:error, :owner_unavailable}
+  end
 
   @doc "Report whether a handle is available for the named key."
   @spec ready?(GenServer.server(), atom()) :: boolean()
@@ -85,6 +98,7 @@ defmodule RequestSeal.Custody.Local.Owner do
   @impl true
   def init(keys) do
     Process.flag(:sensitive, true)
+    :proc_lib.set_label({__MODULE__, Keyword.keys(keys)})
     state = Map.new(keys, fn {name, source} -> {name, load_key(source)} end)
     {:ok, state, {:continue, :discard_sources}}
   end
@@ -118,11 +132,24 @@ defmodule RequestSeal.Custody.Local.Owner do
   @impl true
   def handle_info(_, state), do: {:noreply, state}
 
+  # OTP's crash report is separate from format_status/1. Sanitize the exit
+  # itself so neither report nor a supervisor can retain private reason terms.
+  @impl true
+  def terminate(reason, _state) when reason in [:normal, :shutdown], do: :ok
+  def terminate({:shutdown, _}, _state), do: exit(:shutdown)
+  def terminate(reason, _state), do: exit(crash_reason(reason))
+
+  defp crash_reason(reason) when reason in [:badarg, :badarith, :function_clause, :undef],
+    do: reason
+
+  defp crash_reason(_), do: :owner_failure
+
   @impl true
   def format_status(status) do
     Map.new(status, fn
       {:state, state} -> {:state, statuses(state)}
-      {key, _} when key in [:message, :reason, :log] -> {key, :redacted}
+      {:reason, reason} -> {:reason, crash_reason(reason)}
+      {key, _} when key in [:message, :log] -> {key, :redacted}
       pair -> pair
     end)
   end
@@ -189,6 +216,7 @@ defmodule RequestSeal.Custody.Local.Owner do
 
   defp read_source(:env, variable) do
     case System.fetch_env(variable) do
+      {:ok, ""} -> :unconfigured
       {:ok, value} -> {:ok, value}
       :error -> :unconfigured
     end
@@ -200,28 +228,55 @@ defmodule RequestSeal.Custody.Local.Owner do
 
   defp read_source(:file, path) do
     with {:ok, stat} <- File.lstat(path),
-         :ok <- secure_file(stat),
-         {:ok, file} <- :file.open(path, [:read, :binary, :raw]) do
-      try do
-        read_file(file, path, stat)
-      after
-        :file.close(file)
-      end
+         :ok <- secure_file(stat) do
+      read_existing_file(path, stat)
     end
     |> file_result()
+  end
+
+  defp read_existing_file(path, stat) do
+    result =
+      with {:ok, file} <- :file.open(path, [:read, :binary, :raw]) do
+        try do
+          read_file(file, path, stat)
+        after
+          :file.close(file)
+        end
+      end
+
+    case result do
+      {:error, :enoent} -> {:error, :insecure_file}
+      other -> other
+    end
   end
 
   defp read_file(file, path, before) do
     with {:ok, record} <- :file.read_file_info(file),
          opened = File.Stat.from_record(record),
          :ok <- secure_file(opened),
-         {:ok, current} <- File.lstat(path),
+         true <- same_file?(before, opened),
+         :ok <- check_current_file(path, opened),
+         {:ok, bytes} <- read_bytes(file),
+         :ok <- check_current_file(path, opened) do
+      {:ok, bytes}
+    else
+      false -> {:error, :insecure_file}
+      error -> error
+    end
+  end
+
+  defp read_bytes(file) do
+    case :file.read(file, @max_source_bytes + 1) do
+      :eof -> {:ok, ""}
+      result -> result
+    end
+  end
+
+  defp check_current_file(path, opened) do
+    with {:ok, current} <- File.lstat(path),
          :ok <- secure_file(current),
-         true <- same_file?(before, opened) and same_file?(opened, current) do
-      case :file.read(file, @max_source_bytes + 1) do
-        :eof -> {:ok, ""}
-        result -> result
-      end
+         true <- same_file?(opened, current) do
+      :ok
     else
       false -> {:error, :insecure_file}
       error -> error
@@ -246,9 +301,9 @@ defmodule RequestSeal.Custody.Local.Owner do
     result =
       case encoding do
         :raw -> {:ok, input}
-        :base64url -> Base.url_decode64(String.trim(input), padding: false)
-        :base64 -> Base.decode64(String.trim(input))
-        :hex -> Base.decode16(String.trim(input), case: :mixed)
+        :base64url -> decode_base64(trim_ascii(input), :base64url)
+        :base64 -> decode_base64(trim_ascii(input), :base64)
+        :hex -> Base.decode16(trim_ascii(input), case: :mixed)
       end
 
     case result do
@@ -258,4 +313,30 @@ defmodule RequestSeal.Custody.Local.Owner do
   end
 
   defp decode(_, _), do: {:error, :invalid_seed}
+
+  defp decode_base64(input, encoding) do
+    {result, encode} =
+      case encoding do
+        :base64url -> {Base.url_decode64(input, padding: false), &Base.url_encode64/2}
+        :base64 -> {Base.decode64(input), &Base.encode64/2}
+      end
+
+    with {:ok, bytes} <- result,
+         true <-
+           encode.(bytes, padding: encoding == :base64 or String.ends_with?(input, "=")) == input do
+      {:ok, bytes}
+    else
+      _ -> :error
+    end
+  end
+
+  defp trim_ascii(<<byte, rest::binary>>) when byte in [32, 9, 13, 10], do: trim_ascii(rest)
+  defp trim_ascii(input), do: trim_ascii_end(input)
+  defp trim_ascii_end(<<>>), do: <<>>
+
+  defp trim_ascii_end(input) do
+    if :binary.last(input) in [32, 9, 13, 10],
+      do: trim_ascii_end(binary_part(input, 0, byte_size(input) - 1)),
+      else: input
+  end
 end

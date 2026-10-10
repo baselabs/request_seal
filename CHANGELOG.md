@@ -11,8 +11,12 @@
   `"signer algorithm does not match signature specification"`.
 - Preserve custody signing failures as `RequestSeal.Error` with reason
   `:signing_failed`, layer `:crypto`, and a bounded `RequestSeal.Custody.Error`
-  in `source`, including generated signing specs. Core errors add `message`
-  and `source` fields, both nil for existing non-custody failures.
+  in `source`. For the existing signing-spec path with a `KeyHandle`, the reason
+  was `:signer_failed`, now `:signing_failed` with the custody error as `source`.
+  Core errors add `message` and `source` fields, both nil for existing
+  non-custody failures. Malformed signing output uses custody
+  `:invalid_signing_output`; malformed custody errors use `:custodian_failure`
+  on both HTTP signing paths.
 - Add caller-supervised `RequestSeal.Custody.Local.Owner` for Ed25519 seeds
   from tagged environment, file, and file-from-environment sources. Encodings
   are `:base64url`, `:base64`, `:hex`, and `:raw`; source inputs are bounded to
@@ -22,8 +26,13 @@
 - Owner restart rereads sources and retires cached handles. Fetch per operation
   or fetch again and retry once on `:key_not_found`; prefer direct file sources
   in production. Environment variables are never deleted by the Owner.
-- This is an additive minor release. Replace `Unreleased` with the release date
-  only when publishing 0.4.0.
+- Owner queries distinguish `:owner_unavailable` from an unconfigured key.
+  Empty environment values and empty file paths from environment variables
+  report `:unconfigured`. Files removed or replaced after initial checks report
+  `:insecure_file`. Encoded seeds require canonical trailing bits and trim only
+  ASCII space, tab, CR, and LF. Base64url padding remains optional.
+- Owner terminate and crash reports discard private reason terms while retaining
+  configured key names, bounded statuses, and an atom failure reason.
 
 ## 0.3.1 - 2026-10-09
 

@@ -241,10 +241,9 @@ defmodule RequestSeal.Authentication do
   end
 
   defp sign_bytes(%KeyHandle{} = handle, _, bytes, timeout) do
-    case Custody.sign(handle, bytes, timeout: timeout) do
-      {:ok, sig} when byte_size(sig) in 1..1024 -> sig
+    case RequestSeal.Signing.custody_sign(handle, bytes, timeout) do
+      {:ok, sig} -> sig
       {:error, %Custody.Error{} = source} -> fail(:signing_failed, :crypto, nil, source)
-      _ -> fail(:signing_failed, :crypto, nil, Custody.Error.new(:invalid_signature))
     end
   end
 

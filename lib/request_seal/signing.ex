@@ -321,7 +321,7 @@ defmodule RequestSeal.Signing do
   end
 
   defp invoke(%KeyHandle{} = handle, _, base, timeout),
-    do: Custody.sign(handle, base, timeout: timeout)
+    do: custody_sign(handle, base, timeout)
 
   defmodule FunctionCustodian do
     @moduledoc false
@@ -343,6 +343,23 @@ defmodule RequestSeal.Signing do
     }
 
     Custody.sign(handle, base, timeout: timeout)
+  end
+
+  # Both HTTP signing forms share output bounds and custody error normalization.
+  def custody_sign(handle, base, timeout) do
+    case Custody.sign(handle, base, timeout: timeout) do
+      {:ok, signature} when is_binary(signature) and byte_size(signature) in 1..1024 ->
+        {:ok, signature}
+
+      {:error, %Custody.Error{}} = error ->
+        error
+
+      {:ok, _} ->
+        {:error, Custody.Error.new(:invalid_signing_output)}
+
+      _ ->
+        {:error, Custody.Error.new(:custodian_failure)}
+    end
   end
 
   defp parameters(spec, opts) do

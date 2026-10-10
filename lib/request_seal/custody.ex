@@ -184,6 +184,8 @@ defmodule RequestSeal.Custody do
   defp normalize(:sign, {:ok, bytes}) when is_binary(bytes) and byte_size(bytes) in 1..16_384,
     do: {:ok, bytes}
 
+  defp normalize(:sign, {:ok, _}), do: {:error, Error.new(:invalid_signing_output)}
+
   defp normalize(:unwrap, {:ok, bytes}) when is_binary(bytes) and byte_size(bytes) in 1..1024,
     do: {:ok, bytes}
 

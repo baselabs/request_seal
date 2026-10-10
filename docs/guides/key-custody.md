@@ -148,17 +148,26 @@ Source forms are explicit:
 | `{:file_from_env, "SIGNING_SEED_FILE", encoding}` | A path from the variable, then its file |
 
 Encodings are `:base64url` (padding optional), `:base64` (padded), `:hex` (either case),
-or `:raw`. Text encodings are trimmed; raw bytes are unchanged. No encoding is
-guessed. Input is limited to 4,096 bytes including whitespace; decoded seeds
+or `:raw`. Only ASCII space, tab, CR, and LF are trimmed from the ends of text
+encodings; interior whitespace and non-ASCII whitespace reject. Base64 encodings
+must be canonical, including unused trailing bits. Standard Base64 requires
+padding; Base64url accepts canonical padded or unpadded input. Raw bytes are
+unchanged. Avoid `:raw` seeds in environment variables, which cannot safely
+represent arbitrary binary data. No encoding is guessed. Input is limited to 4,096 bytes including whitespace; decoded seeds
 must contain exactly 32 bytes. Files must be regular, not symbolic links, with
 mode 0600 or stricter: execute, group, other, and special permission bits reject.
-Keep files and their parent directories under trusted control during startup.
+A file that disappears or changes identity after its initial checks reports
+`:insecure_file`. Keep files and their parent directories under trusted control
+during startup.
 
 `status/1` reports each configured name as `:ready`, `:unconfigured` for a missing
-variable/file or stopped holder, or `{:error, :invalid_seed | :insecure_file | :unreadable}`.
+or empty variable, a missing file, or a stopped holder, or `{:error, :invalid_seed | :insecure_file | :unreadable}`.
 Bad keys leave the Owner running. `fetch/2` returns `{:ok, handle}` for a ready
 key, otherwise `{:error, :unconfigured}`; no signing handle is issued for a bad
-key. `ready?/2` returns a Boolean. No registration is supported after startup.
+key. An empty environment seed and an empty `:file_from_env` path both report
+`:unconfigured`. Calls to a stopped or busy Owner return
+`{:error, :owner_unavailable}` from both `fetch/2` and `status/1`; `ready?/2`
+returns false in that case. `ready?/2` returns a Boolean. No registration is supported after startup.
 Configuration descriptors contain variable names or paths, never literal seeds.
 
 The Owner sets process sensitivity before reading sources, passes each decoded
@@ -168,7 +177,9 @@ never deletes environment variables and rereads every source on restart.
 
 **Restart rule:** fetch per signing operation, as below. If you cache a handle,
 an Owner restart makes that old handle return custody `:key_not_found`; fetch a
-new handle and retry signing once. Releasing an Owner's handle also ends that
+new handle and retry signing once. If fetching returns `:owner_unavailable`
+during restart, wait for the supervised Owner to become available before
+fetching again. Releasing an Owner's handle also ends that
 holder and makes its status `:unconfigured` until restart; keep its lifetime
 under the supervision tree's control. Readiness is a snapshot, so signing can
 still encounter an unavailable holder after a successful fetch.
@@ -199,6 +210,16 @@ layer `:input`, and the exact message string
 Custody failures return `RequestSeal.Error` with reason `:signing_failed`, layer
 `:crypto`, and a bounded `RequestSeal.Custody.Error` in `source`. This preserves
 `:key_not_found` and `:deadline_exceeded` for explicit and generated signing specs.
+`Error.retryable` is false while `source.retryable` may be true for
+`:deadline_exceeded`. Malformed or excessive signing output uses custody
+`:invalid_signing_output`; malformed custody errors use `:custodian_failure`.
+Both signing forms return these in `source` with outer reason `:signing_failed`.
 Function errors in the explicit form retain the existing `:signer_failed` reason.
+
+Owner terminate reports keep configured key names and bounded statuses. Both
+terminate and crash reports use bounded atom reasons; private reason terms are
+discarded before the process exits. Unknown abnormal reasons become
+`:owner_failure`; `:badarg`, `:badarith`, `:function_clause`, and `:undef` remain
+recognizable. Normal and shutdown exits retain their lifecycle meaning.
 
 Module docs: `RequestSeal.Custody`, `RequestSeal.Custody.Local`, `RequestSeal.Custody.Local.Owner`, `RequestSeal.Custody.SSHAgent`, `RequestSeal.KeyHandle`, `RequestSeal.PublicKey`, `RequestSeal.Custody.Error`.

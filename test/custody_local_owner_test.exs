@@ -138,7 +138,8 @@ defmodule RequestSeal.CustodyLocalOwnerTest do
       capture_log(fn ->
         bad =
           Enum.map(@encodings, fn encoding ->
-            path = seed_file(c.dir, "bad-#{encoding}", encode(@seed <> "!", encoding))
+            assert String.contains?(invalid_input(encoding), encode(@seed, encoding))
+            path = seed_file(c.dir, "bad-#{encoding}", invalid_input(encoding))
             {encoding, {"ed25519", {:file, path, encoding}}}
           end)
 
@@ -155,10 +156,73 @@ defmodule RequestSeal.CustodyLocalOwnerTest do
     end
   end
 
+  test "terminate and crash reports redact seeds while retaining key and atom reason", c do
+    strings = Enum.map(@encodings, &encode(@seed, &1))
+
+    keys =
+      Enum.map(@encodings, fn encoding ->
+        path = seed_file(c.dir, "crash-#{encoding}", encode(@seed, encoding))
+        {encoding, {"ed25519", {:file, path, encoding}}}
+      end)
+
+    bad = seed_file(c.dir, "crash-failed", invalid_input(:base64))
+
+    {:ok, owner} =
+      Owner.start_link(keys: [{:failing_key, {"ed25519", {:file, bad, :base64}}} | keys])
+
+    Process.unlink(owner)
+    parent = self()
+
+    filter = fn
+      %{meta: %{pid: ^owner}, msg: {:report, report}}, _ ->
+        send(parent, {:owner_report, report})
+        :ignore
+
+      _, _ ->
+        :ignore
+    end
+
+    :ok = :logger.add_primary_filter(:request_seal_owner_reports, {filter, nil})
+
+    try do
+      log =
+        capture_log(fn ->
+          try do
+            GenServer.stop(owner, {:owner_failure, strings})
+          catch
+            :exit, _ -> :ok
+          end
+        end)
+
+      assert_receive {:owner_report, %{label: {:gen_server, :terminate}} = termination}
+      assert_receive {:owner_report, %{label: {:proc_lib, :crash}} = crash}
+
+      for value <- strings,
+          surface <- [
+            log,
+            inspect(termination, limit: :infinity, printable_limit: :infinity),
+            inspect(crash, limit: :infinity, printable_limit: :infinity)
+          ] do
+        refute String.contains?(surface, value), "seed canary leaked in crash diagnostics"
+      end
+
+      assert {Owner, names} = Keyword.fetch!(hd(crash.report), :process_label)
+      assert :failing_key in names
+      assert termination.state.failing_key == {:error, :invalid_seed}
+      assert {:owner_failure, stacktrace} = termination.reason
+      assert is_list(stacktrace)
+      assert [{:exit, :owner_failure, _}] = for({:error_info, info} <- hd(crash.report), do: info)
+      assert log =~ "failing_key"
+      assert log =~ "owner_failure"
+    after
+      :logger.remove_primary_filter(:request_seal_owner_reports)
+      if Process.alive?(owner), do: GenServer.stop(owner)
+    end
+  end
+
   test "source errors are per-key, bounded and fail closed", c do
     valid = seed_file(c.dir, "valid", @seed)
     insecure = seed_file(c.dir, "insecure", @seed, 0o644)
-    unreadable = seed_file(c.dir, "unreadable", @seed, 0o000)
     link = Path.join(c.dir, "link")
     File.ln_s!(valid, link)
     missing = env("MISSING", nil)
@@ -168,7 +232,6 @@ defmodule RequestSeal.CustodyLocalOwnerTest do
     keys = [
       valid: {"ed25519", {:file, valid, :raw}},
       insecure: {"ed25519", {:file, insecure, :raw}},
-      unreadable: {"ed25519", {:file, unreadable, :raw}},
       symlink: {"ed25519", {:file, link, :raw}},
       missing_var: {"ed25519", {:env, missing, :raw}},
       missing_path_var: {"ed25519", {:file_from_env, missing, :raw}},
@@ -187,7 +250,6 @@ defmodule RequestSeal.CustodyLocalOwnerTest do
     assert Owner.status(owner) == %{
              valid: :ready,
              insecure: {:error, :insecure_file},
-             unreadable: {:error, :unreadable},
              symlink: {:error, :insecure_file},
              directory: {:error, :insecure_file},
              missing_var: :unconfigured,
@@ -239,6 +301,229 @@ defmodule RequestSeal.CustodyLocalOwnerTest do
       assert System.get_env(var) == input
     end
   end
+
+  @tag skip: elem(System.cmd("id", ["-u"]), 0) |> String.trim() == "0"
+  test "mode 000 cannot be read by an unprivileged owner", c do
+    path = seed_file(c.dir, "unreadable", @seed, 0o000)
+    owner = start_supervised!({Owner, keys: [signing: {"ed25519", {:file, path, :raw}}]})
+    assert Owner.status(owner) == %{signing: {:error, :unreadable}}
+  end
+
+  test "stopped Owner differs from a bad key", c do
+    path = seed_file(c.dir, "stopped", @seed)
+    owner = start_supervised!({Owner, keys: [signing: {"ed25519", {:file, path, :raw}}]})
+    stop_supervised!(Owner)
+    assert Owner.fetch(owner, :signing) == {:error, :owner_unavailable}
+    refute Owner.ready?(owner, :signing)
+    assert Owner.status(owner) == {:error, :owner_unavailable}
+  end
+
+  test "busy Owner times out consistently on real blocked calls", c do
+    path = seed_file(c.dir, "busy", @seed)
+    owner = start_supervised!({Owner, keys: [signing: {"ed25519", {:file, path, :raw}}]})
+    :ok = :sys.suspend(owner)
+
+    try do
+      tasks =
+        Enum.map(
+          [
+            fn -> Owner.fetch(owner, :signing) end,
+            fn -> Owner.ready?(owner, :signing) end,
+            fn -> query_status(owner) end
+          ],
+          &Task.async/1
+        )
+
+      results = Enum.map(tasks, &Task.await(&1, 7_000))
+      assert results == [{:error, :owner_unavailable}, false, {:error, :owner_unavailable}]
+    after
+      :sys.resume(owner)
+    end
+  end
+
+  test "empty environment values and indirect paths are unconfigured" do
+    var = env("EMPTY", "")
+
+    owner =
+      start_supervised!(
+        {Owner,
+         keys: [
+           seed: {"ed25519", {:env, var, :base64url}},
+           path: {"ed25519", {:file_from_env, var, :base64url}}
+         ]}
+      )
+
+    assert Owner.status(owner) == %{seed: :unconfigured, path: :unconfigured}
+  end
+
+  test "source is sensitive at its first real file metadata read", c do
+    path = seed_file(c.dir, "sensitivity", @seed)
+    # Known-positive control: the same observer sees a nonsensitive reader.
+    control = observe_file(path, 1, false)
+
+    try do
+      assert {:ok, _} = File.lstat(path)
+      reader = self()
+      assert_receive {:source_read, ^reader, {:sensitive, false}}
+    after
+      :sys.remove(:file_server_2, control)
+    end
+
+    observer = observe_file(path, 1, false)
+
+    try do
+      owner = start_supervised!({Owner, keys: [signing: {"ed25519", {:file, path, :raw}}]})
+      assert_receive {:source_read, ^owner, {:sensitive, true}}
+      assert Owner.ready?(owner, :signing)
+    after
+      :sys.remove(:file_server_2, observer)
+    end
+  end
+
+  for step <- [1, 2], action <- [:unlink, :replace] do
+    @tag read_step: step, action: action
+    test "file #{action} after metadata check #{step} is insecure", c do
+      path = seed_file(c.dir, "race", @seed)
+      replacement = seed_file(c.dir, "replacement", @seed)
+      observer = observe_file(path, c.read_step, true)
+
+      task =
+        Task.async(fn -> Owner.start_link(keys: [signing: {"ed25519", {:file, path, :raw}}]) end)
+
+      try do
+        assert_receive {:source_read, owner, {:sensitive, true}}
+        assert_receive {:source_checked, ^owner}, 1_000
+
+        assert :ok =
+                 if(c.action == :unlink,
+                   do: :prim_file.delete(path),
+                   else: :prim_file.rename(replacement, path)
+                 )
+
+        send(Process.whereis(:file_server_2), {:resume_owner, owner})
+        assert {:ok, ^owner} = Task.await(task)
+
+        try do
+          assert Owner.status(owner) == %{signing: {:error, :insecure_file}}
+          assert Owner.fetch(owner, :signing) == {:error, :unconfigured}
+        after
+          GenServer.stop(owner)
+        end
+      after
+        :sys.remove(:file_server_2, observer)
+      end
+    end
+  end
+
+  test "padded Base64url remains accepted", c do
+    path = seed_file(c.dir, "padded", Base.url_encode64(@seed))
+    owner = start_supervised!({Owner, keys: [signing: {"ed25519", {:file, path, :base64url}}]})
+    assert {:ok, handle} = Owner.fetch(owner, :signing)
+    assert_signs(handle)
+  end
+
+  for {name, encoding, input} <- [
+        {:unpadded_base64, :base64, Base.encode64(@seed, padding: false)},
+        {:base64url_alphabet, :base64, Base.url_encode64(:binary.copy(<<255>>, 32))},
+        {:base64_alphabet, :base64url, Base.encode64(:binary.copy(<<255>>, 32))},
+        {:odd_hex, :hex, Base.encode16(@seed) <> "0"},
+        {:interior_space, :base64url,
+         String.replace_prefix(Base.url_encode64(@seed, padding: false), "b3", "b 3")},
+        {:interior_tab, :base64, "b3d\t" <> binary_part(Base.encode64(@seed), 3, 41)},
+        {:interior_hex_space, :hex, "6f " <> binary_part(Base.encode16(@seed), 2, 62)}
+      ] do
+    @tag encoding: encoding, input: input
+    test "decoder rejects #{name}", c do
+      assert_invalid_source(c.dir, c.input, c.encoding)
+    end
+  end
+
+  for encoding <- [:base64url, :base64], tail <- ["F", "G", "H"] do
+    @tag encoding: encoding, tail: tail
+    test "decoder rejects noncanonical #{encoding} tail #{tail}", c do
+      # 32 zero bytes ending in 1: canonical final sextet is E.
+      canonical = encode(<<0::248, 1>>, c.encoding)
+      input = String.replace(canonical, "E", c.tail)
+      assert_invalid_source(c.dir, input, c.encoding)
+    end
+  end
+
+  for encoding <- [:base64url, :base64, :hex],
+      whitespace <- ["\u00a0", "\u2028", "\u0085", "\v", "\f"] do
+    @tag encoding: encoding, whitespace: whitespace
+    test "decoder rejects non-ASCII trim #{encoding} #{inspect(whitespace)}", c do
+      assert_invalid_source(
+        c.dir,
+        c.whitespace <> encode(@seed, c.encoding) <> c.whitespace,
+        c.encoding
+      )
+    end
+  end
+
+  defp assert_invalid_source(dir, input, encoding) do
+    path = seed_file(dir, "invalid", input)
+    owner = start_supervised!({Owner, keys: [signing: {"ed25519", {:file, path, encoding}}]})
+    assert Owner.status(owner) == %{signing: {:error, :invalid_seed}}
+    assert Owner.fetch(owner, :signing) == {:error, :unconfigured}
+  end
+
+  # Observe the real OTP file server, suspending only the Owner across the chosen
+  # metadata result. The file operation itself is never replaced or simulated.
+  defp observe_file(path, step, suspend?) do
+    parent = self()
+
+    observer = fn
+      {count, nil}, {:in, {:"$gen_call", {pid, _} = from, {:read_link_info, ^path, _}}}, _ ->
+        if count + 1 == step do
+          observe_reader(pid, parent, suspend?)
+          {count + 1, from}
+        else
+          {count + 1, nil}
+        end
+
+      {count, from}, {:out, {:ok, _}, from, _}, _ when from != nil ->
+        pid = elem(from, 0)
+        send(parent, {:source_checked, pid})
+
+        if suspend?, do: resume_reader(pid, parent)
+
+        {count, nil}
+
+      state, _, _ ->
+        state
+    end
+
+    :ok = :sys.install(:file_server_2, {observer, observer, {0, nil}})
+    observer
+  end
+
+  defp observe_reader(pid, parent, suspend?) do
+    :erlang.suspend_process(pid)
+    probe = {:sensitivity_probe, make_ref()}
+    send(pid, probe)
+    {:messages, messages} = Process.info(pid, :messages)
+    send(parent, {:source_read, pid, {:sensitive, probe not in messages}})
+    unless suspend?, do: :erlang.resume_process(pid)
+  end
+
+  defp resume_reader(pid, parent) do
+    receive do
+      {:resume_owner, ^pid} -> :ok
+    after
+      5_000 -> send(parent, :file_observer_timeout)
+    end
+
+    :erlang.resume_process(pid)
+  end
+
+  defp query_status(owner) do
+    Owner.status(owner)
+  catch
+    :exit, reason -> {:exit, reason}
+  end
+
+  defp invalid_input(:raw), do: @seed <> "!"
+  defp invalid_input(encoding), do: encode(@seed, encoding) <> "!"
 
   defp encode(seed, :base64url), do: Base.url_encode64(seed, padding: false)
   defp encode(seed, :base64), do: Base.encode64(seed)

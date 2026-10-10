@@ -69,12 +69,89 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
       ref: fn -> parent end
     }
 
+    started = System.monotonic_time(:millisecond)
+
     assert {:error,
-            %{reason: :signing_failed, source: %Custody.Error{reason: :deadline_exceeded}}} =
+            %{
+              reason: :signing_failed,
+              source: %Custody.Error{reason: :deadline_exceeded, retryable: true},
+              retryable: false
+            }} =
              RequestSeal.sign(c.message, c.spec, handle, signing_timeout: 50)
 
+    assert System.monotonic_time(:millisecond) - started < 1_000
     assert_received {:signing, runner, _context}
     refute Process.alive?(runner)
+  end
+
+  test "explicit deadline above the default permits a real delayed signature", c do
+    {holder, _} = c.handle.ref.()
+    parent = self()
+
+    timer =
+      Task.async(fn ->
+        :erlang.suspend_process(holder)
+        send(parent, :holder_suspended)
+        Process.sleep(5_500)
+        :erlang.resume_process(holder)
+      end)
+
+    assert_receive :holder_suspended
+    started = System.monotonic_time(:millisecond)
+
+    try do
+      assert {:ok, actual} = RequestSeal.sign(c.message, c.spec, c.handle, signing_timeout: 6_000)
+      assert System.monotonic_time(:millisecond) - started >= 5_000
+      assert {:ok, ^actual} = RequestSeal.sign(c.message, c.spec, c.handle)
+    after
+      Task.await(timer, 7_000)
+    end
+  end
+
+  test "malformed signing output has a signing-output reason on both forms", c do
+    for output <- [<<>>, :not_bytes, :binary.copy(<<1>>, 1_025)] do
+      handle = transformed_handle(c.handle, fn {:ok, _signature} -> {:ok, output} end)
+
+      for spec <- [c.spec, generated_spec()] do
+        assert {:error,
+                %Error{
+                  reason: :signing_failed,
+                  layer: :crypto,
+                  source: %Custody.Error{reason: :invalid_signing_output, retryable: false}
+                }} =
+                 RequestSeal.sign(c.message, spec, handle)
+      end
+    end
+  end
+
+  test "malformed custody errors agree on reason and source on both forms", c do
+    handle =
+      transformed_handle(c.handle, fn {:ok, _signature} -> {:error, {:private, "untrusted"}} end)
+
+    for spec <- [c.spec, generated_spec()] do
+      assert {:error,
+              %Error{
+                reason: :signing_failed,
+                layer: :crypto,
+                source: %Custody.Error{reason: :custodian_failure, retryable: false}
+              }} =
+               RequestSeal.sign(c.message, spec, handle)
+    end
+  end
+
+  defp generated_spec do
+    %{label: "sig", algorithm: "ed25519", components: ~s[("@method")], expires_in: 60}
+  end
+
+  # Perform real local signing, then corrupt its result to exercise the caller
+  # callback boundary. This makes no external conformance claim.
+  defp transformed_handle(local, transform) do
+    %KeyHandle{
+      custodian: RequestSeal.Signing.FunctionCustodian,
+      algorithm: local.algorithm,
+      capabilities: [:sign],
+      ref: fn -> fn _, base -> transform.(Custody.sign(local, base)) end end
+    }
   end
 
   test "algorithm mismatch has a stable distinct reason and message", c do
@@ -117,9 +194,15 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
 
   test "generated signing specs also preserve custody errors", c do
     :ok = Local.release(c.handle)
-    spec = %{label: "sig", algorithm: "ed25519", components: ~s[("@method")], expires_in: 60}
 
-    assert {:error, %{reason: :signing_failed, source: %Custody.Error{reason: :key_not_found}}} =
-             RequestSeal.sign(c.message, spec, c.handle)
+    for spec <- [generated_spec(), RequestSeal.Signing.normalize_spec!(generated_spec())] do
+      assert {:error,
+              %Error{
+                reason: :signing_failed,
+                layer: :crypto,
+                retryable: false,
+                source: %Custody.Error{reason: :key_not_found, retryable: false}
+              }} = RequestSeal.sign(c.message, spec, c.handle)
+    end
   end
 end
