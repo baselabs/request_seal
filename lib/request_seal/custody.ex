@@ -26,7 +26,8 @@ defmodule RequestSeal.Custody do
   identities, never log secrets, and must propagate the context deadline and
   cancellation to any additional work they own. Killing the worker closes sockets
   it owns; it cannot revoke work already accepted by an external peer.
-  A custodian verifying with `RequestSeal.Crypto.verify/5` must pass
+  A custodian signing with `RequestSeal.Crypto.sign/4` or verifying with
+  `RequestSeal.Crypto.verify/5` must pass
   `max_bytes: RequestSeal.Crypto.max_bytes_ceiling()` because custody has already
   enforced the caller's bound, which `RequestSeal.Custody.Context` does not carry.
   """

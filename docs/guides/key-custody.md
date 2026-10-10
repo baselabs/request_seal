@@ -113,7 +113,7 @@ Invalid values and duplicate options return `:invalid_options`; `unwrap/3`
 does not accept this option. `RequestSeal.Crypto.sign/4` and `verify/5` expose
 the same option for direct primitive calls. `RequestSeal.SignatureBase` retains
 its separate 1,048,576-byte ceiling. `RequestSeal.Message`, `Body`, JWS, and the
-Plug keep their 1 MiB defaults; this release does not propagate the new
+Plug keep their fixed 1 MiB limits; this release does not propagate the new
 custody/crypto opt-in to those APIs.
 
 [OpenSSH caps the whole agent message at 256 KiB](https://github.com/openssh/openssh-portable/blob/V_9_9_P1/ssh-agent.c),

@@ -102,7 +102,15 @@ defmodule RequestSeal.MaxBytesTest do
     assert Support.max_bytes([]) == 1_048_576
     assert Support.max_bytes(timeout: 5_000, max_bytes: 10) == 10
 
-    for opts <- [:bad, %{}, [1], [{:max_bytes, 1} | :bad], [max_bytes: 1, max_bytes: 2]] do
+    for opts <- [
+          :bad,
+          %{},
+          [1],
+          [{:max_bytes, 1} | :bad],
+          [max_bytes: 1, max_bytes: 2],
+          [foo: 1],
+          [timeout: 1, foo: 1]
+        ] do
       assert {:custody_error, :invalid_options} = catch_throw(Support.max_bytes(opts))
     end
   end

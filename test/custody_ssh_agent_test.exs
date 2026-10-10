@@ -102,6 +102,24 @@ defmodule RequestSeal.CustodySSHAgentTest do
   end
 
   @tag :max_bytes_revision
+  test "direct SSH signing rejects excess bytes before reading the reference", ctx do
+    {handle, _seed} = byte_limit_key(ctx)
+    owner = self()
+
+    observed = fn ->
+      send(owner, :reference_read)
+      handle.ref.()
+    end
+
+    for bytes <- [:binary.copy(<<0>>, 16_777_217), :not_binary] do
+      assert {:error, :invalid_data} =
+               SSHAgent.sign(observed, "ed25519", bytes, byte_limit_context())
+
+      refute_receive :reference_read, 20
+    end
+  end
+
+  @tag :max_bytes_revision
   test "direct SSH verification rejects excess bytes before reading the reference", ctx do
     {handle, seed} = byte_limit_key(ctx)
     owner = self()

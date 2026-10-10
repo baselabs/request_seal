@@ -81,7 +81,8 @@ defmodule RequestSeal.Custody.SSHAgent do
   end
 
   @impl true
-  def sign(ref, algorithm, bytes, context) do
+  def sign(ref, algorithm, bytes, context)
+      when is_binary(bytes) and byte_size(bytes) <= @max_bytes_ceiling do
     {bound, socket_path, public, check} = ref.()
     ensure(algorithm == bound, :key_mismatch)
     blob = Wire.key_blob(public)
@@ -108,6 +109,8 @@ defmodule RequestSeal.Custody.SSHAgent do
       :gen_tcp.close(socket)
     end
   end
+
+  def sign(_, _, _, _), do: {:error, :invalid_data}
 
   @impl true
   def verify(ref, algorithm, bytes, signature, _context)
