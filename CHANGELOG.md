@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.1 - Unreleased
+## 0.4.1 - 2026-10-10
 
 - `RequestSeal.Custody.sign/3`, `verify/4`, `RequestSeal.Crypto.sign/4` and `verify/5` accept `max_bytes:` (1–16,777,216, default 1,048,576). The default and the existing `:invalid_data` rejection are unchanged. Out-of-range or non-integer values reject with `:invalid_options` before handle, capability, or algorithm validation. `unwrap/3` does not accept it. `Crypto.max_bytes_ceiling/0` exposes the shared ceiling.
 - Direct `Custody.Local.sign/4`, `Local.verify/5`, `Custody.SSHAgent.sign/4`, and `SSHAgent.verify/5` callback calls (outside `RequestSeal.Custody`) accept up to the 16,777,216-byte ceiling; `Local` previously stopped at 1 MiB. They reject larger or nonbinary inputs with the bare reason `{:error, :invalid_data}` before reading the key reference, so such inputs no longer report `:key_mismatch` or a `RequestSeal.Crypto.Error` struct first. The public `RequestSeal.Custody` and `RequestSeal.Crypto` functions are unchanged for callers that pass no `max_bytes:`.
