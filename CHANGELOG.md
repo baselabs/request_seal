@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 - Unreleased
+## 0.4.0 - 2026-10-10
 
 - Accept an algorithm-bound `RequestSeal.KeyHandle` in the explicit
   `RequestSeal.sign/4` form. `signing_timeout` accepts 1–300,000 ms, default 5,000.
