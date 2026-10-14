@@ -36,8 +36,8 @@ if Code.ensure_loaded?(Plug.Conn) do
       * `:label` (required) - the signature label to verify.
       * `:on_reject` (required) - `:continue`, or `{:halt, status}` with a final
         status in 200..599.
-      * `:assign` - an atom or nil (default nil). When set, a successful
-        verification is also assigned under that key.
+      * `:assign` - a non-Boolean atom or nil (default nil). When set, a
+        successful verification is also assigned under that key.
 
     ## Returns
 
@@ -62,7 +62,7 @@ if Code.ensure_loaded?(Plug.Conn) do
 
              Signing.ensure(
                policy_source?(opts[:policy]) and SignatureFields.label?(opts[:label]) and
-                 is_atom(opts[:assign]) and rejection?(opts[:on_reject]),
+                 assign?(opts[:assign]) and rejection?(opts[:on_reject]),
                :invalid_options
              )
 
@@ -96,6 +96,8 @@ if Code.ensure_loaded?(Plug.Conn) do
       policy
     end
 
+    defp assign?(assign), do: assign == nil or (is_atom(assign) and not is_boolean(assign))
+
     defp rejection?(:continue), do: true
     defp rejection?({:halt, status}), do: is_integer(status) and status in 200..599
     defp rejection?(_), do: false
@@ -103,7 +105,12 @@ if Code.ensure_loaded?(Plug.Conn) do
     @doc """
     Verifies the captured request once and records the result in private state.
 
-    Checks run in this order: an earlier attempt, a missing capture, the
+    A connection is verified at most once. If Verify already ran on it, a
+    later call leaves the earlier result and its assign unchanged, records an
+    `:already_verified` `RequestSeal.Adapter.Error` as the connection's private
+    `:error`, and applies `:on_reject`.
+
+    Checks run in this order: a missing capture, the
     replay checks, policy resolution, target-dependent coverage, then
     `RequestSeal.verify/3` with the label. The replay checks reject a replaced
     or rewrapped replay adapter, a RequestSeal reader call without a replay
@@ -127,7 +134,6 @@ if Code.ensure_loaded?(Plug.Conn) do
         `{:error, %RequestSeal.Adapter.Error{stage: :verify, attempt: 0}}`, any
         `:assign` key is removed, and with `{:halt, status}` the connection is
         sent with that status and an empty body and halted. Reasons:
-        `:already_verified` (Verify already ran on this connection),
         `:not_captured` (no capture), `:parser_order` (replay checks above),
         `:invalid_options` (a policy function or MFA returned an invalid
         policy), `:unsupported_component` (the policy requires, or the selected
@@ -184,9 +190,10 @@ if Code.ensure_loaded?(Plug.Conn) do
         iex> {verification.label, verification.authorization, conn.assigns.signature == verification}
         {"sig", :not_evaluated, true}
         iex> again = RequestSeal.Plug.Verify.call(conn, verify)
-        iex> {:error, error} = again.private.request_seal.verification
-        iex> {error.reason, again.status, again.halted}
+        iex> {again.private.request_seal.error.reason, again.status, again.halted}
         {:already_verified, 401, true}
+        iex> {RequestSeal.Plug.verification(again) == {:ok, verification}, again.assigns.signature == verification}
+        {true, true}
         iex> RequestSeal.Custody.Local.release(handle)
         :ok
     """
@@ -194,12 +201,24 @@ if Code.ensure_loaded?(Plug.Conn) do
     def call(conn, opts) do
       state = State.get(conn)
 
+      if state.verification != nil, do: refuse_repeat(conn, opts), else: verify(conn, state, opts)
+    end
+
+    # A repeated Verify leaves the first result and its assign in place; it
+    # records the refusal as the connection's bounded error and applies on_reject.
+    defp refuse_repeat(conn, opts) do
+      conn = State.error(conn, Error.new(:already_verified, :plug, :verify, 0))
+
+      case opts[:on_reject] do
+        :continue -> conn
+        {:halt, status} -> conn |> Plug.Conn.send_resp(status, "") |> Plug.Conn.halt()
+      end
+    end
+
+    defp verify(conn, state, opts) do
       result =
         Signing.protect(:plug, :verify, 0, fn ->
           cond do
-            state.verification != nil ->
-              {:error, Error.new(:already_verified, :plug, :verify, 0)}
-
             state.capture == nil ->
               {:error, Error.new(:not_captured, :plug, :verify, 0)}
 

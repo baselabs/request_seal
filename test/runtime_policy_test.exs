@@ -157,9 +157,16 @@ defmodule RequestSeal.RuntimePolicyTest do
 
     T.raw(origin, T.wire("B.2.6"))
     assert_receive :policy_resolved, 5_000
-    assert_receive {:observed, conn, _, :error}, 5_000
-    assert {:error, %Error{reason: :already_verified}} = conn.private.request_seal.verification
+    assert_receive {:observed, conn, _, {:ok, _}}, 5_000
+    assert {:ok, _} = conn.private.request_seal.verification
+    assert %Error{reason: :already_verified} = conn.private.request_seal.error
     refute_receive :policy_resolved
+
+    for assign <- [true, false, "signature", 1] do
+      assert_raise Error, fn ->
+        Verify.init(policy: source, label: "sig", on_reject: :continue, assign: assign)
+      end
+    end
 
     options = Verify.init(policy: source, label: "sig", on_reject: :continue)
     conn = Verify.call(%Plug.Conn{}, options)

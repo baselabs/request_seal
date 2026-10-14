@@ -163,7 +163,7 @@ Cover `@method`, `@scheme`, `@authority`, `@path`, headers, and retained content
 | `:untrusted_proxy` | Forwarded mode saw a peer outside `trusted_peers`; Capture halts with 400. |
 | `:invalid_request` | CONNECT, an empty host, or malformed forwarded fields; Capture halts with 400. |
 | `:invalid_options` | A plug option, or the policy returned by a policy function or MFA, is invalid. |
-| `:already_verified` | Verify ran twice on one request; install it once. |
+| `:already_verified` | Verify ran twice on one request; the first result and its assign stay, the refusal is in `conn.private[:request_seal].error`, and `on_reject` applies. Install Verify once. |
 | `:signing_failed` | The response signer or its custody failed; SignResponse sends its `on_failure` status. |
 
 Capture's other failures halt with 400. Required verification does not authorize the action; apply your access policy afterward.

@@ -435,8 +435,10 @@ defmodule RequestSeal.PlugTransportTest do
              )
 
     assert {:ok, _} = Finch.request(signed, __MODULE__.Pool)
-    assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
-    assert {:error, %Error{reason: :already_verified}} = conn.private[:request_seal].verification
+    # A repeated Verify keeps the first successful result and records its refusal.
+    assert_receive {:observed, conn, {:ok, _}, {:ok, first}}, 5_000
+    assert {:ok, ^first} = conn.private[:request_seal].verification
+    assert %Error{reason: :already_verified} = conn.private[:request_seal].error
     assert_receive {:first_verification, {:ok, _}}, 5_000
     assert_receive {:resolved, _}, 5_000
     assert_receive {:commitment, _}, 5_000
@@ -444,7 +446,11 @@ defmodule RequestSeal.PlugTransportTest do
     refute_received {:commitment, _}
     assert {:ok, _} = Finch.request(signed, __MODULE__.Pool)
     assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
-    assert {:error, %Error{reason: :already_verified}} = conn.private[:request_seal].verification
+
+    assert {:error, %Error{reason: :request_rejected}} =
+             conn.private[:request_seal].verification
+
+    assert %Error{reason: :already_verified} = conn.private[:request_seal].error
     assert_receive {:first_verification, :error}, 5_000
 
     assert_receive {:verification_attempt,
