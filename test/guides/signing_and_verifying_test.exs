@@ -203,6 +203,7 @@ defmodule RequestSeal.GuideSigningAndVerifyingTest do
     assert Keyword.fetch!(binding, :verification).signature.crypto == :valid
     assert Keyword.fetch!(binding, :verification).authorization == :not_evaluated
     assert Keyword.fetch!(binding, :result).satisfied == [:sender]
+    assert Keyword.fetch!(binding, :result).count == 1
     assert :ok = RequestSeal.Message.validate(Keyword.fetch!(binding, :low_level_signed))
     E.assert_rejected_signature(binding)
     E.assert_fences("docs/guides/signing-and-verifying.md", 10)

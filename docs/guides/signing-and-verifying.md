@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Sign and verify HTTP messages
 
@@ -79,7 +79,7 @@ The linked request supplies components selected with `req`; no request is inferr
   })
 ```
 
-All six choices are required: algorithms, components, key resolver, freshness, content, and replay. `extra_components: :reject` requires exactly your selected coverage; the default allows additional coverage. A representation digest needs an explicitly selected complete representation; a content body does not substitute. For streams, feed `Digest.init/3` and `update/2` through EOF, then pass `digest_state:`.
+All six choices are required: algorithms, components, key resolver, freshness, content, and replay. `algorithms:` takes tokens from `RequestSeal.Crypto.algorithms/0` (`"ed25519"`, `"ecdsa-p256-sha256"`, `"ecdsa-p384-sha384"`, `"rsa-pss-sha512"`, `"rsa-v1_5-sha256"`, `"hmac-sha256"`) or an explicit `{:jws, name}` selection. `RequestSeal.Policy.new/1` documents every option. `extra_components: :reject` requires exactly your selected coverage; the default allows additional coverage. A representation digest needs an explicitly selected complete representation; a content body does not substitute. For streams, feed `Digest.init/3` and `update/2` through EOF, then pass `digest_state:`.
 
 ## 4. Sign and verify
 
@@ -99,7 +99,8 @@ signing = %{
 Core signing requires label, algorithm, components, and a positive integer
 expires_in. Defaults are created true, nonce random, alg true (false for JWS
 algorithm tuples), keyid/tag/digest nil, and field_schemas an empty map.
-The signer's clock defaults to nonnegative system seconds. Req and Finch accept
+Pass `clock:` (an arity-zero function returning integer Unix seconds from 0
+through 253,402,300,799) to replace the default system clock. Req and Finch accept
 the same defaulted signing spec; see [Req and Finch](req-and-finch.md).
 The shared pipeline adds or checks Content-Digest
 and supplies covered Content-Length only over retained bytes. Existing conflicting
@@ -107,10 +108,12 @@ digests reject. It refuses `host` and trailer components; cover `@authority`
 instead. Responses can cover related-request components.
 
 Spec signing accepts a custody handle or an arity-two signer `(algorithm, base)`.
-Both use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
+A handle whose algorithm differs from the spec's `algorithm` returns
+`:invalid_options` at `:input`. Both forms use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
 accepts 1–300,000 ms. Optional `nonce:` supplies caller-owned 32-byte entropy
 instead of generating it; callers must provide fresh entropy for each signing
-attempt. It is ignored when the spec omits nonce. Unknown or duplicate options,
+attempt. It is ignored when the spec sets `nonce: nil`; omitting `nonce` keeps the
+default `:random`, which uses this option. Unknown or duplicate options,
 callback faults, malformed results, and reused labels reject with bounded
 `RequestSeal.Error` values.
 
@@ -216,7 +219,7 @@ parameters.
 
 `RequestSeal.Verification` reports the selected label, profile, covered identifiers, authoritative algorithm, signature parameters, digest checks, freshness checks, and replay receipt. Generic results have `principal: :unattributed` and `authorization: :not_evaluated`. A cryptographically valid shared-secret signature also supplies no identity attribution. Do not log parameters or key IDs; default inspection hides them.
 
-`RequestSeal.Quorum.Verification.signatures` maps assigned labels to those results. `qualifying` records assigned slots and caller counting bindings; `count` counts distinct configured units. `required` lists required slots and `satisfied` includes assigned optional slots. Negotiation checks the verified eligible pool: a valid `Accept-Signature` challenge can be fulfilled without being assigned or appearing in the result map. Nested bindings require both inner signature dictionary members; equal-parameter bindings require the same non-nil value. See `RequestSeal.AcceptSignature` and `RequestSeal.Quorum` for negotiation and assignment limits.
+`RequestSeal.Quorum.Verification.signatures` maps assigned labels to those results. `qualifying` records assigned slots and caller counting bindings; `count` counts distinct configured units. `nonqualifying` lists the bounded label, slot, reason, and layer of each ignored label or failed slot attempt; read it to diagnose `:quorum_not_met`. `required` lists required slots and `satisfied` includes assigned optional slots. Negotiation checks the verified eligible pool: a valid `Accept-Signature` challenge can be fulfilled without being assigned or appearing in the result map. Nested bindings require both inner signature dictionary members; equal-parameter bindings require the same non-nil value. See `RequestSeal.AcceptSignature` and `RequestSeal.Quorum` for negotiation and assignment limits.
 
 ## Errors and next steps
 
@@ -228,8 +231,18 @@ parameters.
 | `:invalid_signature` | Reject: signed bytes or the selected key differ. |
 | `:digest_mismatch` | Reject: body bytes differ from the signed digest. |
 | `:expired` | Reject: the expiration is exclusive; check your clocks and validity window. |
+| `:too_old` | Reject: created plus `max_age` has passed; check clocks or `max_age`. |
+| `:created_in_future` | Reject: the sender's clock is ahead by more than `skew`. |
+| `:missing_created`, `:missing_expires` | The sender must include the parameter your freshness policy requires. |
+| `:unknown_label` | No `Signature-Input`/`Signature` member has this label. |
+| `:digest_not_covered` | The sender must cover the exact digest field your content policy selects. |
+| `:algorithm_not_permitted` | The algorithm is outside `algorithms:`; add it only if you trust it. |
+| `:unexpected_component` | Coverage exceeds the policy under `extra_components: :reject`. |
+| `:label_in_use` | Signing would reuse an existing label; choose another. |
+| `:invalid_options` | Fix the signing specification or options. |
+| `:signer_failed`, `:signing_failed` | The signer function or the key handle failed; `:signing_failed` carries a bounded custody error in `source`, for example `:key_not_found`. |
 | `:quorum_not_met` | The required slots or distinct counting units are not satisfied. |
 
 See [the public contract](../design/architecture.md) for the separate representation, construction, cryptography, profile, trust, integrity, and replay layers. Named application profiles use `RequestSeal.Profile` in extension packages; this extension surface is unstable, so pin RequestSeal exactly. Extensions must enforce their source-specific rules and trusted attribution; a profile stamp alone is no proof.
 
-Module docs: `RequestSeal`, `RequestSeal.Message`, `RequestSeal.SignatureBase`, `RequestSeal.Policy`, `RequestSeal.Verification`, `RequestSeal.Quorum`, `RequestSeal.Quorum.Verification`, `RequestSeal.Digest`, `RequestSeal.Profile`, `RequestSeal.Error`. [Testing](testing.md) distinguishes published vectors, local round trips, independent verifiers, and deployed-peer acceptance. Proposed contracts in design pages do not establish implemented capability.
+Module docs: `RequestSeal`, `RequestSeal.Message`, `RequestSeal.SignatureBase`, `RequestSeal.Policy`, `RequestSeal.Verification`, `RequestSeal.Quorum`, `RequestSeal.Quorum.Verification`, `RequestSeal.Digest`, `RequestSeal.Profile`, `RequestSeal.Error`. `RequestSeal.Error` lists every reason by layer, and the [errors guide](errors.md) shows how to diagnose them. [Testing](testing.md) distinguishes published vectors, local round trips, independent verifiers, and deployed-peer acceptance. Proposed contracts in design pages do not establish implemented capability.

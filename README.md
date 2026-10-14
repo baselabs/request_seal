@@ -531,6 +531,9 @@ RequestSeal's tests run an independently sourced [conformance corpus](docs/refer
 - [Key discovery](docs/guides/key-discovery.md)
 - [JOSE: JWS and JWE](docs/guides/jose.md)
 - [Key custody](docs/guides/key-custody.md)
+- [Rotate signing keys](docs/guides/key-rotation.md)
+- [Diagnose and handle errors](docs/guides/errors.md)
+- [Test your integration](docs/guides/testing-your-integration.md)
 - [Livebooks](livebooks/README.md): executable notebooks for the core flow, a published RFC vector, Plug, Web Bot Auth, and JOSE
 
 API reference: [HexDocs](https://hexdocs.pm/request_seal). Release notes: [CHANGELOG](CHANGELOG.md).
