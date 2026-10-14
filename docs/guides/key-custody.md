@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-10 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Keep signing keys behind a handle
 
@@ -13,7 +13,7 @@
 {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
 ```
 
-A handle exposes signing operations and public metadata, not private key export. Construction explicitly starts a sensitive holder process; loading the library starts nothing. For existing keys, `Custody.Local.import/4` accepts an explicit PEM or private JWK format, validates algorithm/key restrictions, derives the public key, and performs a real sign/verify before returning the handle.
+A handle exposes signing operations and public metadata, not private key export. Construction explicitly starts a sensitive holder process; loading the library starts nothing. For existing keys, `Custody.Local.import/4` accepts an explicit `:pem`, `:der` (PKCS #8), or `:jwk` (private JWK map) format, validates algorithm/key restrictions, derives the public key, and performs a real sign/verify before returning the handle.
 
 ## 2. Sign, verify, and release
 
@@ -100,11 +100,11 @@ integrity alone does not establish sender identity or authorization.
 
 ## Use an SSH agent
 
-`RequestSeal.Custody.SSHAgent.new/4` takes an explicit absolute agent socket path, supported algorithm, and trusted public key. It proves possession by signing and verifying before returning a handle. It never reads SSH_AUTH_SOCK, starts an agent, or loads private files. You start and load your OpenSSH agent, then select its socket explicitly. Supported algorithms include HTTP Ed25519, RSA-v1_5-SHA256, P-256, and P-384, and their documented JWS selections; PSS and HMAC reject. See the module's cited SSH standards and public protocol.
+`RequestSeal.Custody.SSHAgent.new/4` takes a supported algorithm, an explicit absolute agent socket path, a trusted public key, and optional `timeout:`. It proves possession by signing and verifying before returning a handle. It never reads SSH_AUTH_SOCK, starts an agent, or loads private files. You start and load your OpenSSH agent, then select its socket explicitly. Supported algorithms include HTTP Ed25519, RSA-v1_5-SHA256, P-256, and P-384, and their documented JWS selections; PSS and HMAC reject. See the module's cited SSH standards and public protocol.
 
 ## Deadlines and secrets
 
-`Custody.sign/3` and `verify/4` bound work with `timeout:` (default 5,000 ms). Monitored workers terminate on deadlines and caller cancellation; cancellation cannot revoke external work already accepted by a peer. HMAC secret verification stays inside custody; key equivalence for shared secrets is an explicit nonsecret custodian value, never derived by RequestSeal. Public-key resolution does not expose private material. Custodians are trusted code and must propagate deadlines and keep secrets out of logs.
+`Custody.sign/3`, `verify/4`, and `unwrap/3` bound work with `timeout:` (1–300,000 ms, default 5,000). Monitored workers terminate on deadlines and caller cancellation; cancellation cannot revoke external work already accepted by a peer. HMAC secret verification stays inside custody; key equivalence for shared secrets is an explicit nonsecret custodian value, never derived by RequestSeal. Public-key resolution does not expose private material. Custodians are trusted code and must propagate deadlines and keep secrets out of logs.
 
 Signing and verification also accept per-call `max_bytes:`: an integer from 1
 through 16,777,216, with the existing 1,048,576-byte default. Bytes over the
@@ -112,9 +112,11 @@ selected value return `:invalid_data` before the private reference is read.
 Invalid values and duplicate options return `:invalid_options`; `unwrap/3`
 does not accept this option. `RequestSeal.Crypto.sign/4` and `verify/5` expose
 the same option for direct primitive calls. `RequestSeal.SignatureBase` retains
-its separate 1,048,576-byte ceiling. `RequestSeal.Message`, `Body`, JWS, and the
-Plug keep their fixed 1 MiB limits; this release does not propagate the new
-custody/crypto opt-in to those APIs.
+its separate 1,048,576-byte ceiling. `Message.request/5` and `Message.response/4`
+retain at most 1,048,576 body bytes, message fields total at most 1,048,576 bytes,
+and compact JWS and JWE are at most 1,048,576 bytes. `Body.new/1` (`max_bytes:`)
+and `RequestSeal.Plug.Capture` (`max_body_bytes:`) use caller-selected limits. The
+custody `max_bytes:` option changes none of these.
 
 [OpenSSH caps the whole agent message at 256 KiB](https://github.com/openssh/openssh-portable/blob/V_9_9_P1/ssh-agent.c),
 including protocol overhead, so payloads slightly under 262,144 bytes are the
@@ -124,7 +126,7 @@ not raise the agent's limit.
 
 ## Errors
 
-`RequestSeal.Custody.Error` uses bounded reasons. `:key_not_found` means the holder or agent key is gone. `:key_mismatch` means the material cannot serve the selected algorithm. `:unsupported_format` includes PKCS #8 v2 containers. `:deadline_exceeded` stops the operation. Agent `:custodian_unavailable` can describe a retryable pre-send connection failure; post-send `:custodian_protocol` is nonretryable because the signing request may already have reached the agent. Verification proves mathematical validity, not identity attribution or authority.
+`RequestSeal.Custody.Error` uses bounded reasons. `:key_not_found` means the holder or agent key is gone. `:key_mismatch` means the material cannot serve the selected algorithm. `:unsupported_format` includes PKCS #8 v2 containers. `:deadline_exceeded` stops the operation. Agent `:custodian_unavailable` can describe a retryable pre-send connection failure; post-send `:custodian_protocol` is nonretryable because the signing request may already have reached the agent. `:custodian_rejected` means the agent does not hold the trusted key; `:unsupported_algorithm` means no implementation for that selection. Only `:deadline_exceeded` and `:custodian_unavailable` are retryable. Verification proves mathematical validity, not identity attribution or authority.
 
 ## Long-lived owner
 
@@ -222,7 +224,8 @@ The existing arity-two function signer stays synchronous; a valid timeout option
 does not interrupt it. A handle's algorithm must equal `spec.algorithm`.
 Mismatch returns `RequestSeal.Error` with reason `:signer_algorithm_mismatch`,
 layer `:input`, and the exact message string
-`"signer algorithm does not match signature specification"`.
+`"signer algorithm does not match signature specification"`. Generated signing
+specs return `:invalid_options` at `:input` for the same mismatch.
 Custody failures return `RequestSeal.Error` with reason `:signing_failed`, layer
 `:crypto`, and a bounded `RequestSeal.Custody.Error` in `source`. This preserves
 `:key_not_found` and `:deadline_exceeded` for explicit and generated signing specs.

@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Reject repeated signed requests
 
@@ -106,11 +106,11 @@ RequestSeal.Replay.ETS.sweep(replay_pid, retain_until)
 # => {:ok, 1}
 ```
 
-Use a trusted clock consistent with verification. Retention ends at the first rejected second: the minimum of expiration plus skew and created plus max-age plus skew plus one. Multi-node operators sweep at `now - max_internode_skew`, so a claim remains while any verifier can still accept it. Use one freshness bound per namespace; duplicate claims never extend retention. Claims never evict entries, and neither adapter schedules a background sweep.
+Use a trusted clock consistent with verification. Retention ends at the first rejected second: the minimum of expiration plus skew and created plus max-age plus skew plus one. Multi-node operators sweep at `now - max_internode_skew`, so a claim remains while any verifier can still accept it. Use one freshness bound per namespace; duplicate claims never extend retention. Claims never evict entries, and no RequestSeal adapter schedules a background sweep.
 
 ## Choose local or persistent storage
 
-Supervise `RequestSeal.Replay.ETS` with an explicit capacity in your application. It serializes atomic claims and sweeps; owner termination loses the claims. It is local, not a distributed store.
+Supervise `RequestSeal.Replay.ETS` with an explicit `max_entries:` capacity (1 to 10,000,000) in your application. It serializes atomic claims and sweeps; owner termination loses the claims. It is local, not a distributed store.
 
 For durable replay, prefer `RequestSeal.Replay.AshOnetime` with optional
 `{:ash_onetime, "~> 1.5", optional: true}` on Elixir 1.20 or newer. Install
@@ -150,6 +150,6 @@ For Web Bot Auth, use the same generic replay policy fields on its policy. Bind 
 
 ## Errors
 
-`:missing_replay_identifier` means the selected signature has no usable nonce. `:replayed` means a prior claim exists. `:commitment_failed` means your function failed or returned an invalid result. `:store_unavailable`, `:store_timeout`, and `:store_failed` reject authentication, including full stores. A single deadline covers commitment and atomic storage; caller cancellation stops work but cannot undo a committed claim. A timeout may already have committed, so no replay error permits automatic retry.
+`:missing_replay_identifier` means the selected signature has no usable nonce. `:replayed` means a prior claim exists. `:commitment_failed` means your function failed or returned an invalid result. `:store_unavailable`, `:store_timeout`, and `:store_failed` reject authentication, including full stores. A single deadline covers commitment and atomic storage; caller cancellation stops work but cannot undo a committed claim. A timeout may already have committed, so no replay error permits automatic retry. `:retention_exceeded` means the derived retention end is above 253,402,300,799 and rejects before commitment. `RequestSeal.Policy.new/1` returns `:invalid_policy` when required replay lacks bounded freshness (`require_expires: true` or a `max_age`). The [errors guide](errors.md) reproduces `:replayed` and `:missing_replay_identifier`.
 
 Module docs: `RequestSeal.Policy`, `RequestSeal.Replay`, `RequestSeal.Replay.ETS`, `RequestSeal.Replay.AshOnetime`, `RequestSeal.Replay.Postgres`, `RequestSeal.Replay.Store`, `RequestSeal.Replay.Receipt`, `RequestSeal.Error`.

@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Sign JWS and encrypt JWE envelopes
 
@@ -73,78 +73,27 @@ inner.payload
 # => "signed payload"
 ```
 
-The wrapping key stays in your callback. Encryption uses fresh content-encryption keys and IVs from the real random generator. `RequestSeal.JOSE.Nested.verify/4` also supports one-level JWS-in-JWE verification with explicit outer/inner policies and `content_types: ["JWS"]` when the outer protected header declares `cty: "JWS"`. Decryption withholds all plaintext until AEAD authentication succeeds. Recipient integrity alone does not establish sender origin, identity, or request association.
+The wrapping key stays in your callback. Encryption uses fresh content-encryption keys and IVs from the CSPRNG. `RequestSeal.JOSE.Nested.verify/4` also supports one-level JWS-in-JWE verification with explicit outer/inner policies and `content_types: ["JWS"]` when the outer protected header declares `cty: "JWS"`.
+The envelope above omits `cty`; add `{"cty", "JWS"}` to the JWE header before using
+`Nested.verify/4`, or it rejects with `:content_type_mismatch`. Decryption withholds all plaintext until AEAD authentication succeeds. Recipient integrity alone does not establish sender origin, identity, or request association.
 
 ## Decrypt with a recipient key handle
 
-For RSA-OAEP recipient custody, import an unencrypted private PEM into an
-algorithm-bound unwrap handle. This example generates an RSA key locally; use
-your existing PEM when provisioning a long-lived owner. The operation follows
-[RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html) and
-[RFC 7518 Section 4.3](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.3).
-Encrypt to the handle's public key and return the handle from the resolver:
-
-```elixir
-private = :public_key.generate_key({:rsa, 2048, 65537})
-pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPrivateKey, private)])
-
-{:ok, recipient_handle} =
-  RequestSeal.Custody.Local.import({:jwe, "RSA-OAEP-256"}, pem, :pem)
-
-# Run this health check at startup, before accepting encrypted messages.
-{:ok, recipient_public} = RequestSeal.Custody.public_key(recipient_handle)
-
-{:ok, recipient_jwe} =
-  RequestSeal.JOSE.JWE.encrypt(
-    [{"alg", "RSA-OAEP-256"}, {"enc", "A256GCM"}],
-    "recipient payload",
-    recipient_public
-  )
-
-recipient_policy = %{
-  algorithms: ["RSA-OAEP-256"],
-  encryption: ["A256GCM"],
-  max_plaintext: 1_048_576,
-  timeout: 5_000,
-  key_resolver: fn %{algorithm: "RSA-OAEP-256"} ->
-    {:ok, %{algorithm: "RSA-OAEP-256", key: recipient_handle}}
-  end
-}
-
-{:ok, recipient_result} = RequestSeal.JOSE.JWE.decrypt(recipient_jwe, recipient_policy)
-recipient_result.plaintext
-# => "recipient payload"
-:ok = RequestSeal.Custody.Local.release(recipient_handle)
-```
-
-The RSA private key stays in the sensitive local holder. The CEK passes through
-the sensitive custody runner and middle process to JWE's sensitive worker. Those
-four processes see the CEK; the outer JWE middle process and your decrypt caller
-receive only the authenticated result. A direct `Custody.unwrap/3` caller receives
-unwrapped bytes and owns their protection.
-
-OAEP unwrap and GCM authentication failures return the identical complete
-`%RequestSeal.JOSE.Error{reason: :decryption_failed, layer: :crypto,
-correlation: nil, retryable: false}`. A released or unavailable resolved handle
-makes every decrypt fail with that same error as a forged message, by design.
-Use `RequestSeal.Custody.public_key(handle)` as a startup health check: successful
-public resolution returns `{:ok, public_key}`; a stopped holder returns
-`{:error, %RequestSeal.Custody.Error{reason: :key_not_found, retryable: false}}`.
-This check reports custody availability separately from attacker-controlled
-message failures. Deadline expiration remains a distinct error.
-
-Reuse recipient handles in a long-lived owner. Release each handle when it is no
-longer needed; holders also stop when their creating process exits. Recipient
-integrity alone does not establish sender identity or authorization.
+For RSA-OAEP, keep the recipient's private key in an algorithm-bound custody
+handle and return that handle from the key resolver. [Decryption keys](key-custody.md#decryption-keys)
+shows the import, the startup health check, and why a released handle fails
+exactly like a forged message.
 
 ## Options and bounds
 
-Choose exact algorithm allowlists, timeout, content-encryption algorithms, and maximum plaintext. Compact envelopes are at most 1 MiB, protected JSON at most 16 KiB and depth four. Base64url is canonical and unpadded. Duplicate JSON members and floats reject. Compression, detached JWS, JSON serializations, remote/embedded key headers, `b64`, and `crit` are unsupported; choose a different protocol contract when those are required.
+JWS algorithms are `RS256`, `PS256`, `PS384`, `PS512`, `HS256`, `ES256`, `ES384`, and `EdDSA`. JWE key management is `RSA-OAEP-256`, `RSA-OAEP`, `A128GCMKW`, `A256GCMKW`, or `dir`; content encryption is `A128GCM` or `A256GCM`.
+
+Choose exact algorithm allowlists, timeout, content-encryption algorithms, and maximum plaintext. Compact envelopes are at most 1 MiB, protected JSON at most 16 KiB and depth four. Base64url is canonical and unpadded. Duplicate JSON members and floats reject. Compression, detached JWS, JSON serializations, the `jku`, `x5u`, and `jwk` key headers, `b64`, and `crit` are unsupported (`x5c` is accepted only as untrusted data); choose a different protocol contract when those are required.
 
 This is generic JOSE, with no JWT claims policy, implicit key lookup, provider profile, trust anchor, freshness, replay, or authorization. Apply those application rules separately. Tests use Node WebCrypto as an independent verifier, in addition to published vectors and local cryptography.
 
 ## Errors
 
-`RequestSeal.JOSE.Error` carries bounded reasons and no input text. `:invalid_signature` rejects a JWS mismatch. `:decryption_failed` covers key unwrap and AEAD failure without releasing partial plaintext. `:detached_payload` rejects empty JWS payloads. `:algorithm_not_permitted`, `:invalid_options`, and `:limit` require a supported explicit contract or smaller input. Inspect the module's exact reason/layer list before implementing error handling.
+`RequestSeal.JOSE.Error` carries bounded reasons and no input text. `:invalid_signature` rejects a JWS mismatch. `:decryption_failed` covers key unwrap and AEAD failure without releasing partial plaintext. `:detached_payload` rejects empty JWS payloads. `:algorithm_not_permitted`, `:invalid_options`, and `:limit` require a supported explicit contract or smaller input. `:unknown_key` and `:key_resolver_failed` come from your resolver; `Nested` adds `:content_type_mismatch` and `:nesting_depth`; a failing wrap callback is `:signer_failed`. Only `:deadline_exceeded` is retryable. Each function's documentation lists the exact reasons it can return.
 
 Module docs: `RequestSeal.JOSE`, `RequestSeal.JOSE.JWS`, `RequestSeal.JOSE.JWE`, `RequestSeal.JOSE.Nested`, `RequestSeal.JOSE.KeyManagement`, `RequestSeal.JOSE.Error`.
