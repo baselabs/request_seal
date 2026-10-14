@@ -5,6 +5,7 @@
 ### Breaking changes
 
 - `RequestSeal.AshHooks.Http.request/5` now requires a nonce on every signed attempt: a signing spec with `nonce: nil` returns `{:error, {:terminal, :request_seal_signing_failed}}` before any request is sent. It previously signed such attempts without a nonce. Remove `nonce: nil` from ash_hooks signing specs.
+- `RequestSeal.Plug.Verify` on an already verified connection: a repeat with the same `:policy` and `:label` now reuses the first result; a repeat with any other policy or label fails closed. `RequestSeal.Plug.verification/1` then returns `:error`, private state holds `{:error, %RequestSeal.Adapter.Error{reason: :already_verified}}`, every Verify assign is removed, and `on_reject` applies. Previously any repeat replaced the result with that error. Migration: install Verify once per pipeline; if a route needs stricter checks, verify once with the stricter policy instead of stacking a second Verify.
 
 ### Fixed
 
@@ -14,7 +15,7 @@
 - `RequestSeal.sign/4` with a generated signing spec now returns `:signer_algorithm_mismatch` (layer `:input`) for a key handle bound to another algorithm, like the explicit form; it returned `:invalid_options`. Req, Finch, and Plug keep `:invalid_options` and carry the core error in `source`.
 - `RequestSeal.Profile.dictionaries/2` now rejects an invalid message (`:invalid_message`) and a `max` outside 1..64 (`:invalid_options`) before parsing; both returned `:invalid_signature_input`. `RequestSeal.Profile.preflight/4` now rejects an `extra` other than `:allow` or `:reject` and invalid freshness values, such as a negative skew, with `:invalid_policy`; it used them as given.
 - `RequestSeal.Req.attach/2` now rejects a `verify` map whose `max_stream_bytes` is not a nonnegative integer, including nil, with `:invalid_options`; nil returned `:unsupported_delivery`.
-- `RequestSeal.Plug.Verify` called again on a verified connection now keeps the first result and its assign, records `:already_verified` as the connection's private `:error`, and applies `on_reject`; it replaced the result with the error and removed the assign. `Verify.init/1` now rejects a Boolean `:assign`.
+- `Verify.init/1` now rejects a Boolean `:assign`.
 - `RequestSeal.JOSE.JWS.sign/4` and `RequestSeal.JOSE.JWE.encrypt/4` now return `:invalid_header` for a header that is not a list of `{name, value}` pairs; it returned `:limit`. More than 64 pairs remains `:limit`.
 - `RequestSeal.WebBotAuth.sign/4` now rejects an invalid caller-supplied `:agent` location, such as a non-HTTPS URL, with `:invalid_options` at `:input`; it returned `:invalid_signature_agent` at `:fields`, which describes a received header. An invalid existing `Signature-Agent` field keeps that reason.
 - `corpus/index.json` now names `v0.4.1`, matching the package version, and the declared gate fails whenever `elixir_release` differs from `v` plus the `mix.exs` version. The v0.4.1 tag's corpus release workflow failed on the stale `v0.4.0` value, so v0.4.1 has no corpus release; its corpus files match v0.4.0's apart from that field. The next release publishes its corpus once the gate passes.

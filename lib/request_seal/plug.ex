@@ -2,7 +2,15 @@ if Code.ensure_loaded?(Plug.Conn) do
   defmodule RequestSeal.Plug.State do
     @moduledoc false
     @derive {Inspect, only: []}
-    defstruct [:capture, :verification, :error, :replay_id, reader_called?: false]
+    defstruct [
+      :capture,
+      :verification,
+      :error,
+      :replay_id,
+      :verified_by,
+      reader_called?: false,
+      verify_assigns: []
+    ]
 
     def get(conn), do: Map.get(conn.private, :request_seal, %__MODULE__{})
     def put(conn, state), do: Plug.Conn.put_private(conn, :request_seal, state)

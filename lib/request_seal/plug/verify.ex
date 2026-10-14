@@ -105,10 +105,15 @@ if Code.ensure_loaded?(Plug.Conn) do
     @doc """
     Verifies the captured request once and records the result in private state.
 
-    A connection is verified at most once. If Verify already ran on it, a
-    later call leaves the earlier result and its assign unchanged, records an
-    `:already_verified` `RequestSeal.Adapter.Error` as the connection's private
-    `:error`, and applies `:on_reject`.
+    A connection is verified at most once. A later Verify with the same
+    `:policy` and `:label` values as the first is idempotent: it reuses the
+    first result (assigning it under its own `:assign` on success) and applies
+    `:on_reject` again on a rejection. A later Verify with any other policy or
+    label fails closed: private state's `:verification` becomes
+    `{:error, %RequestSeal.Adapter.Error{reason: :already_verified}}`, so
+    `RequestSeal.Plug.verification/1` returns `:error` from then on, every
+    assign made by Verify on the connection is removed, and `:on_reject`
+    applies. The `:policy` and `:label` values are compared with `==`.
 
     Checks run in this order: a missing capture, the
     replay checks, policy resolution, target-dependent coverage, then
@@ -190,10 +195,13 @@ if Code.ensure_loaded?(Plug.Conn) do
         iex> {verification.label, verification.authorization, conn.assigns.signature == verification}
         {"sig", :not_evaluated, true}
         iex> again = RequestSeal.Plug.Verify.call(conn, verify)
-        iex> {again.private.request_seal.error.reason, again.status, again.halted}
-        {:already_verified, 401, true}
-        iex> {RequestSeal.Plug.verification(again) == {:ok, verification}, again.assigns.signature == verification}
-        {true, true}
+        iex> {RequestSeal.Plug.verification(again) == {:ok, verification}, again.halted}
+        {true, false}
+        iex> other = RequestSeal.Plug.Verify.init(policy: policy, label: "other", on_reject: {:halt, 401})
+        iex> refused = RequestSeal.Plug.Verify.call(again, other)
+        iex> {:error, error} = refused.private.request_seal.verification
+        iex> {error.reason, RequestSeal.Plug.verification(refused), Map.has_key?(refused.assigns, :signature), refused.status}
+        {:already_verified, :error, false, 401}
         iex> RequestSeal.Custody.Local.release(handle)
         :ok
     """
@@ -201,18 +209,24 @@ if Code.ensure_loaded?(Plug.Conn) do
     def call(conn, opts) do
       state = State.get(conn)
 
-      if state.verification != nil, do: refuse_repeat(conn, opts), else: verify(conn, state, opts)
+      cond do
+        state.verification == nil ->
+          verify(conn, state, opts)
+
+        state.verified_by == {opts[:policy], opts[:label]} ->
+          apply_result(conn, state, opts, state.verification)
+
+        true ->
+          refuse_repeat(conn, state, opts)
+      end
     end
 
-    # A repeated Verify leaves the first result and its assign in place; it
-    # records the refusal as the connection's bounded error and applies on_reject.
-    defp refuse_repeat(conn, opts) do
-      conn = State.error(conn, Error.new(:already_verified, :plug, :verify, 0))
-
-      case opts[:on_reject] do
-        :continue -> conn
-        {:halt, status} -> conn |> Plug.Conn.send_resp(status, "") |> Plug.Conn.halt()
-      end
+    # A repeat with any other policy or label must not inherit the earlier
+    # result: the connection is no longer verified and every Verify assign goes.
+    defp refuse_repeat(conn, state, opts) do
+      result = {:error, Error.new(:already_verified, :plug, :verify, 0)}
+      conn = %{conn | assigns: Map.drop(conn.assigns, state.verify_assigns)}
+      apply_result(conn, %{state | verified_by: :refused}, opts, result)
     end
 
     defp verify(conn, state, opts) do
@@ -249,7 +263,15 @@ if Code.ensure_loaded?(Plug.Conn) do
           end
         end)
 
-      conn = State.put(conn, %{state | verification: result})
+      apply_result(conn, %{state | verified_by: {opts[:policy], opts[:label]}}, opts, result)
+    end
+
+    defp apply_result(conn, state, opts, result) do
+      assigns =
+        if opts[:assign], do: [opts[:assign] | state.verify_assigns], else: state.verify_assigns
+
+      conn =
+        State.put(conn, %{state | verification: result, verify_assigns: Enum.uniq(assigns)})
 
       case result do
         {:ok, result} ->

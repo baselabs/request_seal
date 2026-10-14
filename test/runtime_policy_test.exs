@@ -159,7 +159,7 @@ defmodule RequestSeal.RuntimePolicyTest do
     assert_receive :policy_resolved, 5_000
     assert_receive {:observed, conn, _, {:ok, _}}, 5_000
     assert {:ok, _} = conn.private.request_seal.verification
-    assert %Error{reason: :already_verified} = conn.private.request_seal.error
+    assert conn.private.request_seal.error == nil
     refute_receive :policy_resolved
 
     for assign <- [true, false, "signature", 1] do
