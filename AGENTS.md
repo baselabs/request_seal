@@ -36,7 +36,7 @@ deliberately when adding a public guide or notebook; execute the disclosure chec
 Keep internal work plans, review history, local tooling state, and personal workflow
 out of public source, package contents, and generated documentation.
 No business material, named customer/prospect/sponsor/champion assessment, pricing,
-confidential invention detail, machine path, or link into a private path belongs here.
+confidential design detail, machine path, or link into a private path belongs here.
 Use US English. Non-record Markdown carries Status, Kind, Updated, Governed by, and
 Review when metadata. ADRs and the changelog are records. Release summaries go in
 CHANGELOG.md; durable technical decisions go in ADRs. Keep this contract below 200 lines.
