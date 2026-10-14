@@ -1,24 +1,29 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - Unreleased
 
 ### Breaking changes
 
 - `RequestSeal.AshHooks.Http.request/5` now requires a nonce on every signed attempt: a signing spec with `nonce: nil` returns `{:error, {:terminal, :request_seal_signing_failed}}` before any request is sent. It previously signed such attempts without a nonce. Remove `nonce: nil` from ash_hooks signing specs.
 - `RequestSeal.Plug.Verify` on an already verified connection: a repeat with the same `:policy` and `:label` now reuses the first result; a repeat with any other policy or label fails closed. `RequestSeal.Plug.verification/1` then returns `:error`, private state holds `{:error, %RequestSeal.Adapter.Error{reason: :already_verified}}`, every Verify assign is removed, and `on_reject` applies. Previously any repeat replaced the result with that error. Migration: install Verify once per pipeline; if a route needs stricter checks, verify once with the stricter policy instead of stacking a second Verify.
 
+### Changed
+
+Closed error reasons that callers may match on changed as follows (old → new).
+
+- `RequestSeal.Discovery.Cache.resolve/4` and `refresh/2` on a cache that is not running: `:invalid_response` (not retryable) → `:source_unavailable` (retryable), as `remove/3` and `invalidate/2` already returned.
+- `RequestSeal.Replay.Postgres`: a lost connection or a shutting-down server, `:store_failed` → `:store_unavailable`; a server-side statement cancellation or lock timeout, `:store_failed` → `:store_timeout`. Other database errors stay `:store_failed`.
+- `RequestSeal.Replay.Postgres` and `RequestSeal.Replay.AshOnetime`: a pool queue timeout, or a connection failure or rolled-back transaction observed after the claim's deadline (a client timeout), `:store_unavailable` or `:store_failed` → `:store_timeout`.
+- `RequestSeal.sign/4` with a generated signing spec and a key handle bound to another algorithm: `:invalid_options` → `:signer_algorithm_mismatch` (layer `:input`), like the explicit form. Req, Finch, and Plug keep `:invalid_options` and carry the core error in `source`.
+- `RequestSeal.Profile.dictionaries/2` with an invalid message or a `max` outside 1..64: `:invalid_signature_input` → `:invalid_message` or `:invalid_options`, checked before parsing. `RequestSeal.Profile.preflight/4` with an `extra` other than `:allow` or `:reject`, or invalid freshness values such as a negative skew: used as given (for example `:unexpected_component` or `:expired`) → `:invalid_policy`.
+- `RequestSeal.Req.attach/2` with a `verify` map whose `max_stream_bytes` is nil: `:unsupported_delivery` → `:invalid_options`, as for any other non-integer or negative value.
+- `RequestSeal.Plug.Verify.init/1` with a Boolean `:assign`: accepted → raises `RequestSeal.Adapter.Error` with `:invalid_options`.
+- `RequestSeal.JOSE.JWS.sign/4` and `RequestSeal.JOSE.JWE.encrypt/4` with a header that is not a list of `{name, value}` pairs: `:limit` → `:invalid_header`. More than 64 pairs stays `:limit`.
+- `RequestSeal.WebBotAuth.sign/4` with an invalid caller-supplied `:agent` location, such as a non-HTTPS URL: `:invalid_signature_agent` at `:fields` → `:invalid_options` at `:input`. An invalid existing `Signature-Agent` field keeps `:invalid_signature_agent`.
+
 ### Fixed
 
-- `RequestSeal.Discovery.Cache.resolve/4` and `refresh/2` on a cache that is not running now return `:source_unavailable` (retryable), like `remove/3` and `invalidate/2`; they returned a nonretryable `:invalid_response`.
-
-- `RequestSeal.Replay.Postgres` now reports a lost connection or a shutting-down server as `:store_unavailable`, and a server-side statement cancellation or lock timeout as `:store_timeout`, matching `RequestSeal.Replay.AshOnetime`; both were `:store_failed`. Other database errors remain `:store_failed`.
-- `RequestSeal.sign/4` with a generated signing spec now returns `:signer_algorithm_mismatch` (layer `:input`) for a key handle bound to another algorithm, like the explicit form; it returned `:invalid_options`. Req, Finch, and Plug keep `:invalid_options` and carry the core error in `source`.
-- `RequestSeal.Profile.dictionaries/2` now rejects an invalid message (`:invalid_message`) and a `max` outside 1..64 (`:invalid_options`) before parsing; both returned `:invalid_signature_input`. `RequestSeal.Profile.preflight/4` now rejects an `extra` other than `:allow` or `:reject` and invalid freshness values, such as a negative skew, with `:invalid_policy`; it used them as given.
-- `RequestSeal.Req.attach/2` now rejects a `verify` map whose `max_stream_bytes` is not a nonnegative integer, including nil, with `:invalid_options`; nil returned `:unsupported_delivery`.
-- `Verify.init/1` now rejects a Boolean `:assign`.
-- `RequestSeal.JOSE.JWS.sign/4` and `RequestSeal.JOSE.JWE.encrypt/4` now return `:invalid_header` for a header that is not a list of `{name, value}` pairs; it returned `:limit`. More than 64 pairs remains `:limit`.
-- `RequestSeal.WebBotAuth.sign/4` now rejects an invalid caller-supplied `:agent` location, such as a non-HTTPS URL, with `:invalid_options` at `:input`; it returned `:invalid_signature_agent` at `:fields`, which describes a received header. An invalid existing `Signature-Agent` field keeps that reason.
-- `corpus/index.json` now names `v0.4.1`, matching the package version, and the declared gate fails whenever `elixir_release` differs from `v` plus the `mix.exs` version. The v0.4.1 tag's corpus release workflow failed on the stale `v0.4.0` value, so v0.4.1 has no corpus release; its corpus files match v0.4.0's apart from that field. The next release publishes its corpus once the gate passes.
+- `corpus/index.json`'s `elixir_release` now follows the package version, and the declared gate fails whenever it differs from `v` plus the `mix.exs` version. At the v0.4.1 tag the corpus was identical to v0.4.0's, `elixir_release: "v0.4.0"` included, so the corpus release workflow refused the tag and v0.4.1 has no corpus release. The field reads `v0.4.1` only from this change on; the next release publishes its corpus once the gate passes.
 
 ### Documentation
 
