@@ -10,10 +10,12 @@ trust boundaries, and threat responses are in [the threat model](docs/design/thr
 Never put private keys, tokens, customer payloads, credentials, or exploitable undisclosed
 details into public issues, logs, notebooks, or chat transcripts.
 
-This repository does not yet publish a private disclosure route: GitHub private
-vulnerability reporting is not enabled and no security contact address is listed. Until
-one is documented here, contact the maintainer through an already established private
-channel and request secure coordination before sharing sensitive material.
+Report vulnerabilities privately through GitHub: open the repository's
+[Security tab](https://github.com/baselabs/request_seal/security) and choose
+"Report a vulnerability," or go directly to
+[the private report form](https://github.com/baselabs/request_seal/security/advisories/new).
+Only the reporter and the maintainers can see the report. Do not open a public issue
+for a vulnerability.
 
 ## Supported releases
 

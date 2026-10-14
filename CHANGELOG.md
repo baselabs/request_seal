@@ -24,7 +24,7 @@
 - Every public function now documents its parameters, options with defaults and bounds, return shape, the error reasons it can return, and executed doctest examples. `RequestSeal.Req.attach/2`, `RequestSeal.Req.verification/1`, the `RequestSeal.Finch` functions, `RequestSeal.JOSE.JWS.sign/4`, `RequestSeal.JOSE.KeyManagement.wrap/4` and `unwrap/4`, and `RequestSeal.JOSE.Nested.verify/4` had no documentation before. Replay store callbacks are documented on each adapter.
 - `RequestSeal.Ash.Scope`'s type now admits `replay: :claimed`, which `RequestSeal.Ash.scope/2` already produced.
 - New guides: diagnose and handle errors, rotate signing keys, and test your integration. New Livebooks: core signing and verification, a Plug webhook receiver, Web Bot Auth, and JOSE; the RFC 9421 notebook now verifies the published vector through RequestSeal.
-- Corrected documentation: size limits of `Body` and Plug capture, the spec-form nonce option, Web Bot Auth `max_lifetime`, the Req redirect default, the TypeScript package name (`@request-seal/core`), SECURITY.md's description of the library, and the release runbook.
+- Corrected documentation: size limits of `Body` and Plug capture, the spec-form nonce option, Web Bot Auth `max_lifetime`, the Req redirect default, the TypeScript package name (`@request-seal/core`), SECURITY.md's description of the library and its private vulnerability reporting route (GitHub's "Report a vulnerability"), and the release runbook.
 
 ## 0.4.1 - 2026-10-10
 
