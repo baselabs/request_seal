@@ -3,14 +3,8 @@ defmodule RequestSeal.Custody.Local.Owner do
   Caller-supervised owner of Ed25519 signing handles.
 
   Add `{RequestSeal.Custody.Local.Owner, name: MyApp.Custody, keys: keys}` to
-  your supervision tree. `keys` is a keyword list of
-  `name: {"ed25519", source}` entries. Sources are `{:env, variable, encoding}`,
-  `{:file, path, encoding}`, or `{:file_from_env, variable, encoding}`; the last
-  reads a file path from the variable. Encodings are `:base64url` (padding optional),
-  `:base64` (padded), `:hex` (either case), or `:raw`. Only ASCII space, tab, CR,
-  and LF are trimmed from text encodings; raw bytes are unchanged. Base64
-  encodings must be canonical. Decoded seeds must be exactly 32 bytes. Source
-  inputs are limited to 4,096 bytes, including whitespace. There is no guess-decoding.
+  your supervision tree. `start_link/1` documents the key sources and encodings;
+  there is no guess-decoding.
 
   Files must be regular, not symbolic links, with mode 0600 or stricter (no
   execute, group, other, or special permission bits). Use `{:file, ...}` in
@@ -18,11 +12,7 @@ defmodule RequestSeal.Custody.Local.Owner do
   environment seeds; environment values cannot safely represent arbitrary binary
   data. Keep source paths and their parent directories under trusted control during startup.
 
-  Bad keys do not prevent startup. `status/1` reports `:ready`, `:unconfigured`
-  (missing or empty variable, missing file, or stopped holder), or `{:error, reason}`
-  with `:invalid_seed`, `:insecure_file`, or `:unreadable`. `fetch/2` returns `{:error, :unconfigured}`
-  for a missing or failed key. Calls to a stopped or busy owner return
-  `{:error, :owner_unavailable}` from `fetch/2` and `status/1`; `ready?/2` is false.
+  Bad keys do not prevent startup; `status/1` reports each key's bounded status.
   No signing capability is issued for a bad source.
   Key names, variable names, and paths are configuration, never seed values.
 
@@ -50,7 +40,39 @@ defmodule RequestSeal.Custody.Local.Owner do
   @type options :: [name: atom(), keys: [{atom(), {binary(), source()}}]]
   @max_source_bytes 4_096
 
-  @doc "Build a child specification containing source descriptors, never loaded seeds."
+  @doc """
+  Build a child specification containing source descriptors, never loaded seeds.
+
+  ## Parameters
+
+    * `opts` - the same `:name` and `:keys` options as `start_link/1`.
+
+  ## Returns
+
+    * a `t:Supervisor.child_spec/0` map whose `:id` is `:name` (or this module
+      when no name is given) and whose `:start` calls `start_link/1`. A key entry
+      that is not a valid `{"ed25519", source}` descriptor is replaced by
+      `:invalid_seed`, so the supervisor never retains it.
+
+  Raises `ArgumentError` ("invalid custody owner options") when `opts` fails the
+  checks that make `start_link/1` return `{:error, :invalid_options}`.
+
+  ## Examples
+
+      iex> keys = [builds: {"ed25519", {:file, "/etc/example/builds.key", :base64url}}]
+      iex> RequestSeal.Custody.Local.Owner.child_spec(name: MyApp.Custody, keys: keys)
+      %{
+        id: MyApp.Custody,
+        start: {RequestSeal.Custody.Local.Owner, :start_link, [[name: MyApp.Custody, keys: keys]]}
+      }
+      iex> RequestSeal.Custody.Local.Owner.child_spec(keys: [builds: {"rsa", {:env, "BUILD_KEY", :hex}}])
+      %{
+        id: RequestSeal.Custody.Local.Owner,
+        start: {RequestSeal.Custody.Local.Owner, :start_link, [[name: nil, keys: [builds: :invalid_seed]]]}
+      }
+      iex> RequestSeal.Custody.Local.Owner.child_spec(keys: :none)
+      ** (ArgumentError) invalid custody owner options
+  """
   @spec child_spec(options()) :: Supervisor.child_spec()
   def child_spec(opts) do
     case options(opts) do
@@ -62,7 +84,66 @@ defmodule RequestSeal.Custody.Local.Owner do
     end
   end
 
-  @doc "Start a linked owner with a fixed set of source descriptors."
+  @doc ~S"""
+  Start a linked owner with a fixed set of source descriptors.
+
+  Every source is read once during start (and again on each restart); each valid
+  seed becomes one `RequestSeal.Custody.Local` handle owned by this process.
+
+  ## Parameters
+
+    * `opts` - keyword list; see Options. Unknown or duplicate options reject.
+
+  ## Options
+
+    * `:name` - optional atom used to register the owner (not `true` or `false`).
+      Default: not registered.
+    * `:keys` - required keyword list of `key_name: {"ed25519", source}` entries
+      with unique atom key names. Sources:
+      * `{:env, variable, encoding}` - the seed is the value of `variable`.
+      * `{:file, path, encoding}` - the seed is the content of the file at `path`.
+      * `{:file_from_env, variable, encoding}` - reads a file path from `variable`,
+        then reads that file.
+
+      Encodings are `:base64url` (padding optional), `:base64` (padded), `:hex`
+      (either case), or `:raw`. Only ASCII space, tab, CR, and LF are trimmed from
+      text encodings; raw bytes are unchanged. Base64 encodings must be canonical.
+      Decoded seeds must be exactly 32 bytes. Source inputs are limited to 4,096
+      bytes, including whitespace. An entry that is not of this shape does not
+      stop startup; its status is `{:error, :invalid_seed}`.
+
+  ## Returns
+
+    * `{:ok, pid}` - the owner started, whatever the status of individual keys.
+    * `{:error, :invalid_options}` - `opts` is not a keyword list, has an unknown
+      or duplicate option, lacks a keyword-list `:keys`, repeats a key name, or
+      has a `:name` that is not an atom or is a boolean.
+    * any other `t:GenServer.on_start/0` result, such as
+      `{:error, {:already_started, pid}}` when `:name` is taken.
+
+  ## Examples
+
+  A build signer reads its seed from a 0600 file. The file is created and
+  restricted before the seed is written, then removed after the owner stops.
+
+      iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> path = Path.join(System.tmp_dir!(), "request-seal-builds-#{System.unique_integer([:positive])}.key")
+      iex> File.touch!(path)
+      :ok
+      iex> File.chmod!(path, 0o600)
+      :ok
+      iex> File.write!(path, Base.url_encode64(seed, padding: false) <> "\n")
+      :ok
+      iex> {:ok, owner} = RequestSeal.Custody.Local.Owner.start_link(keys: [builds: {"ed25519", {:file, path, :base64url}}])
+      iex> RequestSeal.Custody.Local.Owner.status(owner)
+      %{builds: :ready}
+      iex> GenServer.stop(owner)
+      :ok
+      iex> File.rm!(path)
+      :ok
+      iex> RequestSeal.Custody.Local.Owner.start_link(keys: [builds: {"ed25519", {:file, path, :base64url}}], timeout: 1_000)
+      {:error, :invalid_options}
+  """
   @spec start_link(options()) :: GenServer.on_start()
   def start_link(opts) do
     case options(opts) do
@@ -74,7 +155,44 @@ defmodule RequestSeal.Custody.Local.Owner do
     end
   end
 
-  @doc "Fetch a handle; distinguish an unconfigured key from an unavailable owner."
+  @doc ~S"""
+  Fetch a handle; distinguish an unconfigured key from an unavailable owner.
+
+  The handle's holder is owned and monitored by the owner, not by the caller;
+  do not release it unless the key should stay unavailable until the owner restarts.
+
+  ## Parameters
+
+    * `owner` - the owner's PID or registered name (`t:GenServer.server/0`).
+    * `name` - the atom key name given in `:keys`.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.KeyHandle{}}` - an Ed25519 signing handle whose holder
+      was alive when the owner replied.
+    * `{:error, :unconfigured}` - the name is unknown, its source was missing,
+      empty, or failed, or its holder has stopped.
+    * `{:error, :owner_unavailable}` - the owner is stopped or did not reply
+      within the default `GenServer.call/3` timeout.
+
+  ## Examples
+
+      iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> variable = "REQUEST_SEAL_DOC_SEED_#{System.unique_integer([:positive])}"
+      iex> System.put_env(variable, Base.encode16(seed))
+      :ok
+      iex> {:ok, owner} = RequestSeal.Custody.Local.Owner.start_link(keys: [crawler: {"ed25519", {:env, variable, :hex}}])
+      iex> System.delete_env(variable)
+      :ok
+      iex> {:ok, handle} = RequestSeal.Custody.Local.Owner.fetch(owner, :crawler)
+      iex> {:ok, _signature} = RequestSeal.Custody.sign(handle, "GET https://www.example.org/robots.txt")
+      iex> RequestSeal.Custody.Local.Owner.fetch(owner, :messaging)
+      {:error, :unconfigured}
+      iex> GenServer.stop(owner)
+      :ok
+      iex> RequestSeal.Custody.Local.Owner.fetch(owner, :crawler)
+      {:error, :owner_unavailable}
+  """
   @spec fetch(GenServer.server(), atom()) ::
           {:ok, KeyHandle.t()} | {:error, :unconfigured | :owner_unavailable}
   def fetch(owner, name) do
@@ -83,7 +201,41 @@ defmodule RequestSeal.Custody.Local.Owner do
     :exit, _ -> {:error, :owner_unavailable}
   end
 
-  @doc "Return each configured key's bounded status."
+  @doc ~S"""
+  Return each configured key's bounded status.
+
+  ## Parameters
+
+    * `owner` - the owner's PID or registered name (`t:GenServer.server/0`).
+
+  ## Returns
+
+    * a map from each configured key name to:
+      * `:ready` - a handle is available.
+      * `:unconfigured` - missing or empty variable, missing file, or stopped holder.
+      * `{:error, :invalid_seed}` - the source decoded to no valid 32-byte seed,
+        or the key entry was malformed.
+      * `{:error, :insecure_file}` - the file is not a regular file with mode 0600
+        or stricter, or it changed identity during reading.
+      * `{:error, :unreadable}` - the source could not be read.
+    * `{:error, :owner_unavailable}` - the owner is stopped or did not reply
+      within the default `GenServer.call/3` timeout.
+
+  ## Examples
+
+      iex> unset = "REQUEST_SEAL_DOC_UNSET_#{System.unique_integer([:positive])}"
+      iex> keys = [
+      ...>   messaging: {"ed25519", {:env, unset, :base64url}},
+      ...>   orders: {"ed25519", {:url, "https://keys.example.com/orders", :hex}}
+      ...> ]
+      iex> {:ok, owner} = RequestSeal.Custody.Local.Owner.start_link(keys: keys)
+      iex> RequestSeal.Custody.Local.Owner.status(owner)
+      %{messaging: :unconfigured, orders: {:error, :invalid_seed}}
+      iex> GenServer.stop(owner)
+      :ok
+      iex> RequestSeal.Custody.Local.Owner.status(owner)
+      {:error, :owner_unavailable}
+  """
   @spec status(GenServer.server()) :: %{atom() => key_status()} | {:error, :owner_unavailable}
   def status(owner) do
     GenServer.call(owner, :status)
@@ -91,7 +243,33 @@ defmodule RequestSeal.Custody.Local.Owner do
     :exit, _ -> {:error, :owner_unavailable}
   end
 
-  @doc "Report whether a handle is available for the named key."
+  @doc ~S"""
+  Report whether a handle is available for the named key.
+
+  Equivalent to `match?({:ok, _}, fetch(owner, name))`. Readiness is a snapshot;
+  a holder can still stop between this call and a signing call.
+
+  ## Parameters
+
+    * `owner` - the owner's PID or registered name (`t:GenServer.server/0`).
+    * `name` - the atom key name given in `:keys`.
+
+  ## Returns
+
+    * `true` - `fetch/2` would return a handle.
+    * `false` - the key is unconfigured or the owner is unavailable.
+
+  ## Examples
+
+      iex> unset = "REQUEST_SEAL_DOC_UNSET_#{System.unique_integer([:positive])}"
+      iex> {:ok, owner} = RequestSeal.Custody.Local.Owner.start_link(keys: [documents: {"ed25519", {:env, unset, :hex}}])
+      iex> RequestSeal.Custody.Local.Owner.ready?(owner, :documents)
+      false
+      iex> GenServer.stop(owner)
+      :ok
+      iex> RequestSeal.Custody.Local.Owner.ready?(owner, :documents)
+      false
+  """
   @spec ready?(GenServer.server(), atom()) :: boolean()
   def ready?(owner, name), do: match?({:ok, _}, fetch(owner, name))
 

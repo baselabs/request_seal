@@ -21,21 +21,14 @@ defmodule RequestSeal.Crypto do
   and select the extension through trusted configuration/key metadata. These
   primitives consume the entire base directly, with no JOSE header or Base64 step.
 
-  Signing material is an operation-local descriptor: `{:rsa, otp_private_key}`,
-  `{:ec, "P-256" | "P-384", scalar_bytes}`, `{:ed25519, seed_bytes}` (32 bytes),
-  or `{:hmac, secret_bytes}`. Verification accepts `RequestSeal.PublicKey` or,
-  only inside the HMAC custodian, `{:hmac, secret_bytes}`. HMAC secrets must be
+  `sign/4` takes operation-local signing material and `verify/5` a
+  `RequestSeal.PublicKey`; their documentation lists the descriptors. HMAC secrets must be
   32–16,384 bytes for both `"hmac-sha256"` and `{:jws, "HS256"}`; there is no
   key-equivalence derivation. HMAC compares
   with OTP `:crypto.hash_equals/2`. HMAC proves shared-secret possession only.
 
-  Bases are binaries of at most 1,048,576 bytes by default. `sign/4` and `verify/5`
-  accept per-call `max_bytes:` (integer 1–16,777,216). Bytes exceeding the selected
-  value return `:invalid_data`; out-of-range, non-integer, unknown, and duplicate
-  options return `:invalid_options`. Options are validated before resolving the
-  algorithm, so invalid options take precedence over an unsupported algorithm.
-  This does not change `RequestSeal.SignatureBase`'s
-  separate 1,048,576-byte ceiling. ECDSA uses fixed-width r || s
+  The per-call `max_bytes:` bound of `sign/4` and `verify/5` does not change
+  `RequestSeal.SignatureBase`'s separate 1,048,576-byte ceiling. ECDSA uses fixed-width r || s
   (64/96 bytes), never DER on the wire. RSA-PSS fixes MGF1 to the selected digest
   and salt length to its digest width (64 for HTTP SHA-512). Ed25519 has no prehash
   and rejects noncanonical S. RSA signatures have the exact modulus width.
@@ -45,19 +38,93 @@ defmodule RequestSeal.Crypto do
   alias RequestSeal.Crypto.{Algorithm, Error, Support}
   import Support, only: [ensure: 2, bounded_binary?: 3]
   @type algorithm :: binary() | {:jws, binary()}
-  @doc "The six registered, case-sensitive HTTP signature algorithm identifiers."
+  @doc """
+  The six registered, case-sensitive HTTP signature algorithm identifiers.
+
+  ## Returns
+
+    * a list of six binaries, in registry order.
+
+  ## Examples
+
+      iex> RequestSeal.Crypto.algorithms()
+      ["rsa-pss-sha512", "rsa-v1_5-sha256", "hmac-sha256", "ecdsa-p256-sha256", "ecdsa-p384-sha384", "ed25519"]
+  """
   @spec algorithms() :: [binary()]
   def algorithms, do: Algorithm.http()
 
-  @doc "The inclusive byte ceiling shared by cryptographic and custody operations."
+  @doc """
+  The inclusive byte ceiling shared by cryptographic and custody operations.
+
+  It is the largest `max_bytes:` value accepted by `sign/4`, `verify/5`,
+  `RequestSeal.Custody.sign/3`, and `RequestSeal.Custody.verify/4`.
+
+  ## Returns
+
+    * `16_777_216`.
+
+  ## Examples
+
+      iex> RequestSeal.Crypto.max_bytes_ceiling()
+      16_777_216
+  """
   @spec max_bytes_ceiling() :: pos_integer()
   def max_bytes_ceiling, do: 16_777_216
 
   @doc """
   Sign exact bytes using operation-local material within the caller's custodian.
 
-  Accepts `max_bytes:` (integer 1–16,777,216; default 1,048,576).
-  Oversized inputs return `:invalid_data`; invalid options return `:invalid_options`.
+  Checks run in this order: options, algorithm, `bytes`, then material, so
+  invalid options take precedence over an unsupported algorithm.
+
+  ## Parameters
+
+    * `algorithm` - an identifier from `algorithms/0` or `{:jws, name}` for a JWS
+      extension listed in the module documentation.
+    * `bytes` - the entire signature base as a binary, at most `:max_bytes` bytes.
+    * `material` - an operation-local descriptor that fits `algorithm`:
+      * `{:rsa, otp_private_key}` - a two-prime `:RSAPrivateKey` record with a
+        valid 2048–8192-bit public part and consistent CRT components.
+      * `{:ec, "P-256" | "P-384", scalar_bytes}` - a 32- or 48-byte scalar in
+        `1..order-1` on the algorithm's curve.
+      * `{:ed25519, seed_bytes}` - a 32-byte seed.
+      * `{:hmac, secret_bytes}` - a 32–16,384-byte secret.
+    * `opts` - keyword list; see Options.
+
+  ## Options
+
+    * `:max_bytes` - largest accepted `bytes` size, integer 1–16,777,216
+      (`max_bytes_ceiling/0`). Default `1_048_576`. It is the only option; any
+      other key, a duplicate, or an out-of-range or non-integer value returns
+      `:invalid_options`.
+
+  ## Returns
+
+    * `{:ok, signature}` - RSA signatures have the modulus width, ECDSA
+      signatures are fixed-width r || s (64 or 96 bytes), Ed25519 signatures are
+      64 bytes, and HMAC-SHA256 tags are 32 bytes.
+    * `{:error, %RequestSeal.Crypto.Error{}}` - reasons this function can return:
+      `:invalid_options`, `:unsupported_algorithm`, `:invalid_data` (`bytes` is
+      not a binary or exceeds `:max_bytes`), `:invalid_key` (malformed,
+      out-of-range, or inconsistent material), `:key_mismatch` (material of a
+      type or curve that does not fit `algorithm`), and `:invalid_signature` (OTP
+      produced an ECDSA r or s outside the curve order). Meanings:
+      `RequestSeal.Crypto.Error`.
+
+  ## Examples
+
+  RFC 8032 Section 7.1, TEST 1 (Ed25519, empty message):
+
+      iex> seed = Base.decode16!("9D61B19DEFFD5A60BA844AF492EC2CC44449C5697B326919703BAC031CAE7F60")
+      iex> {:ok, signature} = RequestSeal.Crypto.sign("ed25519", "", {:ed25519, seed})
+      iex> Base.encode16(signature, case: :lower)
+      "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+      iex> RequestSeal.Crypto.sign("ed25519", "", {:ed25519, seed}, timeout: 1_000)
+      {:error, %RequestSeal.Crypto.Error{reason: :invalid_options}}
+      iex> RequestSeal.Crypto.sign({:jws, "ES256"}, "", {:ed25519, seed})
+      {:error, %RequestSeal.Crypto.Error{reason: :key_mismatch}}
+      iex> RequestSeal.Crypto.sign("hmac-sha256", "message 41 delivered", {:hmac, "short secret"})
+      {:error, %RequestSeal.Crypto.Error{reason: :invalid_key}}
   """
   @spec sign(algorithm(), binary(), tuple(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
   def sign(algorithm, bytes, material, opts \\ []) do
@@ -72,8 +139,58 @@ defmodule RequestSeal.Crypto do
   @doc """
   Verify exact bytes; `:ok` establishes cryptographic validity only.
 
-  Accepts `max_bytes:` (integer 1–16,777,216; default 1,048,576).
-  Oversized inputs return `:invalid_data`; invalid options return `:invalid_options`.
+  Checks run in this order: options, algorithm, `bytes`, key, then signature,
+  so invalid options take precedence over an unsupported algorithm.
+
+  ## Parameters
+
+    * `algorithm` - an identifier from `algorithms/0` or `{:jws, name}` for a JWS
+      extension listed in the module documentation.
+    * `bytes` - the entire signature base as a binary, at most `:max_bytes` bytes.
+    * `signature` - the signature binary in the format `sign/4` returns.
+    * `key` - a `t:RequestSeal.PublicKey.t/0` that fits `algorithm`: its type and
+      curve must match, its JWK `alg` must be absent or equal the JOSE name, its
+      `use` absent or `"sig"`, and its `key_ops` absent or include `"verify"`.
+      Only inside the HMAC custodian, `{:hmac, secret_bytes}` (32–16,384 bytes)
+      for an HMAC algorithm.
+    * `opts` - keyword list; see Options.
+
+  ## Options
+
+    * `:max_bytes` - largest accepted `bytes` size, integer 1–16,777,216
+      (`max_bytes_ceiling/0`). Default `1_048_576`. It is the only option; any
+      other key, a duplicate, or an out-of-range or non-integer value returns
+      `:invalid_options`.
+
+  ## Returns
+
+    * `:ok` - the signature is mathematically valid for `bytes` under `key`.
+    * `{:error, %RequestSeal.Crypto.Error{}}` - reasons this function can return:
+      `:invalid_options`, `:unsupported_algorithm`, `:invalid_data` (`bytes` is
+      not a binary or exceeds `:max_bytes`), `:invalid_key` (`key` is malformed,
+      is neither a public key nor an HMAC descriptor, or holds an HMAC secret
+      outside 32–16,384 bytes), `:key_mismatch` (`key` does not fit `algorithm`
+      or its restrictions forbid verification), and `:invalid_signature` (not a
+      binary, wrong width, ECDSA r or s outside the curve order, noncanonical
+      Ed25519 S, or failed verification). Meanings: `RequestSeal.Crypto.Error`.
+
+  ## Examples
+
+  RFC 8032 Section 7.1, TEST 1 (Ed25519, empty message):
+
+      iex> public = Base.decode16!("D75A980182B10AB7D54BFED3C964073A0EE172F3DAA62325AF021A68F707511A")
+      iex> {:ok, key} = RequestSeal.PublicKey.import({:ed25519, public}, :raw)
+      iex> signature = Base.decode16!("E5564300C360AC729086E2CC806E828A84877F1EB8E5D974D873E065224901555FB8821590A33BACC61E39701CF9B46BD25BF5F0595BBE24655141438E7A100B")
+      iex> RequestSeal.Crypto.verify("ed25519", "", signature, key)
+      :ok
+      iex> RequestSeal.Crypto.verify("ed25519", "x", signature, key)
+      {:error, %RequestSeal.Crypto.Error{reason: :invalid_signature}}
+      iex> RequestSeal.Crypto.verify("ecdsa-p256-sha256", "", signature, key)
+      {:error, %RequestSeal.Crypto.Error{reason: :key_mismatch}}
+      iex> RequestSeal.Crypto.verify("ed25519", "", signature, %{key | operations: ["sign"]})
+      {:error, %RequestSeal.Crypto.Error{reason: :key_mismatch}}
+      iex> RequestSeal.Crypto.verify("ed25519", "", signature, key, max_bytes: 0)
+      {:error, %RequestSeal.Crypto.Error{reason: :invalid_options}}
   """
   @spec verify(algorithm(), binary(), binary(), PublicKey.t() | tuple(), keyword()) ::
           :ok | {:error, Error.t()}

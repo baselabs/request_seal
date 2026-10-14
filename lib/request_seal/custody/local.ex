@@ -2,31 +2,16 @@ defmodule RequestSeal.Custody.Local do
   @moduledoc """
   Caller-owned OTP private keys and symmetric secrets, held in sensitive processes.
 
-  `new/3` accepts the signing descriptors documented by `RequestSeal.Crypto`.
-  It also accepts `{:jwe, "RSA-OAEP"}` or `{:jwe, "RSA-OAEP-256"}` with
-  `{:rsa, otp_private_key}` for unwrap-only custody. RSA keys are 2048–8192 bits;
-  each handle binds exactly one algorithm and cannot sign or verify.
-  `import/4` accepts a single unencrypted private PEM (PKCS #1 RSA, SEC1 EC,
-  PKCS #8 RSA/RSASSA-PSS/EC/Ed25519), PKCS #8 DER (`:der`), or private JWK map. Public-only material,
-  inconsistent private components, algorithm/type/curve mismatches, and encrypted
-  containers reject. A PSS-only private key never becomes a PKCS #1 signing key;
-  parameter-constrained PSS containers reject rather than dropping restrictions.
-  Imported EC/OKP public components must agree with the derived private key.
-  PKCS #8 v2 (OneAsymmetricKey) containers reject with `:unsupported_format`.
-
-  All six HTTP algorithms and the eight explicit JWS extensions in `Crypto` are
-  supported. Construction derives a public key and performs an actual sign/verify
+  `new/3` builds a handle from OTP key material and `import/4` from one private
+  PEM, PKCS #8 DER, or private JWK. All six HTTP algorithms and the eight
+  explicit JWS extensions in `RequestSeal.Crypto` are supported for signing, and
+  `{:jwe, "RSA-OAEP"}` or `{:jwe, "RSA-OAEP-256"}` for unwrap-only custody. Each
+  handle binds exactly one algorithm; an unwrap handle cannot sign or verify.
+  Construction derives a public key and performs an actual sign/verify
   before returning a signing handle. Unwrap construction validates RSA CRT components
   and performs an actual OAEP wrap/unwrap. Only `equivalence: nonsecret_binary` is accepted, and
   only for HMAC (1–256 bytes). Absent HMAC equivalence remains `:unknown`; no value
   is derived from the secret. HMAC verification stays inside the custodian.
-
-  PEM/DER inputs are at most 16,384 bytes. JWK maps have at most 32 fields; components
-  must be canonical unpadded Base64url. `alg`, `use`, and `key_ops` restrictions
-  must permit the selected operation. For OAEP, `use` must be absent or `enc`,
-  and `key_ops` must be absent or permit `decrypt` or `unwrapKey`; signing operations
-  reject. Public metadata retains these restrictions. Private JWK metadata is checked at
-  import; the handle's capabilities are limited to its permitted operations.
   No private key export, global store, server, or telemetry is provided.
 
   Each successful construction starts one unsupervised holder process. It marks
@@ -84,7 +69,62 @@ defmodule RequestSeal.Custody.Local do
   @ed {1, 3, 101, 112}
   @max_bytes_ceiling Crypto.max_bytes_ceiling()
 
-  @doc "Construct an algorithm-bound signing or RSA-OAEP unwrap capability from OTP material."
+  @doc """
+  Construct an algorithm-bound signing or RSA-OAEP unwrap capability from OTP material.
+
+  Construction validates the material, derives its public key (none for HMAC),
+  performs an actual sign/verify (or OAEP wrap/unwrap) round trip, and then starts
+  one holder process owned by the caller. Release the handle with `release/1`.
+
+  ## Parameters
+
+    * `algorithm` - an HTTP identifier from `RequestSeal.Crypto.algorithms/0`,
+      `{:jws, name}` for a JWS extension listed in `RequestSeal.Crypto`, or
+      `{:jwe, "RSA-OAEP"}` / `{:jwe, "RSA-OAEP-256"}` for unwrap-only custody.
+    * `material` - an operation-local OTP descriptor that fits `algorithm`:
+      * `{:rsa, otp_private_key}` - a two-prime `:RSAPrivateKey` record with a
+        2048–8192-bit modulus and consistent CRT components; RSA signing
+        algorithms and both JWE algorithms.
+      * `{:ec, "P-256" | "P-384", scalar_bytes}` - a 32- or 48-byte scalar on the
+        algorithm's curve.
+      * `{:ed25519, seed_bytes}` - a 32-byte seed.
+      * `{:hmac, secret_bytes}` - a 32–16,384-byte secret.
+    * `opts` - keyword list; see Options.
+
+  ## Options
+
+    * `:equivalence` - a nonsecret binary of 1–256 bytes, accepted only for HMAC
+      algorithms; it becomes the handle's `:symmetric` `RequestSeal.KeyIdentity`.
+      When absent, an HMAC handle's identity is `:unknown`. No default.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.KeyHandle{}}` - capabilities `[:sign, :verify]` for a
+      signing algorithm, `[:unwrap]` for a JWE algorithm.
+    * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
+      `:unsupported_algorithm`, `:invalid_options` (an option other than a single
+      `:equivalence`, or `:equivalence` on a non-HMAC algorithm or outside
+      1–256 bytes), `:invalid_key` (malformed, out-of-range, or inconsistent
+      material), and `:key_mismatch` (material of a type or curve that does not
+      fit `algorithm`). Holder startup can also return `:custodian_failure` or
+      `:deadline_exceeded`. Other reasons: see `RequestSeal.Custody.Error`.
+
+  ## Examples
+
+      iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> handle.capabilities
+      [:sign, :verify]
+      iex> {:ok, _signature} = RequestSeal.Custody.sign(handle, "release manifest for build 7781")
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+      iex> RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed}, timeout: 1_000)
+      {:error, %RequestSeal.Custody.Error{reason: :invalid_options, retryable: false}}
+      iex> RequestSeal.Custody.Local.new("hmac-sha256", {:hmac, "too short"})
+      {:error, %RequestSeal.Custody.Error{reason: :invalid_key, retryable: false}}
+      iex> RequestSeal.Custody.Local.new({:jwe, "RSA-OAEP-256"}, {:ed25519, seed})
+      {:error, %RequestSeal.Custody.Error{reason: :key_mismatch, retryable: false}}
+  """
   @spec new(RequestSeal.Custody.algorithm(), tuple(), keyword()) ::
           {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
   def new(algorithm, material, opts \\ []) do
@@ -94,7 +134,91 @@ defmodule RequestSeal.Custody.Local do
     end)
   end
 
-  @doc "Import one unencrypted private PEM, PKCS #8 DER, or private JWK with an explicit algorithm."
+  @doc """
+  Import one unencrypted private PEM, PKCS #8 DER, or private JWK with an explicit algorithm.
+
+  The decoded key goes through the same validation and round trip as `new/3`.
+  Public-only material, inconsistent private components, algorithm/type/curve
+  mismatches, and encrypted containers reject.
+
+  ## Parameters
+
+    * `algorithm` - as in `new/3`.
+    * `value` - the encoded private key, matching `format`:
+      * PEM: a binary of 1–16,384 bytes holding exactly one unencrypted entry,
+        PKCS #1 RSA, SEC1 EC (P-256 or P-384), or PKCS #8 RSA, RSASSA-PSS, EC, or
+        Ed25519. DER inside the entry must be canonical.
+      * DER: a canonical PKCS #8 binary of 1–16,384 bytes with the same key types.
+      * JWK: a private JWK map of at most 32 fields: `"RSA"` with all two-prime
+        CRT members, `"EC"` (P-256 or P-384), `"OKP"` Ed25519, or `"oct"`.
+        Components must be canonical unpadded Base64url; `"oth"` and explicit
+        `null` `alg`, `use`, or `key_ops` reject.
+    * `format` - `:pem`, `:der`, or `:jwk`.
+    * `opts` - keyword list; see Options.
+
+  A PSS-only private key never becomes a PKCS #1 signing key: it binds only
+  `PS256`, `PS384`, or `PS512`. Parameter-constrained PSS containers reject rather
+  than dropping restrictions. Imported EC/OKP public components must agree with
+  the derived private key. PKCS #8 v2 (OneAsymmetricKey) containers reject with
+  `:unsupported_format`.
+
+  JWK `alg`, `use`, and `key_ops` restrictions must permit the selected
+  operation. `alg` must be absent or equal the selected JOSE name (for example
+  `"EdDSA"` for `"ed25519"`). For signing, `use` must be absent or `"sig"` and
+  `key_ops` must be absent or a duplicate-free subset of `"sign"` and `"verify"`
+  that includes `"sign"`. For OAEP, `use` must be absent or `"enc"`, and `key_ops`
+  must be absent or a duplicate-free subset of `"encrypt"`, `"decrypt"`,
+  `"wrapKey"`, and `"unwrapKey"` that includes `"decrypt"` or `"unwrapKey"`;
+  signing operations reject. Public metadata retains these restrictions, and the
+  handle's capabilities are limited to the permitted operations: `[:unwrap]` for
+  OAEP, `[:sign, :verify]` when `key_ops` is absent or includes `"verify"`, and
+  `[:sign]` otherwise.
+
+  ## Options
+
+    * `:equivalence` - as in `new/3`: a nonsecret binary of 1–256 bytes, accepted
+      only for HMAC algorithms. No default.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.KeyHandle{}}` - a handle whose capabilities follow the
+      rules above.
+    * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
+      `:unsupported_algorithm`, `:unsupported_format` (unknown `format`, encrypted
+      PEM, constrained PSS parameters, PKCS #8 v2, or an unrecognized PKCS #8
+      algorithm), `:invalid_key` (malformed, oversized, noncanonical, public-only,
+      or inconsistent input, or a JWK `key_ops` value outside the allowed set),
+      `:key_mismatch` (JWK `alg` or `use` that does not fit, `key_ops` without the
+      required operation, a PSS-only key for a non-PSS algorithm, or material that
+      does not fit `algorithm`), and `:invalid_options`. Holder startup can also
+      return `:custodian_failure` or `:deadline_exceeded`. Other reasons: see
+      `RequestSeal.Custody.Error`.
+
+  ## Examples
+
+  A crawler's signing key arrives as a private JWK restricted to signing.
+
+      iex> {public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> jwk = %{
+      ...>   "kty" => "OKP",
+      ...>   "crv" => "Ed25519",
+      ...>   "x" => Base.url_encode64(public, padding: false),
+      ...>   "d" => Base.url_encode64(seed, padding: false),
+      ...>   "key_ops" => ["sign"]
+      ...> }
+      iex> {:ok, handle} = RequestSeal.Custody.Local.import({:jws, "EdDSA"}, jwk, :jwk)
+      iex> handle.capabilities
+      [:sign]
+      iex> {:ok, %RequestSeal.PublicKey{operations: ["sign"]}} = RequestSeal.Custody.public_key(handle)
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+      iex> RequestSeal.Custody.Local.import("ed25519", Map.put(jwk, "alg", "ES256"), :jwk)
+      {:error, %RequestSeal.Custody.Error{reason: :key_mismatch, retryable: false}}
+      iex> RequestSeal.Custody.Local.import("ed25519", Map.delete(jwk, "d"), :jwk)
+      {:error, %RequestSeal.Custody.Error{reason: :invalid_key, retryable: false}}
+      iex> RequestSeal.Custody.Local.import("ed25519", jwk, :yaml)
+      {:error, %RequestSeal.Custody.Error{reason: :unsupported_format, retryable: false}}
+  """
   @spec import(RequestSeal.Custody.algorithm(), term(), :pem | :der | :jwk, keyword()) ::
           {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
   def import(algorithm, value, format, opts \\ []) do
@@ -175,7 +299,36 @@ defmodule RequestSeal.Custody.Local do
     Crypto.verify(algorithm, "", signature, public || material) |> unwrap()
   end
 
-  @doc "Stop a local holder and discard its key material. Releasing it again returns :ok."
+  @doc """
+  Stop a local holder and discard its key material. Releasing it again returns `:ok`.
+
+  Waits up to 5,000 ms for the holder to exit. Later operations on the handle
+  return `:key_not_found`.
+
+  ## Parameters
+
+    * `handle` - a `t:RequestSeal.KeyHandle.t/0` created by this custodian.
+
+  ## Returns
+
+    * `:ok` - the holder has exited, or had already exited.
+    * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
+      `:invalid_handle` (not a handle created by this custodian, or a malformed
+      one) and `:deadline_exceeded` (the holder did not exit within 5,000 ms).
+      Meanings: `RequestSeal.Custody.Error`.
+
+  ## Examples
+
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("hmac-sha256", {:hmac, :crypto.strong_rand_bytes(32)})
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+      iex> RequestSeal.Custody.sign(handle, "order 5512 shipped")
+      {:error, %RequestSeal.Custody.Error{reason: :key_not_found, retryable: false}}
+      iex> RequestSeal.Custody.Local.release(:not_a_handle)
+      {:error, %RequestSeal.Custody.Error{reason: :invalid_handle, retryable: false}}
+  """
   @spec release(KeyHandle.t()) :: :ok | {:error, RequestSeal.Custody.Error.t()}
   def release(handle) do
     Support.safe(

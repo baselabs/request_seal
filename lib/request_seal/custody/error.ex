@@ -6,7 +6,8 @@ defmodule RequestSeal.Custody.Error do
 
   Reasons:
 
-  * `:invalid_handle`, `:invalid_options`: malformed capability or options.
+  * `:invalid_handle`, `:invalid_options`: malformed capability, options, or
+    SSH agent socket path.
   * `:unsupported_algorithm`, `:unsupported_operation`, `:unsupported_format`:
     explicitly unimplemented selection; no fallback.
   * `:invalid_key`, `:key_mismatch`: invalid material or incompatible binding.

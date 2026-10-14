@@ -9,20 +9,15 @@ defmodule RequestSeal.PublicKey do
   [RFC 5480](https://www.rfc-editor.org/rfc/rfc5480.html), and
   [RFC 8410](https://www.rfc-editor.org/rfc/rfc8410.html).
 
-  `import/2` and `export/2` support public JWK maps (`:jwk`), PEM (`:pem`), DER
-  SubjectPublicKeyInfo (`:der`), and explicit components (`:raw`):
-  `{:rsa, n, e}`, `{:rsa_pss, n, e}`, `{:ec, "P-256" | "P-384", uncompressed_point}`,
-  or `{:ed25519, public_bytes}`. PEM also accepts PKCS #1 RSA public keys.
-  Private and symmetric JWK/PEM material rejects. No secret or key ID is retained.
+  `import/2` and `export/2` move keys between public JWK maps, PEM, DER
+  SubjectPublicKeyInfo, and explicit components; their documentation lists the
+  accepted shapes. No secret or key ID is retained.
 
   JWK `alg`, `use`, and `key_ops` are retained and checked on every verification.
-  Algorithm names are printable ASCII; simultaneous use/operation restrictions must agree.
   JWK `alg` uses exact JOSE identifiers even for an HTTP algorithm. Absent metadata
-  imposes no additional restriction; it does not establish trust. Export preserves
-  restrictions; restricted JWKs cannot export to formats without metadata.
-  RSA-PSS SubjectPublicKeyInfo with absent parameters retains its PSS-only type;
-  parameter-constrained PSS keys reject instead of discarding constraints. PSS-only
-  keys cannot export to JWK, which has no equivalent key-type restriction.
+  imposes no additional restriction; it does not establish trust.
+  RSA-PSS SubjectPublicKeyInfo with absent parameters retains its PSS-only type,
+  which binds only `PS256`, `PS384`, and `PS512`.
 
   RSA moduli are odd, 2048–8192 bits; public exponents are odd, 3–2^32-1 and
   smaller than the modulus. EC points must have the exact uncompressed width and
@@ -31,8 +26,7 @@ defmodule RequestSeal.PublicKey do
   The check ignores the encoded x sign, following the
   libsodium small-order blocklist (`ge25519_has_small_order` in
   [ed25519_ref10.c at tag 1.0.18](https://github.com/jedisct1/libsodium/blob/1.0.18/src/libsodium/crypto_core/ed25519/ref10/ed25519_ref10.c)).
-  PEM/DER inputs are limited to 16,384 bytes. JWK maps have at most 32 entries;
-  encoded components are bounded. Supplied structs are revalidated at each use.
+  Supplied structs are revalidated at each use.
   """
   alias RequestSeal.Crypto.{Algorithm, Support}
   import Support, only: [ensure: 2, bounded_binary?: 3]
@@ -58,13 +52,95 @@ defmodule RequestSeal.PublicKey do
     0x7A03AC9277FDC74EC6CC392CFA53202A0F67100D760B3CBA4FD84D3D706A17C7
   ]
 
-  @doc "Import bounded, explicit public key material, preserving JWK restrictions."
+  @doc """
+  Import bounded, explicit public key material, preserving JWK restrictions.
+
+  Every format applies the validation rules in the module documentation.
+
+  ## Parameters
+
+    * `value` - the encoded public key, matching `format`:
+      * `:raw` - `{:rsa, n, e}`, `{:rsa_pss, n, e}`,
+        `{:ec, "P-256" | "P-384", uncompressed_point}`, or `{:ed25519, public_bytes}`.
+      * `:jwk` - a public JWK map of at most 32 entries: `"RSA"` (`"n"`, `"e"`),
+        `"EC"` (`"crv"`, `"x"`, `"y"`), or `"OKP"` Ed25519 (`"x"`). Components are
+        canonical unpadded Base64url of at most 1,366 characters; RSA integers have
+        no leading zero byte. Private members (`d`, `p`, `q`, `dp`, `dq`, `qi`,
+        `oth`) and symmetric `k` reject. `alg` (printable ASCII, 1–64 bytes), `use`
+        (`"sig"` or `"enc"`), and `key_ops` (at most eight distinct registered
+        operations) are retained; an explicit `null` rejects, and simultaneous
+        `use` and `key_ops` restrictions must agree.
+      * `:pem` - a binary of 1–16,384 bytes holding exactly one unencrypted
+        SubjectPublicKeyInfo or PKCS #1 RSA public key entry. Private material rejects.
+      * `:der` - a canonical SubjectPublicKeyInfo binary of 1–16,384 bytes. RSA-PSS
+        with absent parameters imports as `:rsa_pss`; parameter-constrained PSS keys
+        reject instead of discarding constraints.
+    * `format` - `:jwk`, `:pem`, `:der`, or `:raw`.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.PublicKey{}}` - validated `material` in the `:raw` shape;
+      `algorithm`, `use`, and `operations` hold JWK metadata, otherwise `nil`.
+    * `{:error, %RequestSeal.Crypto.Error{}}` - reasons this function can return:
+      `:unsupported_format` (`format` is not one of the four) and `:invalid_key`
+      (any malformed, oversized, noncanonical, private, small-order, or otherwise
+      invalid input). Meanings: `RequestSeal.Crypto.Error`.
+
+  ## Examples
+
+  The Ed25519 public key from RFC 8037 Appendix A.2:
+
+      iex> jwk = %{"kty" => "OKP", "crv" => "Ed25519", "x" => "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}
+      iex> {:ok, %RequestSeal.PublicKey{material: {:ed25519, public}, algorithm: nil}} = RequestSeal.PublicKey.import(jwk, :jwk)
+      iex> byte_size(public)
+      32
+      iex> {:ok, key} = RequestSeal.PublicKey.import(Map.put(jwk, "key_ops", ["verify"]), :jwk)
+      iex> key.operations
+      ["verify"]
+      iex> RequestSeal.PublicKey.import(Map.put(jwk, "d", "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"), :jwk)
+      {:error, %RequestSeal.Crypto.Error{reason: :invalid_key}}
+      iex> RequestSeal.PublicKey.import({:ed25519, <<1>> <> :binary.copy(<<0>>, 31)}, :raw)
+      {:error, %RequestSeal.Crypto.Error{reason: :invalid_key}}
+      iex> RequestSeal.PublicKey.import(jwk, :ssh)
+      {:error, %RequestSeal.Crypto.Error{reason: :unsupported_format}}
+  """
   @spec import(term(), :jwk | :pem | :der | :raw) ::
           {:ok, t()} | {:error, RequestSeal.Crypto.Error.t()}
   def import(value, format),
     do: Support.safe(:invalid_key, fn -> {:ok, decode(value, format)} end)
 
-  @doc "Export a validated public key without dropping algorithm or operation restrictions."
+  @doc """
+  Export a validated public key without dropping algorithm or operation restrictions.
+
+  ## Parameters
+
+    * `key` - a `t:t/0`; it is revalidated before export.
+    * `format` - `:jwk`, `:pem`, `:der`, or `:raw`.
+
+  ## Returns
+
+    * `{:ok, encoded}` - for `:raw`, the `material` tuple; for `:jwk`, a map with
+      the required members plus any `alg`, `use`, and `key_ops` restrictions; for
+      `:der`, a SubjectPublicKeyInfo binary; for `:pem`, a `PUBLIC KEY` PEM binary.
+    * `{:error, %RequestSeal.Crypto.Error{}}` - reasons this function can return:
+      `:invalid_key` (`key` fails validation) and `:unsupported_format` (unknown
+      `format`; a key with `algorithm`, `use`, or `operations` restrictions
+      exported to a format other than `:jwk`, which would drop them; or a PSS-only
+      `:rsa_pss` key exported to `:jwk`, which has no equivalent key-type
+      restriction). Meanings: `RequestSeal.Crypto.Error`.
+
+  ## Examples
+
+      iex> jwk = %{"kty" => "OKP", "crv" => "Ed25519", "x" => "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo", "alg" => "EdDSA"}
+      iex> {:ok, key} = RequestSeal.PublicKey.import(jwk, :jwk)
+      iex> RequestSeal.PublicKey.export(key, :jwk) == {:ok, jwk}
+      true
+      iex> RequestSeal.PublicKey.export(key, :pem)
+      {:error, %RequestSeal.Crypto.Error{reason: :unsupported_format}}
+      iex> {:ok, "-----BEGIN PUBLIC KEY-----" <> _} = RequestSeal.PublicKey.export(%{key | algorithm: nil}, :pem)
+      iex> RequestSeal.PublicKey.export(%{key | material: {:ed25519, "short"}}, :raw)
+      {:error, %RequestSeal.Crypto.Error{reason: :invalid_key}}
+  """
   @spec export(t(), :jwk | :pem | :der | :raw) ::
           {:ok, term()} | {:error, RequestSeal.Crypto.Error.t()}
   def export(key, format) do
@@ -81,7 +157,34 @@ defmodule RequestSeal.PublicKey do
     end)
   end
 
-  @doc "Compute the RFC 7638 / RFC 8037 SHA-256 thumbprint of required public members."
+  @doc """
+  Compute the RFC 7638 / RFC 8037 SHA-256 thumbprint of required public members.
+
+  Only the required members are hashed (`e`, `kty`, `n` for RSA, including
+  PSS-only keys; `crv`, `kty`, `x` for Ed25519; `crv`, `kty`, `x`, `y` for EC);
+  `alg`, `use`, and `key_ops` metadata is not thumbprint material.
+
+  ## Parameters
+
+    * `key` - a `t:t/0`; it is revalidated first.
+
+  ## Returns
+
+    * `{:ok, thumbprint}` - the unpadded Base64url SHA-256 digest (43 characters).
+    * `{:error, %RequestSeal.Crypto.Error{}}` - reason `:invalid_key` when `key`
+      fails validation. Meanings: `RequestSeal.Crypto.Error`.
+
+  ## Examples
+
+  RFC 8037 Appendix A.3:
+
+      iex> jwk = %{"kty" => "OKP", "crv" => "Ed25519", "x" => "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}
+      iex> {:ok, key} = RequestSeal.PublicKey.import(jwk, :jwk)
+      iex> RequestSeal.PublicKey.thumbprint(key)
+      {:ok, "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"}
+      iex> RequestSeal.PublicKey.thumbprint(%{key | use: "encrypt"})
+      {:error, %RequestSeal.Crypto.Error{reason: :invalid_key}}
+  """
   @spec thumbprint(t()) :: {:ok, binary()} | {:error, RequestSeal.Crypto.Error.t()}
   def thumbprint(key) do
     Support.safe(:invalid_key, fn ->

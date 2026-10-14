@@ -7,15 +7,13 @@ defmodule RequestSeal.Custody.SSHAgent do
   [RFC 8332](https://www.rfc-editor.org/rfc/rfc8332.html), and
   [RFC 5656](https://www.rfc-editor.org/rfc/rfc5656.html).
 
-  `new/4` accepts a trusted public key and an explicit absolute socket path
-  (1–103 bytes, no NUL). It proves possession by signing empty bytes and checking
-  the returned signature. Only `timeout:` is accepted, with the custody boundary's
-  5,000 ms default and 1–300,000 ms bound. It never reads `SSH_AUTH_SOCK`, starts
+  `new/4` binds a trusted public key to an explicit socket path and proves
+  possession before returning a handle. It never reads `SSH_AUTH_SOCK`, starts
   an agent, loads keys, or accesses private files. The caller owns agent access and
   authorization. An OpenSSH agent is a separate process, not an HSM guarantee.
 
-  Supports HTTP Ed25519, RSA-v1_5-SHA256 (agent flag 2), P-256, and P-384,
-  plus explicit JWS `EdDSA`, `RS256`, `ES256`, and `ES384`. PSS and HMAC reject.
+  `new/4` lists the supported algorithms; RSA PKCS #1 v1.5 SHA-256 signing uses
+  agent flag 2.
   Each sign uses one new connection; replies cannot spill into another operation.
   Identity lists are bounded to 256 keys, receive frames to 1,048,576 bytes, key blobs and
   comments to 16,384 bytes. Selection uses exact public components, never a comment
@@ -23,16 +21,14 @@ defmodule RequestSeal.Custody.SSHAgent do
   must verify with `Crypto` before release. Verification uses the trusted public
   key locally; it does not assert current agent possession or authorization.
 
-  `Custody.sign/3` and `Custody.verify/4` accept per-call `max_bytes:` (integer
-  1–16,777,216, default 1,048,576). Outgoing request frames have no additional
-  library bound. [OpenSSH caps the whole agent message at 256 KiB](https://github.com/openssh/openssh-portable/blob/V_9_9_P1/ssh-agent.c),
+  Outgoing request frames have no library bound beyond the `max_bytes:` option of
+  `RequestSeal.Custody.sign/3`. [OpenSSH caps the whole agent message at 256 KiB](https://github.com/openssh/openssh-portable/blob/V_9_9_P1/ssh-agent.c),
   including protocol overhead, so payloads slightly under 262,144 bytes are the
   practical limit. Observed with OpenSSH 9.9 and Ed25519: 262,000 bytes signed
-  successfully; 262,200 returned `:custodian_protocol`. A larger custody bound
+  successfully; 262,200 returned `:custodian_protocol`. A larger `max_bytes:`
   does not raise the agent's limit.
 
-  Unknown keys at construction yield `:custodian_rejected`; removed keys during
-  signing yield `:key_not_found`. Connect and pre-send connection failures yield
+  Removed keys during signing yield `:key_not_found`. Connect and pre-send connection failures yield
   retryable `:custodian_unavailable`. After a request is written, a closed
   connection, short frame, or malformed reply yields nonretryable
   `:custodian_protocol`; deadline expiry yields `:deadline_exceeded`.
@@ -47,7 +43,64 @@ defmodule RequestSeal.Custody.SSHAgent do
   import Support, only: [ensure: 2, unwrap: 1]
   @max_bytes_ceiling Crypto.max_bytes_ceiling()
 
-  @doc "Bind a supported algorithm, explicit socket, and trusted public key after a real possession check."
+  @doc """
+  Bind a supported algorithm, explicit socket, and trusted public key after a real possession check.
+
+  Construction proves possession by asking the agent to sign empty bytes and
+  checking the returned signature against `public`. The returned handle has
+  capabilities `[:sign, :verify]`; each later signature first confirms the key is
+  still listed by the agent.
+
+  ## Parameters
+
+    * `algorithm` - `"ed25519"`, `"rsa-v1_5-sha256"`, `"ecdsa-p256-sha256"`,
+      `"ecdsa-p384-sha384"`, or `{:jws, name}` with `name` one of `"EdDSA"`,
+      `"RS256"`, `"ES256"`, or `"ES384"`. PSS and HMAC reject.
+    * `socket_path` - an absolute agent socket path of 1–103 bytes with no NUL byte.
+    * `public` - the trusted `t:RequestSeal.PublicKey.t/0` of the agent key; it
+      must fit `algorithm`, and any JWK restrictions must permit verification
+      with it.
+    * `opts` - keyword list; see Options.
+
+  ## Options
+
+    * `:timeout` - deadline in milliseconds for the possession check, integer
+      1–300,000. Default `5_000`. No other option is accepted.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.KeyHandle{}}` - a signing and verification handle.
+    * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
+      `:invalid_options` (unknown, duplicate, or out-of-range option, or an
+      invalid `socket_path`), `:unsupported_algorithm`, `:invalid_key` (`public`
+      fails validation), `:key_mismatch` (`public` does not fit `algorithm` or its
+      restrictions), `:custodian_unavailable` (no socket, refused, or closed before
+      the request), `:custodian_rejected` (the agent does not hold the key, refuses,
+      or returns a signature that fails verification), `:custodian_protocol`
+      (malformed, short, or oversized reply, or a connection closed after the
+      request), `:deadline_exceeded`, and
+      `:custodian_failure`. Meanings: `RequestSeal.Custody.Error`.
+
+  ## Examples
+
+  Algorithm and path checks run before any agent connection:
+
+      iex> {public, _seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, key} = RequestSeal.PublicKey.import({:ed25519, public}, :raw)
+      iex> RequestSeal.Custody.SSHAgent.new("hmac-sha256", "/run/agent.sock", key)
+      {:error, %RequestSeal.Custody.Error{reason: :unsupported_algorithm, retryable: false}}
+      iex> RequestSeal.Custody.SSHAgent.new("ed25519", "agent.sock", key)
+      {:error, %RequestSeal.Custody.Error{reason: :invalid_options, retryable: false}}
+      iex> RequestSeal.Custody.SSHAgent.new("ecdsa-p256-sha256", "/run/agent.sock", key)
+      {:error, %RequestSeal.Custody.Error{reason: :key_mismatch, retryable: false}}
+
+  Fragment (requires a running OpenSSH agent holding the Ed25519 key; not executed here):
+
+      {:ok, key} = RequestSeal.PublicKey.import(trusted_public_key_pem, :pem)
+      {:ok, handle} = RequestSeal.Custody.SSHAgent.new("ed25519", "/run/user/1000/agent.sock", key, timeout: 2_000)
+      {:ok, signature} = RequestSeal.Custody.sign(handle, "deploy build 9134 to staging.example.com")
+      :ok = RequestSeal.Custody.verify(handle, "deploy build 9134 to staging.example.com", signature)
+  """
   @spec new(Crypto.algorithm(), binary(), PublicKey.t(), keyword()) ::
           {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
   def new(algorithm, socket_path, public, opts \\ []) do

@@ -13,7 +13,37 @@ defmodule RequestSeal.KeyIdentity do
   defstruct [:kind, :value]
   @type t :: %__MODULE__{kind: :public | :symmetric | :unknown, value: term()}
 
-  @doc "Compare known, validated identities; unknown or malformed identities never match."
+  @doc """
+  Compare known, validated identities; unknown or malformed identities never match.
+
+  ## Parameters
+
+    * `a`, `b` - `t:t/0` values, normally returned by
+      `RequestSeal.Custody.identity/1`.
+
+  ## Returns
+
+    * `true` - both are `:public` identities whose components validate as
+      `RequestSeal.PublicKey` material and are equal after `:rsa_pss` is
+      normalized to `:rsa`, or both are `:symmetric` identities with equal
+      binary values of 1–256 bytes.
+    * `false` - in every other case, including any `:unknown` identity (even
+      compared with itself), identities of different kinds, and malformed values.
+      This function returns no error and does not raise.
+
+  ## Examples
+
+      iex> {public, _seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> a = %RequestSeal.KeyIdentity{kind: :public, value: {:ed25519, public}}
+      iex> RequestSeal.KeyIdentity.same?(a, %RequestSeal.KeyIdentity{kind: :public, value: {:ed25519, public}})
+      true
+      iex> {other, _seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> RequestSeal.KeyIdentity.same?(a, %RequestSeal.KeyIdentity{kind: :public, value: {:ed25519, other}})
+      false
+      iex> unknown = %RequestSeal.KeyIdentity{kind: :unknown, value: nil}
+      iex> RequestSeal.KeyIdentity.same?(unknown, unknown)
+      false
+  """
   @spec same?(t(), t()) :: boolean()
   def same?(%__MODULE__{kind: :public, value: a}, %__MODULE__{kind: :public, value: b}) do
     case {RequestSeal.PublicKey.import(a, :raw), RequestSeal.PublicKey.import(b, :raw)} do
