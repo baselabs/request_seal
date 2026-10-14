@@ -11,6 +11,8 @@
 - `RequestSeal.Profile.dictionaries/2` now rejects an invalid message (`:invalid_message`) and a `max` outside 1..64 (`:invalid_options`) before parsing; both returned `:invalid_signature_input`. `RequestSeal.Profile.preflight/4` now rejects an `extra` other than `:allow` or `:reject` and invalid freshness values, such as a negative skew, with `:invalid_policy`; it used them as given.
 - `RequestSeal.Req.attach/2` now rejects a `verify` map whose `max_stream_bytes` is not a nonnegative integer, including nil, with `:invalid_options`; nil returned `:unsupported_delivery`.
 - `RequestSeal.Plug.Verify` called again on a verified connection now keeps the first result and its assign, records `:already_verified` as the connection's private `:error`, and applies `on_reject`; it replaced the result with the error and removed the assign. `Verify.init/1` now rejects a Boolean `:assign`.
+- `RequestSeal.JOSE.JWS.sign/4` and `RequestSeal.JOSE.JWE.encrypt/4` now return `:invalid_header` for a header that is not a list of `{name, value}` pairs; it returned `:limit`. More than 64 pairs remains `:limit`.
+- `RequestSeal.JOSE.KeyManagement.unwrap/4` now returns `:decryption_failed` for a KEK of the wrong size, like every other failure to recover a CEK; it returned `:algorithm_mismatch`. `wrap/4` keeps `:algorithm_mismatch` for mismatched sender configuration.
 
 ### Documentation
 

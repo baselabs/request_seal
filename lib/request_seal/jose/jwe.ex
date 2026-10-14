@@ -80,7 +80,9 @@ defmodule RequestSeal.JOSE.JWE do
       `protected.encrypted_key.iv.ciphertext.tag`.
     * `{:error, %RequestSeal.JOSE.Error{}}` - reasons this function can return:
       `:invalid_options` (option or recipient form), `:invalid_serialization`
-      (non-binary plaintext), `:limit`, `:invalid_header`, `:duplicate_member`
+      (non-binary plaintext), `:limit` (more than 64 pairs or an oversized
+      result), `:invalid_header` (including a header that is not a list of
+      `{name, value}` pairs), `:duplicate_member`
       (including an addition that repeats a caller member),
       `:unsupported_critical_header`, `:compression_unsupported`,
       `:unsupported_header` (including disallowed additions),

@@ -48,8 +48,9 @@ defmodule RequestSeal.JOSE.JWS do
     * `{:error, %RequestSeal.JOSE.Error{}}` - reasons this function can return:
       `:invalid_options` (unknown, duplicate, or out-of-range option, or a signer
       that is neither form), `:invalid_serialization` (non-binary payload),
-      `:detached_payload` (empty payload), `:limit`, `:invalid_header`,
-      `:duplicate_member`, `:unsupported_critical_header`,
+      `:detached_payload` (empty payload), `:limit` (more than 64 pairs or an
+      oversized result), `:invalid_header` (including a header that is not a
+      list of `{name, value}` pairs), `:duplicate_member`, `:unsupported_critical_header`,
       `:compression_unsupported`, `:unsupported_header`, `:algorithm_not_permitted`,
       `:algorithm_mismatch` (handle bound to another algorithm), `:signer_failed`
       (signer error, exception, malformed result, or unusable handle), and

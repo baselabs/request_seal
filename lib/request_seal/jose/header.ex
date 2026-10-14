@@ -15,7 +15,8 @@ defmodule RequestSeal.JOSE.Header do
   end
 
   def from_pairs(pairs) do
-    ensure(is_list(pairs) and length(pairs) <= 64, :limit)
+    ensure(proper_list?(pairs), :invalid_header)
+    ensure(length(pairs) <= 64, :limit)
 
     h =
       Enum.reduce(pairs, %{}, fn
@@ -63,4 +64,8 @@ defmodule RequestSeal.JOSE.Header do
     ensure(not Enum.any?(~w(jku x5u jwk b64), &Map.has_key?(h, &1)), :unsupported_header)
     ensure(is_binary(h["alg"]), :invalid_header)
   end
+
+  defp proper_list?([]), do: true
+  defp proper_list?([_ | tail]), do: proper_list?(tail)
+  defp proper_list?(_), do: false
 end
