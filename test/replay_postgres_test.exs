@@ -135,6 +135,52 @@ defmodule RequestSeal.ReplayPostgresTest do
     refute_receive {_, :claimed}, 100
   end
 
+  test "a client timeout during a slow insert is a timeout, not unavailability", ctx do
+    slow_insert!(ctx.admin, ctx.table)
+    context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 300}
+
+    assert {:error, :timeout} =
+             Postgres.claim({ctx.a, ctx.table}, claim("a", "slow", 100), context)
+
+    assert {:error, %{reason: :store_timeout, retryable: false}} =
+             Replay.claim(ctx.store, claim("a", "slower", 100), timeout: 300)
+  end
+
+  test "a pool queue timeout is a timeout", ctx do
+    {:ok, queued} =
+      Postgrex.start_link(
+        Keyword.merge(ctx.options, pool_size: 1, queue_target: 10, queue_interval: 20)
+      )
+
+    holder =
+      Task.async(fn -> Postgrex.query(queued, "SELECT pg_sleep(1.5)", [], timeout: 5000) end)
+
+    Process.sleep(100)
+    context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 5000}
+
+    outcomes =
+      for n <- 1..4, do: Postgres.claim({queued, ctx.table}, claim("a", "q#{n}", 100), context)
+
+    assert {:error, :timeout} in outcomes
+    refute Enum.any?(outcomes, &(&1 == {:error, :unavailable}))
+    assert {:ok, _} = Task.await(holder, 5000)
+    GenServer.stop(queued)
+  end
+
+  defp slow_insert!(admin, table) do
+    Postgrex.query!(
+      admin,
+      "CREATE FUNCTION #{table}_slow() RETURNS trigger AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$ LANGUAGE plpgsql",
+      []
+    )
+
+    Postgrex.query!(
+      admin,
+      "CREATE TRIGGER #{table}_slow BEFORE INSERT ON #{table} FOR EACH ROW EXECUTE FUNCTION #{table}_slow()",
+      []
+    )
+  end
+
   test "a server-side statement timeout while the key is locked is a store timeout", ctx do
     {:ok, limited} =
       Postgrex.start_link(

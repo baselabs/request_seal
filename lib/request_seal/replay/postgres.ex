@@ -114,12 +114,15 @@ if Code.ensure_loaded?(Postgrex) do
 
       * `:claimed` - one row was inserted.
       * `:already_claimed` - the namespace and key were already stored.
-      * `{:error, :timeout}` - the deadline had expired before the query, the
-        query call exited with a timeout, the connection timed out, or the server
-        canceled the statement or could not take a lock (`query_canceled`,
-        `lock_not_available`). The claim may have committed.
+      * `{:error, :timeout}` - the deadline had expired before the query; the
+        query ran past the deadline (the pool closed the connection at the
+        client timeout); the pool dropped the queued request (DBConnection
+        `:queue_timeout`); or the server canceled the statement or could not take
+        a lock (`query_canceled`, `lock_not_available`). The claim may have
+        committed.
       * `{:error, :unavailable}` - the connection process is not running or
-        exited, the connection was lost, or the server is shutting down or
+        exited, the connection was lost before the deadline, or the server is
+        shutting down or
         refusing connections (`admin_shutdown`, `crash_shutdown`,
         `cannot_connect_now`, `too_many_connections`).
       * `{:error, :failure}` - an invalid table name or claim, any other
@@ -177,12 +180,17 @@ if Code.ensure_loaded?(Postgrex) do
     ## Returns
 
       * `{:ok, removed}` - the number of rows deleted.
-      * `{:error, :timeout}` - the deadline had expired before the query, the
-        query call exited with a timeout, the connection timed out, or the server
-        canceled the statement or could not take a lock (`query_canceled`,
-        `lock_not_available`). The claim may have committed.
+      * `{:error, :timeout}` - the deadline had expired before the query; the
+        query ran past the deadline (the pool closed the connection at the
+        client timeout); the pool dropped the queued request (DBConnection
+        `:queue_timeout`); or the server canceled the statement or could not take
+        a lock (`query_canceled`, `lock_not_available`). The sweep's deletions
+        were not committed when the statement was canceled or never sent, and may
+        or may not have committed when the connection closed at the deadline; a
+        later sweep with the same `now` removes whatever remains.
       * `{:error, :unavailable}` - the connection process is not running or
-        exited, the connection was lost, or the server is shutting down or
+        exited, the connection was lost before the deadline, or the server is
+        shutting down or
         refusing connections (`admin_shutdown`, `crash_shutdown`,
         `cannot_connect_now`, `too_many_connections`).
       * `{:error, :failure}` - `now` is outside the range, the table name is
@@ -229,11 +237,11 @@ if Code.ensure_loaded?(Postgrex) do
       else
         case Postgrex.query(conn, sql, params, timeout: remaining) do
           {:ok, result} -> {:ok, result}
-          {:error, error} -> query_error(error)
+          {:error, error} -> query_error(error, context)
         end
       end
     rescue
-      error in [DBConnection.ConnectionError, Postgrex.Error] -> query_error(error)
+      error in [DBConnection.ConnectionError, Postgrex.Error] -> query_error(error, context)
       _ -> {:error, :failure}
     catch
       :exit, {:noproc, _} -> {:error, :unavailable}
@@ -245,8 +253,18 @@ if Code.ensure_loaded?(Postgrex) do
     # The same classification as RequestSeal.Replay.AshOnetime: connection loss
     # and server shutdown are unavailability; cancellation and lock waits are
     # timeouts (indeterminate); other database errors remain failures.
-    defp query_error(%DBConnection.ConnectionError{reason: :timeout}), do: {:error, :timeout}
-    defp query_error(%DBConnection.ConnectionError{}), do: {:error, :unavailable}
+    # DBConnection 2.10 marks a dropped queued request with reason :queue_timeout.
+    # A client timeout closes the connection (reason :closed or :error, no
+    # timeout marker); the expired deadline we passed as the query timeout is
+    # the signal that distinguishes it from a lost connection.
+    defp query_error(%DBConnection.ConnectionError{reason: :queue_timeout}, _),
+      do: {:error, :timeout}
+
+    defp query_error(%DBConnection.ConnectionError{}, context) do
+      if Context.remaining(context) == 0, do: {:error, :timeout}, else: {:error, :unavailable}
+    end
+
+    defp query_error(error, _context), do: query_error(error)
 
     defp query_error(%Postgrex.Error{postgres: %{code: code}})
          when code in [:query_canceled, :lock_not_available],

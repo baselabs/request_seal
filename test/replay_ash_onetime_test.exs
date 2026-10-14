@@ -83,6 +83,34 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       end
     end
 
+    test "a client timeout during a slow claim is a timeout", %{prefix: prefix} do
+      table = "#{prefix}.ash_onetime_nonce_claims"
+      function = "#{prefix}.request_seal_slow_claim"
+
+      OwnedRepo.query!(
+        "CREATE FUNCTION #{function}() RETURNS trigger AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$ LANGUAGE plpgsql"
+      )
+
+      OwnedRepo.query!(
+        "CREATE TRIGGER request_seal_slow_claim BEFORE INSERT ON #{table} FOR EACH ROW EXECUTE FUNCTION #{function}()"
+      )
+
+      on_exit(fn ->
+        {:ok, cleanup} =
+          Postgrex.start_link(
+            Ecto.Repo.Supervisor.parse_url(System.fetch_env!("REQUESTSEAL_REPLAY_PG_URL"))
+          )
+
+        Postgrex.query!(cleanup, "DROP TRIGGER IF EXISTS request_seal_slow_claim ON #{table}", [])
+        GenServer.stop(cleanup)
+      end)
+
+      context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 500}
+
+      assert {:error, :timeout} =
+               AshOnetime.claim({OwnedRepo, "slow-claim", prefix}, claim(), context)
+    end
+
     test "a timeout after the actual commit leaves a spent nonce", %{prefix: prefix} do
       store = AshOnetime.store(OwnedRepo, partition: "committed-timeout", prefix: prefix)
       c = claim()

@@ -103,8 +103,11 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
       * `:claimed` - ash_onetime admitted the nonce.
       * `:already_claimed` - ash_onetime reported `:nonce_already_used`.
-      * `{:error, :timeout}` - the deadline had expired before the transaction, or
-        a lock, cancellation or connection timeout; the claim may have committed.
+      * `{:error, :timeout}` - the deadline had expired before the transaction; a
+        lock, cancellation or pool queue timeout (DBConnection `:queue_timeout`);
+        or any failure observed after the deadline, such as a transaction rolled
+        back when the pool closed the connection at the client timeout. The claim
+        may have committed.
       * `{:error, :unavailable}` - the repo is not running, a connection could not
         be checked out, or the database is shutting down or refusing connections.
       * `{:error, :failure}` - an invalid claim or reference, any other ash_onetime
@@ -123,7 +126,25 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     @impl true
     @spec claim(ref(), Claim.t(), Context.t()) ::
             :claimed | :already_claimed | {:error, :unavailable | :timeout | :failure}
-    def claim({repo, partition, prefix}, %Claim{} = claim, %Context{} = context) do
+    def claim({repo, partition, prefix} = ref, %Claim{} = claim, %Context{} = context) do
+      case attempt(ref, claim, context) do
+        # A client timeout surfaces as a rolled-back transaction or a closed
+        # connection with no timeout marker; the expired deadline that bounded
+        # the transaction is the signal that the outcome is indeterminate.
+        {:error, reason} when reason in [:unavailable, :failure] ->
+          if valid_ref?(repo, partition, prefix) and Claim.valid?(claim) and
+               Context.remaining(context) == 0,
+             do: {:error, :timeout},
+             else: {:error, reason}
+
+        outcome ->
+          outcome
+      end
+    end
+
+    def claim(_, _, _), do: {:error, :failure}
+
+    defp attempt({repo, partition, prefix}, claim, context) do
       cond do
         not Claim.valid?(claim) or not valid_ref?(repo, partition, prefix) ->
           {:error, :failure}
@@ -182,8 +203,6 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       _, _ -> {:error, :failure}
     end
 
-    def claim(_, _, _), do: {:error, :failure}
-
     defp valid_ref?(repo, partition, prefix) do
       is_atom(repo) and Code.ensure_loaded?(repo) and function_exported?(repo, :transaction, 2) and
         text?(partition, 255) and (prefix == nil or text?(prefix, 63))
@@ -196,7 +215,10 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       _ -> false
     end
 
-    defp connection_error(%DBConnection.ConnectionError{reason: :timeout}), do: {:error, :timeout}
+    # DBConnection 2.10 marks a dropped queued request with reason :queue_timeout.
+    defp connection_error(%DBConnection.ConnectionError{reason: :queue_timeout}),
+      do: {:error, :timeout}
+
     defp connection_error(_), do: {:error, :unavailable}
 
     defp database_error(%Postgrex.Error{postgres: %{code: code}})
