@@ -9,10 +9,12 @@ defmodule RequestSeal.StructuredFields.Error do
   exceeded. `:invalid_schema` and `:invalid_limits` reject invalid configuration.
   `:invalid_message`, `:invalid_field`, `:missing_field`, and
   `:unavailable_section` identify field capture failures. No partial parse is
-  returned on failure. The internal field-policy hook uses `:duplicate_key` when
-  a key required to be unique repeats before dictionary deduplication.
-  `:duplicate_parameter` rejects repeated parameter names when the signature
-  parsing policy requires uniqueness.
+  returned on failure. `:duplicate_key` means a dictionary key required to be
+  unique (the `:unique_keys` option of `RequestSeal.StructuredFields.parse_field/5`,
+  also used by the library's own field policies) repeats before deduplication.
+  `:duplicate_parameter` rejects repeated parameter names when uniqueness is
+  required (the `:unique_parameters` option of the same function, also used by
+  the signature parsing policy).
   """
   @enforce_keys [:reason]
   defstruct [:reason]

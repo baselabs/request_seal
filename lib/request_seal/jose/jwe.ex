@@ -2,37 +2,21 @@ defmodule RequestSeal.JOSE.JWE do
   @moduledoc """
   Compact RFC 7516 encryption with explicitly pinned algorithms and AES GCM.
 
-  `encrypt/4` takes ordered protected header pairs with `alg`/`enc`, plaintext
-  bytes, and a `PublicKey` or arity-two wrapper `(wire_algorithm, generated_cek)`.
-  The wrapper returns `{:ok, %{encrypted_key: bytes, header: additions_map}}`;
-  additions are protected, cannot replace caller members, and may contain only
-  `iv`/`tag` for GCMKW. Protected headers use compact JSON: top-level members keep
-  caller order, followed by additions sorted by member name; nested JSON objects
-  are serialized in map order. For JWS signatures needing exact protected bytes,
-  use `RequestSeal.JOSE.JWS.sign_protected/4`. For `dir`, the wrapper must
-  provision the generated CEK to its recipient through caller-owned custody
-  and return an empty encrypted key.
-  No symmetric secret can be supplied in a public key or header. Only
-  `timeout: milliseconds` is accepted (default 5,000; 1–300,000).
+  `encrypt/4` generates a fresh content-encryption key (CEK) and IV and hands the
+  CEK to the recipient's public key or a caller wrapper; `decrypt/2` authenticates
+  and decrypts under an explicit policy. Key management is `RSA-OAEP-256`,
+  `RSA-OAEP`, `A128GCMKW`, `A256GCMKW`, or `dir`; content encryption is `A128GCM`
+  or `A256GCM`. No symmetric secret can be supplied in a public key or header.
 
-  `decrypt/2` requires exactly `:algorithms`, `:encryption`, `:max_plaintext`
-  (1–1,048,576), `:timeout` (1–300,000), and `:key_resolver`. Algorithms are
-  unique nonempty lists selected from RSA-OAEP-256, RSA-OAEP, A128GCMKW,
-  A256GCMKW, dir; content encryption is A128GCM or A256GCM. The arity-one
-  resolver receives `%{algorithm: name, encryption: name, header: map}` and
-  returns `{:ok, %{algorithm: same_name, unwrap: arity_two_fun}}`,
-  `{:ok, %{algorithm: same_name, key: custody_handle}}`, or `:error`.
-  A custody handle must bind `{:jwe, same_name}` with `:unwrap` capability;
-  RSA-OAEP private operations stay inside its sensitive local holder. The
-  existing callback path can still use caller-owned raw key material.
-  Unwrap receives `(encrypted_key_bytes, header)` and returns `{:ok, cek}` or
-  `{:error, term}`. Resolver and callback unwrap execute in JWE's sensitive worker.
-  On the handle path, the CEK passes from the sensitive local holder through a
-  separate sensitive custody runner and middle process to that JWE worker.
-  These four processes see the CEK; JWE's outer middle process and the decrypt
-  caller receive only the authenticated result. All work shares one absolute
-  deadline. Unwrap failure uses a fresh random CEK and
-  still attempts tag authentication; both paths return `:decryption_failed`.
+  On the decryption handle path, RSA-OAEP private operations stay inside the
+  handle's sensitive local holder; the callback path can still use caller-owned
+  raw key material. Resolver and callback unwrap execute in JWE's sensitive
+  worker. On the handle path, the CEK passes from the sensitive local holder
+  through a separate sensitive custody runner and middle process to that JWE
+  worker. These four processes see the CEK; JWE's outer middle process and the
+  decrypt caller receive only the authenticated result. All work shares one
+  absolute deadline. Unwrap failure uses a fresh random CEK and still attempts
+  tag authentication; both paths return `:decryption_failed`.
 
   A released or unavailable resolved handle makes decryption fail with the same
   complete error as a forged message, by design. Check
@@ -45,7 +29,8 @@ defmodule RequestSeal.JOSE.JWE do
   CEK/IV use the real CSPRNG. Decrypted data stays in the private worker until
   full authentication succeeds; no partial result is returned. IVs are 12 bytes,
   tags 16 bytes, CEKs exactly 16/32 bytes. The protected segment is verbatim AAD.
-  Returns `{:ok, compact}` / `{:ok, Result}` or `{:error, JOSE.Error}`.
+  Recipient integrity establishes no sender identity, request association, claims
+  validation, or authorization.
   """
   alias RequestSeal.{Custody, KeyHandle, PublicKey, JOSE}
   alias JOSE.{Header, KeyManagement, Support}
@@ -53,38 +38,63 @@ defmodule RequestSeal.JOSE.JWE do
   import Support
 
   @doc """
-  Encrypt plaintext into compact JWE with fresh CEK and IV bytes (RFC 7516).
+  Encrypt plaintext into a compact JWE with fresh CEK and IV bytes (RFC 7516).
 
-  `header` is an ordered list of `{string_name, json_value}` pairs with `"alg"`
-  selected from `"RSA-OAEP-256"`, `"RSA-OAEP"`, `"A128GCMKW"`, `"A256GCMKW"`,
-  or `"dir"`, and `"enc"` selected from `"A128GCM"` or `"A256GCM"`.
-  Members must be unique. `"crit"` rejects as `:unsupported_critical_header`,
-  `"zip"` as `:compression_unsupported`, and `"jku"`, `"x5u"`, `"jwk"`, and
-  `"b64"` as `:unsupported_header`, regardless of their values.
-  Plaintext and the resulting compact envelope are bounded to 1,048,576 bytes.
+  The protected header is compact JSON: top-level members keep caller order,
+  followed by recipient additions sorted by member name; nested JSON objects are
+  serialized in map order. For JWS signatures needing exact protected bytes, use
+  `RequestSeal.JOSE.JWS.sign_protected/4`. Wrapping and encryption run in a
+  sensitive worker with deadline and caller cancellation. This function accepts
+  no policy map; decryption selects its own explicit policy.
 
-  `recipient` is a compatible RSA `RequestSeal.PublicKey` or an arity-two function
-  receiving `(wire_algorithm, generated_cek_bytes)`. The function returns
-  `{:ok, %{encrypted_key: bytes, header: additions_map}}` with exactly those keys.
-  Additions may contain only `"iv"`/`"tag"` for GCM key wrapping, cannot replace
-  caller members, and become authenticated protected headers. For `"dir"`, the
-  function provisions the generated CEK through caller-owned custody and returns
-  an empty encrypted key. Symmetric secrets cannot be supplied as public keys.
+  ## Parameters
 
-  `opts` accepts only `timeout: milliseconds` (default 5,000; integer 1–300,000).
-  This function accepts no policy map; decryption selects its own explicit policy.
-  Wrapping and encryption run in a sensitive worker with deadline and caller
-  cancellation. Returns `{:ok, compact_binary}` or
-  `{:error, RequestSeal.JOSE.Error.t()}`. Error reasons are `:invalid_options`,
-  `:invalid_serialization`, `:limit`, `:invalid_header`, `:duplicate_member`,
-  `:unsupported_critical_header`, `:compression_unsupported`, `:unsupported_header`,
-  `:algorithm_not_permitted`, `:algorithm_mismatch`, `:invalid_base64`,
-  `:invalid_iv`, `:invalid_tag`, `:decryption_failed`, `:entropy_failure`,
-  `:signer_failed`, and `:deadline_exceeded`. Callback failure or an invalid wrap
-  result returns `:signer_failed`; malformed encrypted-key bytes return
-  `:decryption_failed`. This function has no key resolver and does not return
-  `:key_resolver_failed`. Only `:deadline_exceeded` is retryable.
-  See the module documentation for protected JSON serialization order.
+    * `header` - `t:RequestSeal.JOSE.header/0` with unique members, at most 64
+      pairs, nesting depth at most four, serialized size at most 16,384 bytes.
+      `"alg"` must be `"RSA-OAEP-256"`, `"RSA-OAEP"`, `"A128GCMKW"`, `"A256GCMKW"`,
+      or `"dir"`; `"enc"` must be `"A128GCM"` or `"A256GCM"`. `"crit"`, `"zip"`,
+      `"jku"`, `"x5u"`, `"jwk"`, and `"b64"` reject regardless of their values.
+    * `plaintext` - binary, at most 1,048,576 bytes; the compact result has the
+      same bound.
+    * `recipient` - one of:
+      * a `RequestSeal.PublicKey` with RSA material, for `"RSA-OAEP"` and
+        `"RSA-OAEP-256"`. Its `algorithm` must be nil or the header `alg`, `use`
+        nil or `"enc"`, and `operations` nil or include `"encrypt"` or `"wrapKey"`.
+      * an arity-two function receiving `(wire_algorithm, generated_cek_bytes)`
+        and returning `{:ok, %{encrypted_key: bytes, header: additions_map}}`
+        with exactly those keys. Additions may contain only `"iv"`/`"tag"`, only
+        for `"A128GCMKW"`/`"A256GCMKW"`, cannot replace caller members, and become
+        authenticated protected headers. For `"dir"`, the function provisions the
+        generated CEK to its recipient through caller-owned custody and returns an
+        empty encrypted key. `RequestSeal.JOSE.KeyManagement.wrap/4` produces this
+        result shape.
+    * `opts` - keyword list.
+
+  ## Options
+
+    * `:timeout` - integer milliseconds, 1 to 300,000. Default 5,000.
+
+  ## Returns
+
+    * `{:ok, compact}` - five unpadded Base64url segments:
+      `protected.encrypted_key.iv.ciphertext.tag`.
+    * `{:error, %RequestSeal.JOSE.Error{}}` - reasons this function can return:
+      `:invalid_options` (option or recipient form), `:invalid_serialization`
+      (non-binary plaintext), `:limit`, `:invalid_header`, `:duplicate_member`
+      (including an addition that repeats a caller member),
+      `:unsupported_critical_header`, `:compression_unsupported`,
+      `:unsupported_header` (including disallowed additions),
+      `:algorithm_not_permitted` (unsupported `alg`, or missing or unsupported
+      `enc`),
+      `:algorithm_mismatch` (public key unusable for `alg`), `:invalid_base64`,
+      `:invalid_iv`, `:invalid_tag` (malformed `iv`/`tag` additions),
+      `:decryption_failed` (encrypted key with the wrong width for `alg`),
+      `:entropy_failure`, `:signer_failed` (wrapper error, exception, or invalid
+      result; invalid public key), and `:deadline_exceeded` (the only retryable
+      reason). This function has no key resolver and does not return
+      `:key_resolver_failed`. Meanings: `RequestSeal.JOSE.Error`.
+
+  ## Examples
 
   This example uses actual RFC 7518 AES GCM key wrapping and content encryption:
 
@@ -96,6 +106,9 @@ defmodule RequestSeal.JOSE.JWE do
       iex> {:error, error} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}], "payload", wrap, timeout: 0)
       iex> error.reason
       :invalid_options
+      iex> {:error, error} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}, {"zip", "DEF"}], "payload", wrap)
+      iex> error.reason
+      :compression_unsupported
   """
   @spec encrypt(JOSE.header(), binary(), PublicKey.t() | function(), keyword()) ::
           {:ok, binary()} | {:error, JOSE.Error.t()}
@@ -167,32 +180,57 @@ defmodule RequestSeal.JOSE.JWE do
   @doc """
   Authenticate and decrypt a compact JWE under an explicit policy (RFC 7516).
 
-  The policy must be a map containing exactly these atom keys:
-
-  * `:algorithms`: a nonempty unique list selected from `"RSA-OAEP-256"`,
-    `"RSA-OAEP"`, `"A128GCMKW"`, `"A256GCMKW"`, and `"dir"`.
-  * `:encryption`: a nonempty unique list selected from `"A128GCM"` and `"A256GCM"`.
-  * `:max_plaintext`: an integer from 1 through 1,048,576 bytes.
-  * `:timeout`: an integer from 1 through 300,000 milliseconds.
-  * `:key_resolver`: an arity-one function receiving
-    `%{algorithm: wire_name, encryption: wire_name, header: decoded_header_map}`.
-    It returns `:error`, `{:ok, %{algorithm: same_name, unwrap: arity_two_function}}`,
-    or `{:ok, %{algorithm: same_name, key: custody_handle}}`, with exactly two
-    entry keys. Unwrap receives `(encrypted_key_bytes, header)` and returns
-    `{:ok, cek_bytes}` or `{:error, term}`. The `key:` handle form works only for
-    `"RSA-OAEP"` and `"RSA-OAEP-256"`, binding `{:jwe, same_name}` with only
-    `:unwrap` capability; RSA private operations stay in custody. `"dir"`,
-    `"A128GCMKW"`, and `"A256GCMKW"` require the `unwrap:` callback. A handle
-    supplied for one of those algorithms returns `:decryption_failed`.
-
   Resolution, unwrapping, and authentication share one absolute deadline with
   sensitive workers and caller cancellation. No plaintext leaves the worker
-  before full tag authentication. Returns `{:ok, RequestSeal.JOSE.JWE.Result.t()}`
-  or `{:error, RequestSeal.JOSE.Error.t()}`. Invalid policies return `:invalid_policy`;
-  unwrap and authentication failures share `:decryption_failed`; expiry remains
-  `:deadline_exceeded`. Compact input is bounded to 1,048,576 bytes. The received
-  protected segment is used verbatim as AAD. Recipient integrity establishes no
-  sender identity, request association, claims validation, or authorization.
+  before full tag authentication. The received protected segment is used verbatim
+  as AAD.
+
+  ## Parameters
+
+    * `compact` - binary compact JWE, at most 1,048,576 bytes, with exactly five
+      segments. JSON serializations (input starting with `{` or `[`) reject. The
+      protected header follows the bounds in `RequestSeal.JOSE.JWS.sign_protected/4`
+      and is at most 21,846 Base64url bytes. The IV must decode to 12 bytes and the
+      tag to 16 bytes. The encrypted key must be empty for `"dir"`, the CEK width
+      for GCM key wrapping (with protected `"iv"` and `"tag"` members), and 256 to
+      1,024 bytes for RSA.
+    * `policy` - a map containing exactly these atom keys:
+      * `:algorithms` - nonempty unique list selected from `"RSA-OAEP-256"`,
+        `"RSA-OAEP"`, `"A128GCMKW"`, `"A256GCMKW"`, and `"dir"`.
+      * `:encryption` - nonempty unique list selected from `"A128GCM"` and
+        `"A256GCM"`.
+      * `:max_plaintext` - integer bytes, 1 to 1,048,576; bounds the ciphertext.
+      * `:timeout` - integer milliseconds, 1 to 300,000.
+      * `:key_resolver` - arity-one function receiving
+        `%{algorithm: wire_name, encryption: wire_name, header: decoded_header_map}`.
+        It returns `:error`,
+        `{:ok, %{algorithm: same_name, unwrap: arity_two_function}}`, or
+        `{:ok, %{algorithm: same_name, key: custody_handle}}`, with exactly two
+        entry keys. Unwrap receives `(encrypted_key_bytes, header)` and returns
+        `{:ok, cek_bytes}` or `{:error, term}`; a CEK whose width differs from the
+        `enc` key size counts as failure. The `key:` handle form works only for
+        `"RSA-OAEP"` and `"RSA-OAEP-256"`, binding `{:jwe, same_name}` with only
+        `:unwrap` capability; RSA private operations stay in custody. `"dir"`,
+        `"A128GCMKW"`, and `"A256GCMKW"` require the `unwrap:` callback. A handle
+        supplied for one of those algorithms returns `:decryption_failed`.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.JOSE.JWE.Result{}}` - carries `algorithm`, `encryption`,
+      decoded `header`, received `protected` segment, and `plaintext`.
+    * `{:error, %RequestSeal.JOSE.Error{}}` - reasons this function can return:
+      `:invalid_policy`, `:invalid_serialization`, `:unsupported_serialization`,
+      `:limit` (including ciphertext above `:max_plaintext`), `:invalid_base64`,
+      `:invalid_header`, `:duplicate_member`, `:unsupported_critical_header`,
+      `:compression_unsupported`, `:unsupported_header`, `:algorithm_not_permitted`
+      (`alg` or `enc` outside the policy), `:invalid_iv`, `:invalid_tag`,
+      `:unknown_key` (resolver returned `:error`), `:algorithm_mismatch` (resolver
+      returned another algorithm), `:key_resolver_failed` (resolver exception or
+      invalid entry), `:entropy_failure`, `:decryption_failed` (wrong encrypted-key
+      width, unwrap failure, or authentication failure), and `:deadline_exceeded`
+      (the only retryable reason). Meanings: `RequestSeal.JOSE.Error`.
+
+  ## Examples
 
   This is a local RFC 7518 round trip, using real key wrapping and AEAD:
 
@@ -207,6 +245,11 @@ defmodule RequestSeal.JOSE.JWE do
       iex> {:error, error} = RequestSeal.JOSE.JWE.decrypt(token, Map.delete(policy, :encryption))
       iex> error.reason
       :invalid_policy
+      iex> other_key = {:aes, :crypto.strong_rand_bytes(32)}
+      iex> wrong = fn bytes, header -> RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", bytes, header, other_key) end
+      iex> {:error, error} = RequestSeal.JOSE.JWE.decrypt(token, %{policy | key_resolver: fn _ -> {:ok, %{algorithm: "A256GCMKW", unwrap: wrong}} end})
+      iex> error.reason
+      :decryption_failed
   """
   @spec decrypt(binary(), map()) :: {:ok, Result.t()} | {:error, JOSE.Error.t()}
   def decrypt(compact, policy) do

@@ -5,25 +5,17 @@ defmodule RequestSeal.WebBotAuth do
 
   Caller clocks range from 0 through 253,402,300,799 Unix seconds.
 
-  `verify/3` validates every `web-bot-auth` signature independently. It requires
-  created/expires, a SHA-256 JWK thumbprint key ID, authority or target URI coverage,
-  and a matching dictionary Signature-Agent member when present. Legacy strings
-  reject. Caller trust resolves the (URL, key) pair before agent attribution.
-  Nested signature coverage includes the inner input and every inner component.
-  One replay claim follows validation of the entire envelope.
+  `verify/3` validates every `web-bot-auth` signature independently. Legacy
+  string `Signature-Agent` fields reject. Caller trust resolves the (URL, key)
+  pair before agent attribution. Nested signature coverage includes the inner
+  input and every inner component. One replay claim follows validation of the
+  entire envelope. Unresolved associations return `:agent_unresolved` with a
+  bounded detail; they never imply invalid cryptography or populate a URL
+  principal. Policy explicitly permits held keys when desired. No network or
+  store is started.
 
-  Options are `:representation`, `:digest_state` (generic digest contracts), and
-  `:timeout` (1..300,000 ms, default 5,000, one discovery/trust deadline).
-  Unresolved associations return `:agent_unresolved` with a bounded detail;
-  they never imply invalid cryptography or populate a URL principal. Policy
-  explicitly permits held keys when desired. No network or store is started.
-
-  `sign/4` accepts `label`, `agent` (`location`, `type`), public `key`, `algorithm`,
-  `created`, `expires`, and `nonce` (string or nil); optional `components` adds
-  identifiers to authority and the matching agent member. The key supplies its thumbprint;
-  private material remains behind the arity-two signer. Lifetimes are positive
-  and at most 86,400 seconds. The only option is `:field_schemas`.
-  Signing adds a dictionary member without replacing other agent members.
+  `sign/4` keeps private material behind the caller's arity-two signer and adds a
+  dictionary `Signature-Agent` member without replacing other agent members.
   Authorization always remains unevaluated. See `RequestSeal.Error` for reasons.
   """
   alias RequestSeal.{
@@ -44,7 +36,128 @@ defmodule RequestSeal.WebBotAuth do
   @profile %{name: :web_bot_auth, revision: @revision}
   # RFC 9421 Appendix B.1 public test keys, identified by RFC 7638/8037 thumbprints.
   @test_keys ~w(BHj8s0GPnMEQtkaULIM-PLgEhLBbuGUQ1vMxmBWZzEo oD0HwocPBSfpNy5W3bpJeyFGY_IQ_YpqxSjQ3Yd-CLA ydQXMtvbsOsZyFir-Y7A8t7fKEM1gbKPvyFkdpu4fvI poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U)
-  @doc "Verify all selected request signatures, then commit replay once."
+  @doc """
+  Verify all selected request signatures, then commit replay once.
+
+  A signature is selected when its `tag` parameter is `"web-bot-auth"`. Each
+  selected signature needs `created` and `expires` (lifetime positive and at most
+  the policy `max_lifetime`), a `keyid` that is a SHA-256 JWK thumbprint, and
+  coverage of `@authority` or `@target-uri` plus the policy `components`. When a
+  `Signature-Agent` field is present, including an empty dictionary, it must have
+  a member for the signature's label (otherwise `:agent_unresolved` with detail
+  `:missing_member`), and the signature must cover
+  `"signature-agent";key="<label>"`. Published RFC 9421 test keys reject unless
+  the policy sets `test_keys: :allow`. Each signature is then checked by
+  `RequestSeal.verify/3` with the resolved key, and nested signatures must be
+  covered completely. A required replay claim runs once, after every selected
+  signature passes; a derived replay retention end above 253,402,300,799 rejects
+  with `:retention_exceeded` at `:replay` before commitment or storage.
+
+  ## Parameters
+
+    * `message` - a `RequestSeal.Message` of kind `:request`.
+    * `policy` - a `RequestSeal.WebBotAuth.Policy` built by
+      `RequestSeal.WebBotAuth.Policy.new/1`.
+    * `opts` - keyword list.
+
+  ## Options
+
+    * `:representation` - optional `RequestSeal.Body` for a required
+      representation digest, as in `RequestSeal.verify/3`.
+    * `:digest_state` - optional `RequestSeal.Digest` state, as in
+      `RequestSeal.verify/3`; mutually exclusive with `:representation`.
+    * `:timeout` - integer milliseconds, 1 to 300,000. Default 5,000. One
+      deadline shared by trust callbacks, held-key resolution, and discovery.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.WebBotAuth.Verification{}}` - `signatures` maps each
+      selected label to a `RequestSeal.Verification` whose `principal` is
+      `%{kind: :agent, ...}` with source provenance, or
+      `%{kind: :key, thumbprint: keyid}` for a held key.
+    * `{:error, %RequestSeal.Error{}}` - established reasons:
+      `:invalid_policy`, `:invalid_options`, `:invalid_message`, `:limit`;
+      signature fields: `:missing_signature_input`, `:missing_signature`,
+      `:label_mismatch`, `:duplicate_label`, `:duplicate_parameter`,
+      `:invalid_signature_input`, `:invalid_signature_field`,
+      `:no_web_bot_auth_signature`, `:invalid_signature_agent` (detail
+      `:legacy_string`, `:invalid_dictionary`, `:duplicate_member`, or
+      `:invalid_member`); profile rules: `:unexpected_signature`, `:invalid_keyid`,
+      `:test_key_rejected`, `:missing_required_component`,
+      `:nested_coverage_incomplete`; freshness: `:invalid_clock`,
+      `:missing_created`, `:missing_expires`, `:lifetime_exceeded`,
+      `:created_in_future`, `:expired`, `:too_old`; key association:
+      `:agent_unresolved` (detail `:missing_member`, `:unsupported_type`,
+      `:not_an_origin`, `:untrusted_agent`, `:source_mismatch`, `:unknown_key`,
+      `:revoked_key`, `:source_unavailable`, or `:timeout`); generic
+      verification: `:algorithm_not_permitted`, `:algorithm_mismatch`,
+      `:signature_base_failed`, `:invalid_signature`, `:verifier_failed`;
+      content: `:digest_not_covered`, `:digest_unsupported`, `:digest_mismatch`,
+      `:body_unavailable`; replay: `:missing_replay_identifier`,
+      `:retention_exceeded`, `:commitment_failed`, `:replayed`,
+      `:store_unavailable`, `:store_timeout`, `:store_failed`. Other reasons:
+      see `RequestSeal.Error`.
+
+  ## Examples
+
+  A held public key, trusted by its thumbprint (no network):
+
+      iex> {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
+      iex> {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
+      iex> signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+      iex> {:ok, message} = RequestSeal.Message.request("GET", "https://docs.example.org/guides/index.html", [], nil)
+      iex> spec = %{label: "crawler", agent: %{location: "https://crawler.example", type: :directory}, key: key, algorithm: "ed25519", created: 1_760_000_000, expires: 1_760_000_060, nonce: "crawl-0001"}
+      iex> {:ok, request} = RequestSeal.WebBotAuth.sign(message, spec, signer)
+      iex> held = fn %{keyid: ^thumbprint} -> {:ok, %{algorithm: "ed25519", key: key}}; _ -> :error end
+      iex> attrs = %{algorithms: ["ed25519"], agents: fn _ -> :error end, cache: nil, unresolved: {:held_keys, held}, freshness: %{clock: fn -> 1_760_000_010 end, skew: 5, max_age: 60}, content: :not_required, replay: :not_required}
+      iex> {:ok, policy} = RequestSeal.WebBotAuth.Policy.new(attrs)
+      iex> {:ok, envelope} = RequestSeal.WebBotAuth.verify(request, policy)
+      iex> envelope.signatures["crawler"].principal == %{kind: :key, thumbprint: thumbprint}
+      true
+      iex> {envelope.ignored, envelope.replay, envelope.authorization}
+      {[], :not_required, :not_evaluated}
+      iex> {:ok, untrusting} = RequestSeal.WebBotAuth.Policy.new(Map.delete(attrs, :unresolved))
+      iex> {:error, error} = RequestSeal.WebBotAuth.verify(request, untrusting)
+      iex> {error.reason, error.detail}
+      {:agent_unresolved, :untrusted_agent}
+      iex> {:error, error} = RequestSeal.WebBotAuth.verify(%{request | authority: "other.example"}, policy)
+      iex> error.reason
+      :invalid_signature
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+
+  Directory discovery: the trust callback maps the configured agent URL to a
+  caller-configured `RequestSeal.Discovery.Source`, which a caller-started cache
+  resolves.
+
+  Fragment (requires an HTTPS key directory peer at `https://crawler.example`; not executed here):
+
+      {:ok, cache} = RequestSeal.Discovery.Cache.start_link()
+
+      {:ok, source} =
+        RequestSeal.Discovery.Source.new(%{type: :directory, location: "https://crawler.example"})
+
+      {:ok, policy} =
+        RequestSeal.WebBotAuth.Policy.new(%{
+          algorithms: ["ed25519"],
+          cache: cache,
+          agents: fn
+            %{location: "https://crawler.example", type: :directory} -> {:ok, source}
+            _ -> :error
+          end,
+          freshness: %{clock: fn -> System.system_time(:second) end, skew: 5, max_age: 60},
+          content: :not_required,
+          replay: :not_required
+        })
+
+      {:ok, envelope} = RequestSeal.WebBotAuth.verify(request, policy, timeout: 5_000)
+      envelope.signatures["crawler"].principal.kind
+      #=> :agent
+
+      GenServer.stop(cache)
+  """
   @spec verify(Message.t(), Policy.t(), keyword()) ::
           {:ok, Verification.t()} | {:error, Error.t()}
   def verify(message, policy, opts \\ []) do
@@ -555,7 +668,79 @@ defmodule RequestSeal.WebBotAuth do
     unwrap(Replay.commit(policy, %{profile: @profile, signatures: facts}, retain))
   end
 
-  @doc "Sign an explicit protocol-00 request with caller-owned signing authority."
+  @doc """
+  Sign an explicit protocol-00 request with caller-owned signing authority.
+
+  Signing appends a `Signature-Agent` dictionary member for the label (or reuses
+  an identical existing member), then `Signature-Input` and `Signature` members.
+  The signature always covers `@authority` and `"signature-agent";key="<label>"`,
+  plus any `components`. Parameters are `created`, `keyid` (the key's SHA-256 JWK
+  thumbprint), `alg` (HTTP algorithm names only), `expires`, `nonce` (when not
+  nil), and `tag="web-bot-auth"`.
+
+  ## Parameters
+
+    * `message` - a `RequestSeal.Message` of kind `:request`.
+    * `spec` - a map with exactly these required keys, plus optional `:components`:
+      * `:label` - signature label (Structured Fields key).
+      * `:agent` - `%{location: url, type: type}` with exactly those keys. `type` is
+        `:directory`, `:jwks_uri`, or `:cimd`; `location` is an HTTPS URL of 1 to
+        2,048 printable ASCII bytes, without userinfo. A `:directory` location must
+        be a bare lowercase origin, such as `"https://crawler.example"`. If the
+        message already has a member for the label, it must be identical.
+      * `:key` - the signer's `RequestSeal.PublicKey`, compatible with `:algorithm`.
+      * `:algorithm` - a `RequestSeal.Crypto` algorithm; `"hmac-sha256"` and
+        `{:jws, "HS256"}` reject.
+      * `:created`, `:expires` - integer Unix seconds, 0 to 999,999,999,999,999;
+        `expires` is after `created` by at most 86,400 seconds.
+      * `:nonce` - binary of 1 to 1,024 bytes, or nil.
+      * `:components` - optional serialized Inner List of additional component
+        identifiers, without parameters. Default `"()"`.
+    * `signer` - arity-two function receiving `(algorithm, signature_base)` and
+      returning `{:ok, signature}` (1 to 1,024 bytes) or `{:error, term}`.
+    * `opts` - keyword list.
+
+  ## Options
+
+    * `:field_schemas` - Structured Fields schemas for covered fields, as in
+      `RequestSeal.sign/4`. Default `%{}`.
+
+  ## Returns
+
+    * `{:ok, message}` - the message with the appended fields.
+    * `{:error, %RequestSeal.Error{}}` - established reasons: `:invalid_options`
+      (option, spec, key, lifetime, or signer form), `:invalid_message`,
+      `:invalid_signature_agent` (invalid `:agent` location, or an invalid existing
+      `Signature-Agent` field), `:limit`, `:nested_coverage_incomplete` (`components` name
+      a signature that is absent or not covered completely), existing-dictionary
+      reasons `:missing_signature_input`, `:missing_signature`, `:label_mismatch`,
+      `:duplicate_label`, `:duplicate_parameter`, `:invalid_signature_input`,
+      `:invalid_signature_field`, and from `RequestSeal.sign/4` `:label_in_use`,
+      `:signature_base_failed`, and `:signer_failed`. Other reasons: see
+      `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
+      iex> signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+      iex> {:ok, message} = RequestSeal.Message.request("GET", "https://docs.example.org/guides/index.html", [], nil)
+      iex> spec = %{label: "crawler", agent: %{location: "https://crawler.example", type: :directory}, key: key, algorithm: "ed25519", created: 1_760_000_000, expires: 1_760_000_060, nonce: "crawl-0001"}
+      iex> {:ok, signed} = RequestSeal.WebBotAuth.sign(message, spec, signer)
+      iex> Enum.map(signed.fields, &{&1.name, &1.value}) |> hd()
+      {"Signature-Agent", ~s(crawler="https://crawler.example";type=directory)}
+      iex> Enum.map(signed.fields, & &1.name)
+      ["Signature-Agent", "Signature-Input", "Signature"]
+      iex> {:error, error} = RequestSeal.WebBotAuth.sign(message, %{spec | expires: 1_760_090_000}, signer)
+      iex> error.reason
+      :invalid_options
+      iex> {:error, error} = RequestSeal.WebBotAuth.sign(message, %{spec | agent: %{location: "http://crawler.example", type: :directory}}, signer)
+      iex> {error.reason, error.detail}
+      {:invalid_signature_agent, :invalid_member}
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+  """
   @spec sign(Message.t(), map(), Policy.signer(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}
   def sign(message, spec, signer, opts \\ []) do

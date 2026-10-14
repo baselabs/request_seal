@@ -2,18 +2,65 @@ defmodule RequestSeal.JOSE.Nested do
   @moduledoc """
   Verify exactly one compact JWS inside one authenticated compact JWE.
 
-  `verify/4` requires `content_types: [binary]`, a unique nonempty list of at
-  most 64 nonempty strings (each at most 256 bytes). The outer protected `cty`
-  must be selected. Inner envelopes or an inner JWS with `cty` reject as
-  `:nesting_depth`. Both policies are explicit; no recursive dispatch or fallback
-  occurs. Only complete success returns `%{jwe: JWE.Result, jws: JWS.Result}`.
-  Failure returns a redacted `JOSE.Error`, never a decrypted partial result.
-  Each policy supplies its own stage timeout; there is no combined timeout option.
+  Both policies are explicit; no recursive dispatch or fallback occurs. Failure
+  returns a redacted `RequestSeal.JOSE.Error`, never a decrypted partial result.
   These are envelope facts, not JWT claims validation or authorization.
   """
   alias RequestSeal.JOSE.{JWE, JWS, Support}
   import Support
 
+  @doc """
+  Decrypt one compact JWE, then verify the compact JWS it carries.
+
+  The outer protected `cty` must be one of the selected content types. Inner
+  envelopes (plaintext that is not a three-segment compact JWS) or an inner JWS
+  with a `cty` header reject as `:nesting_depth`. Only complete success returns a
+  result. Each policy supplies its own stage timeout; there is no combined timeout
+  option.
+
+  ## Parameters
+
+    * `compact` - the outer compact JWE, as accepted by
+      `RequestSeal.JOSE.JWE.decrypt/2`.
+    * `jwe_policy` - the decryption policy map for `RequestSeal.JOSE.JWE.decrypt/2`.
+    * `jws_policy` - the verification policy map for `RequestSeal.JOSE.JWS.verify/2`.
+    * `opts` - keyword list; required (there is no default).
+
+  ## Options
+
+    * `:content_types` - required. Unique nonempty list of at most 64 nonempty
+      strings, each at most 256 bytes, compared exactly with the outer `cty`.
+
+  ## Returns
+
+    * `{:ok, %{jwe: %RequestSeal.JOSE.JWE.Result{}, jws: %RequestSeal.JOSE.JWS.Result{}}}`.
+    * `{:error, %RequestSeal.JOSE.Error{}}` - `:invalid_options` (missing, unknown,
+      duplicate, or invalid option), `:content_type_mismatch` (outer `cty` absent
+      or not selected), `:nesting_depth`, and every reason
+      `RequestSeal.JOSE.JWE.decrypt/2` and `RequestSeal.JOSE.JWS.verify/2` return.
+      Meanings: `RequestSeal.JOSE.Error`.
+
+  ## Examples
+
+      iex> {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new({:jws, "EdDSA"}, {:ed25519, seed})
+      iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
+      iex> {:ok, jws} = RequestSeal.JOSE.JWS.sign([{"alg", "EdDSA"}], ~s({"order":"A-1001","status":"shipped"}), handle)
+      iex> kek = {:aes, :crypto.strong_rand_bytes(32)}
+      iex> wrap = fn algorithm, cek -> RequestSeal.JOSE.KeyManagement.wrap(algorithm, cek, %{}, kek) end
+      iex> {:ok, jwe} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}, {"cty", "JWT"}], jws, wrap)
+      iex> unwrap = fn bytes, header -> RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", bytes, header, kek) end
+      iex> jwe_policy = %{algorithms: ["A256GCMKW"], encryption: ["A256GCM"], max_plaintext: 4_096, timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "A256GCMKW", unwrap: unwrap}} end}
+      iex> jws_policy = %{algorithms: ["EdDSA"], timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: key}} end}
+      iex> {:ok, %{jws: inner}} = RequestSeal.JOSE.Nested.verify(jwe, jwe_policy, jws_policy, content_types: ["JWT"])
+      iex> inner.payload
+      ~s({"order":"A-1001","status":"shipped"})
+      iex> {:error, error} = RequestSeal.JOSE.Nested.verify(jwe, jwe_policy, jws_policy, content_types: ["application/example+jws"])
+      iex> error.reason
+      :content_type_mismatch
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+  """
   @spec verify(binary(), map(), map(), keyword()) ::
           {:ok, map()} | {:error, RequestSeal.JOSE.Error.t()}
   def verify(compact, jwe_policy, jws_policy, opts) do

@@ -2,61 +2,31 @@ defmodule RequestSeal.Message do
   @moduledoc """
   Lossless HTTP message values for later component derivation.
 
-  `new/1` accepts a map. Required for both kinds: `:kind` (`:request` or
-  `:response`), ordered `:fields` of `RequestSeal.FieldOccurrence`, `:trailers`,
-  a `RequestSeal.Body`, and `:transport` (`RequestSeal.TransportFacts`). Trailers
-  are an ordered list (including an observed empty list), `:unavailable`, or
-  `:pending` while the body is streaming. A streaming body describes unread
-  caller-owned content, not transport progress: a completed capture may have
-  known trailers while its content stream remains unread. Header and trailer
-  sections never mix.
-  Total fields and trailers are bounded to 1,024 occurrences and 1,048,576 bytes
-  of names and values. Field maps, tuples, and invalid nested structs reject.
+  A message is a request or a response holding ordered `RequestSeal.FieldOccurrence`
+  values, trailers, a `RequestSeal.Body` availability snapshot, and
+  `RequestSeal.TransportFacts` declarations. URI octets, percent-encoding, field
+  name case, and field value bytes are kept exactly as supplied; no normalization
+  is used to make inputs agree. Header and trailer sections never mix.
 
-  Requests require a token `:method` (at most 256 bytes), `:raw_target` (at most
-  16,384 bytes), and explicit `:target_form`: `:origin`, `:absolute`, `:authority`
-  (CONNECT with a port), or `:asterisk` (OPTIONS). URI octets and percent-encoding
-  remain unchanged; fragments, userinfo, malformed escapes, and controls reject.
-  Absolute targets require a scheme and authority. Optional `:scheme` and
-  `:authority` are a pair of caller-declared authoritative origin facts, never
-  inferred from Host or Forwarded. Scheme is bounded to 64 bytes; authority to
-  1,024 bytes. Ports are decimal numbers in 0..65535. Missing origin is preserved
-  as `nil`; a later component rule decides whether it is required. When supplied,
-  an absolute target must match the declared scheme and authority byte for byte;
-  a CONNECT target must match the declared authority. No normalization is used
-  to reconcile conflicting declarations.
+  Trailers can be an observed list, `:unavailable`, or `:pending` while the body
+  is streaming. A streaming body describes unread caller-owned content, not
+  transport progress: a completed capture may have known trailers while its
+  content stream remains unread.
 
-  Bracketed hosts follow [RFC 3986 Section 3.2.2](https://www.rfc-editor.org/rfc/rfc3986.html#section-3.2.2):
-  only IPv6address or IPvFuture literals accept. Bracketed IPv4, shortened,
-  decimal or hexadecimal IPv4 forms, and zone identifiers (including `%25`)
-  reject. IPv6 with a full dotted-decimal IPv4 tail remains valid.
-  The IPvFuture version flag accepts `[vV]` case-insensitively because quoted
-  ABNF literals are case-insensitive under
-  [RFC 5234 Section 2.3](https://www.rfc-editor.org/rfc/rfc5234.html#section-2.3).
+  A request's `:scheme` and `:authority` are caller-declared authoritative origin
+  facts, never inferred from Host or Forwarded. A missing origin is preserved as
+  `nil`; a later component rule decides whether it is required.
 
-  Responses require integer `:status` in 100..599. Optional `:related_request`
-  is a validated request (not another response); absent context remains `nil`.
-  Request-only fields must be `nil` on responses. Requests cannot carry status
-  or another related request. Unknown options reject; no normalization occurs.
-
-  `validate/1` applies the same checks to directly constructed or modified structs.
-  Success establishes a well-formed value, not HTTP framing, component availability,
+  Use `request/5` and `response/4` to build common messages from a URL, headers,
+  and body bytes, and `new/1` for full control over every attribute. `validate/1`
+  applies the same checks to directly constructed or modified structs. Success
+  establishes a well-formed value, not HTTP framing, component availability,
   cryptographic validity, or authentication. Signature-base derivation is provided by `RequestSeal.SignatureBase`.
   Generic signing and verification are provided by `RequestSeal`; optional Req/Finch
   adapters, Plug integration (also used by Phoenix), Ash scope mapping, and Web Bot Auth protocol-00
   are implemented. Other named application profiles use `RequestSeal.Profile`
   in extension packages. This module starts no process and reads no stream.
   Default inspection is redacted.
-
-      iex> {:ok, body} = RequestSeal.Body.new(%{state: :unavailable})
-      iex> {:ok, transport} = RequestSeal.TransportFacts.new(%{})
-      iex> {:ok, request} = RequestSeal.Message.new(%{kind: :request, method: "GET", raw_target: "/a%2Fb?", target_form: :origin, fields: [], trailers: :unavailable, body: body, transport: transport})
-      iex> {request.raw_target, request.body.state, request.scheme}
-      {"/a%2Fb?", :unavailable, nil}
-      iex> RequestSeal.Message.validate(request)
-      :ok
-      iex> RequestSeal.Message.new(%{kind: :request})
-      {:error, %RequestSeal.Message.Error{reason: :invalid_message}}
   """
   alias RequestSeal.{Body, FieldOccurrence, TransportFacts}
   alias RequestSeal.Message.Validation
@@ -91,7 +61,100 @@ defmodule RequestSeal.Message do
           transport: TransportFacts.t()
         }
 
-  @doc "Construct a request or response; return a bounded error on invalid input."
+  @doc """
+  Construct a request or response from an attribute map and validate it with `validate/1`.
+
+  ## Parameters
+
+    * `attrs` - a plain map (not a struct) using only the keys below. Unknown keys
+      reject; no value is normalized.
+
+  Keys for both kinds:
+
+    * `:kind` (required) - `:request` or `:response`.
+    * `:fields` (required) - ordered list of `RequestSeal.FieldOccurrence` values
+      with section `:headers`. Field maps, tuples, and invalid nested structs reject.
+    * `:trailers` (required) - ordered list of `:trailers` occurrences (an observed
+      empty list is valid), `:unavailable`, or `:pending`. `:pending` requires a
+      `:streaming` body.
+    * `:body` (required) - a `RequestSeal.Body`.
+    * `:transport` (required) - a `RequestSeal.TransportFacts`.
+
+  Fields and trailers together are bounded to 1,024 occurrences and 1,048,576 bytes
+  of names and values.
+
+  Request keys (`:status` and `:related_request` must be absent or `nil`):
+
+    * `:method` - an HTTP token of 1..256 bytes, case-sensitive. `"CONNECT"` requires
+      the `:authority` target form.
+    * `:raw_target` - 1..16,384 bytes of RFC 3986 URI characters and well-formed
+      percent escapes, kept unchanged. Fragments, userinfo, malformed escapes, and
+      controls reject.
+    * `:target_form` - `:origin` (starts with `/`), `:absolute` (requires a scheme
+      and authority), `:authority` (`CONNECT` only, with a port), or `:asterisk`
+      (exactly `*`, `OPTIONS` only). Origin and absolute paths and queries cannot
+      contain `[` or `]`.
+    * `:scheme` and `:authority` - optional pair; supply both or neither. Scheme is
+      an RFC 3986 scheme of at most 64 bytes; authority is at most 1,024 bytes with
+      an optional decimal port of at most five digits in 0..65535. When supplied,
+      an absolute target must match the declared scheme and authority byte for
+      byte, and an authority-form target must equal the declared authority.
+
+  Bracketed hosts follow [RFC 3986 Section 3.2.2](https://www.rfc-editor.org/rfc/rfc3986.html#section-3.2.2):
+  only IPv6address or IPvFuture literals accept. Bracketed IPv4, shortened,
+  decimal or hexadecimal IPv4 forms, and zone identifiers (including `%25`)
+  reject. IPv6 with a full dotted-decimal IPv4 tail remains valid.
+  The IPvFuture version flag accepts `[vV]` case-insensitively because quoted
+  ABNF literals are case-insensitive under
+  [RFC 5234 Section 2.3](https://www.rfc-editor.org/rfc/rfc5234.html#section-2.3).
+
+  Response keys (`:method`, `:raw_target`, `:target_form`, `:scheme`, and
+  `:authority` must be absent or `nil`):
+
+    * `:status` - integer in 100..599.
+    * `:related_request` - optional valid request (not a response); absent
+      context remains `nil`.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Message{}}` - the validated value, exactly as supplied.
+    * `{:error, %RequestSeal.Message.Error{}}` - reasons this function can return:
+      `:invalid_message` (not a map, missing or unknown keys, kind, method, target,
+      origin, status, related request, or `:pending` trailers without a streaming
+      body), `:invalid_field` (an invalid or misplaced field or trailer occurrence,
+      or the combined bound exceeded), `:invalid_body`, and `:invalid_transport`.
+      Meanings: `RequestSeal.Message.Error`.
+
+  ## Examples
+
+      iex> {:ok, body} = RequestSeal.Body.new(%{state: :unavailable})
+      iex> {:ok, transport} = RequestSeal.TransportFacts.new(%{})
+      iex> {:ok, request} = RequestSeal.Message.new(%{kind: :request, method: "GET", raw_target: "/a%2Fb?", target_form: :origin, fields: [], trailers: :unavailable, body: body, transport: transport})
+      iex> {request.raw_target, request.body.state, request.scheme}
+      {"/a%2Fb?", :unavailable, nil}
+      iex> RequestSeal.Message.new(%{kind: :request})
+      {:error, %RequestSeal.Message.Error{reason: :invalid_message}}
+
+  An absolute target must agree with the declared origin byte for byte:
+
+      iex> {:ok, body} = RequestSeal.Body.new(%{state: :unavailable})
+      iex> {:ok, transport} = RequestSeal.TransportFacts.new(%{})
+      iex> attrs = %{kind: :request, method: "GET", raw_target: "https://docs.example/reports/7", target_form: :absolute, scheme: "https", authority: "docs.example", fields: [], trailers: :unavailable, body: body, transport: transport}
+      iex> {:ok, _request} = RequestSeal.Message.new(attrs)
+      iex> RequestSeal.Message.new(%{attrs | authority: "DOCS.example"})
+      {:error, %RequestSeal.Message.Error{reason: :invalid_message}}
+
+  A response with pending trailers needs a streaming body:
+
+      iex> {:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: "build 118 passed"})
+      iex> {:ok, transport} = RequestSeal.TransportFacts.new(%{http_version: :http2})
+      iex> attrs = %{kind: :response, status: 200, fields: [], trailers: [], body: body, transport: transport}
+      iex> {:ok, response} = RequestSeal.Message.new(attrs)
+      iex> response.status
+      200
+      iex> RequestSeal.Message.new(%{attrs | trailers: :pending})
+      {:error, %RequestSeal.Message.Error{reason: :invalid_message}}
+  """
   @spec new(map()) :: {:ok, t()} | {:error, RequestSeal.Message.Error.t()}
   def new(attrs),
     do:
@@ -103,26 +166,64 @@ defmodule RequestSeal.Message do
       )
 
   @doc """
-  Build a request from an absolute HTTP(S) URL, ordered headers, and exact body bytes.
+  Build an origin-form request from an absolute HTTP(S) URL, ordered headers, and exact body bytes.
 
-  Scheme and host are lowercased; default ports (HTTPS 443 and HTTP 80)
-  are omitted, matching Finch and Req. Percent escapes and query bytes
-  are preserved. An absent path becomes `/`; an empty query retains its `?`.
-  Header case, order, and repeats remain unchanged. `nil` and `""` both retain
-  empty content. Transport declarations stay unknown and trailers unavailable.
-  All values pass through `new/1`, including its 1 MiB body retention limit.
+  The scheme and authority are ASCII-lowercased; a port numerically equal to the
+  scheme default (HTTPS 443, HTTP 80) is omitted, matching Finch and Req. Path and
+  query bytes, including percent escapes, are preserved. An absent path becomes
+  `/`; an empty query retains its `?`. Transport declarations stay unknown and
+  trailers `:unavailable`. The result passes through `new/1`.
 
-  The only option is `:digest`, default `nil`: a nonempty unique list of
-  `"sha-256"` and/or `"sha-512"` adds Content-Digest over the exact bytes.
-  Existing Content-Digest headers reject when generating a digest; omit the
-  option to preserve caller-supplied headers. Invalid options return
-  `:invalid_message`; invalid headers and bodies retain their existing errors.
+  ## Parameters
+
+    * `method` - HTTP token of 1..256 bytes, kept as given (no case change).
+    * `url` - valid UTF-8 binary of at most 17,480 bytes: `http://` or `https://`
+      (scheme case-insensitive), a nonempty authority, then an optional path and
+      query. Any `#` rejects. The authority and resulting target must satisfy
+      `new/1`; userinfo rejects.
+    * `headers` - ordered list of at most 1,024 `{name, value}` binary tuples, each
+      becoming a `:headers` `RequestSeal.FieldOccurrence` with `:caller`
+      provenance. Name case, order, and repeats remain unchanged.
+    * `bytes` - exact body bytes retained in a `RequestSeal.Body`, or `nil` for
+      empty content. At most 1,048,576 bytes (the body's default retention limit).
+
+  ## Options
+
+    * `:digest` - `nil` (default) or a nonempty unique list of `"sha-256"` and/or
+      `"sha-512"`. A list appends one `content-digest` header computed by
+      `RequestSeal.Digest.compute/3` over the exact bytes, in list order. Existing
+      Content-Digest headers (any case) reject when generating a digest; omit the
+      option to keep caller-supplied headers.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Message{kind: :request, target_form: :origin}}`.
+    * `{:error, %RequestSeal.Message.Error{}}` - reasons this function can return:
+      `:invalid_message` (unknown or duplicate options, an invalid `:digest` value,
+      an existing Content-Digest with `:digest`, a URL that is not absolute
+      HTTP(S), or a method, authority, or target that `new/1` rejects),
+      `:invalid_field` (a header that is not a binary pair, an invalid name or
+      value, more than 1,024 headers, or the combined field bound), and
+      `:invalid_body` (bytes not a binary or `nil`, or over the retention limit).
+      Meanings: `RequestSeal.Message.Error`.
+
+  ## Examples
 
       iex> {:ok, message} = RequestSeal.Message.request("post", "https://example.com:8443/a%2Fb?", [{"X", "one"}, {"X", "two"}], nil)
       iex> {message.method, message.authority, message.raw_target, message.body.bytes}
       {"post", "example.com:8443", "/a%2Fb?", ""}
       iex> Enum.map(message.fields, &{&1.name, &1.value})
       [{"X", "one"}, {"X", "two"}]
+
+  Default ports are dropped and a digest header can be added:
+
+      iex> {:ok, message} = RequestSeal.Message.request("POST", "HTTPS://Telemetry.Example:443/ingest", [{"Content-Type", "application/json"}], ~s({"hello": "world"}), digest: ["sha-256"])
+      iex> {message.scheme, message.authority, message.raw_target}
+      {"https", "telemetry.example", "/ingest"}
+      iex> Enum.map(message.fields, &{&1.name, &1.value})
+      [{"Content-Type", "application/json"}, {"content-digest", "sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:"}]
+      iex> RequestSeal.Message.request("GET", "https://example.org/page#top", [], nil)
+      {:error, %RequestSeal.Message.Error{reason: :invalid_message}}
   """
   @spec request(binary(), binary(), [{binary(), binary()}], binary() | nil, keyword()) ::
           {:ok, t()} | {:error, RequestSeal.Message.Error.t()}
@@ -144,16 +245,44 @@ defmodule RequestSeal.Message do
   end
 
   @doc """
-  Build a response with ordered headers and retained bytes (`nil` means empty).
+  Build a response with ordered headers and retained bytes.
 
-  Accepts the same `:digest` option as `request/5`. Optional `:request` links a
-  validated request for components with `req`; no linkage is inferred. Status,
-  fields, body, and related request pass through `new/1` unchanged.
+  Status, fields, body, and related request pass through `new/1` unchanged.
+  Transport declarations stay unknown and trailers `:unavailable`.
+
+  ## Parameters
+
+    * `status` - integer in 100..599.
+    * `headers` - ordered list of at most 1,024 `{name, value}` binary tuples, as in
+      `request/5`.
+    * `bytes` - exact body bytes, or `nil` for empty content; at most 1,048,576 bytes.
+
+  ## Options
+
+    * `:digest` - same as in `request/5`: `nil` (default) or a nonempty unique list
+      of `"sha-256"` and/or `"sha-512"` that appends a `content-digest` header.
+    * `:request` - a valid request `RequestSeal.Message` to link as
+      `:related_request` for components with the `req` parameter; default `nil`.
+      No linkage is inferred.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Message{kind: :response}}`.
+    * `{:error, %RequestSeal.Message.Error{}}` - reasons this function can return:
+      `:invalid_message` (unknown or duplicate options, an invalid `:digest` value,
+      an existing Content-Digest with `:digest`, a status outside 100..599, or a
+      `:request` value that is not a valid request), `:invalid_field` (as in
+      `request/5`), and `:invalid_body` (bytes not a binary or `nil`, or over the
+      retention limit). Meanings: `RequestSeal.Message.Error`.
+
+  ## Examples
 
       iex> {:ok, request} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
       iex> {:ok, response} = RequestSeal.Message.response(204, [], nil, request: request)
       iex> {response.status, response.related_request == request, response.body.bytes}
       {204, true, ""}
+      iex> RequestSeal.Message.response(200, [], nil, request: response)
+      {:error, %RequestSeal.Message.Error{reason: :invalid_message}}
   """
   @spec response(100..599, [{binary(), binary()}], binary() | nil, keyword()) ::
           {:ok, t()} | {:error, RequestSeal.Message.Error.t()}
@@ -249,7 +378,36 @@ defmodule RequestSeal.Message do
     end
   end
 
-  @doc "Validate all nested values, states, bounds, targets, and request linkage."
+  @doc """
+  Validate all nested values, states, bounds, targets, and request linkage.
+
+  Applies every rule listed for `new/1` to an existing struct, including one built
+  or modified directly. Checks run in order: struct shape, body, transport, kind
+  rules, header fields, then trailers; the first failure is returned.
+
+  ## Parameters
+
+    * `message` - any term; only a `RequestSeal.Message` struct can pass.
+
+  ## Returns
+
+    * `:ok` - the value is well formed. This says nothing about HTTP framing,
+      component availability, cryptographic validity, or authentication.
+    * `{:error, %RequestSeal.Message.Error{}}` - reasons this function can return:
+      `:invalid_message`, `:invalid_field`, `:invalid_body`, and
+      `:invalid_transport`, with the same causes as in `new/1`.
+      Meanings: `RequestSeal.Message.Error`.
+
+  ## Examples
+
+      iex> {:ok, request} = RequestSeal.Message.request("GET", "https://example.com/orders/17", [], nil)
+      iex> RequestSeal.Message.validate(request)
+      :ok
+      iex> RequestSeal.Message.validate(%{request | method: "GET ORDERS"})
+      {:error, %RequestSeal.Message.Error{reason: :invalid_message}}
+      iex> RequestSeal.Message.validate(%{request | transport: :tls})
+      {:error, %RequestSeal.Message.Error{reason: :invalid_transport}}
+  """
   @spec validate(term()) :: :ok | {:error, RequestSeal.Message.Error.t()}
   def validate(%__MODULE__{} = message) do
     with true <- Validation.exact_struct?(message, __MODULE__),

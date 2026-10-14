@@ -7,14 +7,8 @@ defmodule RequestSeal.StructuredFields do
   first-position rule. No type is authorized by recognizing its syntax. Errors
   contain only bounded reasons and never return a partially parsed value.
 
-  Limits (keyword options) may only lower these ceilings: `:max_bytes` 65,536
-  (input or output), `:max_members` 1,024 (top-level encounters, including
-  duplicates), `:max_inner_items` 256 (per inner list), `:max_parameters` 256
-  (per item/list, including duplicates), `:max_key_bytes` 256,
-  `:max_value_bytes` 16,384 (decoded strings/bytes or token bytes), and
-  `:max_nodes` 4,096 (containers, items, and parameter encounters combined).
-  These are library resource ceilings, not protocol maximums.
-  All limits are positive integers. Grammar depth is fixed: top-level container,
+  Work is bounded by library resource ceilings (see `parse/3`), which callers may
+  only lower. Grammar depth is fixed: top-level container,
   optional inner list, item; inner lists cannot nest. Numeric syntax has the
   RFC's 15-digit integer and 12+3-digit decimal bounds, including leading zeros.
 
@@ -23,17 +17,8 @@ defmodule RequestSeal.StructuredFields do
   Missing padding is synthesized before decoding; invalid encodings fail parsing
   as described in [RFC 8941 Section 4.2.7](https://www.rfc-editor.org/rfc/rfc8941.html#section-4.2.7).
 
-  `parse_field/5` consumes the existing lossless `RequestSeal.Message` model,
-  combining matching occurrences in one explicitly selected section in order
-  with comma-space. It never merges headers with trailers or reads a body.
-  Its optional limits apply to both the combined bytes and the complete parse.
-  Missing fields and unavailable sections remain explicit failures.
-
-  Serializing an empty list or dictionary returns `{:ok, ""}`. The empty binary
-  means the caller must omit both the field name and field value from the HTTP
-  message, as specified by [RFC 9651 Section 4.1](https://www.rfc-editor.org/rfc/rfc9651.html#section-4.1).
-  It must not be emitted as an empty HTTP field. This keeps the serialization
-  result binary while leaving field emission to the caller.
+  `parse_field/5` reads fields from the lossless `RequestSeal.Message` model; it
+  never merges headers with trailers or reads a body.
 
       iex> alias RequestSeal.StructuredFields, as: SF
       iex> {:ok, schema} = SF.Schema.new(%{revision: :rfc8941, type: :item, item_types: [:integer]})
@@ -59,7 +44,53 @@ defmodule RequestSeal.StructuredFields do
     max_nodes: 4096
   }
 
-  @doc "Parse complete ASCII field bytes under an explicit schema and bounded work."
+  @doc """
+  Parse complete ASCII field bytes under an explicit schema and bounded work.
+
+  Leading spaces and trailing spaces are ignored; any other trailing byte rejects.
+  An empty input is an empty list or dictionary; an item cannot be empty.
+
+  ## Parameters
+
+    * `bytes` - the complete field value as a binary.
+    * `schema` - a valid `RequestSeal.StructuredFields.Schema`; it selects the RFC
+      revision, top-level type, and allowed item and parameter types.
+
+  ## Options
+
+  Limits may only lower these library resource ceilings, not protocol maximums.
+  Each value is a positive integer no greater than its ceiling; any other key or
+  value rejects with `:invalid_limits`.
+
+    * `:max_bytes` - 65,536: input bytes (or output bytes for `serialize/3`).
+    * `:max_members` - 1,024: top-level encounters, including duplicates.
+    * `:max_inner_items` - 256: items per inner list.
+    * `:max_parameters` - 256: parameters per item or inner list, including duplicates.
+    * `:max_key_bytes` - 256: bytes per dictionary or parameter key.
+    * `:max_value_bytes` - 16,384: decoded string or byte-sequence bytes, or token bytes.
+    * `:max_nodes` - 4,096: containers, items, and parameter encounters combined.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.StructuredFields.Value{}}` - typed as the schema's `:type`.
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - reasons this function can
+      return: `:invalid_schema`, `:invalid_limits`, `:syntax` (including a
+      non-binary input), `:limit`, `:revision_type`, and `:schema_type`.
+      Meanings: `RequestSeal.StructuredFields.Error`.
+
+  ## Examples
+
+      iex> {:ok, schema} = RequestSeal.StructuredFields.Schema.new(%{revision: :rfc8941, type: :dictionary, item_types: [:integer, :boolean]})
+      iex> {:ok, value} = RequestSeal.StructuredFields.parse("retries=2, cached, retries=3", schema)
+      iex> Enum.map(value.value, fn {key, item} -> {key, item.value} end)
+      [{"retries", {:integer, 3}}, {"cached", {:boolean, true}}]
+      iex> RequestSeal.StructuredFields.parse("retries=2, depth=4", schema, max_members: 1)
+      {:error, %RequestSeal.StructuredFields.Error{reason: :limit}}
+      iex> RequestSeal.StructuredFields.parse("retries=two", schema)
+      {:error, %RequestSeal.StructuredFields.Error{reason: :schema_type}}
+      iex> RequestSeal.StructuredFields.parse("retries=2", schema, max_members: 2048)
+      {:error, %RequestSeal.StructuredFields.Error{reason: :invalid_limits}}
+  """
   @spec parse(binary(), Schema.t(), keyword()) :: {:ok, Value.t()} | {:error, Error.t()}
   def parse(bytes, schema, opts \\ []) do
     protect(fn -> parse_bytes(bytes, schema, setup(schema, opts)) end)
@@ -86,7 +117,43 @@ defmodule RequestSeal.StructuredFields do
     {:ok, value}
   end
 
-  @doc "Serialize canonically; an empty binary means omit the field. Invalid values reject."
+  @doc """
+  Serialize canonically; an empty binary means omit the field. Invalid values reject.
+
+  Serializing an empty list or dictionary returns `{:ok, ""}`. The empty binary
+  means the caller must omit both the field name and field value from the HTTP
+  message, as specified by [RFC 9651 Section 4.1](https://www.rfc-editor.org/rfc/rfc9651.html#section-4.1).
+  It must not be emitted as an empty HTTP field. This keeps the serialization
+  result binary while leaving field emission to the caller.
+
+  ## Parameters
+
+    * `value` - a `RequestSeal.StructuredFields.Value` whose `:type` equals the
+      schema's `:type`. Hand-constructed duplicate keys reject.
+    * `schema` - a valid `RequestSeal.StructuredFields.Schema`.
+
+  ## Options
+
+  The same limit options as `parse/3`; `:max_bytes` bounds the output.
+
+  ## Returns
+
+    * `{:ok, wire}` - canonical field value bytes.
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - reasons this function can
+      return: `:invalid_schema`, `:invalid_limits`, `:invalid_value`, `:schema_type`,
+      `:revision_type`, and `:limit`. Meanings: `RequestSeal.StructuredFields.Error`.
+
+  ## Examples
+
+      iex> alias RequestSeal.StructuredFields.{Schema, Value}
+      iex> {:ok, schema} = Schema.new(%{revision: :rfc8941, type: :list, item_types: [:token]})
+      iex> RequestSeal.StructuredFields.serialize(%Value{type: :list, value: [%Value{type: :item, value: {:token, "gzip"}, parameters: [{"q", {:decimal, {5, 1}}}]}]}, schema)
+      {:ok, "gzip;q=0.5"}
+      iex> RequestSeal.StructuredFields.serialize(%Value{type: :list, value: []}, schema)
+      {:ok, ""}
+      iex> RequestSeal.StructuredFields.serialize(%Value{type: :list, value: [%Value{type: :item, value: {:token, "two words"}}]}, schema)
+      {:error, %RequestSeal.StructuredFields.Error{reason: :invalid_value}}
+  """
   @spec serialize(Value.t(), Schema.t(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
   def serialize(value, schema, opts \\ []) do
     protect(fn ->
@@ -101,13 +168,55 @@ defmodule RequestSeal.StructuredFields do
   @doc """
   Combine ordered header or trailer occurrences and parse under optional lowered limits.
 
-  `:unique_keys` optionally lists dictionary keys (or `:all`) whose repeats reject with
-  `:duplicate_key` before deduplication, including across field occurrences.
-  It defaults to `[]`; keys must use valid dictionary-key syntax, fit the key
-  byte ceiling, and number no more than `:max_members`. Other keys retain the
-  last-value, first-position rule. `:unique_parameters` defaults to false; true
-  rejects repeated parameter names on any member or inner item with
-  `:duplicate_parameter`, after the bounded parse completes.
+  Matching occurrences in the one selected section are joined in order with
+  comma-space, then parsed as in `parse/3`. Headers and trailers never merge and
+  no body is read. Missing fields and unavailable sections remain explicit
+  failures.
+
+  ## Parameters
+
+    * `message` - a valid `RequestSeal.Message`.
+    * `name` - field name, an HTTP token of 1..256 bytes, matched case-insensitively.
+    * `schema` - a valid `RequestSeal.StructuredFields.Schema`.
+    * `section` - `:headers` (default) or `:trailers`. Trailers must be an
+      observed list.
+
+  ## Options
+
+  The limit options of `parse/3`, which apply to both the combined bytes and the
+  complete parse, plus:
+
+    * `:unique_keys` - `[]` (default), `:all`, or a list of dictionary keys whose
+      repeats reject with `:duplicate_key` before deduplication, including across
+      field occurrences. Keys must use valid dictionary-key syntax, fit the
+      256-byte key ceiling, and number no more than `:max_members`. Other keys
+      retain the last-value, first-position rule.
+    * `:unique_parameters` - `false` (default) or `true`; true rejects repeated
+      parameter names on any member or inner item with `:duplicate_parameter`,
+      after the bounded parse completes.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.StructuredFields.Value{}}`.
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - reasons this function can
+      return: `:invalid_schema`, `:invalid_limits`, `:invalid_message`,
+      `:invalid_field` (an invalid name or section), `:unavailable_section`,
+      `:missing_field`, `:limit`, `:syntax`, `:revision_type`, `:schema_type`,
+      `:duplicate_key`, and `:duplicate_parameter`.
+      Meanings: `RequestSeal.StructuredFields.Error`.
+
+  ## Examples
+
+      iex> alias RequestSeal.StructuredFields
+      iex> {:ok, schema} = StructuredFields.Schema.new(%{revision: :rfc8941, type: :dictionary, item_types: [:integer]})
+      iex> {:ok, request} = RequestSeal.Message.request("GET", "https://crawler.example/queue", [{"Example-Budget", "pages=10"}, {"example-budget", "depth=2, pages=20"}], nil)
+      iex> {:ok, value} = StructuredFields.parse_field(request, "Example-Budget", schema)
+      iex> Enum.map(value.value, fn {key, item} -> {key, item.value} end)
+      [{"pages", {:integer, 20}}, {"depth", {:integer, 2}}]
+      iex> StructuredFields.parse_field(request, "Example-Budget", schema, :headers, unique_keys: ["pages"])
+      {:error, %RequestSeal.StructuredFields.Error{reason: :duplicate_key}}
+      iex> StructuredFields.parse_field(request, "Example-Budget", schema, :trailers)
+      {:error, %RequestSeal.StructuredFields.Error{reason: :unavailable_section}}
   """
   @spec parse_field(Message.t(), binary(), Schema.t(), :headers | :trailers, keyword()) ::
           {:ok, Value.t()} | {:error, Error.t()}

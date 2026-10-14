@@ -2,32 +2,13 @@ defmodule RequestSeal.WebBotAuth.Policy do
   @moduledoc """
   Explicit policy for `draft-ietf-webbotauth-httpsig-protocol-00`.
 
-  `new/1` requires `:algorithms`, `:agents`, `:cache` (PID or nil),
-  `:freshness` (clock, skew, max_age), `:content`, and `:replay`.
-  Freshness always requires expiration. Max-age is nil or an integer in
-  1..253,402,300,799 seconds; skew is an integer in 0..86,400 seconds.
-  Values outside these ranges reject with `:invalid_policy`.
-  A derived replay retention end above 253,402,300,799 rejects with
-  `:retention_exceeded` at `:replay` before commitment or storage.
-  Content and replay use the generic
-  `RequestSeal.Policy` contracts; HMAC algorithms are forbidden.
-
-  The arity-one `:agents` trust function receives `identifier`, `location`, and
-  `type` (`:directory`, `:jwks_uri`, or `:cimd`) and returns `{:ok, source_or_key_set}`
-  or `:error`. It selects caller-configured trust, never an arbitrary fetch URL.
-  A Source requires a caller-started cache. A KeySet must be fresh and associated
-  with the same URL and type. Attribution requires this trusted association.
-
-  Optional choices: `:components` (extra required identifiers, default `"()"`),
-  `:max_lifetime` (1..604,800 seconds, default 86,400), `:unresolved` (`:reject`
-  or `{:held_keys, key_resolver}`), `:test_keys` (`:reject` or `:allow`),
-  `:untagged` (`:ignore` or `:reject`), `:max_signatures` (1..64, default 16),
-  and `:field_schemas`. Held-key verification attributes only the thumbprint,
-  never an unresolved agent URL. The `:held_keys` option waives the draft's
-  field-presence rule only when the field is absent.
-  A present `Signature-Agent` field, including an empty dictionary, must have
-  a member for the selected signature label or verification rejects with `:missing_member`.
-  Test keys default to rejection under Section 6.8.
+  `new/1` validates every choice without invoking trust, clock, or storage.
+  Content and replay use the generic `RequestSeal.Policy` contracts; HMAC
+  algorithms are forbidden. The `:agents` trust function selects
+  caller-configured trust, never an arbitrary fetch URL. Attribution requires
+  this trusted association. Held-key verification attributes only the
+  thumbprint, never an unresolved agent URL. Test keys default to rejection
+  under Section 6.8.
 
   Within the caller's chosen replay namespace, commitments should hash each
   signature's nonce, keyid, and agent identifier only (`identifier`, `keyid`, and
@@ -78,7 +59,74 @@ defmodule RequestSeal.WebBotAuth.Policy do
         }
   @required [:algorithms, :agents, :cache, :freshness, :content, :replay]
   @type signer :: RequestSeal.Policy.signer()
-  @doc "Construct an explicit policy without invoking trust, clock, or storage."
+  @doc """
+  Construct an explicit policy without invoking trust, clock, or storage.
+
+  ## Parameters
+
+    * `attrs` - a plain map (not a struct) with the required keys below and any
+      of the optional keys. Unknown keys reject.
+
+  Required keys:
+
+    * `:algorithms` - nonempty unique list of `RequestSeal.Crypto` HTTP tokens or
+      `{:jws, name}` selections, as in `RequestSeal.Policy`; `"hmac-sha256"` and
+      `{:jws, "HS256"}` reject.
+    * `:agents` - arity-one trust function receiving
+      `%{identifier: id, location: url, type: type}`, where `type` is
+      `:directory`, `:jwks_uri`, or `:cimd`, `location` is the received member
+      URL, and `identifier` is the directory URL
+      (`origin/.well-known/http-message-signatures-directory`) or the normalized
+      location. It returns `{:ok, %RequestSeal.Discovery.Source{}}`,
+      `{:ok, %RequestSeal.Discovery.KeySet{}}`, or `:error`. A Source requires a
+      caller-started `:cache`. A KeySet must be fresh and associated with the
+      same URL and type. Sources must allow no redirects.
+    * `:cache` - a `RequestSeal.Discovery.Cache` PID, or nil.
+    * `:freshness` - map with `:clock` (arity zero, integer Unix seconds),
+      `:skew` (integer 0 to 86,400 seconds), and `:max_age` (nil or integer 1 to
+      253,402,300,799 seconds). An optional `:require_expires` key is accepted,
+      but expiration is always required.
+    * `:content` - `:not_required` or a `RequestSeal.Policy` content map.
+    * `:replay` - `:not_required` or a `RequestSeal.Policy` replay map.
+
+  ## Options
+
+    * `:components` - serialized Inner List of extra required component
+      identifiers, without Inner List parameters. Default `"()"`.
+    * `:max_lifetime` - integer seconds, 1 to 604,800. Default 86,400.
+    * `:unresolved` - `:reject` (default) or `{:held_keys, key_resolver}`. The
+      arity-one resolver receives `%{label: label, keyid: keyid, tag: tag}` and
+      returns `{:ok, %{algorithm: algorithm, key: %RequestSeal.PublicKey{}}}` or
+      `:error`; the algorithm must be in `:algorithms` and the key's thumbprint
+      must equal `keyid`. It applies when no trusted association resolves,
+      except for revoked keys, source mismatches, and non-origin directory
+      locations. It waives the draft's `Signature-Agent` presence rule only when
+      the field is absent.
+    * `:test_keys` - `:reject` (default) or `:allow`.
+    * `:untagged` - `:ignore` (default; listed in `ignored`) or `:reject`.
+    * `:max_signatures` - integer 1 to 64. Default 16.
+    * `:field_schemas` - Structured Fields schemas, as in `RequestSeal.Policy`.
+      Default `%{}`.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.WebBotAuth.Policy{}}`.
+    * `{:error, %RequestSeal.Error{}}` - always reason `:invalid_policy`, layer
+      `:input`. Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> attrs = %{algorithms: ["ed25519"], agents: fn _ -> :error end, cache: nil, freshness: %{clock: fn -> 1_760_000_000 end, skew: 5, max_age: 60}, content: :not_required, replay: :not_required}
+      iex> {:ok, policy} = RequestSeal.WebBotAuth.Policy.new(attrs)
+      iex> {policy.max_lifetime, policy.unresolved, policy.test_keys, policy.untagged}
+      {86400, :reject, :reject, :ignore}
+      iex> {:error, error} = RequestSeal.WebBotAuth.Policy.new(%{attrs | algorithms: ["hmac-sha256"]})
+      iex> error.reason
+      :invalid_policy
+      iex> {:error, error} = RequestSeal.WebBotAuth.Policy.new(Map.put(attrs, :max_lifetime, 604_801))
+      iex> error.reason
+      :invalid_policy
+  """
   @spec new(map()) :: {:ok, t()} | {:error, Error.t()}
   def new(attrs) when is_map(attrs) and not is_struct(attrs) do
     allowed = Map.keys(Map.from_struct(%__MODULE__{}))

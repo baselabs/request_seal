@@ -3,18 +3,19 @@ defmodule RequestSeal.Digest do
   [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) content/representation digests and preference fields, using OTP hashes.
 
   `compute/3` hashes a retained `RequestSeal.Body` without re-encoding its bytes.
-  Algorithms are an explicit nonempty, unique list drawn from `"sha-256"` and
-  `"sha-512"`. Its result is a Structured Fields dictionary, serialized with
-  `serialize/1`. `init/3`, `update/2`, and `finish/1` support caller-fed binary
-  chunks without retaining content, reading handles, or starting processes.
-  `:max_bytes` defaults to 16,777,216 and may be lowered to any nonnegative integer.
-  Retained-body `compute/3` and `check/3` cannot raise this 16 MiB hard limit,
-  bounding work on already retained content. Only caller-fed streams may explicitly
-  opt in to a higher `:max_bytes` through `init/3`: incremental hash state uses
-  constant memory and retains no chunks. The caller owns that larger work budget.
-  A chunk exceeding the remaining limit rejects before hashing it. State is
-  caller-owned and immutable; use each returned state and finish only at EOF.
-  Finishing does not prove transport completion; the caller supplies that boundary.
+  `init/3`, `update/2`, and `finish/1` support caller-fed binary chunks without
+  retaining content, reading handles, or starting processes. Results are
+  Structured Fields dictionaries, serialized with `serialize/1`. `check/3` and
+  `check_stream/3` compare computed checksums with a Message's Content-Digest or
+  Repr-Digest field.
+
+  Retained content is bounded at 16,777,216 bytes (16 MiB): `compute/3` and
+  `check/3` cannot raise that hard limit, bounding work on already retained
+  content. Only caller-fed streams may explicitly opt in to a higher `:max_bytes`
+  through `init/3`: incremental hash state uses constant memory and retains no
+  chunks. The caller owns that larger work budget. State is caller-owned and
+  immutable; use each returned state and finish only at EOF. Finishing does not
+  prove transport completion; the caller supplies that boundary.
 
   Hash HTTP content after transfer framing removal but before content decoding.
   Gzip bytes remain gzip bytes. A range's content is only the transmitted range;
@@ -22,15 +23,7 @@ defmodule RequestSeal.Digest do
   complete selected representation, including content encoding (Sections 2–3).
   The caller selects that representation using HTTP method, status, metadata,
   and resource semantics; this library never reconstructs it from partial content.
-
-  `check/3` takes a validated Message and `:content` or `:representation`.
-  Content uses the Message's retained body. Representation requires the option
-  `:representation`, a retained Body containing the entire selected representation,
-  even when it equals content. No unavailable body substitutes for empty bytes.
-  `:section` selects `:headers` (default) or `:trailers`; sections never merge.
-  `:max_bytes` sets the computation bound. Unknown or duplicate options reject.
-  `check_stream/3` checks caller-fed state against the field selected by its kind;
-  its only option is `:section`. A trailer must be observed before checking it.
+  No unavailable body substitutes for empty bytes.
 
   Every supported checksum present must match. Before dictionary deduplication,
   checks reject a supported algorithm appearing more than once across the combined
@@ -38,16 +31,14 @@ defmodule RequestSeal.Digest do
   checksum values agree. Unknown and deprecated algorithms
   are parsed but never computed; success reports only their count. They cannot
   establish a match alone. A stream must have computed every supported algorithm
-  in the field. A successful map contains `:kind`, `:bytes`, `:checked` (supported
-  algorithm names), and `:unsupported` (count); it proves checksum agreement only,
+  in the field. A successful check proves checksum agreement only,
   with no signature coverage, authentication, identity, or authorization claim.
   Legacy Digest fields never substitute for these fields.
 
   `parse/1` and `serialize/1` use the RFC 8941 dictionary/byte-sequence schema
-  mandated by RFC 9530; known checksum lengths are checked. `parse_preferences/1`,
-  `serialize_preferences/1`, and `preferences/3` use integer weights in 0..10.
-  Preferences are hints, with 0 meaning unacceptable (Section 4); this module
-  selects no algorithm from them. Parameters and duplicate keys follow Structured
+  mandated by RFC 9530; known checksum lengths are checked. Preferences are
+  hints, with 0 meaning unacceptable (Section 4); this module selects no
+  algorithm from them. Parameters and duplicate keys follow Structured
   Fields rules (last value, first position), except supported checksum algorithms
   in `check/3` and `check_stream/3`, which reject any repeat with `:conflicting_digest`.
   Inspection hides hash contexts.
@@ -72,7 +63,39 @@ defmodule RequestSeal.Digest do
   @doc """
   Initialize incremental hashes for an explicit semantic kind and algorithms.
 
-  `:max_bytes` may exceed 16 MiB to explicitly opt in to a larger streaming work budget.
+  Feed chunks with `update/2`, then call `finish/1` or `check_stream/3` at the
+  caller's EOF.
+
+  ## Parameters
+
+    * `kind` - `:content` or `:representation`; selects the field `check_stream/3`
+      compares against (Content-Digest or Repr-Digest).
+    * `algorithms` - a nonempty list of unique names drawn from `"sha-256"` and
+      `"sha-512"`; the result keeps this order.
+
+  ## Options
+
+    * `:max_bytes` - nonnegative integer bounding the total bytes accepted by
+      `update/2`; default 16,777,216. It may exceed 16 MiB to explicitly opt in to
+      a larger streaming work budget.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Digest{}}` - immutable hash state with `bytes: 0`.
+    * `{:error, %RequestSeal.Digest.Error{}}` - reasons this function can return:
+      `:invalid_kind`, `:invalid_options` (not a keyword list, unknown or
+      duplicate keys, or a negative or non-integer `:max_bytes`), and
+      `:unsupported_algorithm`. Meanings: `RequestSeal.Digest.Error`.
+
+  ## Examples
+
+      iex> {:ok, state} = RequestSeal.Digest.init(:content, ["sha-256", "sha-512"], max_bytes: 1024)
+      iex> {state.kind, state.bytes, state.max_bytes}
+      {:content, 0, 1024}
+      iex> RequestSeal.Digest.init(:content, ["md5"])
+      {:error, %RequestSeal.Digest.Error{reason: :unsupported_algorithm}}
+      iex> RequestSeal.Digest.init(:content, ["sha-256", "sha-256"])
+      {:error, %RequestSeal.Digest.Error{reason: :unsupported_algorithm}}
   """
   @spec init(:content | :representation, [binary()], keyword()) :: {:ok, t()} | failure()
   def init(kind, algorithms, opts \\ []) do
@@ -89,7 +112,35 @@ defmodule RequestSeal.Digest do
     end)
   end
 
-  @doc "Hash one binary content chunk, rejecting overflow before cryptographic work."
+  @doc """
+  Hash one binary content chunk, rejecting overflow before cryptographic work.
+
+  A chunk that would take the total past the state's `:max_bytes` rejects before
+  it is hashed. The input state is not changed; continue with the returned state.
+
+  ## Parameters
+
+    * `state` - a `RequestSeal.Digest` state from `init/3` or a previous `update/2`.
+    * `chunk` - a binary; an empty binary is allowed.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Digest{}}` - the new state with `:bytes` increased.
+    * `{:error, %RequestSeal.Digest.Error{}}` - reasons this function can return:
+      `:invalid_state`, `:invalid_chunk`, and `:limit`.
+      Meanings: `RequestSeal.Digest.Error`.
+
+  ## Examples
+
+      iex> {:ok, state} = RequestSeal.Digest.init(:content, ["sha-256"], max_bytes: 12)
+      iex> {:ok, state} = RequestSeal.Digest.update(state, "cpu=0.42;")
+      iex> state.bytes
+      9
+      iex> RequestSeal.Digest.update(state, "mem=0.91;")
+      {:error, %RequestSeal.Digest.Error{reason: :limit}}
+      iex> RequestSeal.Digest.update(state, [?a])
+      {:error, %RequestSeal.Digest.Error{reason: :invalid_chunk}}
+  """
   @spec update(t(), binary()) :: {:ok, t()} | failure()
   def update(state, chunk) do
     protect(fn ->
@@ -107,7 +158,35 @@ defmodule RequestSeal.Digest do
     end)
   end
 
-  @doc "Finalize checksums as an ordered Structured Fields dictionary at caller EOF."
+  @doc """
+  Finalize checksums as an ordered Structured Fields dictionary at caller EOF.
+
+  Finishing does not prove transport completion. The state stays usable; finishing
+  it again returns the same checksums.
+
+  ## Parameters
+
+    * `state` - a `RequestSeal.Digest` state.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.StructuredFields.Value{type: :dictionary}}` - one
+      `{name, item}` member per algorithm in `init/3` order; each item value is
+      `{:bytes, checksum}`.
+    * `{:error, %RequestSeal.Digest.Error{reason: :invalid_state}}` - the only
+      reason. Meanings: `RequestSeal.Digest.Error`.
+
+  ## Examples
+
+      iex> {:ok, state} = RequestSeal.Digest.init(:content, ["sha-256"])
+      iex> {:ok, state} = RequestSeal.Digest.update(state, ~s({"hello": ))
+      iex> {:ok, state} = RequestSeal.Digest.update(state, ~s("world"}))
+      iex> {:ok, dictionary} = RequestSeal.Digest.finish(state)
+      iex> RequestSeal.Digest.serialize(dictionary)
+      {:ok, "sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:"}
+      iex> RequestSeal.Digest.finish(%{state | bytes: -1})
+      {:error, %RequestSeal.Digest.Error{reason: :invalid_state}}
+  """
   @spec finish(t()) :: {:ok, Value.t()} | failure()
   def finish(state) do
     protect(fn ->
@@ -124,7 +203,41 @@ defmodule RequestSeal.Digest do
     end)
   end
 
-  @doc "Compute SHA-256/SHA-512 checksums from retained exact body bytes."
+  @doc """
+  Compute SHA-256/SHA-512 checksums from retained exact body bytes.
+
+  ## Parameters
+
+    * `body` - a valid `RequestSeal.Body` in the `:retained` state. Its bytes are
+      hashed as they are, without re-encoding.
+    * `algorithms` - a nonempty list of unique names drawn from `"sha-256"` and
+      `"sha-512"`; the result keeps this order.
+
+  ## Options
+
+    * `:max_bytes` - integer in 0..16,777,216 bounding the hashed bytes; default
+      16,777,216. A larger value rejects; use `init/3` for a larger streaming budget.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.StructuredFields.Value{type: :dictionary}}` - as in `finish/1`.
+    * `{:error, %RequestSeal.Digest.Error{}}` - reasons this function can return:
+      `:invalid_body`, `:body_unavailable` (streaming, unavailable, or consumed),
+      `:invalid_options`, `:unsupported_algorithm`, and `:limit`.
+      Meanings: `RequestSeal.Digest.Error`.
+
+  ## Examples
+
+      iex> {:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: ~s({"hello": "world"})})
+      iex> {:ok, dictionary} = RequestSeal.Digest.compute(body, ["sha-256"])
+      iex> RequestSeal.Digest.serialize(dictionary)
+      {:ok, "sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:"}
+      iex> RequestSeal.Digest.compute(body, ["sha-256"], max_bytes: 16_777_217)
+      {:error, %RequestSeal.Digest.Error{reason: :invalid_options}}
+      iex> {:ok, unavailable} = RequestSeal.Body.new(%{state: :unavailable})
+      iex> RequestSeal.Digest.compute(unavailable, ["sha-256"])
+      {:error, %RequestSeal.Digest.Error{reason: :body_unavailable}}
+  """
   @spec compute(Body.t(), [binary()], keyword()) :: {:ok, Value.t()} | failure()
   def compute(body, algorithms, opts \\ []) do
     protect(fn ->
@@ -138,24 +251,165 @@ defmodule RequestSeal.Digest do
     end)
   end
 
-  @doc "Parse an RFC 9530 integrity dictionary; parameters retain RFC semantics."
+  @doc """
+  Parse an RFC 9530 integrity dictionary; parameters retain RFC semantics.
+
+  Every member must be a byte sequence. Known algorithms (`"sha-256"`, 32 bytes;
+  `"sha-512"`, 64 bytes) have their checksum length checked; other algorithm
+  names are kept unchecked. Duplicate keys follow the Structured Fields
+  last-value, first-position rule.
+
+  ## Parameters
+
+    * `wire` - the field value bytes (at most 65,536).
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.StructuredFields.Value{type: :dictionary}}`.
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - `:syntax`, `:limit`,
+      `:revision_type`, or `:schema_type`. Meanings: `RequestSeal.StructuredFields.Error`.
+    * `{:error, %RequestSeal.Digest.Error{reason: :invalid_digest_length}}`.
+      Meanings: `RequestSeal.Digest.Error`.
+
+  ## Examples
+
+      iex> {:ok, dictionary} = RequestSeal.Digest.parse("sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:, md5=:AAAA:")
+      iex> Enum.map(dictionary.value, fn {name, _item} -> name end)
+      ["sha-256", "md5"]
+      iex> RequestSeal.Digest.parse("sha-256=:AAAA:")
+      {:error, %RequestSeal.Digest.Error{reason: :invalid_digest_length}}
+      iex> RequestSeal.Digest.parse("sha-256=42")
+      {:error, %RequestSeal.StructuredFields.Error{reason: :schema_type}}
+  """
   @spec parse(binary()) :: {:ok, Value.t()} | failure()
   def parse(wire), do: validate_parsed(StructuredFields.parse(wire, schema(:bytes)), :bytes)
 
-  @doc "Serialize a digest dictionary with known algorithm checksum-size validation."
+  @doc """
+  Serialize a digest dictionary with known algorithm checksum-size validation.
+
+  ## Parameters
+
+    * `value` - a `RequestSeal.StructuredFields.Value` dictionary whose members are
+      `{:bytes, checksum}` items, such as the result of `compute/3` or `finish/1`.
+
+  ## Returns
+
+    * `{:ok, wire}` - canonical field value bytes; `""` for an empty dictionary
+      (omit the field).
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - `:invalid_value`,
+      `:schema_type`, `:revision_type`, or `:limit`.
+      Meanings: `RequestSeal.StructuredFields.Error`.
+    * `{:error, %RequestSeal.Digest.Error{reason: :invalid_digest_length}}`.
+      Meanings: `RequestSeal.Digest.Error`.
+
+  ## Examples
+
+      iex> alias RequestSeal.StructuredFields.Value
+      iex> checksum = :crypto.hash(:sha256, "invoice 2041")
+      iex> RequestSeal.Digest.serialize(%Value{type: :dictionary, value: [{"sha-256", %Value{type: :item, value: {:bytes, checksum}}}]})
+      {:ok, "sha-256=:" <> Base.encode64(checksum) <> ":"}
+      iex> RequestSeal.Digest.serialize(%Value{type: :dictionary, value: [{"sha-512", %Value{type: :item, value: {:bytes, checksum}}}]})
+      {:error, %RequestSeal.Digest.Error{reason: :invalid_digest_length}}
+  """
   @spec serialize(Value.t()) :: {:ok, binary()} | failure()
   def serialize(value), do: serialize_value(value, :bytes)
 
-  @doc "Parse an RFC 9530 preference dictionary with integer weights in 0..10."
+  @doc """
+  Parse an RFC 9530 preference dictionary with integer weights in 0..10.
+
+  Weights are hints; 0 means unacceptable. Algorithm names are not restricted.
+
+  ## Parameters
+
+    * `wire` - the Want-Content-Digest or Want-Repr-Digest field value bytes
+      (at most 65,536).
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.StructuredFields.Value{type: :dictionary}}` - members
+      carry `{:integer, weight}` items.
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - `:syntax`, `:limit`,
+      `:revision_type`, or `:schema_type`. Meanings: `RequestSeal.StructuredFields.Error`.
+    * `{:error, %RequestSeal.Digest.Error{reason: :invalid_preference}}` - a
+      weight outside 0..10. Meanings: `RequestSeal.Digest.Error`.
+
+  ## Examples
+
+      iex> {:ok, preferences} = RequestSeal.Digest.parse_preferences("sha-512=3, sha-256=10, md5=0")
+      iex> Enum.map(preferences.value, fn {name, item} -> {name, item.value} end)
+      [{"sha-512", {:integer, 3}}, {"sha-256", {:integer, 10}}, {"md5", {:integer, 0}}]
+      iex> RequestSeal.Digest.parse_preferences("sha-256=11")
+      {:error, %RequestSeal.Digest.Error{reason: :invalid_preference}}
+  """
   @spec parse_preferences(binary()) :: {:ok, Value.t()} | failure()
   def parse_preferences(wire),
     do: validate_parsed(StructuredFields.parse(wire, schema(:integer)), :integer)
 
-  @doc "Serialize an RFC 9530 preference dictionary with weight validation."
+  @doc """
+  Serialize an RFC 9530 preference dictionary with weight validation.
+
+  ## Parameters
+
+    * `value` - a `RequestSeal.StructuredFields.Value` dictionary whose members are
+      `{:integer, weight}` items with weights in 0..10.
+
+  ## Returns
+
+    * `{:ok, wire}` - canonical field value bytes; `""` for an empty dictionary
+      (omit the field).
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - `:invalid_value`,
+      `:schema_type`, `:revision_type`, or `:limit`.
+      Meanings: `RequestSeal.StructuredFields.Error`.
+    * `{:error, %RequestSeal.Digest.Error{reason: :invalid_preference}}`.
+      Meanings: `RequestSeal.Digest.Error`.
+
+  ## Examples
+
+      iex> alias RequestSeal.StructuredFields.Value
+      iex> weight = fn n -> %Value{type: :item, value: {:integer, n}} end
+      iex> RequestSeal.Digest.serialize_preferences(%Value{type: :dictionary, value: [{"sha-256", weight.(10)}, {"sha-512", weight.(1)}]})
+      {:ok, "sha-256=10, sha-512=1"}
+      iex> RequestSeal.Digest.serialize_preferences(%Value{type: :dictionary, value: [{"sha-256", weight.(-1)}]})
+      {:error, %RequestSeal.Digest.Error{reason: :invalid_preference}}
+  """
   @spec serialize_preferences(Value.t()) :: {:ok, binary()} | failure()
   def serialize_preferences(value), do: serialize_value(value, :integer)
 
-  @doc "Read an explicit Want-Content-Digest or Want-Repr-Digest field/section."
+  @doc """
+  Read an explicit Want-Content-Digest or Want-Repr-Digest field/section.
+
+  Matching occurrences in the selected section are combined in order, as in
+  `RequestSeal.StructuredFields.parse_field/5`, then parsed as in
+  `parse_preferences/1`.
+
+  ## Parameters
+
+    * `message` - a valid `RequestSeal.Message`.
+    * `name` - `"Want-Content-Digest"` or `"Want-Repr-Digest"`, any case.
+    * `section` - `:headers` (default) or `:trailers`.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.StructuredFields.Value{type: :dictionary}}`.
+    * `{:error, %RequestSeal.Digest.Error{}}` - `:invalid_options` (another
+      section), `:invalid_field` (another field name), or `:invalid_preference`.
+      Meanings: `RequestSeal.Digest.Error`.
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - `:invalid_message`,
+      `:unavailable_section`, `:missing_field`, `:limit`, `:syntax`,
+      `:revision_type`, or `:schema_type`.
+      Meanings: `RequestSeal.StructuredFields.Error`.
+
+  ## Examples
+
+      iex> {:ok, request} = RequestSeal.Message.request("GET", "https://builds.example/artifacts/118", [{"Want-Content-Digest", "sha-512=3, sha-256=10"}], nil)
+      iex> {:ok, preferences} = RequestSeal.Digest.preferences(request, "want-content-digest")
+      iex> Enum.map(preferences.value, fn {name, item} -> {name, item.value} end)
+      [{"sha-512", {:integer, 3}}, {"sha-256", {:integer, 10}}]
+      iex> RequestSeal.Digest.preferences(request, "Want-Repr-Digest")
+      {:error, %RequestSeal.StructuredFields.Error{reason: :missing_field}}
+      iex> RequestSeal.Digest.preferences(request, "Accept")
+      {:error, %RequestSeal.Digest.Error{reason: :invalid_field}}
+  """
   @spec preferences(Message.t(), binary(), :headers | :trailers) :: {:ok, Value.t()} | failure()
   def preferences(message, name, section \\ :headers) do
     protect(fn ->
@@ -174,7 +428,62 @@ defmodule RequestSeal.Digest do
     end)
   end
 
-  @doc "Recompute the selected field from retained content or explicit representation."
+  @doc """
+  Recompute the selected field from retained content or explicit representation.
+
+  `:content` checks Content-Digest against the Message's retained body.
+  `:representation` checks Repr-Digest against the `:representation` option, a
+  retained Body containing the entire selected representation, even when it
+  equals content. Only supported algorithms in the field are computed.
+
+  ## Parameters
+
+    * `message` - a valid `RequestSeal.Message`.
+    * `kind` - `:content` or `:representation`.
+
+  ## Options
+
+  Unknown or duplicate options reject.
+
+    * `:section` - `:headers` (default) or `:trailers`; sections never merge. A
+      trailer must be observed (a list) before checking it.
+    * `:max_bytes` - integer in 0..16,777,216 bounding the hashed bytes; default
+      16,777,216.
+    * `:representation` - a retained `RequestSeal.Body`; required for
+      `:representation` and rejected for `:content`.
+
+  ## Returns
+
+    * `{:ok, %{kind: kind, bytes: count, checked: names, unsupported: count}}` -
+      every supported checksum matched. `:checked` lists the supported algorithm
+      names in field order; `:unsupported` counts other algorithm names.
+    * `{:error, %RequestSeal.Digest.Error{}}` - reasons this function can return:
+      `:invalid_message`, `:invalid_kind`, `:invalid_options`,
+      `:representation_required`, `:invalid_body`, `:body_unavailable`,
+      `:conflicting_digest`, `:invalid_digest_length`, `:unsupported_algorithm`
+      (no supported algorithm in the field), `:limit`, and `:mismatch`.
+      Meanings: `RequestSeal.Digest.Error`.
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - `:unavailable_section`,
+      `:missing_field`, `:limit`, `:syntax`, `:revision_type`, or `:schema_type`.
+      Meanings: `RequestSeal.StructuredFields.Error`.
+
+  ## Examples
+
+      iex> {:ok, request} = RequestSeal.Message.request("POST", "https://docs.example/notes", [], ~s({"hello": "world"}), digest: ["sha-256"])
+      iex> RequestSeal.Digest.check(request, :content)
+      {:ok, %{kind: :content, bytes: 18, checked: ["sha-256"], unsupported: 0}}
+      iex> RequestSeal.Digest.check(%{request | body: %{request.body | bytes: ~s({"hello": "World"})}}, :content)
+      {:error, %RequestSeal.Digest.Error{reason: :mismatch}}
+      iex> RequestSeal.Digest.check(request, :representation)
+      {:error, %RequestSeal.Digest.Error{reason: :representation_required}}
+
+  A representation check reads Repr-Digest and the explicit representation body:
+
+      iex> {:ok, representation} = RequestSeal.Body.new(%{state: :retained, bytes: ~s({"hello": "world"})})
+      iex> {:ok, response} = RequestSeal.Message.response(200, [{"Repr-Digest", "sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:"}], nil)
+      iex> RequestSeal.Digest.check(response, :representation, representation: representation)
+      {:ok, %{kind: :representation, bytes: 18, checked: ["sha-256"], unsupported: 0}}
+  """
   @spec check(Message.t(), :content | :representation, keyword()) :: {:ok, map()} | failure()
   def check(message, kind, opts \\ []) do
     protect(fn ->
@@ -200,7 +509,51 @@ defmodule RequestSeal.Digest do
     end)
   end
 
-  @doc "Check hashes accumulated through caller EOF against a Message digest field."
+  @doc """
+  Check hashes accumulated through caller EOF against a Message digest field.
+
+  The state's kind selects Content-Digest (`:content`) or Repr-Digest
+  (`:representation`). The state must have computed every supported algorithm in
+  the field; extra computed algorithms are ignored. The Message body is not read.
+
+  ## Parameters
+
+    * `state` - a `RequestSeal.Digest` state fed through the caller's EOF.
+    * `message` - a valid `RequestSeal.Message`.
+
+  ## Options
+
+    * `:section` - `:headers` (default) or `:trailers`; the only option. A trailer
+      must be observed (a list) before checking it.
+
+  ## Returns
+
+    * `{:ok, %{kind: kind, bytes: count, checked: names, unsupported: count}}` - as in `check/3`.
+    * `{:error, %RequestSeal.Digest.Error{}}` - reasons this function can return:
+      `:invalid_state`, `:invalid_options`, `:conflicting_digest`,
+      `:invalid_digest_length`, `:unsupported_algorithm`, `:uncomputed_algorithm`,
+      and `:mismatch`. Meanings: `RequestSeal.Digest.Error`.
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` - `:invalid_message`,
+      `:unavailable_section`, `:missing_field`, `:limit`, `:syntax`,
+      `:revision_type`, or `:schema_type`.
+      Meanings: `RequestSeal.StructuredFields.Error`.
+
+  ## Examples
+
+      iex> {:ok, body} = RequestSeal.Body.new(%{state: :streaming, source: make_ref()})
+      iex> {:ok, transport} = RequestSeal.TransportFacts.new(%{})
+      iex> {:ok, field} = RequestSeal.FieldOccurrence.new(%{name: "Content-Digest", value: "sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:", section: :headers})
+      iex> {:ok, response} = RequestSeal.Message.new(%{kind: :response, status: 200, fields: [field], trailers: :pending, body: body, transport: transport})
+      iex> {:ok, state} = RequestSeal.Digest.init(:content, ["sha-256"])
+      iex> {:ok, state} = RequestSeal.Digest.update(state, ~s({"hello": "world"}))
+      iex> RequestSeal.Digest.check_stream(state, response)
+      {:ok, %{kind: :content, bytes: 18, checked: ["sha-256"], unsupported: 0}}
+      iex> RequestSeal.Digest.check_stream(state, response, section: :trailers)
+      {:error, %RequestSeal.StructuredFields.Error{reason: :unavailable_section}}
+      iex> {:ok, other} = RequestSeal.Digest.init(:content, ["sha-512"])
+      iex> RequestSeal.Digest.check_stream(other, response)
+      {:error, %RequestSeal.Digest.Error{reason: :uncomputed_algorithm}}
+  """
   @spec check_stream(t(), Message.t(), keyword()) :: {:ok, map()} | failure()
   def check_stream(state, message, opts \\ []) do
     protect(fn ->

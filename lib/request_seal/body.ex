@@ -2,13 +2,11 @@ defmodule RequestSeal.Body do
   @moduledoc """
   Caller-owned body availability, without implicit reads or replayability.
 
-  `new/1` requires `:state`: `:retained` requires binary `:bytes`; `:streaming`
-  requires a caller-owned `:source` PID or reference; `:unavailable` and `:consumed`
-  carry neither. Empty retained bytes are different from unavailable bytes.
-  `:ownership` can only be `:caller`. `:max_bytes` bounds retained bytes (default
-  1,048,576; any nonnegative integer is allowed as the caller's retention policy).
-  Unknown keys reject. Stream handles are opaque; construction/validation never
-  invoke, enumerate, close, or claim to have consumed them.
+  A body is `:retained` (exact bytes held in memory), `:streaming` (an opaque
+  caller-owned PID or reference), `:unavailable`, or `:consumed`. Empty retained
+  bytes are different from unavailable bytes. Stream handles are opaque;
+  construction and validation never invoke, enumerate, close, or claim to have
+  consumed them.
 
   Values are snapshots supplied by the caller, not a stream controller. A later
   snapshot must report consumption; copying a value does not make a stream
@@ -16,12 +14,6 @@ defmodule RequestSeal.Body do
   trailers can coexist with `:streaming`. This module neither hashes content
   nor validates message framing.
   Inspection hides body bytes and handles.
-
-      iex> {:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: <<0, 255>>, max_bytes: 2})
-      iex> {body.state, body.bytes, body.ownership}
-      {:retained, <<0, 255>>, :caller}
-      iex> RequestSeal.Body.new(%{state: :streaming})
-      {:error, %RequestSeal.Message.Error{reason: :invalid_body}}
   """
   alias RequestSeal.Message.Validation
   @derive {Inspect, only: []}
@@ -35,11 +27,73 @@ defmodule RequestSeal.Body do
           max_bytes: non_neg_integer()
         }
 
-  @doc "Construct an availability snapshot or return `:invalid_body`."
+  @doc """
+  Construct an availability snapshot from an attribute map.
+
+  ## Parameters
+
+    * `attrs` - a plain map (not a struct) using only these keys; unknown keys reject:
+      * `:state` (required) - `:retained`, `:streaming`, `:unavailable`, or `:consumed`.
+      * `:bytes` - binary, required for `:retained` and otherwise absent or `nil`.
+      * `:source` - a caller-owned PID or reference, required for `:streaming` and
+        otherwise absent or `nil`.
+      * `:ownership` - only `:caller` (the default).
+      * `:max_bytes` - nonnegative integer bounding retained bytes, default
+        1,048,576. Any nonnegative integer is allowed as the caller's retention
+        policy.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Body{}}`.
+    * `{:error, %RequestSeal.Message.Error{reason: :invalid_body}}` - the only
+      reason: a missing or unknown key, a state without its required value, a
+      value not allowed for the state, or retained bytes over `:max_bytes`.
+      Meanings: `RequestSeal.Message.Error`.
+
+  ## Examples
+
+      iex> {:ok, body} = RequestSeal.Body.new(%{state: :retained, bytes: <<0, 255>>, max_bytes: 2})
+      iex> {body.state, body.bytes, body.ownership}
+      {:retained, <<0, 255>>, :caller}
+      iex> RequestSeal.Body.new(%{state: :streaming})
+      {:error, %RequestSeal.Message.Error{reason: :invalid_body}}
+
+  A stream handle is kept but never read:
+
+      iex> source = make_ref()
+      iex> {:ok, body} = RequestSeal.Body.new(%{state: :streaming, source: source})
+      iex> body.source == source
+      true
+      iex> RequestSeal.Body.new(%{state: :retained, bytes: "crawl page 3", max_bytes: 4})
+      {:error, %RequestSeal.Message.Error{reason: :invalid_body}}
+  """
   @spec new(map()) :: {:ok, t()} | {:error, RequestSeal.Message.Error.t()}
   def new(attrs), do: Validation.construct(attrs, __MODULE__, [:state], :invalid_body)
 
-  @doc "Validate a snapshot without touching the caller's body source."
+  @doc """
+  Validate a snapshot without touching the caller's body source.
+
+  Applies the rules of `new/1` to an existing struct, including one built or
+  modified directly.
+
+  ## Parameters
+
+    * `body` - any term; only a `RequestSeal.Body` struct can pass.
+
+  ## Returns
+
+    * `:ok`.
+    * `{:error, %RequestSeal.Message.Error{reason: :invalid_body}}` - the only
+      reason. Meanings: `RequestSeal.Message.Error`.
+
+  ## Examples
+
+      iex> {:ok, body} = RequestSeal.Body.new(%{state: :consumed})
+      iex> RequestSeal.Body.validate(body)
+      :ok
+      iex> RequestSeal.Body.validate(%{body | bytes: "already read"})
+      {:error, %RequestSeal.Message.Error{reason: :invalid_body}}
+  """
   @spec validate(term()) :: :ok | {:error, RequestSeal.Message.Error.t()}
   def validate(%__MODULE__{} = body) do
     if Validation.exact_struct?(body, __MODULE__) and body.ownership == :caller and
