@@ -1,11 +1,11 @@
-<!-- Status: current · Kind: design · Updated: 2026-10-09 · Governed by: architecture and ADRs 0002–0007 · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
+<!-- Status: current · Kind: design · Updated: 2026-10-14 · Governed by: architecture and ADRs 0002–0007 · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
 
 # RequestSeal threat model
 
 
 RequestSeal processes attacker-controlled wire data at an authentication boundary. Its primary security goal is to report exactly what was cryptographically established, by which trusted association, under which profile, without granting caller authorization or payment authority.
 
-The TypeScript counterpart is designed and in progress as a separate npm package named `request-seal`. Both implementations share the independently sourced conformance corpus and its digest and cardinality checks.
+The TypeScript counterpart is the separate npm package `@request-seal/core`. Both implementations share the independently sourced conformance corpus and its digest and cardinality checks.
 
 ## Assets and trust boundaries
 
@@ -40,7 +40,7 @@ The caller controls accepted profiles, trusted origins/proxies, trust anchors, d
 | Retry/redirect reuse | Req re-signs each final attempt and requires cross-origin policy; selected nonce/time parameters regenerate. Finch signs each explicit caller invocation; callers own its retry/redirect loop. Responses bind to the supplied request. | Actual redirect/retry flows, including cross-origin denial. |
 | Parser/resource exhaustion | Bounded bytes, members, depth, signature/component/key counts, numeric magnitudes, deadlines, and streaming work. | Just-inside/outside bounds, fuzz corpus, timeout/cancel paths, measured resource receipts. |
 | Error oracle/data leak | Stable bounded public reasons and redacted default inspection. Opt-in diagnostic redactors and a versioned telemetry contract remain proposed in ADR 0006. | Real negative paths with sensitive canaries absent from output. |
-| Cross-profile replay | Domain-separate the trusted profile/security context in replay identity; no fallback. | Same nonce under generic, Web Bot Auth, and package-namespaced extension profiles; tag substitution rejection. |
+| Cross-profile replay | Commitment facts carry the selected profile stamp; the caller's namespace and commitment separate profiles. No fallback. | Same nonce under generic, Web Bot Auth, and package-namespaced extension profiles; tag substitution rejection. |
 | Corpus compromise | Immutable provenance, independent expected values, digest manifest, source review, and the Elixir consumer prohibited from regenerating expectations. | Tampered-case red proof in Elixir and manifest verification. |
 | Supply-chain substitution | Exact development pins, locked dependencies, package content allowlist, advisory/license review, provenance/checksums, isolated notebook toolchain. CI actions use immutable commit SHAs; the PostgreSQL service uses the moving `postgres:18` tag, not a digest pin. | Fresh clone, package inspection, audit output, and consumer install on required platforms; the service tag does not establish immutable image identity. |
 
@@ -66,8 +66,10 @@ and application trust explicitly; generic JOSE cannot infer them from wire data.
 Malformed or unsupported input returns a stable error before cryptographic work when safe. Verification continues only when needed to apply an explicit multi-signature policy; it never silently accepts the first convenient label. Required digest, discovery, clock, custody, replay, or related-request data that is unavailable fails closed for that profile.
 
 Custody, discovery, JOSE callbacks, Web Bot Auth trust callbacks, and required replay
-receive bounded deadlines and caller cancellation. Generic policy resolver, clock,
-verification-function, and signer callbacks run synchronously in the calling process;
+receive bounded deadlines and caller cancellation. Generic policy resolver, clock, and
+verification-function callbacks, and function signers in the explicit three-key
+`sign/4` form, run synchronously in the calling process (`t:RequestSeal.signing_spec/0`
+signers run in custody's monitored workers under `:signing_timeout`);
 callers own their external-work deadlines or delegate to bounded custody/discovery
 operations. A timeout is distinct from invalid cryptography and from policy rejection,
 but none produces an authenticated principal. Replay errors are always nonretryable;
@@ -78,7 +80,7 @@ attacker-controlled diagnostics.
 
 ## Residual boundaries
 
-RequestSeal cannot establish that a caller's trust anchors, proxy configuration, authorization policy, payment decision, or external key-custody service are correct. It makes their inputs, provenance, and unevaluated state explicit so the caller cannot receive an accidental success signal. Actual assurance for a configured adapter comes from the real-substrate receipts in the verification design, not from the existence of the interface.
+RequestSeal cannot establish that a caller's trust anchors, proxy configuration, authorization policy, payment decision, or external key-custody service are correct. It makes their inputs, provenance, and unevaluated state explicit so the caller cannot receive an accidental success signal. Actual assurance for a configured adapter comes from real-substrate evidence (see the [testing guide](../guides/testing.md)), not from the existence of the interface.
 
 ## Measured input ceilings
 

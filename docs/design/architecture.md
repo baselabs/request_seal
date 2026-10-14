@@ -1,9 +1,9 @@
-<!-- Status: current · Kind: design · Updated: 2026-10-09 · Governed by: accepted ADRs 0001–0011 and 0013 · Review when: a supported standard, profile, public contract, or trust boundary changes -->
+<!-- Status: current · Kind: design · Updated: 2026-10-14 · Governed by: accepted ADRs 0001–0011 and 0013 · Review when: a supported standard, profile, public contract, or trust boundary changes -->
 
 # RequestSeal architecture
 
 
-RequestSeal is one framework-independent Elixir library for signing and verifying HTTP messages and generic compact JOSE, with Web Bot Auth protocol-00 and an explicit named-profile extension surface. The TypeScript counterpart is designed and in progress as a separate npm package named `request-seal`. The lossless message value model (the Message/occurrence/body/transport portion of
+RequestSeal is one framework-independent Elixir library for signing and verifying HTTP messages and generic compact JOSE, with Web Bot Auth protocol-00 and an explicit named-profile extension surface. The TypeScript counterpart is the separate npm package `@request-seal/core`. The lossless message value model (the Message/occurrence/body/transport portion of
 ADR 0002) is implemented by `RequestSeal.Message`, `FieldOccurrence`,
 `Body`, and `TransportFacts`; their module documentation is the API reference.
 Structured Fields parsing, serialization, and explicit type schemas are implemented
@@ -123,8 +123,9 @@ Both APIs return bounded `RequestSeal.Error` values on rejection.
 
 `Message.request/5` and `Message.response/4` build validated messages from
 ordered header tuples and exact retained body bytes. Optional `digest:` adds
-Content-Digest without re-encoding. `RequestSeal.sign/4` also accepts the six-key
-`t:RequestSeal.signing_spec/0` used by Req and Finch, through one shared internal
+Content-Digest without re-encoding. `RequestSeal.sign/4` also accepts
+`t:RequestSeal.signing_spec/0` (required `:label`, `:algorithm`, `:components`, and
+`:expires_in`, or the full `:parameters` form) used by Req and Finch, through one shared internal
 pipeline. It generates explicit metadata with a caller clock and optional
 caller-owned nonce entropy, and accepts an opaque custody handle or function
 with bounded execution. The explicit-input form preserves caller-supplied metadata.
@@ -222,15 +223,19 @@ Acceptance includes duplicated labels, aliased key IDs, HMAC aliases/imports of 
 
 Private key material never enters a general message or result structure. A `KeyHandle` is an opaque caller value understood only by the selected signing, verification, or key-unwrapping custodian. The generic signer callback returns signature bytes, never a secret. Custody exposes public metadata through separate operations. Asymmetric verification resolves public key material; symmetric HMAC verification resolves an arity-three verification function that can invoke an opaque custody handle, keeping the secret inside its custodian. HMAC proves shared-secret possession, not a unique signer or public verifiability. Generic policy resolution supplies an authoritative algorithm and public key or verification function, with optional trusted key-equivalence identity. `Discovery.Resolution` separately exposes source type, location, origin, fetched-at time, expiry, revision, and possession-proof status. The generic resolver bridge returns only algorithm and key; Web Bot Auth applies explicit caller trust before recording an agent association and provenance.
 
-`RequestSeal.Custody` implements a cancellation- and deadline-aware contract for opaque, algorithm-bound `KeyHandle` values. `Custody.Local` holds OTP signing and RSA-OAEP recipient descriptors in sensitive per-handle processes, imports unencrypted private PEM/PKCS #8 DER/JWK, and verifies HMAC within custody. Unwrap-only handles bind exactly one RSA-OAEP algorithm; JWE resolvers can return them so private RSA decryption stays in the sensitive holder; the CEK passes through the sensitive custody runner and middle process to the sensitive JWE worker for content authentication. JWE's outer middle process and the decrypt caller receive only the authenticated result. Direct unwrap callers receive unwrapped bytes and own their protection. OAEP rejection retains random-CEK fallback and the same complete error as GCM authentication failure. `Custody.SSHAgent` optionally signs through an explicit caller-owned OpenSSH agent socket, selects exact public components, and verifies every returned signature before release. Operations run in monitored workers; deadline expiry or caller death terminates the worker and closes its connections. Local handles reference only the holder PID and token. The holder monitors its creator and exits on creator death or explicit `Local.release/1`; stopped holders return `:key_not_found`. Private state is excluded from handle serialization, function environments, process inspection, and system introspection. Symmetric equivalence is a caller-supplied nonsecret value or remains unknown. These operations establish mathematical validity only; additional KMS/HSM custodians implement the same contract. Discovery is an explicit caller-configured adapter with HTTPS requirements, redirect policy, address/range restrictions, response and decompression limits, key-count limits, bounded caches, and rotation/removal semantics. `Discovery.Source` is caller-configured; a signature key ID never selects a URL. `Discovery.fetch/2` performs a bounded fetch only on explicit invocation, with SSL started by the caller. The generic resolver accepts a snapshot or caller-started cache/source pair. Cache refresh, removal, and invalidation are explicit, with no background timers or stale-key fallback. IDs default to RFC thumbprints; JWKS/CIMD may select directory-assigned IDs while retaining thumbprints for revocation and removal. Directory sources require thumbprint IDs. Freshness honors HTTP cache directives and key/proof expiry; CIMD failures are not negatively cached.
+`RequestSeal.Custody` implements a cancellation- and deadline-aware contract for opaque, algorithm-bound `KeyHandle` values. `Custody.Local` holds OTP signing and RSA-OAEP recipient descriptors in sensitive per-handle processes, imports unencrypted private PEM/PKCS #8 DER/JWK, and verifies HMAC within custody. Unwrap-only handles bind exactly one RSA-OAEP algorithm; JWE resolvers can return them so private RSA decryption stays in the sensitive holder; the CEK passes through the sensitive custody runner and middle process to the sensitive JWE worker for content authentication. JWE's outer middle process and the decrypt caller receive only the authenticated result. Direct unwrap callers receive unwrapped bytes and own their protection. OAEP rejection retains random-CEK fallback and the same complete error as GCM authentication failure. `Custody.SSHAgent` optionally signs through an explicit caller-owned OpenSSH agent socket, selects exact public components, and verifies every returned signature before release. Operations run in monitored workers; deadline expiry or caller death terminates the worker and closes its connections. Local handles reference only the holder PID and token. The holder monitors its creator and exits on creator death or explicit `Local.release/1`; stopped holders return `:key_not_found`. Private state is excluded from handle serialization, function environments, process inspection, and system introspection. Symmetric equivalence is a caller-supplied nonsecret value or remains unknown. These operations establish mathematical validity only. A KMS or HSM custodian would implement the same `RequestSeal.Custody` behaviour; none ships with RequestSeal. `Custody.Local.Owner` supervises Ed25519 seed sources. Discovery is an explicit caller-configured adapter with HTTPS requirements, redirect policy, address/range restrictions, response and decompression limits, key-count limits, bounded caches, and rotation/removal semantics. `Discovery.Source` is caller-configured; a signature key ID never selects a URL. `Discovery.fetch/2` performs a bounded fetch only on explicit invocation, with SSL started by the caller. The generic resolver accepts a snapshot or caller-started cache/source pair. Cache refresh, removal, and invalidation are explicit, with no background timers or stale-key fallback. IDs default to RFC thumbprints; JWKS/CIMD may select directory-assigned IDs while retaining thumbprints for revocation and removal. Directory sources require thumbprint IDs. Freshness honors HTTP cache directives and key/proof expiry; CIMD failures are not negatively cached.
 
 Replay protection is an optional but profile-required port where applicable. The caller supplies a bounded commitment function binding a verified nonce, challenge, or transaction identifier to a caller-defined scope. RequestSeal does not derive this commitment. The store exposes one atomic operation over its result:
 
 ```elixir
-# Implemented RequestSeal.Replay callback.
+# Implemented RequestSeal.Replay callbacks.
 @callback claim(term(), RequestSeal.Replay.Claim.t(), RequestSeal.Custody.Context.t()) ::
   :claimed | :already_claimed | {:error, :unavailable | :timeout | :full | :failure}
+@callback sweep(term(), 0..253_402_300_799, RequestSeal.Custody.Context.t()) ::
+  {:ok, non_neg_integer()} | {:error, atom()}
 ```
+
+Stores implement atomic `claim/3` and explicit `sweep/3`.
 
 [ADR 0005](../adr/0005-atomic-replay-envelope.md) is the canonical replay contract.
 The selected profile validates its required replay identifier. Only after validation
@@ -238,7 +243,7 @@ does the caller commitment function receive the authenticated facts; missing or
 ambiguous required inputs fail closed. Retention metadata does not alter its result.
 The generic profile selects the authenticated nonce parameter. Required replay uses
 bounded freshness, one shared commitment/store deadline, and caller cancellation.
-ETS is caller-supervised and local; Postgres uses a caller connection and explicit DDL.
+ETS is caller-supervised and local; Postgres uses a caller connection and explicit DDL. `Replay.AshOnetime` (Elixir 1.20, ash_onetime 1.5) is the recommended durable store; its sweeping belongs to ash_onetime.
 Claims never evict, and explicit sweeps delete only at the exclusive retention end.
 Expiration is exclusive; max-age is inclusive. Thus retention ends at the minimum
 of `expires + skew` and `created + max_age + skew + 1`, over present bounds.
@@ -289,14 +294,15 @@ caller authorization remains outside RequestSeal.
 - **Finch:** translates a finalized Finch request/response without starting a pool. Caller supervision and transport remain outside RequestSeal.
 - **Plug/Phoenix:** captures ordered headers and bounded request bytes before parsers; replays retained bytes through Plug readers; trusted external origin is explicit; verification facts go into private connection state; response signing runs after registered callbacks. Unavailable exact target or trailer evidence rejects required coverage. Pending response cookies reject `set-cookie` coverage, and later server transformations must be disabled when covering response bytes. See `RequestSeal.Plug` for supported components and delivery limits.
 - **Ash:** maps successful verification through explicit caller actor/tenant bindings into bounded context and an authorization-enabled scope. Authorization stays in Ash policies and actions.
+- **ash_hooks (Elixir 1.20):** `RequestSeal.AshHooks.verify_signature/4` verifies provider webhooks under an explicit policy and label from a headers map that has already lost order and duplicates; `RequestSeal.AshHooks.Http` signs final bytes through ash_hooks' transport. Prefer Plug capture when ordered evidence matters.
 - **Reverse proxy (planned):** reconstructs external message facts only from an explicit trusted-proxy policy; raw ingress and reconstructed facts remain separately visible for diagnostics.
 
 Each adapter must refuse when its framework cannot supply a required component faithfully. It cannot synthesize a plausible value and call the signature valid.
 
 ## TypeScript counterpart and conformance
 
-The TypeScript counterpart is designed and in progress as a separate npm package named `request-seal`. The [conformance corpus](../reference/corpus-format.md) stores inputs, exact signature bases, outputs, rejection rule IDs, provenance, and externally owned source references; consumers must not generate their own expected values during a conformance run.
+The TypeScript counterpart is the separate npm package `@request-seal/core`; it runs the same corpus. The [conformance corpus](../reference/corpus-format.md) stores inputs, exact signature bases, outputs, rejection rule IDs, provenance, and externally owned source references; consumers must not generate their own expected values during a conformance run.
 
 ## Sources
 
-Primary standards: [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html), [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651.html), [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html), [RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html), [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html), [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html). These sources define mechanisms; the verification plan distinguishes reading them from executing conformance evidence.
+Primary standards: [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html), [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651.html), [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html), [RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html), [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html), [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html). These sources define mechanisms; the [testing guide](../guides/testing.md) separates published vectors, local construction, and peer evidence.

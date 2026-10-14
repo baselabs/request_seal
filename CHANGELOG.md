@@ -1,12 +1,21 @@
 # Changelog
 
+## Unreleased
+
+Documentation only; no library behavior changes.
+
+- Every public function now documents its parameters, options with defaults and bounds, return shape, the error reasons it can return, and executed doctest examples. `RequestSeal.Req.attach/2`, `Req.verification/1`, the `RequestSeal.Finch` functions, `JOSE.JWS.sign/4`, `JOSE.KeyManagement.wrap/4` and `unwrap/4`, and `JOSE.Nested.verify/4` had no documentation before. Replay store callbacks are documented on each adapter.
+- `RequestSeal.Ash.Scope`'s type now admits `replay: :claimed`, which `RequestSeal.Ash.scope/2` already produced.
+- New guides: diagnose and handle errors, rotate signing keys, and test your integration. New Livebooks: core signing and verification, a Plug webhook receiver, Web Bot Auth, and JOSE; the RFC 9421 notebook now verifies the published vector through RequestSeal.
+- Corrected documentation: size limits of `Body` and Plug capture, the spec-form nonce option, the ash_hooks nonce behavior, Web Bot Auth `max_lifetime`, the Req redirect default, the TypeScript package name (`@request-seal/core`), SECURITY.md's description of the library, and the release runbook.
+
 ## 0.4.1 - 2026-10-10
 
 - `RequestSeal.Custody.sign/3`, `verify/4`, `RequestSeal.Crypto.sign/4` and `verify/5` accept `max_bytes:` (1–16,777,216, default 1,048,576). The default and the existing `:invalid_data` rejection are unchanged. Out-of-range or non-integer values reject with `:invalid_options` before handle, capability, or algorithm validation. `unwrap/3` does not accept it. `Crypto.max_bytes_ceiling/0` exposes the shared ceiling.
 - Direct `Custody.Local.sign/4`, `Local.verify/5`, `Custody.SSHAgent.sign/4`, and `SSHAgent.verify/5` callback calls (outside `RequestSeal.Custody`) accept up to the 16,777,216-byte ceiling; `Local` previously stopped at 1 MiB. They reject larger or nonbinary inputs with the bare reason `{:error, :invalid_data}` before reading the key reference, so such inputs no longer report `:key_mismatch` or a `RequestSeal.Crypto.Error` struct first. The public `RequestSeal.Custody` and `RequestSeal.Crypto` functions are unchanged for callers that pass no `max_bytes:`.
 - Third-party custodians that sign with `Crypto.sign/4` or verify with `Crypto.verify/5` must pass `max_bytes: RequestSeal.Crypto.max_bytes_ceiling()`; custody has already enforced the caller's bound.
 - The SSH-agent custodian forwards larger requests unchanged. [OpenSSH caps the whole agent message at 256 KiB](https://github.com/openssh/openssh-portable/blob/V_9_9_P1/ssh-agent.c), including protocol overhead, so the practical payload limit is slightly under 262,144 bytes. Observed with OpenSSH 9.9 and Ed25519: 262,000 bytes signed successfully; 262,200 returned `:custodian_protocol`.
-- `RequestSeal.Message`, `Body`, JWS, and the Plug keep their fixed 1 MiB limits. This release does not propagate the new custody/crypto opt-in to those APIs. `RequestSeal.SignatureBase` retains its separate 1 MiB ceiling.
+- `Message.request/5` and `Message.response/4` (1 MiB body default), message field totals, and compact JWS keep their 1 MiB limits; `Body.new/1` and `RequestSeal.Plug.Capture` keep their caller-selected bounds. This release does not propagate the new custody/crypto opt-in to those APIs. `RequestSeal.SignatureBase` retains its separate 1 MiB ceiling.
 
 ## 0.4.0 - 2026-10-10
 
@@ -182,4 +191,3 @@ Includes executable guides, published-vector checks, and Livebooks.
 - Established the local Elixir library scaffold and exact development toolchain.
 - Defined HTTP signature and Web Bot Auth scope, architecture decisions, public technical explanations, and interoperability principles.
 - Added official-Livebook execution tooling and a published RFC signature learning notebook.
-- No signing, verification, discovery, replay, or protocol adapter API has been released.

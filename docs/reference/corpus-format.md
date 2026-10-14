@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-10-09 · Governed by: ADR 0009 · Review when: corpus schema, surfaces, or publication changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: ADR 0009 · Review when: corpus schema, surfaces, or publication changes -->
 
 # Conformance corpus format
 
@@ -9,7 +9,7 @@ repository tooling and release assets; the Hex and npm packages exclude them.
 
 ## Layout and encoding
 
-`index.json` inventories `sources/<origin>/` and `cases/<surface>/`. Sources retain
+`index.json` inventories `sources/<origin>/` and `cases/<surface prefix>/` (for example, `cases/jws/` holds `jws.sign` and `jws.verify` cases). Sources retain
 upstream fixture bytes, licenses, provenance and SHA-256 inventories. Manifests and
 the index use [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785.html) canonical JSON:
 sorted object keys by UTF-16 code units, compact encoding, unmodified Unicode,
@@ -26,7 +26,7 @@ Source files themselves retain their original numeric and binary encodings.
 
 Format `request-seal-conformance-corpus-index/1` requires:
 
-- `elixir_release`: the source release tag, first published with `v0.3.0`.
+- `elixir_release`: the release tag that published this corpus (currently `v0.4.0`; the first was `v0.3.0`).
 - `files`: every regular file below sources and cases, sorted by relative path,
   each with `path` and lowercase hexadecimal `sha256`.
 - `cases`: unique `id`, `manifest`, `surface` and `class` entries. A batch also
@@ -85,6 +85,8 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `discovery.body` | Injected body, source kind/location, limits and evaluation clock | Public key thumbprints |
 | `replay.claim` | Namespace/key bytes, created/expires/max-age/skew, clock | Retention end and optional lowercase hexadecimal row |
 | `profile.name` | Package/kind pair and bounded metadata | `valid` |
+
+The consumer also accepts `digest.content` and `nested.decrypt`; the current corpus contains no cases for them.
 
 HTTP message attributes match the existing RFC 9421 fixture shape. Manifest-owned
 field and body bytes use byte tags; `append_fields` appends ordered occurrences,
@@ -180,18 +182,17 @@ names are `rfc9421`, `web_bot_auth` with the exact selected revision, or an
 extension package/kind pair. Content is `not_required` or digest facts (`kind`,
 `checked`, tagged `bytes`, `unsupported`). Freshness is `not_evaluated` or
 `now`, `created`, nullable `expires`/`max_age` and `skew`, with tagged integers.
-Replay is `not_required` or namespace/key bytes and a tagged retention end.
-Principal is `unattributed` or trusted origin, source kind and thumbprint.
+Replay is always `not_required` in canonical verification facts; successful required replay is exercised on the `replay.claim` surface (tagged retention end and optional stored row).
+Principal is `unattributed` or an object with `agent` (trusted origin), `source` (discovery type) and `thumbprint`.
 Authorization is always `not_evaluated`. Web Bot Auth groups those facts by label.
 Parameter order is recovered from the actual parsed wire input and checked
 against the successful API result; a host map's iteration order is not wire order.
 
-## Changes from the design note
+## Format decisions
 
 This reference governs the format. Verification objects use RFC 8785 sorted
-keys rather than the design note's listed member order; semantic arrays remain
-ordered. Batch counts use `{"int":"..."}` rather than bare integers. The source
-origin for public HTTP examples is `local-http`, not `local-keys`. Deterministic
+keys; semantic arrays remain ordered. Batch counts use `{"int":"..."}` rather
+than bare integers. The source origin for public HTTP examples is `local-http`. Deterministic
 HTTP signing (HMAC, Ed25519, RSA v1.5) and JWS signing (HS256, EdDSA, RS256)
 compare exact output bytes; ECDSA and RSA-PSS use verification only. Positive
 key imports include the RFC 7638 public thumbprint. Per-item overrides and separate
@@ -207,7 +208,7 @@ its pinned index digest, and verifies the inventory, creates a deterministic
 asset plus `corpus.sha256` on the tag's GitHub release. The archive root contains exactly `index.json`, `sources/`, and `cases/`;
 both consumers refuse other paths in the corpus root. Existing assets are downloaded
 and compared byte for byte; a differing digest fails publication without replacement.
-Missing assets are uploaded to existing releases. The TypeScript package `request-seal` vendors `conformance/` from one
+Missing assets are uploaded to existing releases. A tag whose package version differs from `elixir_release` fails this workflow and publishes nothing; v0.4.1 changed no corpus files and has no corpus release. The TypeScript package `@request-seal/core` vendors `conformance/` from one
 release tag. Its source pin records tag, commit and index SHA-256; updating the
 pin and vendored bytes is a reviewed commit. Corpus data stays outside published
 runtime packages.
