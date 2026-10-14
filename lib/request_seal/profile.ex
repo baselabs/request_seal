@@ -85,7 +85,7 @@ defmodule RequestSeal.Profile do
 
   Parses `Signature-Input` and `Signature` header fields with the same rules as
   `RequestSeal.verify/3` and checks that their labels pair exactly. It
-  validates the message and `max` first but not the selected Inner List; pass
+  validates the message and `max` first (from 0.5.0 (unreleased)) but not the selected Inner List; pass
   the returned values to `preflight/4` and `verify_label/6`.
 
   ## Parameters
@@ -154,7 +154,7 @@ defmodule RequestSeal.Profile do
       `:extra_components`.
     * `freshness_policy` - `:not_evaluated` or a freshness map with `:clock`,
       `:max_age`, `:skew`, and `:require_expires`, as in `RequestSeal.Policy`.
-      It is validated like `RequestSeal.Policy.new/1`'s freshness.
+      From 0.5.0 (unreleased), it is validated like `RequestSeal.Policy.new/1`'s freshness.
 
   ## Returns
 

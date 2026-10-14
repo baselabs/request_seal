@@ -708,7 +708,7 @@ defmodule RequestSeal.WebBotAuth do
 
     * `{:ok, message}` - the message with the appended fields.
     * `{:error, %RequestSeal.Error{}}` - established reasons: `:invalid_options`
-      (option, spec, key, lifetime, signer form, or an invalid `:agent`
+      (option, spec, key, lifetime, signer form, or, from 0.5.0 (unreleased), an invalid `:agent`
       location), `:invalid_message`, `:invalid_signature_agent` (an invalid
       existing `Signature-Agent` field), `:limit`, `:nested_coverage_incomplete` (`components` name
       a signature that is absent or not covered completely), existing-dictionary

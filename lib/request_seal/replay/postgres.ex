@@ -114,15 +114,15 @@ if Code.ensure_loaded?(Postgrex) do
 
       * `:claimed` - one row was inserted.
       * `:already_claimed` - the namespace and key were already stored.
-      * `{:error, :timeout}` - the deadline had expired before the query; the
-        query ran past the deadline (the pool closed the connection at the
-        client timeout); the pool dropped the queued request (DBConnection
-        `:queue_timeout`); or the server canceled the statement or could not take
-        a lock (`query_canceled`, `lock_not_available`). The claim may have
-        committed.
+      * `{:error, :timeout}` - the deadline had expired before the query; or,
+        from 0.5.0 (unreleased), the query ran past the deadline (the pool closed the
+        connection at the client timeout), the pool dropped the queued request
+        (DBConnection `:queue_timeout`), or the server canceled the statement or
+        could not take a lock (`query_canceled`, `lock_not_available`). The claim
+        may have committed.
       * `{:error, :unavailable}` - the connection process is not running or
-        exited, the connection was lost before the deadline, or the server is
-        shutting down or
+        exited; or, from 0.5.0 (unreleased), the connection was lost before the deadline or
+        the server is shutting down or
         refusing connections (`admin_shutdown`, `crash_shutdown`,
         `cannot_connect_now`, `too_many_connections`).
       * `{:error, :failure}` - an invalid table name or claim, any other
@@ -180,17 +180,17 @@ if Code.ensure_loaded?(Postgrex) do
     ## Returns
 
       * `{:ok, removed}` - the number of rows deleted.
-      * `{:error, :timeout}` - the deadline had expired before the query; the
-        query ran past the deadline (the pool closed the connection at the
-        client timeout); the pool dropped the queued request (DBConnection
-        `:queue_timeout`); or the server canceled the statement or could not take
-        a lock (`query_canceled`, `lock_not_available`). The sweep's deletions
+      * `{:error, :timeout}` - the deadline had expired before the query; or,
+        from 0.5.0 (unreleased), the query ran past the deadline (the pool closed the
+        connection at the client timeout), the pool dropped the queued request
+        (DBConnection `:queue_timeout`), or the server canceled the statement or
+        could not take a lock (`query_canceled`, `lock_not_available`). The sweep's deletions
         were not committed when the statement was canceled or never sent, and may
         or may not have committed when the connection closed at the deadline; a
         later sweep with the same `now` removes whatever remains.
       * `{:error, :unavailable}` - the connection process is not running or
-        exited, the connection was lost before the deadline, or the server is
-        shutting down or
+        exited; or, from 0.5.0 (unreleased), the connection was lost before the deadline or
+        the server is shutting down or
         refusing connections (`admin_shutdown`, `crash_shutdown`,
         `cannot_connect_now`, `too_many_connections`).
       * `{:error, :failure}` - `now` is outside the range, the table name is

@@ -81,7 +81,7 @@ defmodule RequestSeal.JOSE.JWE do
     * `{:error, %RequestSeal.JOSE.Error{}}` - reasons this function can return:
       `:invalid_options` (option or recipient form), `:invalid_serialization`
       (non-binary plaintext), `:limit` (more than 64 pairs or an oversized
-      result), `:invalid_header` (including a header that is not a list of
+      result), `:invalid_header` (including, from 0.5.0 (unreleased), a header that is not a list of
       `{name, value}` pairs), `:duplicate_member`
       (including an addition that repeats a caller member),
       `:unsupported_critical_header`, `:compression_unsupported`,

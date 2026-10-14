@@ -27,7 +27,11 @@ Other named application profiles belong in extension packages.
    `test/support/conformance_pin.ex` in the same commit. Record the release in
    `CHANGELOG.md` under a `## <version> - Unreleased` heading (currently
    `## 0.5.0 - Unreleased`) and replace `Unreleased` with the release date in
-   `YYYY-MM-DD` form when publishing, as in `## 0.4.1 - 2026-10-10`.
+   `YYYY-MM-DD` form when publishing, as in `## 0.4.1 - 2026-10-10`. Documents
+   mark behavior that is not yet published with `From <version> (unreleased)`;
+   when publishing, delete every ` (unreleased)` after that version in `docs/`,
+   the guides, and `lib/`. The document check fails while a marker names the
+   `mix.exs` version or a version other than the pending changelog section.
    Confirm the public document allowlist, supported profiles, and accepted ADRs.
 2. Use Elixir 1.20.4 / OTP 29.1.1, the exact development pins. Run focused checks
    while editing, then run the declared gate once on the final source:

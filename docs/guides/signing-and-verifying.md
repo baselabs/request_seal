@@ -109,7 +109,7 @@ instead. Responses can cover related-request components.
 
 Spec signing accepts a custody handle or an arity-two signer `(algorithm, base)`.
 A handle whose algorithm differs from the spec's `algorithm` returns
-`:signer_algorithm_mismatch` at `:input`. Both forms use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
+`:signer_algorithm_mismatch` at `:input` (from 0.5.0 (unreleased); 0.4.1 returns `:invalid_options`). Both forms use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
 accepts 1–300,000 ms. Optional `nonce:` supplies caller-owned 32-byte entropy
 instead of generating it; callers must provide fresh entropy for each signing
 attempt. It is ignored when the spec sets `nonce: nil`; omitting `nonce` keeps the

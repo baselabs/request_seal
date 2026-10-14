@@ -117,8 +117,8 @@ defmodule RequestSeal.Discovery.Cache do
     * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
       `:invalid_source`, `:invalid_options`, `:unknown_key` (malformed ID, or no
       fresh, compatible key with that ID), `:revoked_key`, `:source_unavailable`
-      (negative freshness, invalidation, a failed fetcher, or a cache that is not
-      running), `:cache_overloaded`, `:deadline_exceeded`, and any error from
+      (negative freshness, invalidation, a failed fetcher, or, from 0.5.0 (unreleased), a
+      cache that is not running; 0.4.1 returns `:invalid_response` for that case), `:cache_overloaded`, `:deadline_exceeded`, and any error from
       `RequestSeal.Discovery.fetch/2`. Meanings:
       `RequestSeal.Discovery.Error`.
 
@@ -195,7 +195,8 @@ defmodule RequestSeal.Discovery.Cache do
       thumbprints denied by `remove/3`.
     * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
       `:invalid_source`, `:invalid_options`, `:source_unavailable` (invalidation,
-      a failed fetcher, or a cache that is not running), `:cache_overloaded`,
+      a failed fetcher, or, from 0.5.0 (unreleased), a cache that is not running; 0.4.1
+      returns `:invalid_response` for that case), `:cache_overloaded`,
       `:deadline_exceeded`, and any error from `RequestSeal.Discovery.fetch/2`. Meanings:
       `RequestSeal.Discovery.Error`.
 

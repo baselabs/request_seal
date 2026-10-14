@@ -141,7 +141,8 @@ if Code.ensure_loaded?(Req) do
       * `:verify` (required) - `:none`, or a map with exactly `:policy` (a valid
         `RequestSeal.Policy`), `:label` (the response signature label), and
         `:max_stream_bytes` (a nonnegative integer bound on buffered response
-        bytes; any other value, including nil, rejects with `:invalid_options`). With a map, the request
+        bytes; any other value, including nil, rejects with `:invalid_options`,
+        from 0.5.0 (unreleased); 0.4.1 rejects nil with `:unsupported_delivery`). With a map, the request
         must keep `http_errors: :return` (the default), must not set
         `cache: true`, and must not have a response step ahead of
         verification. A non-nil `into` destination must be a two-arity

@@ -198,8 +198,8 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       * any other option - passed unchanged to `AshHooks.Http.Bounded`, with
         `:timeout` replaced by the remaining time and `:request_seal` removed.
 
-    Every attempt regenerates `created`, `expires`, and a random nonce. A
-    nonce is required on every signed attempt: a spec with `nonce: nil` is
+    Every attempt regenerates `created`, `expires`, and a random nonce. From 0.5.0 (unreleased),
+    a nonce is required on every signed attempt: a spec with `nonce: nil` is
     refused as a signing failure before any request is sent.
 
     ## Returns

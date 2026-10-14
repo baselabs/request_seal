@@ -393,7 +393,8 @@ defmodule RequestSeal do
         spec only: `:unsupported_component` (a `host`, trailer, or unavailable
         component), `:invalid_request` (covered `Content-Length` conflicts with
         the retained bytes). Explicit spec only: `:algorithm_mismatch`. Both
-        forms: `:signer_algorithm_mismatch` for a KeyHandle algorithm mismatch,
+        forms (from 0.5.0 (unreleased); 0.4.1 returns `:invalid_options` for a generated
+        spec): `:signer_algorithm_mismatch` for a KeyHandle algorithm mismatch,
         before custody is invoked, with message
         `"signer algorithm does not match signature specification"`.
       * `:fields` - `:label_in_use`, `:label_mismatch`, `:duplicate_label`,

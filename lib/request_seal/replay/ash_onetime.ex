@@ -104,8 +104,8 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       * `:claimed` - ash_onetime admitted the nonce.
       * `:already_claimed` - ash_onetime reported `:nonce_already_used`.
       * `{:error, :timeout}` - the deadline had expired before the transaction; a
-        lock, cancellation or pool queue timeout (DBConnection `:queue_timeout`);
-        or any failure observed after the deadline, such as a transaction rolled
+        lock or cancellation; and, from 0.5.0 (unreleased), a pool queue timeout (DBConnection
+        `:queue_timeout`) or any failure observed after the deadline, such as a transaction rolled
         back when the pool closed the connection at the client timeout. The claim
         may have committed.
       * `{:error, :unavailable}` - the repo is not running, a connection could not

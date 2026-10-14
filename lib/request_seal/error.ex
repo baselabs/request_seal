@@ -29,7 +29,8 @@ defmodule RequestSeal.Error do
     from the explicit algorithm or accompanies JWS), `:limit` (wire/member/component
     bounds, including a decoded `Signature` member or nonce exceeding 1,024 bytes).
     `:signer_algorithm_mismatch` means a KeyHandle's algorithm differs from the
-    specification's algorithm, in either signing form, before custody is invoked.
+    specification's algorithm, in either signing form (from 0.5.0 (unreleased) for a
+    generated spec), before custody is invoked.
   * `:input` additionally includes `:invalid_quorum` (malformed composite policy)
     and `:invalid_profile` (invalid extension profile namespace, keys, values or size,
     or a generic verification `:profile` or `:principal` option).

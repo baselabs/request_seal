@@ -359,6 +359,39 @@ def fence_errors(root, relative, source):
     return errors
 
 
+UNRELEASED_MARKER = re.compile(r"\b[Ff]rom (\d+\.\d+\.\d+) \(unreleased\)")
+PENDING_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) - Unreleased$", re.MULTILINE)
+
+
+def marker_errors(sources, changelog, version):
+    """Unreleased-behavior markers must name the CHANGELOG's pending, unpublished version.
+
+    At release, removing every " (unreleased)" makes the markers read "From X.Y.Z"; this
+    check fails until that is done once mix.exs names the version or its section is dated.
+    """
+    pending = PENDING_RELEASE.search(changelog)
+    errors = []
+    for relative, source in sorted(sources.items()):
+        for match in UNRELEASED_MARKER.finditer(source):
+            marked = match.group(1)
+            if pending is None or marked != pending.group(1):
+                errors.append(f"{relative}: '{match.group(0)}' does not name the CHANGELOG's pending release")
+            elif marked == version:
+                errors.append(f"{relative}: '{match.group(0)}' marks the current package version as unreleased")
+    return errors
+
+
+def unreleased_marker_errors(root=ROOT):
+    configuration = public_configuration(root)
+    paths = sorted(configuration["documents"]) + sorted(
+        p.relative_to(root).as_posix() for p in (root / "lib").rglob("*.ex")
+    )
+    sources = {path: (root / path).read_text() for path in paths if (root / path).is_file()}
+    if not any("lib/" in path for path in sources):
+        raise ValueError("unreleased-marker scan did not find its library positive control")
+    return marker_errors(sources, (root / "CHANGELOG.md").read_text(), configuration["version"])
+
+
 def check(root=ROOT):
     configuration = public_configuration(root)
     approved = configuration["documents"] | SOURCE_DOCUMENTS
@@ -371,6 +404,7 @@ def check(root=ROOT):
             source = path.read_bytes().decode("utf-8")
             errors.extend(content_errors(root, relative, source, paths, configuration["version"]))
             errors.extend(fence_errors(root, relative, source))
+    errors.extend(unreleased_marker_errors(root))
     for relative in sorted(configuration["files"] - approved):
         path = root / relative
         if path.is_file() and not path.is_symlink():

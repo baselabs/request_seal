@@ -568,5 +568,21 @@ class CorpusReleasePinTest(unittest.TestCase):
         self.assertEqual([], gate.corpus_release_errors({"mix.exs": mix, "corpus/index.json": '{"elixir_release":"v0.5.0"}'}))
 
 
+class UnreleasedMarkerTest(unittest.TestCase):
+    CHANGELOG = "# Changelog\n\n## 0.5.0 - Unreleased\n\n- x\n\n## 0.4.1 - 2026-10-10\n"
+
+    def test_actual_markers_name_the_pending_release(self):
+        self.assertEqual([], docs.unreleased_marker_errors(ROOT))
+
+    def test_marker_must_name_the_pending_unreleased_version(self):
+        check = docs.marker_errors
+        self.assertEqual([], check({"a.md": "From 0.5.0 (unreleased): x"}, self.CHANGELOG, "0.4.1"))
+        self.assertTrue(check({"a.md": "from 0.6.0 (unreleased): x"}, self.CHANGELOG, "0.4.1"))
+        released = self.CHANGELOG.replace("0.5.0 - Unreleased", "0.5.0 - 2026-11-01")
+        self.assertTrue(check({"a.md": "From 0.5.0 (unreleased): x"}, released, "0.5.0"))
+        self.assertTrue(check({"a.md": "From 0.5.0 (unreleased): x"}, self.CHANGELOG, "0.5.0"))
+        self.assertEqual([], check({"a.md": "From 0.5.0: x"}, released, "0.5.0"))
+
+
 if __name__ == "__main__":
     unittest.main()
