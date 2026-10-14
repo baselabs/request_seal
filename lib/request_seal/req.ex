@@ -141,7 +141,7 @@ if Code.ensure_loaded?(Req) do
       * `:verify` (required) - `:none`, or a map with exactly `:policy` (a valid
         `RequestSeal.Policy`), `:label` (the response signature label), and
         `:max_stream_bytes` (a nonnegative integer bound on buffered response
-        bytes; nil rejects with `:unsupported_delivery`). With a map, the request
+        bytes; any other value, including nil, rejects with `:invalid_options`). With a map, the request
         must keep `http_errors: :return` (the default), must not set
         `cache: true`, and must not have a response step ahead of
         verification. A non-nil `into` destination must be a two-arity
@@ -334,7 +334,7 @@ if Code.ensure_loaded?(Req) do
     defp validate_verify(%{policy: policy, label: label, max_stream_bytes: max} = v) do
       Signing.ensure(
         map_size(v) == 3 and Policy.valid?(policy) and SignatureFields.label?(label) and
-          (max == nil or (is_integer(max) and max >= 0)),
+          is_integer(max) and max >= 0,
         :invalid_options
       )
     end

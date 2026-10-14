@@ -767,14 +767,16 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:error, %Error{reason: :unsupported_delivery}} =
              request("http://example.com", h, into: "", checksum: "sha256:0")
 
-    assert {:error, %Error{reason: :unsupported_delivery}} =
-             request("http://example.com", h, [into: ""],
-               verify: %{
-                 policy: Peer.policy(Peer.response_components(), h),
-                 label: "res",
-                 max_stream_bytes: nil
-               }
-             )
+    for into <- [nil, ""], max <- [nil, -1, 1.5, :unbounded] do
+      assert {:error, %Error{reason: :invalid_options, stage: :attach}} =
+               request("http://example.com", h, [into: into],
+                 verify: %{
+                   policy: Peer.policy(Peer.response_components(), h),
+                   label: "res",
+                   max_stream_bytes: max
+                 }
+               )
+    end
 
     assert {:ok, req} = request("relative/confidential-path", h)
     assert {:error, %Error{reason: :invalid_request} = e} = Req.request(req)
