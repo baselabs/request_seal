@@ -11,18 +11,31 @@ defmodule RequestSeal.Replay.Claim do
   @doc """
   Validate the bounded shape of a replay claim without claiming or storing it.
 
-  Requires exactly a `RequestSeal.Replay.Claim` struct with `namespace` and `key`
-  binaries of 1–256 bytes each and `retain_until` from -9,223,372,036,854,775,808
-  through 253,402,300,799. Negative ends remain valid already-expired claims.
-  Binaries need not be UTF-8. Other values, maps, and structs with extra fields
-  return false. Validation does not check a clock, require a future retention
-  end, derive uniqueness, or establish replay protection. Stores enforce the
-  exclusive Unix-second retention end when claiming.
+  Validation does not check a clock, require a future retention end, derive
+  uniqueness, or establish replay protection. Stores enforce the exclusive
+  Unix-second retention end when claiming.
+
+  ## Parameters
+
+    * `claim` - any term. Only a `RequestSeal.Replay.Claim` struct with exactly
+      its three fields can pass: `namespace` and `key` binaries of 1–256 bytes
+      each (UTF-8 not required) and an integer `retain_until` from
+      -9,223,372,036,854,775,808 through 253,402,300,799. Negative ends remain
+      valid already-expired claims.
+
+  ## Returns
+
+    * `true` - the claim has the bounded shape.
+    * `false` - any other value, including maps and structs with extra fields.
+
+  ## Examples
 
       iex> claim = %RequestSeal.Replay.Claim{namespace: "scope", key: "nonce", retain_until: 0}
       iex> RequestSeal.Replay.Claim.valid?(claim)
       true
       iex> RequestSeal.Replay.Claim.valid?(%{claim | key: ""})
+      false
+      iex> RequestSeal.Replay.Claim.valid?(%{claim | retain_until: 253_402_300_800})
       false
   """
   @spec valid?(term()) :: boolean()

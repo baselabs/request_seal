@@ -6,9 +6,6 @@ defmodule RequestSeal.Discovery do
   and Client ID Metadata Documents. Construct a `Discovery.Source` from trusted
   caller configuration. A message/key ID never defines a URL to fetch.
 
-  `fetch/2` performs one discovery operation with no cache. Options are `:timeout`
-  (1–300,000 milliseconds, capped by the source timeout) and `:clock` (arity-zero
-  Unix-seconds function, 0 through 253,402,300,799, default system time). Unknown/duplicate options reject.
   The caller starts SSL; the library starts no application, listener, store,
   timer or background refresh. A monitored worker enforces a single absolute
   deadline across DNS, TLS, redirects and CIMD's optional JWKS subresource, and
@@ -37,15 +34,10 @@ defmodule RequestSeal.Discovery do
   or invalid selected members reject.
 
   `resolver/2` bridges a snapshot or `{cache, source}` to `Policy.key_resolver`.
-  It accepts only `algorithms: [...]`, ignores label/tag and returns only
-  `{:ok, %{algorithm: ..., key: ...}}` or `:error`. A key ID never selects a URL.
-  `Discovery.Cache` is an optional caller-started bounded cache with explicit
-  refresh/removal/invalidation; it never serves stale keys.
-
-  The generic resolver bridge evaluates cache freshness and key expiry with the
-  cache's configured clock; snapshot resolution uses system wall time. This preserves
-  the generic caller's explicit clock policy. Named profiles enforce their own
-  key/proof validity clock independently of request-freshness policy.
+  A key ID never selects a URL. `RequestSeal.Discovery.Cache` is an optional
+  caller-started bounded cache with explicit refresh/removal/invalidation; it
+  never serves stale keys. Named profiles enforce their own key/proof validity
+  clock independently of request-freshness policy.
 
   Web Bot Auth protocol-00 Appendix C.4 states: "A verifier should not fetch the
   directory for every request." Freshness follows `Cache-Control: max-age` before
@@ -84,7 +76,67 @@ defmodule RequestSeal.Discovery do
 
   import Support, only: [ensure: 2]
 
-  @doc "Fetch a configured source once under a cancellable absolute deadline."
+  @doc """
+  Fetch a configured source once under a cancellable absolute deadline, with no cache.
+
+  Accepted response media types are
+  `application/http-message-signatures-directory+json` for `:directory`,
+  `application/jwk-set+json` or `application/json` for `:jwks_uri`, and
+  `application/json` for `:cimd` (and for a CIMD document's same-origin `jwks_uri`,
+  `application/jwk-set+json` or `application/json`).
+
+  ## Parameters
+
+    * `source` - a `RequestSeal.Discovery.Source` from `RequestSeal.Discovery.Source.new/1`;
+      a modified struct is revalidated.
+    * `opts` - keyword list without unknown or duplicate keys; see Options.
+
+  ## Options
+
+    * `:timeout` - milliseconds, 1 through 300,000, capped by the source's
+      `:timeout`. Default: the source's `:timeout`.
+    * `:clock` - arity-zero function returning Unix seconds from 0 through
+      253,402,300,799, used for freshness, key validity and directory signature
+      times. Default: system time.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Discovery.KeySet{}}` - the eligible keys indexed by the
+      source's key ID mode, with `fetched_at`, `expires_at`, `revision` and `proof`
+      (`:signed` or `:unsigned` for directories, `:not_applicable` otherwise).
+    * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
+      `:invalid_source`, `:invalid_options`, `:transport_unavailable`,
+      `:resolution_failed`, `:address_denied`, `:connect_failed`, `:tls_failed`,
+      `:deadline_exceeded`, `:redirect_denied` (also a CIMD `jwks_uri` on another
+      origin), `:redirect_limit`, `:unexpected_status`, `:unexpected_media_type`,
+      `:limit`, `:invalid_response`, `:invalid_key_set`, `:client_id_mismatch`,
+      `:ambiguous_key_source`, `:directory_unsigned`, `:directory_signature_invalid`,
+      and `:source_unavailable` if the fetch worker is killed. Meanings:
+      `RequestSeal.Discovery.Error`.
+
+  ## Examples
+
+      iex> {:ok, source} =
+      ...>   RequestSeal.Discovery.Source.new(%{
+      ...>     type: :jwks_uri,
+      ...>     location: "https://keys.example/jwks.json"
+      ...>   })
+      iex> RequestSeal.Discovery.fetch(source, retries: 2)
+      {:error, %RequestSeal.Discovery.Error{reason: :invalid_options, retryable: false}}
+      iex> RequestSeal.Discovery.fetch(source, timeout: 0)
+      {:error, %RequestSeal.Discovery.Error{reason: :invalid_options, retryable: false}}
+
+  Fragment (requires a started `:ssl` application and an HTTPS peer at
+  `signer.example`; not executed here):
+
+      {:ok, _} = Application.ensure_all_started(:ssl)
+
+      {:ok, source} =
+        RequestSeal.Discovery.Source.new(%{type: :directory, location: "https://signer.example"})
+
+      {:ok, %RequestSeal.Discovery.KeySet{proof: :signed} = set} =
+        RequestSeal.Discovery.fetch(source, timeout: 2_000)
+  """
   @spec fetch(Source.t(), keyword()) :: {:ok, KeySet.t()} | {:error, Error.t()}
   def fetch(source, opts \\ []) do
     Support.safe(fn ->
@@ -101,7 +153,79 @@ defmodule RequestSeal.Discovery do
     end)
   end
 
-  @doc "Build a Policy resolver using source-selected IDs and an algorithm allowlist."
+  @doc """
+  Build a `RequestSeal.Policy` `key_resolver` over a key set snapshot or a cache.
+
+  The returned function takes the resolver request map, uses only its `:keyid`
+  (labels and tags are ignored), and returns `{:ok, %{key: key, algorithm: algorithm}}`
+  or `:error`. A `RequestSeal.Discovery.KeySet`
+  snapshot is resolved with `RequestSeal.Discovery.KeySet.lookup/3` at system
+  wall time. A `{cache, source}` pair is resolved with
+  `RequestSeal.Discovery.Cache.resolve/4`, whose freshness and key expiry use the
+  cache's configured clock, preserving the caller's explicit clock policy; a
+  miss or expiry fetches under the source's timeout.
+
+  ## Parameters
+
+    * `input` - a `RequestSeal.Discovery.KeySet`, or `{cache, source}` with a
+      running `RequestSeal.Discovery.Cache` and a `RequestSeal.Discovery.Source`.
+    * `opts` - keyword list; see Options.
+
+  ## Options
+
+    * `:algorithms` - required, and the only accepted option: 1 to 64 algorithm
+      identifiers accepted by a policy (the names in
+      `RequestSeal.Crypto.algorithms/0` or `{:jws, name}` tuples). The first entry
+      compatible with the key is selected.
+
+  ## Returns
+
+    * A function of arity one. Invalid options do not raise: the function then
+      returns `:error` for every request. It also returns `:error` for an unknown,
+      stale, revoked or incompatible key, a cache error, or a request without `:keyid`.
+
+  ## Examples
+
+  A key set normally comes from `fetch/2` or `RequestSeal.Discovery.Cache.refresh/2`;
+  this example builds one from a locally generated Ed25519 key so it runs offline.
+
+      iex> {public, _private} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, key} =
+      ...>   RequestSeal.PublicKey.import(
+      ...>     %{"kty" => "OKP", "crv" => "Ed25519", "x" => Base.url_encode64(public, padding: false)},
+      ...>     :jwk
+      ...>   )
+      iex> {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
+      iex> {:ok, source} =
+      ...>   RequestSeal.Discovery.Source.new(%{type: :jwks_uri, location: "https://keys.example/jwks.json"})
+      iex> entry = %RequestSeal.Discovery.Resolution{
+      ...>   key: key,
+      ...>   key_id: thumbprint,
+      ...>   thumbprint: thumbprint,
+      ...>   algorithm: "ed25519",
+      ...>   origin: "https://keys.example",
+      ...>   source_type: :jwks_uri,
+      ...>   location: source.location,
+      ...>   fetched_at: 0,
+      ...>   expires_at: 253_402_300_799,
+      ...>   proof: :not_applicable
+      ...> }
+      iex> set = %RequestSeal.Discovery.KeySet{
+      ...>   source: source,
+      ...>   origin: "https://keys.example",
+      ...>   keys: %{thumbprint => entry},
+      ...>   fetched_at: 0,
+      ...>   expires_at: 253_402_300_799,
+      ...>   revision: "example-revision",
+      ...>   proof: :not_applicable
+      ...> }
+      iex> resolve = RequestSeal.Discovery.resolver(set, algorithms: ["ed25519"])
+      iex> {:ok, %{algorithm: "ed25519", key: ^key}} = resolve.(%{keyid: thumbprint, label: "sig1"})
+      iex> resolve.(%{keyid: "unknown"})
+      :error
+      iex> RequestSeal.Discovery.resolver(set, algorithms: []).(%{keyid: thumbprint})
+      :error
+  """
   @spec resolver(KeySet.t() | {GenServer.server(), Source.t()}, keyword()) :: (map() -> term())
   def resolver(input, opts) do
     valid =

@@ -2,39 +2,63 @@ defmodule RequestSeal.Discovery.Cache do
   @moduledoc """
   Optional caller-started bounded discovery cache; no timers or background refresh.
 
-  `start_link/1` accepts `:name` (GenServer name), `:max_sources` (64, 1–4,096),
-  `:max_in_flight` (8, 1–256) and `:clock` (Unix seconds, default system clock).
   Source identity includes all configuration and trust roots. A full cache
   returns `:cache_overloaded`; it never silently evicts revocation tombstones.
-  Pending waiters are bounded to 32 per in-flight capacity slot.
 
-  `resolve/4` accepts `:algorithms` (all HTTP algorithms by default), `:timeout`
-  and `:clock`. It fetches on expiry/miss, single-flight per source, returns
-  `{:ok, Discovery.Resolution}` or `{:error, Discovery.Error}`, and never serves
-  stale keys after failure. Unknown keys in a fresh set do not trigger refetch.
-  In thumbprint mode, source revocations and tombstones reject before fetching.
-  In directory ID mode, they filter computed thumbprints after discovery; a
-  matching directory ID cannot override or become a revocation identity.
-  `refresh/2` explicitly fetches even during negative freshness, immediately
-  replacing the old snapshot on success. Failures retain the last observed
-  snapshot without extending its freshness. If it is stale, calls within
-  `negative_ttl` return `:source_unavailable` without another connection.
-  CIMD failures are never cached, as required by CIMD-02 Section 5.2.
+  Fetches are single-flight per source, and the cache never serves stale keys.
+  A failed fetch retains the last observed snapshot without extending its
+  freshness. If that snapshot is stale, `resolve/4` calls within `negative_ttl`
+  return `:source_unavailable` without another connection; `refresh/2` still
+  fetches. CIMD failures are never cached, as required by CIMD-02 Section 5.2.
   No-store/no-cache snapshots serve only current waiters and are never retained.
 
-  `remove/3` persistently denies a thumbprint for that source, including across
-  refresh and invalidation. `invalidate/2` discards freshness and cancels pending
-  fetches, retaining tombstones. Both return `:ok` or a bounded error. Removing
-  the source's denial requires a caller-created new cache/configuration.
-  Refresh returns `{:ok, KeySet}` or a bounded error. Last-waiter cancellation
-  kills the socket-owning fetcher; cache termination also cancels all fetches.
+  Thumbprints denied with `remove/3` stay denied across refresh and
+  invalidation. Removing the source's denial requires a caller-created new
+  cache/configuration. Last-waiter cancellation kills the socket-owning fetcher;
+  cache termination also cancels all fetches.
   """
   use GenServer
   alias RequestSeal.{Discovery, Crypto, SignatureFields}
   alias RequestSeal.Discovery.{Source, Error, Support, KeySet}
   import Support, only: [ensure: 2]
 
-  @doc "Start the explicitly caller-owned cache."
+  @doc """
+  Start the explicitly caller-owned cache, linked to the caller.
+
+  The cache starts no timer and fetches nothing until a call asks for a source.
+  Use `{RequestSeal.Discovery.Cache, opts}` as a child specification.
+
+  ## Parameters
+
+    * `opts` - keyword list without unknown or duplicate keys; see Options.
+
+  ## Options
+
+    * `:name` - a `GenServer` name to register. Default: none.
+    * `:max_sources` - distinct sources the cache tracks, 1 through 4,096;
+      default 64. Calls for a further source return `:cache_overloaded`.
+    * `:max_in_flight` - concurrent source fetches, 1 through 256; default 8.
+      Pending waiters across all fetches are bounded to 32 per slot.
+    * `:clock` - arity-zero function returning Unix seconds from 0 through
+      253,402,300,799, called once at start to validate it. Default: system time.
+
+  ## Returns
+
+    * `{:ok, pid}` - the started cache.
+    * `{:error, %RequestSeal.Discovery.Error{}}` - reason `:invalid_options`.
+      Meanings: `RequestSeal.Discovery.Error`.
+    * Any other `GenServer.start_link/3` error, such as `{:error, {:already_started, pid}}`.
+
+  ## Examples
+
+      iex> {:ok, cache} = RequestSeal.Discovery.Cache.start_link(max_sources: 16, max_in_flight: 4)
+      iex> is_pid(cache)
+      true
+      iex> GenServer.stop(cache)
+      :ok
+      iex> RequestSeal.Discovery.Cache.start_link(max_sources: 0)
+      {:error, %RequestSeal.Discovery.Error{reason: :invalid_options, retryable: false}}
+  """
   @spec start_link(keyword()) :: GenServer.on_start() | {:error, Error.t()}
   def start_link(opts \\ []) do
     Support.safe(
@@ -57,7 +81,70 @@ defmodule RequestSeal.Discovery.Cache do
     )
   end
 
-  @doc "Resolve a source-selected key ID; misses/expiry fetch under caller limits."
+  @doc """
+  Resolve a source-selected key ID, fetching the source on a miss or expiry under caller limits.
+
+  A fresh snapshot answers directly; unknown keys in a fresh set do not trigger a
+  refetch. Otherwise the call joins or starts the source's single fetch and
+  looks the key up in the result. In thumbprint mode, source revocations and
+  tombstones reject before fetching. In directory ID mode, they filter computed
+  thumbprints after discovery; a matching directory ID cannot override or become
+  a revocation identity.
+
+  ## Parameters
+
+    * `cache` - a running cache: pid or registered name.
+    * `source` - a `RequestSeal.Discovery.Source`.
+    * `keyid` - an ID under the source's `key_id` mode (see
+      `RequestSeal.Discovery.KeySet.lookup/3`).
+    * `opts` - keyword list without unknown or duplicate keys; see Options.
+
+  ## Options
+
+    * `:algorithms` - 1 to 64 algorithm identifiers accepted by a policy; the
+      first one compatible with the key is selected. Default:
+      `RequestSeal.Crypto.algorithms/0`.
+    * `:timeout` - milliseconds, 1 through 300,000, capped by the source's
+      `:timeout`. Default: the source's `:timeout`.
+    * `:clock` - arity-zero function returning Unix seconds from 0 through
+      253,402,300,799, used for this call's freshness checks and any fetch it
+      starts. Default: the cache's clock.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Discovery.Resolution{}}` - the key with its selected
+      algorithm and provenance.
+    * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
+      `:invalid_source`, `:invalid_options`, `:unknown_key` (malformed ID, or no
+      fresh, compatible key with that ID), `:revoked_key`, `:source_unavailable`
+      (negative freshness, invalidation, or a failed fetcher), `:cache_overloaded`,
+      `:deadline_exceeded`, `:invalid_response` (also when the cache process is not
+      running), and any error from `RequestSeal.Discovery.fetch/2`. Meanings:
+      `RequestSeal.Discovery.Error`.
+
+  ## Examples
+
+      iex> {:ok, cache} = RequestSeal.Discovery.Cache.start_link()
+      iex> {:ok, source} =
+      ...>   RequestSeal.Discovery.Source.new(%{type: :jwks_uri, location: "https://keys.example/jwks.json"})
+      iex> RequestSeal.Discovery.Cache.resolve(cache, source, "not-a-thumbprint")
+      {:error, %RequestSeal.Discovery.Error{reason: :unknown_key, retryable: false}}
+      iex> thumbprint = Base.url_encode64(:crypto.hash(:sha256, "example key"), padding: false)
+      iex> :ok = RequestSeal.Discovery.Cache.remove(cache, source, thumbprint)
+      iex> RequestSeal.Discovery.Cache.resolve(cache, source, thumbprint, algorithms: ["ed25519"])
+      {:error, %RequestSeal.Discovery.Error{reason: :revoked_key, retryable: false}}
+      iex> GenServer.stop(cache)
+      :ok
+
+  Fragment (requires a started `:ssl` application and an HTTPS peer at
+  `keys.example`; not executed here):
+
+      {:ok, resolution} =
+        RequestSeal.Discovery.Cache.resolve(cache, source, thumbprint,
+          algorithms: ["ed25519", "ecdsa-p256-sha256"],
+          timeout: 2_000
+        )
+  """
   @spec resolve(GenServer.server(), Source.t(), binary(), keyword()) ::
           {:ok, RequestSeal.Discovery.Resolution.t()} | {:error, Error.t()}
   def resolve(cache, source, keyid, opts \\ []) do
@@ -92,8 +179,42 @@ defmodule RequestSeal.Discovery.Cache do
   end
 
   @doc """
-  Explicitly replace a source snapshot on success. Failures retain the last
-  observed snapshot without extending its freshness; stale keys are never served.
+  Explicitly fetch a source and replace its snapshot on success.
+
+  The fetch runs even during negative freshness; if a fetch for the source is
+  already in progress, the call waits for that fetch. On success the old snapshot
+  is replaced immediately; a failure keeps it without extending its freshness.
+
+  ## Parameters
+
+    * `cache` - a running cache: pid or registered name.
+    * `source` - a `RequestSeal.Discovery.Source`; the fetch uses its `:timeout`
+      and the cache's clock.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Discovery.KeySet{}}` - the new snapshot, without
+      thumbprints denied by `remove/3`.
+    * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
+      `:invalid_source`, `:invalid_options`, `:source_unavailable` (invalidation
+      or a failed fetcher), `:cache_overloaded`, `:deadline_exceeded`,
+      `:invalid_response` (also when the cache process is not running), and any
+      error from `RequestSeal.Discovery.fetch/2`. Meanings:
+      `RequestSeal.Discovery.Error`.
+
+  ## Examples
+
+      iex> {:ok, cache} = RequestSeal.Discovery.Cache.start_link()
+      iex> RequestSeal.Discovery.Cache.refresh(cache, %{type: :jwks_uri})
+      {:error, %RequestSeal.Discovery.Error{reason: :invalid_source, retryable: false}}
+      iex> GenServer.stop(cache)
+      :ok
+
+  Fragment (requires a started `:ssl` application and an HTTPS peer at
+  `keys.example`; not executed here):
+
+      {:ok, %RequestSeal.Discovery.KeySet{} = set} =
+        RequestSeal.Discovery.Cache.refresh(cache, source)
   """
   @spec refresh(GenServer.server(), Source.t()) :: {:ok, KeySet.t()} | {:error, Error.t()}
   def refresh(cache, source) do
@@ -109,10 +230,73 @@ defmodule RequestSeal.Discovery.Cache do
     )
   end
 
-  @doc "Deny a thumbprint persistently for this cache and source."
+  @doc """
+  Deny a thumbprint persistently for this cache and source.
+
+  The thumbprint is dropped from any held snapshot and from fetches completing later.
+
+  ## Parameters
+
+    * `cache` - a running cache: pid or registered name.
+    * `source` - a `RequestSeal.Discovery.Source`.
+    * `thumbprint` - an RFC 7638 SHA-256 thumbprint (43 base64url characters).
+
+  ## Returns
+
+    * `:ok` - the thumbprint is denied.
+    * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
+      `:invalid_source`, `:invalid_options`, `:unknown_key` (not a thumbprint),
+      `:limit` (more than 256 denials for the source), `:cache_overloaded`,
+      `:source_unavailable` (including a cache that is not running). Meanings:
+      `RequestSeal.Discovery.Error`.
+
+  ## Examples
+
+      iex> {:ok, cache} = RequestSeal.Discovery.Cache.start_link()
+      iex> {:ok, source} =
+      ...>   RequestSeal.Discovery.Source.new(%{type: :jwks_uri, location: "https://keys.example/jwks.json"})
+      iex> thumbprint = Base.url_encode64(:crypto.hash(:sha256, "retired key"), padding: false)
+      iex> RequestSeal.Discovery.Cache.remove(cache, source, thumbprint)
+      :ok
+      iex> RequestSeal.Discovery.Cache.remove(cache, source, "build-signer-1")
+      {:error, %RequestSeal.Discovery.Error{reason: :unknown_key, retryable: false}}
+      iex> GenServer.stop(cache)
+      :ok
+  """
   @spec remove(GenServer.server(), Source.t(), binary()) :: :ok | {:error, Error.t()}
   def remove(cache, source, thumbprint), do: administrative(cache, source, {:remove, thumbprint})
-  @doc "Discard a snapshot and pending work, preserving explicit removals."
+
+  @doc """
+  Discard a source's snapshot, negative freshness and pending fetch, preserving explicit removals.
+
+  Callers waiting on the cancelled fetch receive `:source_unavailable`. The next
+  `resolve/4` for the source fetches again.
+
+  ## Parameters
+
+    * `cache` - a running cache: pid or registered name.
+    * `source` - a `RequestSeal.Discovery.Source`.
+
+  ## Returns
+
+    * `:ok` - the source state is discarded.
+    * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
+      `:invalid_source`, `:invalid_options`, `:cache_overloaded`,
+      `:source_unavailable` (including a cache that is not running). Meanings:
+      `RequestSeal.Discovery.Error`.
+
+  ## Examples
+
+      iex> {:ok, cache} = RequestSeal.Discovery.Cache.start_link()
+      iex> {:ok, source} =
+      ...>   RequestSeal.Discovery.Source.new(%{type: :jwks_uri, location: "https://keys.example/jwks.json"})
+      iex> RequestSeal.Discovery.Cache.invalidate(cache, source)
+      :ok
+      iex> GenServer.stop(cache)
+      :ok
+      iex> RequestSeal.Discovery.Cache.invalidate(cache, source)
+      {:error, %RequestSeal.Discovery.Error{reason: :source_unavailable, retryable: true}}
+  """
   @spec invalidate(GenServer.server(), Source.t()) :: :ok | {:error, Error.t()}
   def invalidate(cache, source), do: administrative(cache, source, :invalidate)
 

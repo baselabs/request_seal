@@ -5,8 +5,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
     Requires optional ash_onetime 1.5 and Elixir 1.20. The caller owns the
     existing Ecto repo, PostgreSQL database, and ash_onetime installation
-    migrations. `store/2` selects a logical partition and optional schema prefix.
-    Namespace and commitment bytes are base64url encoded into scope and key;
+    migrations. Namespace and commitment bytes are base64url encoded into scope and key;
     they never become SQL identifiers or logical partitions.
 
     Each claim owns a READ COMMITTED transaction under the remaining deadline.
@@ -25,7 +24,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     Duplicate claims do not
     extend retention; use one freshness bound per namespace.
 
-    `sweep/3` returns `{:error, :externally_managed}`. Cleanup belongs to
+    `sweep/3` never deletes anything. Cleanup belongs to
     `mix ash_onetime.prune` or `AshOnetime.Oban.CleanupWorker`; this adapter never
     calls ash_onetime's internal store APIs or starts any process.
     """
@@ -34,7 +33,44 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     alias RequestSeal.Replay.{Claim, Error, Store}
     @type ref :: {module(), binary(), binary() | nil}
 
-    @doc "Reference an existing repo with an explicit logical partition and optional prefix."
+    @doc """
+    Reference an existing repo with an explicit logical partition and optional schema prefix.
+
+    Building the reference does not contact the database; the repo module must be
+    loaded and export `transaction/2`.
+
+    ## Parameters
+
+      * `repo` - the caller's Ecto repo module.
+      * `opts` - keyword list without duplicate keys; see Options.
+
+    ## Options
+
+      * `:partition` - required: the ash_onetime logical partition, a valid UTF-8
+        string of 1–255 bytes without NUL bytes.
+      * `:prefix` - optional schema prefix, a valid UTF-8 string of 1–63 bytes
+        without NUL bytes. Default `nil` (the repo's default schema).
+
+    ## Returns
+
+      * `RequestSeal.Replay.Store` - adapter `RequestSeal.Replay.AshOnetime` with
+        `{repo, partition, prefix}` as its reference.
+      * `{:error, %RequestSeal.Replay.Error{}}` - reason `:invalid_store` for an
+        unknown, duplicate or malformed option, or a repo module that is not
+        loaded or lacks `transaction/2`. Meanings: `RequestSeal.Replay.Error`.
+
+    ## Examples
+
+        iex> RequestSeal.Replay.AshOnetime.store(Example.Repo, partition: "")
+        {:error, %RequestSeal.Replay.Error{reason: :invalid_store, retryable: false}}
+
+    Fragment (requires a running Ecto repo with the ash_onetime migrations; not executed here):
+
+        store = RequestSeal.Replay.AshOnetime.store(Example.Repo, partition: "webhooks")
+        claim = %RequestSeal.Replay.Claim{namespace: "orders", key: "nonce-7f3a", retain_until: 1_900_000_000}
+        :claimed = RequestSeal.Replay.claim(store, claim, timeout: 2_000)
+        :already_claimed = RequestSeal.Replay.claim(store, claim, timeout: 2_000)
+    """
     @spec store(module(), keyword()) :: Store.t() | {:error, Error.t()}
     def store(repo, opts) when is_atom(repo) and is_list(opts) do
       if Keyword.keyword?(opts) and
@@ -50,7 +86,40 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
     def store(_, _), do: {:error, Error.new(:invalid_store)}
 
-    @doc "Atomically claim an envelope in an independently committed transaction."
+    @doc """
+    Atomically claim an envelope in an independently committed transaction.
+
+    Implements `c:RequestSeal.Replay.claim/3`; most callers use
+    `RequestSeal.Replay.claim/3` with the store from `store/2`. The transaction and
+    its queries use the remaining time of `context` as their timeout.
+
+    ## Parameters
+
+      * `ref` - `{repo, partition, prefix}`, the reference built by `store/2`.
+      * `claim` - a `RequestSeal.Replay.Claim`.
+      * `context` - a `RequestSeal.Custody.Context`.
+
+    ## Returns
+
+      * `:claimed` - ash_onetime admitted the nonce.
+      * `:already_claimed` - ash_onetime reported `:nonce_already_used`.
+      * `{:error, :timeout}` - the deadline had expired before the transaction, or
+        a lock, cancellation or connection timeout; the claim may have committed.
+      * `{:error, :unavailable}` - the repo is not running, a connection could not
+        be checked out, or the database is shutting down or refusing connections.
+      * `{:error, :failure}` - an invalid claim or reference, any other ash_onetime
+        error code, or any other failure.
+
+    ## Examples
+
+        iex> context = %RequestSeal.Custody.Context{
+        ...>   owner: self(),
+        ...>   deadline: System.monotonic_time(:millisecond) + 1_000
+        ...> }
+        iex> claim = %RequestSeal.Replay.Claim{namespace: "orders", key: "", retain_until: 100}
+        iex> RequestSeal.Replay.AshOnetime.claim({Example.Repo, "webhooks", nil}, claim, context)
+        {:error, :failure}
+    """
     @impl true
     @spec claim(ref(), Claim.t(), Context.t()) ::
             :claimed | :already_claimed | {:error, :unavailable | :timeout | :failure}
@@ -144,7 +213,30 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
     defp database_error(_), do: {:error, :failure}
 
-    @doc "Cleanup is externally managed by ash_onetime's prune task or Oban worker."
+    @doc """
+    Refuse to sweep: cleanup is externally managed by ash_onetime's prune task or Oban worker.
+
+    Implements `c:RequestSeal.Replay.sweep/3` without touching the database.
+
+    ## Parameters
+
+      * `ref` - ignored.
+      * `now` - ignored.
+      * `context` - ignored.
+
+    ## Returns
+
+      * `{:error, :externally_managed}` - always.
+
+    ## Examples
+
+        iex> context = %RequestSeal.Custody.Context{
+        ...>   owner: self(),
+        ...>   deadline: System.monotonic_time(:millisecond) + 1_000
+        ...> }
+        iex> RequestSeal.Replay.AshOnetime.sweep({Example.Repo, "webhooks", nil}, 1_900_000_000, context)
+        {:error, :externally_managed}
+    """
     @impl true
     @spec sweep(ref(), integer(), Context.t()) :: {:error, :externally_managed}
     def sweep(_ref, _now, _context), do: {:error, :externally_managed}

@@ -1,12 +1,12 @@
 defmodule RequestSeal.Discovery.KeySet do
   @moduledoc """
   Bounded source-bound public keys, freshness and directory proof status.
+
   `revision` is SHA-256 over the fetched JSON bytes, not an origin-assigned sequence.
-  `lookup/3` accepts IDs under the source's explicit `key_id` mode and an algorithm
-  allowlist. Default IDs are computed RFC thumbprints; directory-assigned IDs
-  never replace cryptographic identity or thumbprint revocation. It rejects stale, revoked, incompatible or malformed entries. Key
-  restrictions remain enforced by `PublicKey`. Snapshot lookup uses system time;
-  the cache's `:clock` supports caller-controlled time for resolution/fetching.
+  Default IDs are computed RFC thumbprints; directory-assigned IDs never replace
+  cryptographic identity or thumbprint revocation. Key restrictions remain
+  enforced by `RequestSeal.PublicKey`. The cache's `:clock` supports
+  caller-controlled time for resolution and fetching.
   """
   alias RequestSeal.{PublicKey, SignatureFields}
   alias RequestSeal.Crypto.Algorithm
@@ -23,7 +23,76 @@ defmodule RequestSeal.Discovery.KeySet do
           revision: binary(),
           proof: :signed | :unsigned | :not_applicable
         }
-  @doc "Find a fresh, nonrevoked source-selected ID under the algorithm allowlist."
+  @doc """
+  Find a fresh, nonrevoked key by its source-selected ID under an algorithm allowlist.
+
+  Lookup uses system time. It revalidates the set's source, recomputes the key's
+  thumbprint, and rejects stale, revoked, incompatible or malformed entries.
+
+  ## Parameters
+
+    * `set` - a `RequestSeal.Discovery.KeySet`, normally from
+      `RequestSeal.Discovery.fetch/2`.
+    * `keyid` - an ID under the source's `key_id` mode: an RFC 7638 thumbprint
+      (43 base64url characters) by default, or a directory-assigned ID of 1–256
+      printable ASCII bytes with `key_id: :directory`.
+    * `algorithms` - 1 to 64 algorithm identifiers accepted by a policy (the names
+      in `RequestSeal.Crypto.algorithms/0` or `{:jws, name}` tuples). The first
+      entry the key can use, and that matches any algorithm the source asserted,
+      is selected.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Discovery.Resolution{}}` - the entry with `algorithm`
+      set to the selected algorithm and `revision` set to the set's revision.
+    * `:error` - the ID is malformed for the mode or absent; the set or entry has
+      expired; the thumbprint is revoked by the source; no allowed algorithm fits
+      the key; the source or allowlist is invalid; or `set` is not a key set.
+
+  ## Examples
+
+  A key set normally comes from `RequestSeal.Discovery.fetch/2`; this example
+  builds one from a locally generated Ed25519 key so it runs offline.
+
+      iex> {public, _private} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, key} =
+      ...>   RequestSeal.PublicKey.import(
+      ...>     %{"kty" => "OKP", "crv" => "Ed25519", "x" => Base.url_encode64(public, padding: false)},
+      ...>     :jwk
+      ...>   )
+      iex> {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
+      iex> {:ok, source} =
+      ...>   RequestSeal.Discovery.Source.new(%{type: :jwks_uri, location: "https://keys.example/jwks.json"})
+      iex> entry = %RequestSeal.Discovery.Resolution{
+      ...>   key: key,
+      ...>   key_id: thumbprint,
+      ...>   thumbprint: thumbprint,
+      ...>   algorithm: "ed25519",
+      ...>   origin: "https://keys.example",
+      ...>   source_type: :jwks_uri,
+      ...>   location: source.location,
+      ...>   fetched_at: 0,
+      ...>   expires_at: 253_402_300_799,
+      ...>   proof: :not_applicable
+      ...> }
+      iex> set = %RequestSeal.Discovery.KeySet{
+      ...>   source: source,
+      ...>   origin: "https://keys.example",
+      ...>   keys: %{thumbprint => entry},
+      ...>   fetched_at: 0,
+      ...>   expires_at: 253_402_300_799,
+      ...>   revision: "example-revision",
+      ...>   proof: :not_applicable
+      ...> }
+      iex> {:ok, resolution} =
+      ...>   RequestSeal.Discovery.KeySet.lookup(set, thumbprint, ["ecdsa-p256-sha256", "ed25519"])
+      iex> {resolution.algorithm, resolution.revision, resolution.thumbprint == thumbprint}
+      {"ed25519", "example-revision", true}
+      iex> RequestSeal.Discovery.KeySet.lookup(set, thumbprint, ["ecdsa-p256-sha256"])
+      :error
+      iex> RequestSeal.Discovery.KeySet.lookup(set, "unknown", ["ed25519"])
+      :error
+  """
   @spec lookup(t(), binary(), [RequestSeal.Crypto.algorithm()]) :: {:ok, Resolution.t()} | :error
   def lookup(set, keyid, algorithms),
     do: lookup_at(set, keyid, algorithms, System.system_time(:second))

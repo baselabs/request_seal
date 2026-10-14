@@ -1,38 +1,27 @@
 defmodule RequestSeal.Discovery.Source do
   @moduledoc """
-  Caller-configured discovery trust root. `new/1` requires `:type` (`:directory`,
-  `:jwks_uri`, or `:cimd`) and `:location` (HTTPS URL, at most 2,048 bytes).
+  Caller-configured discovery trust root, built with `new/1`.
+
   A directory origin expands to `/.well-known/http-message-signatures-directory`.
-  CIMD requires a nonempty path; URLs reject userinfo, fragments and dot segments.
   For CIMD, pass `:location` with exactly the spelling of the document's
   `client_id`, including scheme/host case, any trailing host dot and explicit
   port. The client ID comparison is exact; origin normalization for fetching
   and same-origin checks never changes that comparison.
 
-  Options: `:key_id` (`:thumbprint`, default, or explicit `:directory`).
-  Thumbprint mode requires any supplied JWK `kid` to equal its RFC thumbprint.
-  Directory mode requires a unique `kid` per JWK (1..256 printable ASCII bytes),
-  preserves its spelling, and keeps thumbprints as the revocation identity.
+  ## Key ID modes
+
+  Thumbprint mode (`key_id: :thumbprint`, the default) requires any supplied JWK
+  `kid` to equal its RFC thumbprint. Directory mode (`key_id: :directory`)
+  requires a unique `kid` per JWK (1..256 printable ASCII bytes), preserves its
+  spelling, and keeps thumbprints as the revocation identity.
   Directory proof sources (`type: :directory`) require thumbprint mode; their
   signed proof identifies its verification key by thumbprint. Duplicate IDs
   reject among eligible entries only; expired, not-yet-valid, revoked, or
   incompatible entries do not reserve an ID during rotation.
-  `:cacerts` (`:os` or DER roots, default `:os`),
-  `:permitted_addresses` (at most 16 exact IP tuples, default none),
-  `:revoked` (at most 256 RFC thumbprints), `:require_signed_directory` (true),
-  `:max_redirects` (0, at most 3), `:redirect_scope` (`:same_origin`, or explicit
-  `:any_https`), `:max_bytes` (65,536, at most 1,048,576),
-  `:max_decoded_bytes` (65,536, same bound), `:max_keys` (32, at most 256),
-  `:timeout` (5,000 milliseconds, 1–300,000), `:min_ttl` (300 seconds),
-  `:max_ttl` (86,400 seconds, at most 604,800), `:negative_ttl` (30 seconds,
-  at most 300). `min_ttl` supplies fallback freshness only when neither `max-age`
-  nor `Expires` is present; it never extends explicit freshness or a key/signature
-  expiry. Invalid `negative_ttl` returns `:invalid_options`.
-  CIMD response content additionally has a 5,120-byte cap.
 
-  Unknown keys reject. Modified structs are revalidated at every fetch. Inspection
-  excludes locations, addresses, trust roots and revoked IDs. No networking occurs
-  during construction. Starting SSL remains the caller's responsibility.
+  Modified structs are revalidated at every fetch. Inspection excludes
+  locations, addresses, trust roots and revoked IDs. No networking occurs during
+  construction. Starting SSL remains the caller's responsibility.
   """
   alias RequestSeal.Discovery.{Address, Support, Error}
   import Support, only: [ensure: 2]
@@ -75,7 +64,68 @@ defmodule RequestSeal.Discovery.Source do
           negative_ttl: non_neg_integer()
         }
   @directory "/.well-known/http-message-signatures-directory"
-  @doc "Construct a bounded explicit source; malformed inputs return :invalid_source."
+  @doc """
+  Construct a bounded explicit source from trusted caller configuration.
+
+  ## Parameters
+
+    * `attrs` - a plain map (not a struct) with the required keys `:type` and
+      `:location` plus any options below. Unknown keys reject.
+      * `:type` - `:directory`, `:jwks_uri` or `:cimd`.
+      * `:location` - an `https` URL of 1–2,048 printable ASCII bytes with a host,
+        without userinfo, fragment, backslash, malformed percent-escape or dot
+        segment. A `:directory` location is either an origin (expanded to the
+        well-known path) or exactly that path, without a query. A `:cimd`
+        location needs a nonempty path.
+
+  ## Options
+
+    * `:key_id` - `:thumbprint` (default) or `:directory`; see "Key ID modes"
+      above. A `:directory` type requires `:thumbprint`.
+    * `:cacerts` - `:os` (default) or a nonempty list of DER certificates, each
+      1–16,384 bytes.
+    * `:permitted_addresses` - at most 16 exact IPv4 or IPv6 address tuples that
+      are allowed even though they are private or special-purpose. Default `[]`.
+    * `:revoked` - at most 256 RFC thumbprints. Default `[]`.
+    * `:require_signed_directory` - boolean, default `true`.
+    * `:max_redirects` - 0 (default) through 3.
+    * `:redirect_scope` - `:same_origin` (default) or explicit `:any_https`.
+    * `:max_bytes` - response body bytes before content decoding, 1 through
+      1,048,576; default 65,536.
+    * `:max_decoded_bytes` - response body bytes after content decoding, same
+      bounds and default.
+      CIMD response content additionally has a 5,120-byte cap.
+    * `:max_keys` - 1 through 256; default 32.
+    * `:timeout` - milliseconds, 1 through 300,000; default 5,000.
+    * `:min_ttl` - seconds, 0 through 604,800 and at most `:max_ttl`; default 300.
+      It supplies fallback freshness only when neither `max-age` nor `Expires` is
+      present; it never extends explicit freshness or a key/signature expiry.
+    * `:max_ttl` - seconds, 0 through 604,800; default 86,400.
+    * `:negative_ttl` - seconds, 0 through 300; default 30.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Discovery.Source{}}` - the validated source, with a
+      directory origin expanded to the well-known path.
+    * `{:error, %RequestSeal.Discovery.Error{}}` - reason `:invalid_options` for an
+      invalid `:negative_ttl`, otherwise `:invalid_source`. Meanings:
+      `RequestSeal.Discovery.Error`.
+
+  ## Examples
+
+      iex> {:ok, source} =
+      ...>   RequestSeal.Discovery.Source.new(%{type: :directory, location: "https://signer.example"})
+      iex> source.location
+      "https://signer.example/.well-known/http-message-signatures-directory"
+      iex> RequestSeal.Discovery.Source.new(%{type: :jwks_uri, location: "http://keys.example/jwks.json"})
+      {:error, %RequestSeal.Discovery.Error{reason: :invalid_source, retryable: false}}
+      iex> RequestSeal.Discovery.Source.new(%{
+      ...>   type: :jwks_uri,
+      ...>   location: "https://keys.example/jwks.json",
+      ...>   negative_ttl: 301
+      ...> })
+      {:error, %RequestSeal.Discovery.Error{reason: :invalid_options, retryable: false}}
+  """
   @spec new(map()) :: {:ok, t()} | {:error, Error.t()}
   def new(attrs) do
     Support.safe(
@@ -186,7 +236,30 @@ defmodule RequestSeal.Discovery.Source do
   def key_id?(%__MODULE__{key_id: :directory}, value), do: directory_id?(value)
   def key_id?(_, _), do: false
 
-  @doc "Accept directory key IDs containing 1–256 printable ASCII bytes, preserving spelling."
+  @doc """
+  Check whether a value is a valid directory-assigned key ID.
+
+  Directory IDs are compared with their exact spelling; this check does not
+  normalize them.
+
+  ## Parameters
+
+    * `value` - any term.
+
+  ## Returns
+
+    * `true` - a binary of 1–256 bytes, each printable ASCII (0x20 through 0x7E).
+    * `false` - anything else.
+
+  ## Examples
+
+      iex> RequestSeal.Discovery.Source.directory_id?("build-signer 2026")
+      true
+      iex> RequestSeal.Discovery.Source.directory_id?("tab\tseparated")
+      false
+      iex> RequestSeal.Discovery.Source.directory_id?("")
+      false
+  """
   @spec directory_id?(term()) :: boolean()
   def directory_id?(value),
     do:

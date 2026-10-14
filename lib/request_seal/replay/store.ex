@@ -1,5 +1,11 @@
 defmodule RequestSeal.Replay.Store do
-  @moduledoc "Caller-owned replay adapter and reference. Importing it starts nothing."
+  @moduledoc """
+  Caller-owned replay adapter and reference. Importing it starts nothing.
+
+  `adapter` is a module implementing the `RequestSeal.Replay` callbacks and `ref`
+  is that adapter's reference. Build stores with `RequestSeal.Replay.ETS.store/1`,
+  `RequestSeal.Replay.Postgres.store/2` or `RequestSeal.Replay.AshOnetime.store/2`.
+  """
   @derive {Inspect, only: [:adapter]}
   defstruct [:adapter, :ref]
   @type t :: %__MODULE__{adapter: module(), ref: term()}
