@@ -1,0 +1,268 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the core signing, verification, digest, replay, or quorum API changes -->
+
+# Sign and verify HTTP messages
+
+This notebook walks the core RequestSeal journey with locally generated keys: sign a request with a covered body digest, verify it under an explicit policy, sign a response bound to that request, accept a request only once, require two signers, and read the errors each layer returns. It uses only the core library: no framework, server, or network access beyond the Hex install. Every cell asserts its result, so a changed outcome stops the notebook.
+
+```elixir
+Mix.install([{:request_seal, "~> 0.4.1"}])
+```
+
+## Hold a key behind a handle
+
+`RequestSeal.Custody.Local.new/3` keeps the private seed in its own process and returns an opaque handle. Only the public key leaves it.
+
+```elixir
+{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, key} = RequestSeal.Custody.public_key(handle)
+{:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
+
+43 = byte_size(thumbprint)
+IO.puts("Handle ready; public key thumbprint is #{byte_size(thumbprint)} characters")
+```
+
+## Sign a request and its body
+
+The request reports a finished build. `digest: ["sha-256"]` adds a `Content-Digest` header over the exact body bytes, and the signing specification covers it, so the signature protects the body too.
+
+```elixir
+build_event = ~s({"build":"4821","status":"passed"})
+
+{:ok, request} =
+  RequestSeal.Message.request(
+    "POST",
+    "https://ci.example.com/hooks/builds",
+    [{"content-type", "application/json"}],
+    build_event,
+    digest: ["sha-256"]
+  )
+
+components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]
+
+signing = %{
+  label: "sig",
+  algorithm: "ed25519",
+  components: components,
+  expires_in: 60,
+  keyid: "ci-sender"
+}
+
+{:ok, signed} = RequestSeal.sign(request, signing, handle)
+
+["content-type", "content-digest", "Signature-Input", "Signature"] =
+  Enum.map(signed.fields, & &1.name)
+
+[{_, signature_input}] =
+  for field <- signed.fields, field.name == "Signature-Input", do: {field.name, field.value}
+
+IO.puts(signature_input)
+```
+
+Signing appends `Signature-Input` and `Signature` after your headers. The generated `Signature-Input` carries `created`, `expires`, a random `nonce`, `alg`, and `keyid` parameters.
+
+## Verify under an explicit policy
+
+A policy names all six acceptance choices: algorithms, required components, key resolver, freshness, body integrity, and replay. The resolver trusts the key through configuration; the sender's key ID only selects among keys you already trust.
+
+```elixir
+policy_fields = %{
+  algorithms: ["ed25519"],
+  components: components,
+  key_resolver: fn
+    %{keyid: "ci-sender"} -> {:ok, %{algorithm: "ed25519", key: key}}
+    _ -> :error
+  end,
+  freshness: %{
+    clock: fn -> System.system_time(:second) end,
+    max_age: 60,
+    skew: 5,
+    require_expires: true
+  },
+  content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
+  replay: :not_required
+}
+
+{:ok, policy} = RequestSeal.Policy.new(policy_fields)
+{:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
+
+:valid = verification.signature.crypto
+%{kind: :content, checked: ["sha-256"]} = verification.content
+:unattributed = verification.principal
+:not_evaluated = verification.authorization
+IO.puts("Request verified with body integrity")
+```
+
+The result states facts about the signature. `authorization: :not_evaluated` is a reminder that your application decides what the caller may do.
+
+## Reject a changed body
+
+The sender's headers and signature stay the same; only the body differs.
+
+```elixir
+{:ok, altered} =
+  RequestSeal.Message.request(
+    "POST",
+    "https://ci.example.com/hooks/builds",
+    Enum.map(signed.fields, &{&1.name, &1.value}),
+    ~s({"build":"4821","status":"failed"})
+  )
+
+{:error, error} = RequestSeal.verify(altered, policy, label: "sig")
+:digest_mismatch = error.reason
+:content = error.layer
+false = error.retryable
+16 = byte_size(error.correlation)
+IO.puts("Changed body rejected: #{error.reason} at the #{error.layer} layer")
+```
+
+Errors carry a closed `reason`, the `layer` that rejected the message, `retryable: false`, and a random `correlation` token to log. They never carry request bytes or key IDs. `RequestSeal.Error` lists every reason by layer.
+
+## Sign a response bound to its request
+
+A response can cover components of the request it answers with the `req` parameter. A verifier then accepts the response only for that request.
+
+```elixir
+{:ok, response} =
+  RequestSeal.Message.response(
+    202,
+    [{"content-type", "application/json"}],
+    ~s({"queued":true}),
+    request: signed,
+    digest: ["sha-256"]
+  )
+
+response_components = ~s[("@status" "content-digest" "@method";req "@path";req)]
+
+{:ok, signed_response} =
+  RequestSeal.sign(
+    response,
+    %{
+      label: "reply",
+      algorithm: "ed25519",
+      components: response_components,
+      expires_in: 60,
+      keyid: "ci-sender"
+    },
+    handle
+  )
+
+{:ok, response_policy} =
+  RequestSeal.Policy.new(%{policy_fields | components: response_components})
+
+{:ok, response_verification} =
+  RequestSeal.verify(signed_response, response_policy, label: "reply")
+
+:valid = response_verification.signature.crypto
+
+# The same response presented for a different request path fails.
+{:ok, other_request} =
+  RequestSeal.Message.request("POST", "https://ci.example.com/hooks/deploys", [], nil)
+
+{:error, %{reason: :invalid_signature}} =
+  RequestSeal.verify(%{signed_response | related_request: other_request}, response_policy,
+    label: "reply"
+  )
+
+IO.puts("Response verified for its own request and rejected for another")
+```
+
+## Accept a request only once
+
+A replay policy claims each request's authenticated nonce in a store. `RequestSeal.Replay.ETS` is a local, in-memory store for one node; the commitment function decides what a claim identifies within your namespace.
+
+```elixir
+{:ok, replay_store} = RequestSeal.Replay.ETS.start_link(max_entries: 1_000)
+
+replay = %{
+  identifier: :nonce,
+  namespace: "ci-hooks",
+  commitment: fn facts -> {:ok, facts.identifier} end,
+  store: RequestSeal.Replay.ETS.store(replay_store),
+  timeout: 5_000
+}
+
+{:ok, once_policy} = RequestSeal.Policy.new(%{policy_fields | replay: replay})
+{:ok, first} = RequestSeal.verify(signed, once_policy, label: "sig")
+RequestSeal.Replay.Receipt = first.replay.__struct__
+
+{:error, %{reason: :replayed, layer: :replay}} =
+  RequestSeal.verify(signed, once_policy, label: "sig")
+
+GenServer.stop(replay_store)
+IO.puts("First delivery accepted; the repeat rejected as replayed")
+```
+
+ETS loses its claims when the owner stops. For several nodes or restarts, use durable storage; see [replay protection](../docs/guides/replay-protection.md).
+
+## Require two signers
+
+A quorum assigns labels to slots and counts distinct keys. Here a release request must carry signatures from both the build system and a reviewer.
+
+```elixir
+{_, reviewer_seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, reviewer} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, reviewer_seed})
+{:ok, reviewer_key} = RequestSeal.Custody.public_key(reviewer)
+
+release_components = ~s[("@method" "@scheme" "@authority" "@path")]
+
+{:ok, release} =
+  RequestSeal.Message.request("POST", "https://ci.example.com/releases/4821", [], nil)
+
+slot_policy = fn keyid, slot_key ->
+  {:ok, slot} =
+    RequestSeal.Policy.new(%{
+      policy_fields
+      | components: release_components,
+        content: :not_required,
+        key_resolver: fn
+          %{keyid: ^keyid} -> {:ok, %{algorithm: "ed25519", key: slot_key}}
+          _ -> :error
+        end
+    })
+
+  slot
+end
+
+{:ok, quorum} =
+  RequestSeal.Quorum.new(%{
+    mode: :all,
+    unit: :key,
+    unexpected: :reject,
+    invalid: :reject,
+    slots: [
+      %{id: :build, label: "build", required: true, policy: slot_policy.("ci-sender", key)},
+      %{id: :review, label: "review", required: true, policy: slot_policy.("reviewer", reviewer_key)}
+    ]
+  })
+
+release_spec = fn label, keyid ->
+  %{label: label, algorithm: "ed25519", components: release_components, expires_in: 60, keyid: keyid}
+end
+
+{:ok, build_signed} = RequestSeal.sign(release, release_spec.("build", "ci-sender"), handle)
+{:ok, both_signed} = RequestSeal.sign(build_signed, release_spec.("review", "reviewer"), reviewer)
+
+{:ok, result} = RequestSeal.verify_quorum(both_signed, quorum, [])
+2 = result.count
+[:build, :review] = Enum.sort(result.satisfied)
+
+{:error, %{reason: :quorum_not_met, layer: :quorum}} =
+  RequestSeal.verify_quorum(build_signed, quorum, [])
+
+IO.puts("Both signers present: accepted; reviewer missing: rejected")
+```
+
+Each slot's signature must satisfy that slot's complete policy on its own; coverage is never pooled across signatures.
+
+## Release the keys
+
+```elixir
+:ok = RequestSeal.Custody.Local.release(handle)
+:ok = RequestSeal.Custody.Local.release(reviewer)
+
+{:error, %{reason: :key_not_found}} = RequestSeal.Custody.sign(handle, "after release")
+IO.puts("Handles released; signing with a released handle fails")
+```
+
+In an application, a supervised owner holds keys for the life of the service; see [key custody](../docs/guides/key-custody.md). The [signing and verifying guide](../docs/guides/signing-and-verifying.md) covers hand-built messages, exact signature metadata, and every policy option.

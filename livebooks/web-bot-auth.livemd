@@ -1,0 +1,151 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: draft-ietf-webbotauth-httpsig-protocol-00 and accepted ADRs · Review when: the Web Bot Auth API or the implemented draft revision changes -->
+
+# Sign and verify a Web Bot Auth agent
+
+This notebook signs a crawler's request under [Web Bot Auth protocol-00](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html) and verifies it against a held public key, the mode for an agent whose key you configured directly. It also shows what the verifier rejects. No network access is needed beyond the Hex install. Authenticating an agent's URL through HTTPS key discovery needs a real publisher; the [Web Bot Auth guide](../docs/guides/web-bot-auth.md) covers it.
+
+```elixir
+Mix.install([{:request_seal, "~> 0.4.1"}])
+```
+
+## Create the agent's key
+
+Web Bot Auth identifies a key by its SHA-256 JWK thumbprint, which becomes the signature's `keyid`.
+
+```elixir
+{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, key} = RequestSeal.Custody.public_key(handle)
+{:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
+signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+
+IO.puts("Agent key thumbprint: #{byte_size(thumbprint)} characters")
+```
+
+## Sign a crawler request
+
+The crawler fetches a documentation page. Signing adds a `Signature-Agent` dictionary member naming the agent's key directory and always covers that member and the request's `@authority`. The draft requires only that coverage, so a signature on its own would also verify for any other page on the same site. `components:` adds the method and path so the signature binds this exact page.
+
+```elixir
+{:ok, page_request} =
+  RequestSeal.Message.request("GET", "https://docs.example.com/guides/install", [], nil)
+
+now = System.system_time(:second)
+
+{:ok, agent_request} =
+  RequestSeal.WebBotAuth.sign(
+    page_request,
+    %{
+      label: "agent",
+      agent: %{location: "https://crawler.example", type: :directory},
+      key: key,
+      algorithm: "ed25519",
+      created: now,
+      expires: now + 60,
+      nonce: Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false),
+      components: ~s[("@method" "@path")]
+    },
+    signer
+  )
+
+["Signature-Agent", "Signature-Input", "Signature"] =
+  Enum.map(agent_request.fields, & &1.name)
+
+IO.puts("Signed with Signature-Agent, Signature-Input, and Signature")
+```
+
+## Verify against a held key
+
+`agents: fn _ -> :error end` trusts no agent URL. `components:` requires the method and path in addition to the draft's mandatory coverage. `unresolved: {:held_keys, ...}` accepts only the key you pinned by thumbprint. The result is an envelope; each verified label is in `envelope.signatures`.
+
+```elixir
+policy_fields = %{
+  algorithms: ["ed25519"],
+  agents: fn _ -> :error end,
+  cache: nil,
+  unresolved:
+    {:held_keys,
+     fn
+       %{keyid: ^thumbprint} -> {:ok, %{algorithm: "ed25519", key: key}}
+       _ -> :error
+     end},
+  components: ~s[("@method" "@path")],
+  freshness: %{clock: fn -> System.system_time(:second) end, max_age: 60, skew: 5},
+  content: :not_required,
+  replay: :not_required
+}
+
+{:ok, agent_policy} = RequestSeal.WebBotAuth.Policy.new(policy_fields)
+{:ok, envelope} = RequestSeal.WebBotAuth.verify(agent_request, agent_policy)
+verification = envelope.signatures["agent"]
+
+:valid = verification.signature.crypto
+:web_bot_auth = verification.profile.name
+:key = verification.principal.kind
+:not_evaluated = verification.authorization
+
+[~s("@authority"), ~s("signature-agent";key="agent"), ~s("@method"), ~s("@path")] =
+  verification.signature.covered
+
+IO.puts("Agent signature verified for a held key")
+```
+
+A held key identifies the key, not the owner of `crawler.example`: the principal kind is `:key`. To attribute the request to the agent URL, resolve that URL through a source you trust, which yields principal kind `:agent`.
+
+## See what the verifier rejects
+
+```elixir
+# A different page: the signature covers @path, so the bytes no longer match.
+{:ok, other_page} =
+  RequestSeal.Message.request(
+    "GET",
+    "https://docs.example.com/guides/upgrade",
+    Enum.map(agent_request.fields, &{&1.name, &1.value}),
+    nil
+  )
+
+{:error, %{reason: :invalid_signature, layer: :crypto}} =
+  RequestSeal.WebBotAuth.verify(other_page, agent_policy)
+
+# A key the verifier does not hold.
+{_, stranger_seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, stranger} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, stranger_seed})
+{:ok, stranger_key} = RequestSeal.Custody.public_key(stranger)
+
+{:ok, stranger_request} =
+  RequestSeal.WebBotAuth.sign(
+    page_request,
+    %{
+      label: "agent",
+      agent: %{location: "https://crawler.example", type: :directory},
+      key: stranger_key,
+      algorithm: "ed25519",
+      created: now,
+      expires: now + 60,
+      nonce: nil,
+      components: ~s[("@method" "@path")]
+    },
+    fn "ed25519", bytes -> RequestSeal.Custody.sign(stranger, bytes) end
+  )
+
+{:error, %{reason: :agent_unresolved, layer: :key, detail: :unknown_key}} =
+  RequestSeal.WebBotAuth.verify(stranger_request, agent_policy)
+
+# A plain request with no Web Bot Auth signature.
+{:error, %{reason: :missing_signature_input, layer: :fields}} =
+  RequestSeal.WebBotAuth.verify(page_request, agent_policy)
+
+:ok = RequestSeal.Custody.Local.release(stranger)
+IO.puts("Changed page, unknown key, and unsigned request rejected")
+```
+
+Association failures report `:agent_unresolved` with a bounded `detail`; they are not claims of invalid cryptography. `RequestSeal.Error` lists every Web Bot Auth reason and detail.
+
+## Release the key
+
+```elixir
+:ok = RequestSeal.Custody.Local.release(handle)
+IO.puts("Agent key released")
+```
+
+Next: [Web Bot Auth guide](../docs/guides/web-bot-auth.md) for agent URL discovery, nested signatures, and replay; [key discovery](../docs/guides/key-discovery.md) for trusted HTTPS sources and caching.

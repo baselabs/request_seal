@@ -41,7 +41,11 @@ defmodule RequestSeal.MixProject do
     "docs/reference/standards.md",
     "livebooks/README.md",
     "livebooks/environment.livemd",
-    "livebooks/rfc-ed25519.livemd"
+    "livebooks/rfc-ed25519.livemd",
+    "livebooks/sign-and-verify.livemd",
+    "livebooks/plug-webhook.livemd",
+    "livebooks/web-bot-auth.livemd",
+    "livebooks/jose.livemd"
   ]
 
   def project do

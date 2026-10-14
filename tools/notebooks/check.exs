@@ -54,7 +54,8 @@ defmodule RequestSeal.NotebookCheck do
   def local_source!(source, root) do
     if String.contains?(source, "Mix.install") and String.contains?(source, ":request_seal") do
       [_, version] = Regex.run(~r/\bversion: "([^"]+)"/, File.read!(Path.join(root, "mix.exs")))
-      install = "Mix.install([" <> inspect({:request_seal, "~> " <> version}) <> "])"
+      # RequestSeal is the first dependency; optional integrations may follow it.
+      install = "Mix.install([" <> inspect({:request_seal, "~> " <> version})
 
       unless length(String.split(source, install)) == 2 do
         raise "Notebook must contain exactly one matching Hex install cell"
@@ -63,7 +64,7 @@ defmodule RequestSeal.NotebookCheck do
       String.replace(
         source,
         install,
-        "Mix.install([" <> inspect({:request_seal, [path: root]}) <> "])"
+        "Mix.install([" <> inspect({:request_seal, [path: root]})
       )
     else
       source
@@ -172,6 +173,21 @@ if "--self-test" in System.argv() do
       RequestSeal.NotebookCheck.local_source!(changed, root)
     end)
   end
+
+  [_, version] = Regex.run(~r/\bversion: "([^"]+)"/, File.read!(Path.join(root, "mix.exs")))
+  hex_install = inspect({:request_seal, "~> " <> version})
+
+  with_integration =
+    String.replace(source, hex_install <> "])", hex_install <> ", {:plug, \"~> 1.20.3\"}])")
+
+  integration_local = RequestSeal.NotebookCheck.local_source!(with_integration, root)
+
+  unless with_integration != source and
+           String.contains?(
+             integration_local,
+             inspect({:request_seal, [path: root]}) <> ", {:plug, \"~> 1.20.3\"}])"
+           ),
+         do: raise("Local notebook execution must keep integration dependencies")
 
   IO.puts("PASS: Hex install cell validation and explicit local execution selection")
 else

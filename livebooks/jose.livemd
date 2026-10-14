@@ -1,0 +1,162 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: RFC 7515, RFC 7516, RFC 7518 and accepted ADRs · Review when: the JOSE API changes -->
+
+# Sign JWS and encrypt JWE envelopes
+
+This notebook signs a compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html)), encrypts it inside a compact JWE ([RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html)), and verifies both layers before reading the payload. It then decrypts with an RSA-OAEP recipient key held behind a handle and shows the bounded errors. Keys are generated locally; no network access is needed beyond the Hex install.
+
+```elixir
+Mix.install([{:request_seal, "~> 0.4.1"}])
+```
+
+## Sign and verify a JWS
+
+The payload is a sensor reading. `{:jws, "EdDSA"}` binds the handle to the JOSE algorithm name, which is separate from the HTTP signature name `"ed25519"`.
+
+```elixir
+reading = ~s({"sensor":"greenhouse-3","temperature_c":21.4})
+
+{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, signing_handle} = RequestSeal.Custody.Local.new({:jws, "EdDSA"}, {:ed25519, seed})
+{:ok, signing_key} = RequestSeal.Custody.public_key(signing_handle)
+
+{:ok, token} =
+  RequestSeal.JOSE.JWS.sign([{"alg", "EdDSA"}, {"typ", "JOSE"}], reading, signing_handle)
+
+jws_policy = %{
+  algorithms: ["EdDSA"],
+  timeout: 5_000,
+  key_resolver: fn %{algorithm: "EdDSA"} ->
+    {:ok, %{algorithm: "EdDSA", key: signing_key}}
+  end
+}
+
+{:ok, jws} = RequestSeal.JOSE.JWS.verify(token, jws_policy)
+^reading = jws.payload
+%{"alg" => "EdDSA", "typ" => "JOSE"} = jws.header
+3 = length(String.split(token, "."))
+IO.puts("JWS verified: #{byte_size(token)} compact bytes")
+```
+
+The resolver supplies the trusted key; a `kid` or `x5c` header alone confers no trust.
+
+## Reject a changed JWS
+
+```elixir
+[protected, _payload, signature] = String.split(token, ".")
+forged_payload = Base.url_encode64(~s({"sensor":"greenhouse-3","temperature_c":35.0}), padding: false)
+
+{:error, %{reason: :invalid_signature, layer: :crypto}} =
+  RequestSeal.JOSE.JWS.verify(Enum.join([protected, forged_payload, signature], "."), jws_policy)
+
+# An algorithm outside the policy's allowlist rejects.
+{:error, %{reason: :algorithm_not_permitted}} =
+  RequestSeal.JOSE.JWS.verify(token, %{jws_policy | algorithms: ["ES256"]})
+
+IO.puts("Changed payload and unlisted algorithm rejected")
+```
+
+## Encrypt the signed token
+
+The JWE wraps a fresh content-encryption key with an AES key you hold. The wrapping key never leaves your callbacks.
+
+```elixir
+wrapping_key = {:aes, :crypto.strong_rand_bytes(32)}
+
+wrap = fn algorithm, cek ->
+  RequestSeal.JOSE.KeyManagement.wrap(algorithm, cek, %{}, wrapping_key)
+end
+
+{:ok, encrypted} =
+  RequestSeal.JOSE.JWE.encrypt(
+    [{"alg", "A256GCMKW"}, {"enc", "A256GCM"}, {"cty", "JWS"}],
+    token,
+    wrap
+  )
+
+5 = length(String.split(encrypted, "."))
+IO.puts("JWE produced: #{byte_size(encrypted)} compact bytes")
+```
+
+## Decrypt and verify both layers
+
+`RequestSeal.JOSE.Nested.verify/4` decrypts the JWE, checks its declared content type, then verifies the inner JWS. It returns both results only when every step succeeds.
+
+```elixir
+jwe_policy = %{
+  algorithms: ["A256GCMKW"],
+  encryption: ["A256GCM"],
+  max_plaintext: 1_048_576,
+  timeout: 5_000,
+  key_resolver: fn %{algorithm: "A256GCMKW"} ->
+    {:ok,
+     %{
+       algorithm: "A256GCMKW",
+       unwrap: fn bytes, header ->
+         RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", bytes, header, wrapping_key)
+       end
+     }}
+  end
+}
+
+{:ok, %{jwe: outer, jws: inner}} =
+  RequestSeal.JOSE.Nested.verify(encrypted, jwe_policy, jws_policy, content_types: ["JWS"])
+
+^token = outer.plaintext
+^reading = inner.payload
+
+# A ciphertext byte changed in transit fails authentication without releasing plaintext.
+[h, k, iv, ciphertext, tag] = String.split(encrypted, ".")
+<<first, rest::binary>> = Base.url_decode64!(ciphertext, padding: false)
+flipped = Base.url_encode64(<<Bitwise.bxor(first, 1), rest::binary>>, padding: false)
+
+{:error, %{reason: :decryption_failed, layer: :crypto}} =
+  RequestSeal.JOSE.JWE.decrypt(Enum.join([h, k, iv, flipped, tag], "."), jwe_policy)
+
+IO.puts("Nested envelope verified; altered ciphertext rejected")
+```
+
+Successful decryption shows the envelope was made with the shared wrapping key; it does not identify who made it. The inner signature identifies the signing key.
+
+## Decrypt with a recipient key handle
+
+For RSA-OAEP, the recipient's private key lives in a handle bound to `{:jwe, "RSA-OAEP-256"}`. Senders encrypt to its public key; the resolver returns the handle.
+
+```elixir
+private = :public_key.generate_key({:rsa, 2048, 65537})
+pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPrivateKey, private)])
+
+{:ok, recipient} = RequestSeal.Custody.Local.import({:jwe, "RSA-OAEP-256"}, pem, :pem)
+{:ok, recipient_public} = RequestSeal.Custody.public_key(recipient)
+
+{:ok, sealed_note} =
+  RequestSeal.JOSE.JWE.encrypt(
+    [{"alg", "RSA-OAEP-256"}, {"enc", "A256GCM"}],
+    "rotate the staging certificate on Friday",
+    recipient_public
+  )
+
+recipient_policy = %{
+  algorithms: ["RSA-OAEP-256"],
+  encryption: ["A256GCM"],
+  max_plaintext: 1_048_576,
+  timeout: 5_000,
+  key_resolver: fn %{algorithm: "RSA-OAEP-256"} ->
+    {:ok, %{algorithm: "RSA-OAEP-256", key: recipient}}
+  end
+}
+
+{:ok, opened} = RequestSeal.JOSE.JWE.decrypt(sealed_note, recipient_policy)
+"rotate the staging certificate on Friday" = opened.plaintext
+
+# After release, decryption fails with the same error as a forged message.
+:ok = RequestSeal.Custody.Local.release(recipient)
+{:error, %{reason: :decryption_failed}} = RequestSeal.JOSE.JWE.decrypt(sealed_note, recipient_policy)
+
+# The public-key health check tells the two cases apart.
+{:error, %{reason: :key_not_found}} = RequestSeal.Custody.public_key(recipient)
+
+:ok = RequestSeal.Custody.Local.release(signing_handle)
+IO.puts("Recipient handle decrypted; released handle reported separately")
+```
+
+Next: the [JOSE guide](../docs/guides/jose.md) for options, bounds, and the full error list; [key custody](../docs/guides/key-custody.md) for supervised key owners.

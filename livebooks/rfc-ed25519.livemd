@@ -1,11 +1,16 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-06 · Governed by: RFC 9421 Appendix B · Review when: the vector or OTP crypto contract changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: RFC 9421 Appendix B · Review when: the vector, the OTP crypto contract, or the RequestSeal verification API changes -->
 
 # Verify a published HTTP signature
 
-
 This notebook verifies the published Ed25519 signature in [RFC 9421 Appendix B.2.6](https://www.rfc-editor.org/rfc/rfc9421.html#appendix-B.2.6), using the public key from [Appendix B.1.4](https://www.rfc-editor.org/rfc/rfc9421.html#appendix-B.1.4).
 
-It exercises OTP's real Ed25519 implementation against independently published bytes. It does not yet exercise RequestSeal parsing, canonicalization, profile policy, freshness, replay protection, or a remote peer. The timestamp is deliberately historical: this is a fixed cryptographic vector, not a request accepted by an authentication policy today. No private key, account, dependency installation, or network connection is needed.
+It runs in two steps. First, OTP's Ed25519 implementation checks the RFC's signature base and signature bytes directly. Second, RequestSeal rebuilds the same signature base from the RFC's HTTP request and verifies the request through an explicit policy. Both steps also reject altered bytes.
+
+The timestamp is deliberately historical: the policy pins its clock to April 20, 2021, and the notebook shows that today's clock rejects the same request as too old. No private key, account, or remote peer is needed. The only network access is the Hex install below.
+
+```elixir
+Mix.install([{:request_seal, "~> 0.4.1"}])
+```
 
 ## Load the independent vector
 
@@ -56,9 +61,134 @@ false = :crypto.verify(:eddsa, :none, signature_base, corrupt_signature, [public
 IO.puts("Published vector verified; altered path and signature rejected")
 ```
 
-## Reuse this evidence correctly
+## Rebuild the signature base with RequestSeal
 
-Future RequestSeal conformance tests must independently construct the same signature base from the published HTTP message, then verify the published signature. This notebook establishes the crypto baseline only. Protocol support requires the separately tracked parser, canonicalization, policy and interoperability evidence.
+`RequestSeal.Message.request/5` takes the RFC's test request: method, absolute URL, ordered headers, and exact body bytes. The `Signature-Input` and `Signature` headers are the ones published in Appendix B.2.6. `RequestSeal.SignatureBase.build/3` must produce exactly the bytes the RFC prints.
+
+```elixir
+signature_input =
+  ~s|sig-b26=("date" "@method" "@path" "@authority" "content-type" "content-length");created=1618884473;keyid="test-key-ed25519"|
+
+build_request = fn url ->
+  RequestSeal.Message.request(
+    "POST",
+    url,
+    [
+      {"Host", "example.com"},
+      {"Date", "Tue, 20 Apr 2021 02:07:55 GMT"},
+      {"Content-Type", "application/json"},
+      {"Content-Digest",
+       "sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:"},
+      {"Content-Length", "18"},
+      {"Signature-Input", signature_input},
+      {"Signature", "sig-b26=:" <> Base.encode64(signature) <> ":"}
+    ],
+    ~s({"hello": "world"})
+  )
+end
+
+{:ok, message} = build_request.("https://example.com/foo?param=Value&Pet=dog")
+
+{:ok, rebuilt_base} =
+  RequestSeal.SignatureBase.build(
+    message,
+    ~s|("date" "@method" "@path" "@authority" "content-type" "content-length");created=1618884473;keyid="test-key-ed25519"|
+  )
+
+true = rebuilt_base == signature_base
+IO.puts("RequestSeal rebuilt the published signature base byte for byte")
+```
+
+## Verify the request through a policy
+
+The policy names everything the verifier accepts: the algorithm, the components the signature must cover, how to find the key, the freshness window, and whether body integrity and replay protection are required. The resolver returns the RFC's public key only for its published key ID.
+
+```elixir
+{:ok, rfc_key} =
+  RequestSeal.PublicKey.import(
+    %{"kty" => "OKP", "crv" => "Ed25519", "x" => "JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs"},
+    :jwk
+  )
+
+policy_fields = %{
+  algorithms: ["ed25519"],
+  components: ~s[("date" "@method" "@path" "@authority" "content-type" "content-length")],
+  key_resolver: fn
+    %{keyid: "test-key-ed25519"} -> {:ok, %{algorithm: "ed25519", key: rfc_key}}
+    _ -> :error
+  end,
+  # Pin the clock to 27 seconds after the RFC's created timestamp.
+  freshness: %{clock: fn -> 1_618_884_500 end, max_age: 300, skew: 5, require_expires: false},
+  content: :not_required,
+  replay: :not_required
+}
+
+{:ok, policy} = RequestSeal.Policy.new(policy_fields)
+{:ok, verification} = RequestSeal.verify(message, policy, label: "sig-b26")
+
+:valid = verification.signature.crypto
+"ed25519" = verification.signature.algorithm
+"test-key-ed25519" = verification.signature.keyid
+1_618_884_473 = verification.freshness.created
+:unattributed = verification.principal
+:not_evaluated = verification.authorization
+
+IO.inspect(verification.signature.covered, label: "covered")
+```
+
+`principal: :unattributed` means generic RFC 9421 verification proved which key signed the covered bytes, not who holds that key. `authorization: :not_evaluated` means your application still decides what the request may do.
+
+## See each policy layer reject
+
+Every rejection is a `RequestSeal.Error` with a closed `reason` and the `layer` that rejected it.
+
+```elixir
+# Today's clock: the 2021 signature is far older than the 300-second max age.
+{:ok, current_clock} =
+  RequestSeal.Policy.new(%{
+    policy_fields
+    | freshness: %{
+        clock: fn -> System.system_time(:second) end,
+        max_age: 300,
+        skew: 5,
+        require_expires: false
+      }
+  })
+
+{:error, %{reason: :too_old, layer: :freshness}} =
+  RequestSeal.verify(message, current_clock, label: "sig-b26")
+
+# Requiring body integrity: the RFC signature does not cover Content-Digest.
+{:ok, body_required} =
+  RequestSeal.Policy.new(%{
+    policy_fields
+    | content: %{kind: :content, algorithms: ["sha-512"], section: :headers}
+  })
+
+{:error, %{reason: :digest_not_covered, layer: :content}} =
+  RequestSeal.verify(message, body_required, label: "sig-b26")
+
+# The digest itself matches the body; it is just not signed.
+{:ok, %{checked: ["sha-512"], bytes: 18}} = RequestSeal.Digest.check(message, :content, [])
+
+# An altered path with the original signature fails cryptographic verification.
+{:ok, altered} = build_request.("https://example.com/boo?param=Value&Pet=dog")
+
+{:error, %{reason: :invalid_signature, layer: :crypto}} =
+  RequestSeal.verify(altered, policy, label: "sig-b26")
+
+# An unknown label is a field-level rejection.
+{:error, %{reason: :unknown_label, layer: :fields}} =
+  RequestSeal.verify(message, policy, label: "other")
+
+IO.puts("Stale, unsigned-digest, altered, and unknown-label requests rejected")
+```
+
+To accept a body only when its digest is signed, the sender must cover `content-digest`; [signing and verifying](../docs/guides/signing-and-verifying.md) shows that flow.
+
+## What this proves
+
+The OTP cells prove the published bytes verify with the published key. The RequestSeal cells prove that RequestSeal's message model and signature-base construction reproduce the RFC's bytes from its HTTP request, and that the policy layers accept and reject as described. They do not prove interoperability with a live peer; see [testing and evidence](../docs/guides/testing.md) for those evidence classes.
 
 ## RFC code-component attribution
 

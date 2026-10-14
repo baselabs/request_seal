@@ -1,0 +1,160 @@
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the Plug integration or core verification API changes -->
+
+# Verify signed webhooks in a Plug pipeline
+
+This notebook builds a webhook receiver with `Plug.Router` and RequestSeal's Plug integration, then sends it signed, unsigned, and altered requests through `Plug.Test`. Phoenix endpoints use the same plugs. The requests go straight into the pipeline in this process; no server, port, or network is involved beyond the Hex install.
+
+```elixir
+Mix.install([{:request_seal, "~> 0.4.1"}, {:plug, "~> 1.20.3"}])
+```
+
+## Configure the sender and the policy
+
+The sender holds the private key. The receiver's policy trusts only the sender's public key and requires the body digest to be signed.
+
+```elixir
+{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, sender} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, sender_key} = RequestSeal.Custody.public_key(sender)
+
+components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]
+
+{:ok, policy} =
+  RequestSeal.Policy.new(%{
+    algorithms: ["ed25519"],
+    components: components,
+    key_resolver: fn
+      %{keyid: "orders-service"} -> {:ok, %{algorithm: "ed25519", key: sender_key}}
+      _ -> :error
+    end,
+    freshness: %{
+      clock: fn -> System.system_time(:second) end,
+      max_age: 60,
+      skew: 5,
+      require_expires: true
+    },
+    content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
+    replay: :not_required
+  })
+
+Application.put_env(:webhook_notebook, :signature_policy, policy)
+IO.puts("Policy configured")
+```
+
+## Build the receiver
+
+`RequestSeal.Plug.Capture` keeps the exact body bytes before `Plug.Parsers` consumes them, and `Plug.Parsers` reads through Capture's body reader. `RequestSeal.Plug.Verify` then rejects anything that fails the policy before the route runs. Elixir's built-in `JSON` module decodes the body.
+
+```elixir
+defmodule ShipmentWebhook do
+  use Plug.Router
+
+  plug(RequestSeal.Plug.Capture,
+    origin: :connection,
+    max_body_bytes: 65_536,
+    read_timeout: 5_000
+  )
+
+  plug(Plug.Parsers,
+    parsers: [:json],
+    pass: ["*/*"],
+    json_decoder: JSON,
+    body_reader: {RequestSeal.Plug.Capture, :read_body, []}
+  )
+
+  plug(RequestSeal.Plug.Verify,
+    policy: {Application, :fetch_env!, [:webhook_notebook, :signature_policy]},
+    label: "sig",
+    on_reject: {:halt, 401}
+  )
+
+  plug(:match)
+  plug(:dispatch)
+
+  post "/hooks/shipments" do
+    {:ok, verified} = RequestSeal.Plug.verification(conn)
+    send_resp(conn, 200, "#{verified.signature.crypto}: #{conn.body_params["status"]}")
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+end
+
+IO.puts("Receiver compiled")
+```
+
+## Send a signed request
+
+The sender signs with the core API. Its headers, including `Content-Digest`, `Signature-Input`, and `Signature`, go onto a `Plug.Test` connection with the same body.
+
+```elixir
+url = "https://hooks.example.com/hooks/shipments"
+event = ~s({"shipment":"SHP-2207","status":"delivered"})
+
+{:ok, request} =
+  RequestSeal.Message.request("POST", url, [{"content-type", "application/json"}], event,
+    digest: ["sha-256"]
+  )
+
+{:ok, signed} =
+  RequestSeal.sign(
+    request,
+    %{
+      label: "sig",
+      algorithm: "ed25519",
+      components: components,
+      expires_in: 60,
+      keyid: "orders-service"
+    },
+    sender
+  )
+
+deliver = fn headers, body ->
+  conn =
+    Enum.reduce(headers, Plug.Test.conn(:post, url, body), fn {name, value}, conn ->
+      Plug.Conn.put_req_header(conn, String.downcase(name), value)
+    end)
+
+  ShipmentWebhook.call(conn, ShipmentWebhook.init([]))
+end
+
+signed_headers = Enum.map(signed.fields, &{&1.name, &1.value})
+accepted = deliver.(signed_headers, event)
+
+200 = accepted.status
+"valid: delivered" = accepted.resp_body
+IO.puts("Signed request: #{accepted.status} #{accepted.resp_body}")
+```
+
+## Reject unsigned and altered requests
+
+```elixir
+unsigned = deliver.([{"content-type", "application/json"}], event)
+401 = unsigned.status
+
+altered = deliver.(signed_headers, ~s({"shipment":"SHP-2207","status":"returned"}))
+401 = altered.status
+
+# No verification result is available for a rejected request.
+:error = RequestSeal.Plug.verification(altered)
+
+# Verify keeps the bounded rejection in private connection state for logging.
+{:error, error} = altered.private.request_seal.verification
+:request_rejected = error.reason
+%{reason: :digest_mismatch, layer: :content} = error.source
+
+IO.puts("Unsigned: #{unsigned.status}; altered body: #{altered.status}")
+```
+
+`RequestSeal.Plug.verification/1` returns only successful results. A rejection is a `RequestSeal.Adapter.Error` with reason `:request_rejected` in `conn.private[:request_seal].verification`; its `source` is the core `RequestSeal.Error` with the precise reason and layer. Neither contains request bytes or key IDs.
+
+## Clean up
+
+```elixir
+:ok = RequestSeal.Custody.Local.release(sender)
+Application.delete_env(:webhook_notebook, :signature_policy)
+IO.puts("Sender key released")
+```
+
+Next: [Phoenix and Plug](../docs/guides/phoenix-and-plug.md) covers trusted proxies, response signing, and the Phoenix endpoint order; the README's webhook example runs the same receiver over real HTTP with Bandit and Req.

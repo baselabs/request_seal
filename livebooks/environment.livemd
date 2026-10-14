@@ -1,12 +1,8 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-10 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
 
 # Inspect RequestSeal
 
-
-This notebook installs RequestSeal 0.4.1 from Hex. It checks the module's public
-function exports and actual runtime. Protocol verification is exercised by the
-library's published-vector tests; this notebook checks installation and prerequisites.
-Use the pinned Elixir/OTP runtime below. No provider key is required.
+This notebook installs RequestSeal 0.4.1 from Hex and checks that your runtime can use it: the pinned Elixir and OTP versions, Ed25519 support in OTP's crypto, the public entry points, and the supported HTTP signature algorithms. No key, secret, or provider account is required. Use the pinned Elixir/OTP runtime below.
 
 ```elixir
 Mix.install([{:request_seal, "~> 0.4.1"}])
@@ -23,10 +19,17 @@ true = :ed25519 in Keyword.fetch!(:crypto.supports(), :curves)
 {:docs_v1, _, :elixir, _, %{"en" => module_docs}, _, _} = Code.fetch_docs(RequestSeal)
 true = is_binary(module_docs)
 [sign: 3, sign: 4, verify: 3, verify_quorum: 3] = RequestSeal.__info__(:functions)
-IO.puts("RequestSeal module loaded; pinned runtime and Ed25519 available")
+
+[
+  "rsa-pss-sha512",
+  "rsa-v1_5-sha256",
+  "hmac-sha256",
+  "ecdsa-p256-sha256",
+  "ecdsa-p384-sha384",
+  "ed25519"
+] = RequestSeal.Crypto.algorithms()
+
+IO.puts("RequestSeal module loaded; pinned runtime, Ed25519, and six HTTP algorithms available")
 ```
 
-The result proves installation and prerequisites only. See [testing and evidence](../docs/guides/testing.md)
-for the distinction between these checks and protocol support. No filesystem path, secret,
-private key, request body, or token is printed. Mix's own dependency cache remains available;
-the repository gate removes its temporary exported scripts after execution.
+The result proves installation and prerequisites only. The other notebooks exercise signing and verification; see [testing and evidence](../docs/guides/testing.md) for how these checks differ from protocol conformance. No filesystem path, secret, private key, request body, or token is printed.
