@@ -28,7 +28,7 @@ Other named application profiles belong in extension packages.
    `CHANGELOG.md` under a `## <version> - Unreleased` heading (currently
    `## 0.5.0 - Unreleased`) and replace `Unreleased` with the release date in
    `YYYY-MM-DD` form when publishing, as in `## 0.4.1 - 2026-10-10`. Documents
-   mark behavior that is not yet published with `From <version> (unreleased)`;
+   mark behavior that ships in the next release with `From <version> (unreleased)`;
    when publishing, delete every ` (unreleased)` after that version in `docs/`,
    the guides, and `lib/`. The document check fails while a marker names the
    `mix.exs` version or a version other than the pending changelog section.
