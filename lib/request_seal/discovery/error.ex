@@ -56,7 +56,7 @@ defmodule RequestSeal.Discovery.Error do
       compatible key has that ID.
     * `:revoked_key` - the thumbprint is revoked by the source or removed from the cache.
     * `:source_unavailable` - the source is within negative freshness, its fetch
-      was cancelled or failed unexpectedly, or the cache is not running.
+      was canceled or failed unexpectedly, or the cache is not running.
     * `:cache_overloaded` - the cache's source, in-flight or waiter bound is reached.
   """
   defstruct [:reason, :retryable]

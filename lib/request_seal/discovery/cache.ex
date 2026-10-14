@@ -269,7 +269,7 @@ defmodule RequestSeal.Discovery.Cache do
   @doc """
   Discard a source's snapshot, negative freshness and pending fetch, preserving explicit removals.
 
-  Callers waiting on the cancelled fetch receive `:source_unavailable`. The next
+  Callers waiting on the canceled fetch receive `:source_unavailable`. The next
   `resolve/4` for the source fetches again.
 
   ## Parameters
