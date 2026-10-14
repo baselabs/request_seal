@@ -1,12 +1,12 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Sign Req and Finch requests and verify responses
 
 **What you will build:** A Req client that signs outgoing JSON requests and verifies signed responses, followed by the equivalent Finch calls. Install Req (`~> 0.7.4`) and Finch (`>= 0.23.0 and < 0.25.0`), and run the receiver from [Phoenix and Plug](phoenix-and-plug.md) on Phoenix's development default port 4000 at `http://127.0.0.1:4000/webhooks`. These examples use [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) and [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html).
 
-## Shared setup and outgoing coverage
+## 1. Shared setup and outgoing coverage
 
-Generate a key and select acceptance rules once. Req and Finch share the defaults of `RequestSeal.sign/4`: creation time, a fresh random nonce per attempt, and the algorithm parameter (omitted for JWS tuples). Key ID, tag, and digest default to nil; field schemas default to `%{}`. Full explicit specs remain supported.
+Generate a key and select acceptance rules once. A signing specification requires `label`, `algorithm`, `components`, and a positive `expires_in`. Req and Finch share the defaults of `RequestSeal.sign/4`: creation time, a fresh random nonce per attempt, and the algorithm parameter (omitted for JWS tuples). Key ID, tag, and digest default to nil; field schemas default to `%{}`. Full explicit specs remain supported.
 
 ```elixir
 {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
@@ -122,11 +122,11 @@ Pass the exact signed request when verifying its response; request association i
 
 - Cover `@authority` instead of `host`. Request `req`/`tr` components and unretained body coverage reject.
 - Choose `request_body: {:retain, max}` in Req or `body: {:retain, max}` in Finch to retain a request stream under a byte bound; the resulting bytes can be sent again on retry.
-- Req defaults to same-origin redirects. Explicit `redirect: {:allow, [origin]}` permits other origins and strips authorization, cookies, proxy authorization, and your `credential_headers`.
+- `RequestSeal.Req.attach/2` defaults to `redirect: :same_origin` (origin is scheme, host, and port). Explicit `redirect: {:allow, [origin]}` permits other origins and strips authorization, cookies, proxy authorization, and your `credential_headers`.
 - `signing_timeout` bounds handle and function signers. Direct Req verification refuses `into: :self`, caller response steps before verification, caches, raising HTTP errors, and other delivery paths that could expose unverified content.
 
 ## Errors
 
-`RequestSeal.Adapter.Error` hides framework exception text. `:not_final_step` means a request step follows signing; move attachment last. `:response_rejected` wraps the bounded verification error and returns no response body. `:cross_origin_redirect` requires an explicit trusted origin if you intend to permit it. `:limit` means a retained or received body exceeded your budget. `:unsupported_delivery` or `:invalid_options` means your delivery/client customization cannot preserve the signing or verification contract; consult the supported options before changing it.
+`RequestSeal.Adapter.Error` hides framework exception text. `:not_final_step` means a request step follows signing; move attachment last. `:response_rejected` wraps the bounded verification error and returns no response body. `:cross_origin_redirect` requires an explicit trusted origin if you intend to permit it. `:limit` means a retained or received body exceeded your budget. `:unsupported_delivery` or `:invalid_options` means your delivery/client customization cannot preserve the signing or verification contract; consult the supported options before changing it. `:unsupported_component` means coverage the transport cannot supply, such as `host` or request `req`/`tr` components. `:body_unavailable` means covered content was not retained; choose `{:retain, max}`. `:digest_conflict` means a caller-supplied digest disagrees with the bytes. `:signing_failed` carries a bounded custody error in `source`.
 
 Module docs: `RequestSeal.Req`, `RequestSeal.Finch`, `RequestSeal.Adapter.Error`, `RequestSeal.Digest`.

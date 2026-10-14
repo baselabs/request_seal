@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Sign and verify Web Bot Auth agents
 
@@ -147,17 +147,17 @@ discovered_envelope.signatures["agent"].principal.kind
 # => :agent
 ```
 
-Instead of a fetched KeySet, your trust callback may return a configured `Discovery.Source` and use a caller-started `cache`. The received URL never selects an arbitrary network destination. Directory proofs establish key possession; your chosen source policy establishes the trusted association. Discovery supports directories, JWKS, and CIMD; [key discovery](key-discovery.md) covers source configuration and caching.
+Instead of a fetched KeySet, your `agents` trust function may return a configured `Discovery.Source` and use a caller-started `cache`. The received URL never selects an arbitrary network destination. Directory proofs establish key possession; your chosen source policy establishes the trusted association. Discovery supports directories, JWKS, and CIMD; [key discovery](key-discovery.md) covers source configuration and caching.
 
 ## Draft rules and options
 
-Every selected `web-bot-auth` signature independently needs created/expires, a SHA-256 JWK thumbprint key ID, authority or target URI coverage, and its matching dictionary `Signature-Agent` member when present. Legacy string fields reject. Signing adds the matching member and always covers authority and agent identity; extra `components:` adds coverage. HMAC is forbidden. Signing lifetimes are positive and at most 86,400 seconds; verification has an explicit `max_lifetime` bound. Published test keys reject by default.
+Every selected `web-bot-auth` signature independently needs created/expires, a SHA-256 JWK thumbprint key ID, authority or target URI coverage, and its matching dictionary `Signature-Agent` member when present. Legacy string fields reject. Signing adds the matching member and always covers authority and agent identity; extra `components:` adds coverage. HMAC is forbidden. Signing lifetimes are positive and at most 86,400 seconds; verification bounds `expires - created` by the policy's optional `max_lifetime` (default 86,400 seconds, at most 604,800). `RequestSeal.WebBotAuth.verify/3` accepts `timeout:` (default 5,000 ms) as one deadline for trust and discovery. Published test keys reject by default.
 
 Nested signatures cover the inner Signature-Input and all inner components independently. `evidence` records inner labels, without implying delegation. Required replay claims once only after every selected signature and nested requirement passes; see [replay protection](replay-protection.md). Held-key mode waives field presence only when the field is absent; a present dictionary still needs the selected member. `untagged: :ignore` records unrelated labels in `ignored`; choose `:reject` to forbid them.
 
 ## Errors
 
-`RequestSeal.Error` remains bounded. `:agent_unresolved` identifies association failures such as `:missing_member`, `:untrusted_agent`, `:source_mismatch`, `:unknown_key`, or `:timeout`; it is not a claim of invalid cryptography. `:invalid_signature_agent` means the field grammar or dictionary members violate this draft. `:lifetime_exceeded` rejects the timestamp window; `:nested_coverage_incomplete` rejects incomplete inner coverage; `:test_key_rejected` rejects a known published test key.
+`RequestSeal.Error` remains bounded. `:agent_unresolved` identifies association failures such as `:missing_member`, `:untrusted_agent`, `:source_mismatch`, `:unknown_key`, or `:timeout`; it is not a claim of invalid cryptography. `:invalid_signature_agent` means the field grammar or dictionary members violate this draft. `:lifetime_exceeded` rejects the timestamp window; `:nested_coverage_incomplete` rejects incomplete inner coverage; `:test_key_rejected` rejects a known published test key. A request with no signature fields at all rejects with `:missing_signature_input`; `:no_web_bot_auth_signature` means signatures are present but none carries `tag="web-bot-auth"`. `:invalid_keyid` means the key ID is not a SHA-256 JWK thumbprint. `:missing_required_component` means authority or target URI coverage, or the matching `signature-agent` member, is not covered. `:unexpected_signature` means `untagged: :reject` found another label.
 
 Protocol-00 appendix examples contain member-label and lifetime contradictions. [Testing and evidence](testing.md#web-bot-auth-evidence) explains which published bytes verify generically and which profile checks reject them. Local examples establish construction and configured verification, not acceptance by a deployed agent provider.
 

@@ -1,8 +1,8 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Verify webhook signatures in Phoenix and Plug
 
-**What you will build:** A Phoenix webhook pipeline that captures request bytes, verifies a signature before the controller, and signs the buffered response. Install Phoenix with Plug (`~> 1.20.3`) and Jason (`~> 1.0`) for JSON parsing. Your sender must implement [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html). This is not a verifier for every vendor-specific webhook format.
+**What you will build:** A Phoenix webhook pipeline that captures request bytes, verifies a signature before the controller, and signs the buffered response. Install Phoenix (tested with 1.8.15), Plug (`~> 1.20.3`), and Jason (`~> 1.0`) for JSON parsing. Your sender must implement [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html). This is not a verifier for every vendor-specific webhook format.
 
 ## 1. Configure the trusted policy
 
@@ -138,7 +138,7 @@ Cover the final bytes: disable server compression after signing. File and chunke
 
 ## Origin and transport options
 
-`origin: :connection` ignores forwarded fields. Behind a proxy, choose an explicit `{:declared, "https", "api.example.com"}` or `{:forwarded, %{trusted_peers: [{ip_tuple, prefix}], field: :forwarded}}` based on your actual deployment. Forwarded mode checks the actual peer and uses the last element; it preserves ingress facts separately. Do not derive trust from a sender-controlled forwarded header.
+`origin: :connection` ignores forwarded fields. Behind a proxy, choose an explicit `{:declared, "https", "api.example.com"}` or `{:forwarded, %{trusted_peers: [{ip_tuple, prefix}], field: :forwarded}}` (or `field: :x_forwarded` for `X-Forwarded-Proto` and `X-Forwarded-Host`) based on your actual deployment. Forwarded mode checks the actual peer and uses the last element; it preserves ingress facts separately. Do not derive trust from a sender-controlled forwarded header.
 
 All three origin modes lowercase scheme and host and omit default ports per
 [RFC 9421 Section 2.2.3](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.2.3).
@@ -160,6 +160,11 @@ Cover `@method`, `@scheme`, `@authority`, `@path`, headers, and retained content
 | `:request_rejected` | Inspect the bounded core `source.reason`; reject the request. |
 | `:limit` | Capture halts with 413; adjust your explicit body budget if appropriate. |
 | `:unsupported_delivery` | Use a buffered response, finalized cookies, and no post-signing transformation. |
+| `:untrusted_proxy` | Forwarded mode saw a peer outside `trusted_peers`; Capture halts with 400. |
+| `:invalid_request` | CONNECT, an empty host, or malformed forwarded fields; Capture halts with 400. |
+| `:invalid_options` | A plug option, or the policy returned by a policy function or MFA, is invalid. |
+| `:already_verified` | Verify ran twice on one request; install it once. |
+| `:signing_failed` | The response signer or its custody failed; SignResponse sends its `on_failure` status. |
 
 Capture's other failures halt with 400. Required verification does not authorize the action; apply your access policy afterward.
 

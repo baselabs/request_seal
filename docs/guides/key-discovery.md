@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Discover trusted public keys over HTTPS
 
@@ -72,10 +72,8 @@ This example uses an Ed25519 JWKS publisher. Selecting a fetched key demonstrate
 {:ok, resolution} =
   RequestSeal.Discovery.Cache.resolve(cache, source, thumbprint, algorithms: ["ed25519"])
 
-RequestSeal.Discovery.Cache.remove(cache, source, thumbprint)
-# => :ok
-RequestSeal.Discovery.Cache.invalidate(cache, source)
-# => :ok
+:ok = RequestSeal.Discovery.Cache.remove(cache, source, thumbprint)
+:ok = RequestSeal.Discovery.Cache.invalidate(cache, source)
 RequestSeal.Discovery.Cache.resolve(cache, source, thumbprint, algorithms: ["ed25519"])
 # => {:error, %RequestSeal.Discovery.Error{reason: :revoked_key, ...}}
 ```
@@ -92,6 +90,6 @@ HTTP freshness honors Cache-Control max-age before Expires, adjusted by Date/Age
 
 ## Errors
 
-`RequestSeal.Discovery.Error` separates `:address_denied` and `:redirect_denied` (source policy) from TLS/transport errors, `:invalid_key_set` (document/key shape), `:unknown_key` (no eligible selected ID), `:revoked_key`, `:source_unavailable`, and `:cache_overloaded`. `:unexpected_status` is retryable for 5xx and nonretryable for 4xx; your application owns retry scheduling. No exception text or URL is retained in the bounded error.
+`RequestSeal.Discovery.Error` separates `:address_denied` and `:redirect_denied` (source policy) from TLS/transport errors, `:invalid_key_set` (document/key shape), `:unknown_key` (no eligible selected ID), `:revoked_key`, `:source_unavailable`, and `:cache_overloaded`. `:unexpected_status` is retryable for 5xx and nonretryable for 4xx; your application owns retry scheduling. No exception text or URL is retained in the bounded error. `:transport_unavailable` means the `:ssl` application is not started. `RequestSeal.Discovery.Source.new/1` returns `:invalid_source` for a malformed source and `:invalid_options` for out-of-range options such as a `negative_ttl` above 300.
 
 Module docs: `RequestSeal.Discovery`, `RequestSeal.Discovery.Source`, `RequestSeal.Discovery.KeySet`, `RequestSeal.Discovery.Resolution`, `RequestSeal.Discovery.Cache`, `RequestSeal.Discovery.Error`.

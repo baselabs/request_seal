@@ -107,10 +107,8 @@ defmodule RequestSeal.GuideKeyDiscoveryTest do
         {:ok, resolution} =
           RequestSeal.Discovery.Cache.resolve(cache, source, thumbprint, algorithms: ["ed25519"])
 
-        RequestSeal.Discovery.Cache.remove(cache, source, thumbprint)
-        # => :ok
-        RequestSeal.Discovery.Cache.invalidate(cache, source)
-        # => :ok
+        :ok = RequestSeal.Discovery.Cache.remove(cache, source, thumbprint)
+        :ok = RequestSeal.Discovery.Cache.invalidate(cache, source)
         RequestSeal.Discovery.Cache.resolve(cache, source, thumbprint, algorithms: ["ed25519"])
         # => {:error, %RequestSeal.Discovery.Error{reason: :revoked_key, ...}}
         ''',
