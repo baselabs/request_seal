@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- `RequestSeal.AshHooks.Http.request/5` now requires a nonce on every signed attempt: a signing spec with `nonce: nil` returns `{:error, {:terminal, :request_seal_signing_failed}}` before any request is sent. It previously signed such attempts without a nonce. Remove `nonce: nil` from ash_hooks signing specs.
+
 ### Fixed
 
 - `RequestSeal.Discovery.Cache.resolve/4` and `refresh/2` on a cache that is not running now return `:source_unavailable` (retryable), like `remove/3` and `invalidate/2`; they returned a nonretryable `:invalid_response`.
@@ -20,7 +24,7 @@
 - Every public function now documents its parameters, options with defaults and bounds, return shape, the error reasons it can return, and executed doctest examples. `RequestSeal.Req.attach/2`, `RequestSeal.Req.verification/1`, the `RequestSeal.Finch` functions, `RequestSeal.JOSE.JWS.sign/4`, `RequestSeal.JOSE.KeyManagement.wrap/4` and `unwrap/4`, and `RequestSeal.JOSE.Nested.verify/4` had no documentation before. Replay store callbacks are documented on each adapter.
 - `RequestSeal.Ash.Scope`'s type now admits `replay: :claimed`, which `RequestSeal.Ash.scope/2` already produced.
 - New guides: diagnose and handle errors, rotate signing keys, and test your integration. New Livebooks: core signing and verification, a Plug webhook receiver, Web Bot Auth, and JOSE; the RFC 9421 notebook now verifies the published vector through RequestSeal.
-- Corrected documentation: size limits of `Body` and Plug capture, the spec-form nonce option, the ash_hooks nonce behavior, Web Bot Auth `max_lifetime`, the Req redirect default, the TypeScript package name (`@request-seal/core`), SECURITY.md's description of the library, and the release runbook.
+- Corrected documentation: size limits of `Body` and Plug capture, the spec-form nonce option, Web Bot Auth `max_lifetime`, the Req redirect default, the TypeScript package name (`@request-seal/core`), SECURITY.md's description of the library, and the release runbook.
 
 ## 0.4.1 - 2026-10-10
 

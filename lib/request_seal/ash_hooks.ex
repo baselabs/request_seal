@@ -198,8 +198,9 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       * any other option - passed unchanged to `AshHooks.Http.Bounded`, with
         `:timeout` replaced by the remaining time and `:request_seal` removed.
 
-    Every attempt regenerates `created`, `expires`, and a random nonce; a spec
-    with `nonce: nil` signs each attempt without a nonce.
+    Every attempt regenerates `created`, `expires`, and a random nonce. A
+    nonce is required on every signed attempt: a spec with `nonce: nil` is
+    refused as a signing failure before any request is sent.
 
     ## Returns
 
@@ -305,6 +306,8 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       Signing.ensure(match?(%KeyHandle{}, signing[:signer]), :invalid_options)
       spec = signing[:spec] |> Map.put_new(:digest, ["sha-256"]) |> Signing.normalize_spec!()
       input = Signing.spec!(spec)
+      # A nonce is required on every signed attempt.
+      Signing.ensure(spec.parameters.nonce == :random, :invalid_options)
 
       # @query preserves the core's query normalization while retaining the
       # existing method/authority/path contract, including percent-encoded bytes.

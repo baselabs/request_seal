@@ -202,6 +202,15 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       assert {:error, {:terminal, :request_seal_signing_failed}} =
                Http.request(:post, url, headers, "{}", put_in(opts[:request_seal][:clock], 123))
 
+      # A nonce is required on every signed attempt.
+      without_nonce =
+        put_in(opts[:request_seal][:spec], Map.put(HooksTestSupport.spec(), :nonce, nil))
+
+      assert {:error, {:terminal, :request_seal_signing_failed}} =
+               Http.request(:post, url, headers, "{}", without_nonce)
+
+      refute_receive {:hooks_received, _, _, _, _}, 200
+
       nonces =
         for _ <- 1..2 do
           assert {:ok, %{status: 204}} = Http.request(:post, url, headers, "{}", opts)
