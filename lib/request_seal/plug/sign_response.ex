@@ -3,52 +3,75 @@ if Code.ensure_loaded?(Plug.Conn) do
     @moduledoc """
     Sign final buffered response bytes in a Plug `before_send` callback.
 
-    Requires all five options: `:sign` (the signing map described below),
-    `:signer` (caller signer or key handle), `:signing_timeout` (1..300,000 ms),
-    `:clock` (arity zero returning Unix seconds), and `:on_failure`
-    (`{:respond, status}` with final status in 200..599). `req` components bind
-    to the captured request; `tr` components are unsupported. A covered missing `date` is added
-    before signing from the same sampled `:clock` as `created` and `expires`.
-    Request `@request-target`, `@target-uri`, and `@query` coverage
-    rejects with `:unsupported_component` because Plug lacks exact target evidence.
-    Required body coverage needs `conn.state == :set`:
-    file/chunked delivery cannot authenticate unretained bytes. Status-only
-    streaming signatures are supported without body coverage.
-
     The signing callback runs after other registered callbacks, including callbacks
     registered earlier that mutate signed facts. Their changes are included before
-    signing. Absent or nil callback state means no callbacks; malformed callback
-    state replaces delivery with a bounded `:unsupported_delivery` failure.
-    Plug merges
-    `resp_cookies` into headers afterward; if response coverage includes
-    `set-cookie` and cookies are pending, signing fails closed with
-    `:unsupported_delivery`. This also applies to cookies set by session callbacks.
-    Explicit final `set-cookie` response headers can be signed without pending
-    cookies. Transformations in the server after Plug's callbacks (such as Bandit
-    compression) must be disabled when covering bytes; no `no-transform` field
-    is injected.
-    On failure the requested status and empty unsigned body replace any delivery,
-    including file and chunked modes. Later chunk writes return `{:error, :closed}`.
-    A redacted request-local transport wrapper enforces that replacement without
-    starting a process. Private state's `error` holds the bounded failure.
-
-    The signing map contains exactly `:label` (signature label), `:components`
-    (serialized component Inner List without metadata parameters), `:algorithm`
-    (exact supported HTTP signature algorithm), `:parameters`, `:digest`, and
-    `:field_schemas` (explicit field schema map). `:parameters` contains exactly
-    `:created` and `:alg` (Booleans), `:expires_in` (positive seconds or nil,
-    requiring created when present), `:nonce` (`:random` or nil), and `:keyid`
-    and `:tag` (bounded strings or nil). The adapter generates selected metadata
-    for each signing operation. `:digest` is nil or a nonempty unique selection
-    of `"sha-256"` and `"sha-512"`; present digests must match those algorithms
-    and the retained response body. Request fields selected with `req` retain
-    their captured values and do not establish response content integrity.
+    signing. Plug merges `resp_cookies` into headers afterward, so covering
+    `set-cookie` while cookies are pending fails closed; this also applies to
+    cookies set by session callbacks. Explicit final `set-cookie` response
+    headers can be signed without pending cookies. Transformations in the server
+    after Plug's callbacks (such as Bandit compression) must be disabled when
+    covering bytes; no `no-transform` field is injected. Request fields selected
+    with `req` retain their captured values and do not establish response
+    content integrity.
     """
     @behaviour Plug
     alias RequestSeal.{Body, KeyHandle, Message, TransportFacts}
     alias RequestSeal.Adapter.{Error, Signing}
     alias RequestSeal.Plug.{Delivery, State, Target}
 
+    @doc """
+    Validates response signing options once, at plug initialization.
+
+    ## Parameters
+
+      * `opts` - keyword list of the options below. All five are required;
+        unknown or duplicate options reject.
+
+    ## Options
+
+      * `:sign` - the signing map. It contains exactly `:label` (signature
+        label), `:components` (serialized component Inner List without metadata
+        parameters), `:algorithm` (exact supported HTTP signature algorithm),
+        `:parameters`, `:digest`, and `:field_schemas` (explicit field schema
+        map). `:parameters` contains exactly `:created` and `:alg` (Booleans),
+        `:expires_in` (positive seconds or nil, requiring created when present),
+        `:nonce` (`:random` or nil), and `:keyid` and `:tag` (bounded strings or
+        nil). The adapter generates selected metadata for each signing
+        operation. `:digest` is nil or a nonempty unique selection of
+        `"sha-256"` and `"sha-512"`; present digests must match those
+        algorithms and the retained response body. `req` components bind to the
+        captured request; `host` and `tr` components are unsupported. The short
+        `t:RequestSeal.signing_spec/0` form is not accepted here.
+      * `:signer` - a `RequestSeal.KeyHandle` or an arity-two function signer
+        `(algorithm, base)`.
+      * `:signing_timeout` - 1..300,000 milliseconds.
+      * `:clock` - arity-zero function returning Unix seconds.
+      * `:on_failure` - `{:respond, status}` with a final status in 200..599.
+
+    ## Returns
+
+      * keyword list - the validated options.
+
+    Raises `RequestSeal.Adapter.Error` with stage `:sign` and reason
+    `:invalid_options` (a missing, unknown, or invalid option),
+    `:unsupported_component` (`host` or `tr` components), or `:limit` (the
+    component list exceeds its bound).
+
+    ## Examples
+
+        iex> try do
+        ...>   RequestSeal.Plug.SignResponse.init(
+        ...>     sign: %{label: "res", algorithm: "ed25519", components: ~s[("@status")], expires_in: 60},
+        ...>     signer: fn _algorithm, _base -> {:error, :unused} end,
+        ...>     signing_timeout: 5_000,
+        ...>     clock: fn -> 0 end,
+        ...>     on_failure: {:respond, 500}
+        ...>   )
+        ...> rescue
+        ...>   error in RequestSeal.Adapter.Error -> {error.reason, error.stage}
+        ...> end
+        {:invalid_options, :sign}
+    """
     @impl Plug
     def init(opts) do
       case Signing.protect(:plug, :attach, 0, fn ->
@@ -81,6 +104,88 @@ if Code.ensure_loaded?(Plug.Conn) do
     defp failure?({:respond, status}), do: is_integer(status) and status in 200..599
     defp failure?(_), do: false
 
+    @doc """
+    Wraps the transport and registers a final `before_send` callback that signs the response.
+
+    The callback signs the status, final response headers, and, when the
+    connection state is `:set`, the buffered body, bound to the request in
+    `RequestSeal.Plug.capture/1` at the time the callback runs. A covered
+    missing `date` header is added from the same sampled `:clock` value as
+    `created` and `expires`. Required body coverage needs `conn.state == :set`:
+    file and chunked delivery cannot authenticate unretained bytes.
+    Status-only streaming signatures are supported without body coverage. The
+    transport wrapper is request-local, redacted, and starts no process.
+
+    ## Parameters
+
+      * `conn` - a `Plug.Conn`, normally after `RequestSeal.Plug.Capture`.
+      * `opts` - options returned by `init/1`.
+
+    ## Returns
+
+      * `Plug.Conn` - with the wrapped adapter and the signing callback
+        appended after all registered callbacks. Absent or nil callback state
+        means no callbacks.
+
+    When the response is sent, success appends `signature-input` and
+    `signature` (and any generated `content-digest`) to the response headers.
+    On failure the `:on_failure` status and an empty unsigned body replace any
+    delivery, including file and chunked modes; signature, digest,
+    `content-length`, `content-encoding`, `transfer-encoding`, and `trailer`
+    headers are removed, and later chunk writes return `{:error, :closed}`.
+    Private state's `:error` holds a
+    `%RequestSeal.Adapter.Error{stage: :sign, attempt: 1}` with reason:
+    `:unsupported_delivery` (malformed callback state, which replaces delivery
+    at once; pending `resp_cookies` with `set-cookie` covered; or body
+    coverage without `conn.state == :set`), `:unsupported_component` (request
+    `@request-target`, `@target-uri`, or `@query` selected with `req`, because
+    Plug lacks exact target evidence, or a component the message cannot
+    supply), `:not_captured` (no capture), `:invalid_options` (a clock value
+    outside 0..253,402,300,799, or a signer whose algorithm differs),
+    `:body_unavailable`, `:digest_conflict`, `:invalid_request`, `:limit`, and
+    `:signing_failed` (signer or custody failure, or an unexpected exception),
+    with the meanings of `RequestSeal.Finch.sign/4`. Meanings:
+    `RequestSeal.Adapter.Error`.
+
+    ## Examples
+
+        iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+        iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+        iex> sign = %{
+        ...>   label: "res",
+        ...>   algorithm: "ed25519",
+        ...>   components: ~s[("@status" "content-type" "content-digest" "@method";req)],
+        ...>   parameters: %{created: true, expires_in: 60, nonce: :random, alg: true, keyid: nil, tag: nil},
+        ...>   digest: ["sha-256"],
+        ...>   field_schemas: %{}
+        ...> }
+        iex> opts =
+        ...>   RequestSeal.Plug.SignResponse.init(
+        ...>     sign: sign,
+        ...>     signer: handle,
+        ...>     signing_timeout: 5_000,
+        ...>     clock: fn -> System.system_time(:second) end,
+        ...>     on_failure: {:respond, 500}
+        ...>   )
+        iex> capture =
+        ...>   RequestSeal.Plug.Capture.init(origin: :connection, max_body_bytes: 1_024, read_timeout: 5_000)
+        iex> conn =
+        ...>   Plug.Test.conn(:get, "https://docs.example.com/guides/1")
+        ...>   |> RequestSeal.Plug.Capture.call(capture)
+        ...>   |> RequestSeal.Plug.SignResponse.call(opts)
+        ...>   |> Plug.Conn.put_resp_content_type("text/plain")
+        ...>   |> Plug.Conn.send_resp(200, "guide text")
+        iex> {conn.status, Enum.map(conn.resp_headers, &elem(&1, 0)) -- ["cache-control"]}
+        {200, ["content-type", "content-digest", "signature-input", "signature"]}
+        iex> uncaptured =
+        ...>   Plug.Test.conn(:get, "https://docs.example.com/guides/1")
+        ...>   |> RequestSeal.Plug.SignResponse.call(opts)
+        ...>   |> Plug.Conn.send_resp(200, "guide text")
+        iex> {uncaptured.status, uncaptured.resp_body, uncaptured.private.request_seal.error.reason}
+        {500, "", :not_captured}
+        iex> RequestSeal.Custody.Local.release(handle)
+        :ok
+    """
     @impl Plug
     def call(conn, opts) do
       conn = %{conn | adapter: Delivery.wrap(conn.adapter)}

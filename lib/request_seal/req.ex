@@ -20,61 +20,31 @@ if Code.ensure_loaded?(Req) do
     @moduledoc """
     Optional Req final-attempt signing and verification before body decoding.
 
-    `attach/2` requires `sign`, `signer`, and explicit `verify: :none` or a map
-    containing `policy`, `label`, and a nonnegative `max_stream_bytes`.
-    The specification is documented in `RequestSeal.Finch`. Optional
-    `signing_timeout` defaults to 5,000 ms; `clock` to system seconds;
-    `request_body` to `:as_is` or explicit `{:retain, max}`. Retention replaces a
-    stream with replayable bytes before transport. Every attempt removes only
-    this adapter's previously appended values, then regenerates parameters.
-
-    `redirect` defaults to `:same_origin`; `{:allow, [origin]}` permits explicit
-    cross-origin targets. Allowed cross-origin requests strip `authorization`,
-    `cookie`, `proxy-authorization`, and caller-declared `credential_headers`,
-    even with Req's `redirect_trusted`. `credential_headers` defaults to `[]`
-    and accepts at most 64 HTTP header names of at most 256 bytes, case insensitive.
-    Origin includes scheme, host, and port.
-    Req's own redirect/retry choices still govern whether another attempt runs.
-    Signing must remain the last request step; a later step rejects before
-    transport. Only Req's Finch adapter is supported; framework hooks that can
-    mutate transport bytes after signing reject.
+    `attach/2` adds a signing step that runs last on every attempt and, unless
+    `verify: :none`, a verification step that runs first on every response.
+    Every attempt removes only this adapter's previously appended values, then
+    regenerates parameters. Req's own redirect/retry choices still govern whether
+    another attempt runs. Signing must remain the last request step; a later step
+    rejects before transport. Only Req's Finch adapter is supported; framework
+    hooks that can mutate transport bytes after signing reject. No pool, server,
+    or background fetch starts.
 
     When required, verification is the first response step, before retry, HTTP errors,
     redirect, digest auth, decompression, or decoding. Each intermediate response
     must satisfy the selected policy: unsigned 3xx/5xx responses fail closed
-    without redirecting or retrying. It uses the exact sent Message once per response. `verification/1` retrieves the result stored in response private
-    metadata. A rejection returns a bounded `RequestSeal.Adapter.Error` with
+    without redirecting or retrying. It uses the exact sent Message once per
+    response. A rejection returns a bounded `RequestSeal.Adapter.Error` with
     `:response_rejected`, never a response body.
 
-    `into: :self` and `:legacy_self` reject. All verified delivery, including
-    synchronous responses, uses a collector with explicit `max_stream_bytes`:
-    overflow stops transport before complete buffering with `:limit`. Chunks are buffered
-    within that bound and hashed when policy requires content integrity;
-    automatic streams refuse caller-selected representation hashing.
-    The original destination receives chunks only
-    after verification. Collectables are opened only after success. Req checksum
-    wrappers with streaming destinations reject. Verified delivery also refuses
-    Req cache handling, `http_errors: :raise`, and custom response steps before
-    verification, since these can consume or expose unverified bodies.
-    With `verify: :none`, ordinary
-    synchronous delivery retains Req's semantics without a verification claim.
-    Unknown/duplicate options reject. No pool, server, or background fetch starts.
-
-    Supported Req options (checked at attachment, before request steps, and at
-    final signing): `user_agent`, `compressed`, `range`, `base_url`, `params`,
-    `path_params`, `path_params_style`, `auth` (except digest), `form`,
-    `form_multipart`, `json`, `compress_body`, `checksum`, `raw`, `http_errors`,
-    `decode_body`, `decoders`, `decode_json`, `redirect`, `redirect_trusted`,
-    `redirect_log_level`, `max_redirects`, `retry`, `retry_delay`, `retry_log_level`,
-    `max_retries`, `cache`, `cache_dir`, `finch`, `request_timeout`,
-    `receive_timeout`, `pool_timeout`, `follow_redirects`, `location_trusted`,
-    and `redact_auth`. URL, method, headers, body, and into are Req struct fields.
-    Verification imposes the delivery restrictions described above.
-    `finch` accepts only an explicit caller-owned `name` and optional
-    `pool_timeout`, `receive_timeout`, and `request_timeout`; configure trusted
-    pool connections when starting the caller-owned pool. Caller-supplied Host,
-    connection overrides, proxies, UNIX sockets, Finch private metadata and pool
-    options, IPv6 overrides, and Req's `aws_sigv4` option reject with `:invalid_options`.
+    All verified delivery, including synchronous responses, uses a collector with
+    explicit `max_stream_bytes`: overflow stops transport before complete
+    buffering with `:limit`. Chunks are buffered within that bound and hashed when
+    policy requires content integrity; automatic streams refuse caller-selected
+    representation hashing. The original destination receives chunks only after
+    verification. Collectables are opened only after success. Req cache handling,
+    `http_errors: :raise`, checksum wrappers on streaming destinations, and custom
+    response steps before verification are refused under verification, since
+    these can consume or expose unverified bodies.
     """
     alias RequestSeal.{Digest, Policy, SignatureFields, Verification}
     alias RequestSeal.Adapter.{Error, Signing}
@@ -128,6 +98,148 @@ if Code.ensure_loaded?(Req) do
       :redact_auth
     ]
 
+    @doc """
+    Attaches final-attempt signing and optional response verification to a Req request.
+
+    The returned request carries three added steps: an option check prepended
+    to the request steps, a signing step appended as the last request step, and
+    a response step. With a verification map the response step runs first;
+    with `verify: :none` it runs just before Req's `:decompress_body` step and
+    makes no verification claim. Nothing is sent and no process starts. Run the
+    request with `Req.request/1` against a caller-started Finch pool.
+
+    ## Parameters
+
+      * `request` - a `Req.Request` built by `Req.new/1` that still has Req's
+        `:decompress_body` response step and Req's Finch adapter. URL, method,
+        headers, body, and `into` are Req struct fields. The request options
+        may include only `user_agent`, `compressed`, `range`, `base_url`,
+        `params`, `path_params`, `path_params_style`, `auth` (except digest),
+        `form`, `form_multipart`, `json`, `compress_body`, `checksum`, `raw`,
+        `http_errors`, `decode_body`, `decoders`, `decode_json`, `redirect`,
+        `redirect_trusted`, `redirect_log_level`, `max_redirects`, `retry`,
+        `retry_delay`, `retry_log_level`, `max_retries`, `cache`, `cache_dir`,
+        `finch`, `request_timeout`, `receive_timeout`, `pool_timeout`,
+        `follow_redirects`, `location_trusted`, and `redact_auth`. These are
+        checked at attachment, before the request steps, and at final signing.
+        `finch` accepts only an explicit caller-owned atom `name` and optional
+        `pool_timeout`, `receive_timeout`, and `request_timeout`; configure
+        trusted pool connections when starting the caller-owned pool.
+        Caller-supplied Host, connection overrides, proxies, UNIX sockets, Finch
+        private metadata and pool options, IPv6 overrides, and Req's
+        `aws_sigv4` option reject with `:invalid_options`. `into: :self` and
+        `into: :legacy_self` reject.
+      * `opts` - keyword list of the options below. Unknown or duplicate
+        options reject.
+
+    ## Options
+
+      * `:sign` (required) - the signing specification described in
+        `RequestSeal.Finch.sign/4`.
+      * `:signer` (required) - a `RequestSeal.KeyHandle` or an arity-two
+        function signer, as in `RequestSeal.Finch.sign/4`.
+      * `:verify` (required) - `:none`, or a map with exactly `:policy` (a valid
+        `RequestSeal.Policy`), `:label` (the response signature label), and
+        `:max_stream_bytes` (a nonnegative integer bound on buffered response
+        bytes; nil rejects with `:unsupported_delivery`). With a map, the request
+        must keep `http_errors: :return` (the default), must not set
+        `cache: true`, and must not have a response step ahead of
+        verification. A non-nil `into` destination must be a two-arity
+        function or a `Collectable`, must not be combined with Req's
+        `checksum`, and requires a policy whose content is `:not_required` or
+        of kind `:content`. With `:none`, ordinary synchronous delivery keeps
+        Req's semantics.
+      * `:signing_timeout` - 1..300,000 ms. Default 5,000.
+      * `:clock` - arity-zero function returning Unix seconds. Default system
+        seconds.
+      * `:request_body` - `:as_is` (default) or `{:retain, max}` with a
+        nonnegative integer `max`. Retention reads a Req function body or an
+        enumerable stream once under `max` bytes and replaces it with
+        replayable bytes before transport. With `:as_is` an enumerable stream
+        is sent unread with its bytes unavailable for coverage, and a Req
+        function body rejects at signing with `:body_unavailable`.
+      * `:redirect` - `:same_origin` (default) rejects any attempt whose origin
+        differs from the first attempt's. `{:allow, origins}` permits up to 64
+        listed origins, each an `http` or `https` URL with a host and no path,
+        query, fragment, or userinfo, at most 2,048 bytes. An origin is scheme,
+        lowercased host, and port. Allowed cross-origin attempts strip
+        `authorization`, `cookie`, `proxy-authorization`, and
+        `:credential_headers`, even with Req's `redirect_trusted`.
+      * `:credential_headers` - at most 64 HTTP header names of 1..256 token
+        bytes, matched case insensitively, stripped on allowed cross-origin
+        attempts. Default `[]`.
+
+    ## Returns
+
+      * `{:ok, %Req.Request{}}` - the request with RequestSeal steps attached.
+      * `{:error, %RequestSeal.Adapter.Error{stage: :attach, attempt: 0}}` -
+        reasons: `:invalid_options` (option, spec, signer, Req option, or
+        Host value; a request already attached; or an unexpected exception),
+        `:invalid_request` (not a `Req.Request`), `:unsupported_component`
+        (`host`, `tr`, or `req` components in the spec, or a streaming
+        destination with representation hashing), `:unsupported_delivery`
+        (adapter, `into`, verification delivery restrictions, or a missing
+        `:decompress_body` step), and `:limit` (component list bound).
+        Meanings: `RequestSeal.Adapter.Error`.
+
+    `Req.request/1` on the attached request returns
+    `{:error, %RequestSeal.Adapter.Error{}}` with `attempt` set to the final
+    signing attempt (starting at 1). At stage `:sign`: `:not_final_step`,
+    `:cross_origin_redirect`, `:invalid_options`, `:invalid_request`,
+    `:unsupported_component`, `:unsupported_delivery`, `:body_unavailable`,
+    `:digest_conflict`, `:limit`, and `:signing_failed`, with the meanings of
+    `RequestSeal.Finch.sign/4` and the checks above. At stage `:verify`:
+    `:limit` (more than `max_stream_bytes`), `:invalid_request` (a response
+    `RequestSeal.Message.new/1` rejects), and `:response_rejected` (the core
+    verifier rejected, with its bounded `source`, or an unexpected exception).
+
+    ## Examples
+
+        iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+        iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+        iex> spec = %{
+        ...>   label: "sig",
+        ...>   algorithm: "ed25519",
+        ...>   components: ~s[("@method" "@authority" "@path")],
+        ...>   expires_in: 60
+        ...> }
+        iex> request =
+        ...>   Req.new(url: "https://crawler.example.com/pages", finch: [name: Example.Finch], retry: false)
+        iex> {:ok, attached} = RequestSeal.Req.attach(request, sign: spec, signer: handle, verify: :none)
+        iex> {attached.request_steps |> List.first() |> elem(0), attached.request_steps |> List.last() |> elem(0)}
+        {:request_seal_options, :request_seal_sign}
+        iex> {:error, error} = RequestSeal.Req.attach(attached, sign: spec, signer: handle, verify: :none)
+        iex> {error.reason, error.stage, error.attempt}
+        {:invalid_options, :attach, 0}
+        iex> {:error, error} =
+        ...>   RequestSeal.Req.attach(%{request | into: :self}, sign: spec, signer: handle, verify: :none)
+        iex> error.reason
+        :unsupported_delivery
+        iex> RequestSeal.Custody.Local.release(handle)
+        :ok
+
+    Fragment (requires a running Finch pool and an HTTPS peer that signs its responses; not executed here):
+
+        {:ok, _pid} = Finch.start_link(name: Example.Finch)
+
+        request =
+          Req.new(
+            method: :post,
+            url: "https://telemetry.example.com/ingest",
+            body: ~s({"cpu":0.42}),
+            finch: [name: Example.Finch]
+          )
+
+        {:ok, request} =
+          RequestSeal.Req.attach(request,
+            sign: spec,
+            signer: handle,
+            verify: %{policy: response_policy, label: "res", max_stream_bytes: 1_048_576}
+          )
+
+        {:ok, response} = Req.request(request)
+        {:ok, verification} = RequestSeal.Req.verification(response)
+    """
     @spec attach(Req.Request.t(), keyword()) :: {:ok, Req.Request.t()} | {:error, Error.t()}
     def attach(request, opts) do
       Signing.protect(:req, :attach, 0, fn ->
@@ -180,6 +292,37 @@ if Code.ensure_loaded?(Req) do
       end)
     end
 
+    @doc """
+    Returns the verification stored in a response's private metadata by an attached request.
+
+    Only a response that passed the verification step of `attach/2` carries a
+    result. A rejected response is never returned by `Req.request/1`, so it has
+    no partial facts to read.
+
+    ## Parameters
+
+      * `response` - a `Req.Response`, usually from `Req.request/1` on a request
+        attached with a verification map.
+
+    ## Returns
+
+      * `{:ok, %RequestSeal.Verification{}}` - the stored verified facts.
+      * `:error` - no verification is stored: any other response, including
+        responses from requests attached with `verify: :none`, or a value
+        that is not a `Req.Response`.
+
+    ## Examples
+
+        iex> RequestSeal.Req.verification(Req.Response.new(status: 200))
+        :error
+
+    Fragment (requires a running Finch pool and an HTTPS peer that signs its responses; not executed here):
+
+        {:ok, response} = Req.request(attached_request)
+        {:ok, verification} = RequestSeal.Req.verification(response)
+        verification.label
+        #=> "res"
+    """
     @spec verification(Req.Response.t()) :: {:ok, Verification.t()} | :error
     def verification(%Req.Response{private: %{request_seal: %Verification{} = value}}),
       do: {:ok, value}

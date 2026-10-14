@@ -118,9 +118,10 @@ With an existing pending `delivery` row, run the real driver:
 ```
 
 The driver records success only after the receiver returns 2xx. It owns retries,
-redirect refusal, 410 handling, and delivery leases. Every attempt is freshly
-signed with a random nonce. Static `:nonce` options reject; `:clock` must be a
-zero-arity function. For a destination containing a query, include `"@query"`
+redirect refusal, 410 handling, and delivery leases. Every attempt regenerates
+`created`, `expires`, and a random nonce, unless the spec sets `nonce: nil`, which
+signs without a nonce. A `:nonce` key in the `request_seal` options rejects;
+`:clock` must be a zero-arity function. For a destination containing a query, include `"@query"`
 in the signing components and use a receiver that verifies the complete received
 URI. Generic `RequestSeal.Plug.Verify` rejects query coverage because Plug does
 not prove the original raw target; use the core verifier with target evidence

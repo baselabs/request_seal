@@ -3,38 +3,58 @@ if Code.ensure_loaded?(Plug.Conn) do
     @moduledoc """
     Verify the immutable captured request under an explicit policy and label.
 
-    `:policy` accepts a valid `RequestSeal.Policy`, a zero-arity function, or an
-    exported `{module, function, args}`. Functions and MFAs return a policy directly
-    and run once per eligible request, after capture and parser checks, before
-    key resolution. Their returned policy is validated; invalid policies reject
-    with `:invalid_options`. Exceptions, throws, and exits reject with the bounded
-    `:response_rejected` error. No callback diagnostics are retained. Resolution
-    runs synchronously; callers own deadlines for external work.
-
-    Requires `:policy`, `:label`, and `:on_reject` (`:continue` or
-    `{:halt, status}` with final status in 200..599). Optional `:assign` is an atom
-    or nil; only success is assigned. Private state retains `{:ok, verification}`
-    or `{:error, adapter_error}`. No authenticated identity is implicitly authorized.
-    Missing capture returns `:not_captured`; a prior attempt returns
-    `:already_verified` before any resolver or replay callback. Core rejections
-    are `:request_rejected` with a bounded `RequestSeal.Error` source.
-    Replacing the captured replay adapter, a partially drained replay, or a
-    handed-out digest inconsistent with the full captured body rejects with
-    `:parser_order` before resolver or replay callbacks. The RequestSeal reader's
+    Verify reads only the message retained by `RequestSeal.Plug.Capture`. No
+    authenticated identity is implicitly authorized. The RequestSeal reader's
     invocation is tracked separately from adapter reads. Pass-through parsers
     that leave the body unread do not impose a replay requirement, even when
     they fetch empty body params. Wrapper transformations after a read remain
-    caller-controlled and cannot be observed by this check. Unexpected exceptions
-    return a bounded `:response_rejected` adapter error without source details.
-    Required or selected covered `@request-target`, `@target-uri`, and `@query`
-    reject with `:unsupported_component` before resolver, freshness, or replay
-    callbacks: the captured Plug values do not establish exact target evidence.
+    caller-controlled and cannot be observed by the replay check. Captured Plug
+    values do not establish exact target evidence, so target-dependent
+    components are refused (see `call/2`).
     """
     @behaviour Plug
     alias RequestSeal.{Policy, SignatureFields}
     alias RequestSeal.Adapter.{Error, Signing}
     alias RequestSeal.Plug.{Delivery, State, Target}
 
+    @doc """
+    Validates verification options once, at plug initialization.
+
+    ## Parameters
+
+      * `opts` - keyword list of the options below. Unknown or duplicate options
+        reject.
+
+    ## Options
+
+      * `:policy` (required) - a valid `RequestSeal.Policy`, a zero-arity
+        function, or an exported `{module, function, args}`. A function or MFA
+        returns a policy directly and runs once per eligible request, after the
+        capture and parser checks, before key resolution. Resolution runs
+        synchronously; callers own deadlines for external work. No callback
+        diagnostics are retained.
+      * `:label` (required) - the signature label to verify.
+      * `:on_reject` (required) - `:continue`, or `{:halt, status}` with a final
+        status in 200..599.
+      * `:assign` - an atom or nil (default nil). When set, a successful
+        verification is also assigned under that key.
+
+    ## Returns
+
+      * keyword list - the validated options.
+
+    Raises `RequestSeal.Adapter.Error` with reason `:invalid_options` and stage
+    `:verify` on any invalid option.
+
+    ## Examples
+
+        iex> try do
+        ...>   RequestSeal.Plug.Verify.init(policy: fn -> :unused end, label: "sig")
+        ...> rescue
+        ...>   error in RequestSeal.Adapter.Error -> {error.reason, error.stage}
+        ...> end
+        {:invalid_options, :verify}
+    """
     @impl Plug
     def init(opts) do
       case Signing.protect(:plug, :attach, 0, fn ->
@@ -80,6 +100,96 @@ if Code.ensure_loaded?(Plug.Conn) do
     defp rejection?({:halt, status}), do: is_integer(status) and status in 200..599
     defp rejection?(_), do: false
 
+    @doc """
+    Verifies the captured request once and records the result in private state.
+
+    Checks run in this order: an earlier attempt, a missing capture, the
+    replay checks, policy resolution, target-dependent coverage, then
+    `RequestSeal.verify/3` with the label. The replay checks reject a replaced
+    or rewrapped replay adapter, a RequestSeal reader call without a replay
+    read, and a partially drained replay or a handed-out digest that differs
+    from the full captured body. Every check before `RequestSeal.verify/3` runs
+    before key resolution, freshness evaluation, or replay callbacks; the policy
+    function or MFA runs only after the capture and replay checks pass.
+
+    ## Parameters
+
+      * `conn` - a `Plug.Conn` that passed `RequestSeal.Plug.Capture`.
+      * `opts` - options returned by `init/1`.
+
+    ## Returns
+
+      * `Plug.Conn` - on success, private state's `:verification` is
+        `{:ok, %RequestSeal.Verification{}}`, readable with
+        `RequestSeal.Plug.verification/1`, and the result is assigned when
+        `:assign` is set.
+      * `Plug.Conn` - on rejection, private state's `:verification` is
+        `{:error, %RequestSeal.Adapter.Error{stage: :verify, attempt: 0}}`, any
+        `:assign` key is removed, and with `{:halt, status}` the connection is
+        sent with that status and an empty body and halted. Reasons:
+        `:already_verified` (Verify already ran on this connection),
+        `:not_captured` (no capture), `:parser_order` (replay checks above),
+        `:invalid_options` (a policy function or MFA returned an invalid
+        policy), `:unsupported_component` (the policy requires, or the selected
+        Signature-Input covers, `@request-target`, `@target-uri`, or `@query`;
+        unrelated labels impose nothing), `:request_rejected` (the core
+        verifier rejected, with its bounded `RequestSeal.Error` as `source`),
+        and `:response_rejected` (a policy callback raised, threw, or exited, or
+        another unexpected exception, without source details). Meanings:
+        `RequestSeal.Adapter.Error`.
+
+    ## Examples
+
+        iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+        iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+        iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
+        iex> components = ~s[("@method" "@authority" "@path")]
+        iex> {:ok, message} =
+        ...>   RequestSeal.Message.request("POST", "https://messages.example.com/inbox", [], "hi")
+        iex> {:ok, signed} =
+        ...>   RequestSeal.sign(message, %{
+        ...>     label: "sig",
+        ...>     algorithm: "ed25519",
+        ...>     components: components,
+        ...>     expires_in: 60
+        ...>   }, handle)
+        iex> conn =
+        ...>   Enum.reduce(
+        ...>     signed.fields,
+        ...>     Plug.Test.conn(:post, "https://messages.example.com/inbox", "hi"),
+        ...>     fn field, conn ->
+        ...>       Plug.Conn.put_req_header(conn, String.downcase(field.name), field.value)
+        ...>     end
+        ...>   )
+        iex> {:ok, policy} =
+        ...>   RequestSeal.Policy.new(%{
+        ...>     algorithms: ["ed25519"],
+        ...>     components: components,
+        ...>     key_resolver: fn _ -> {:ok, %{algorithm: "ed25519", key: key}} end,
+        ...>     freshness: :not_evaluated,
+        ...>     content: :not_required,
+        ...>     replay: :not_required
+        ...>   })
+        iex> capture =
+        ...>   RequestSeal.Plug.Capture.init(origin: :connection, max_body_bytes: 1_024, read_timeout: 5_000)
+        iex> verify =
+        ...>   RequestSeal.Plug.Verify.init(
+        ...>     policy: policy,
+        ...>     label: "sig",
+        ...>     on_reject: {:halt, 401},
+        ...>     assign: :signature
+        ...>   )
+        iex> conn = conn |> RequestSeal.Plug.Capture.call(capture) |> RequestSeal.Plug.Verify.call(verify)
+        iex> {:ok, verification} = RequestSeal.Plug.verification(conn)
+        iex> {verification.label, verification.authorization, conn.assigns.signature == verification}
+        {"sig", :not_evaluated, true}
+        iex> again = RequestSeal.Plug.Verify.call(conn, verify)
+        iex> {:error, error} = again.private.request_seal.verification
+        iex> {error.reason, again.status, again.halted}
+        {:already_verified, 401, true}
+        iex> RequestSeal.Custody.Local.release(handle)
+        :ok
+    """
     @impl Plug
     def call(conn, opts) do
       state = State.get(conn)

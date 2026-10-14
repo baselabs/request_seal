@@ -70,7 +70,6 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     Results live in redacted `conn.private[:request_seal]`. The `:assign` option
     on Verify explicitly copies successful verification into caller-selected assigns.
-    `capture/1` and `verification/1` return `:error` when their result is unavailable.
     Read error values explicitly from private state's `:error` or `:verification`.
     Application plugs between Verify and SignResponse can replace captured state
     in `conn.private`; they are inside the server trust boundary. SignResponse
@@ -86,7 +85,35 @@ if Code.ensure_loaded?(Plug.Conn) do
     """
     alias RequestSeal.Plug.State
 
-    @doc "Return the retained capture; does not consume or verify anything."
+    @doc """
+    Returns the request retained by `RequestSeal.Plug.Capture`; does not consume or verify anything.
+
+    ## Parameters
+
+      * `conn` - a `Plug.Conn`.
+
+    ## Returns
+
+      * `{:ok, %RequestSeal.Plug.Capture{}}` - the capture, with the immutable
+        request `message`, the original `ingress` facts, and the selected
+        `origin`.
+      * `:error` - no successful capture is present, including after a capture
+        rejection or for a value that is not a `Plug.Conn`.
+
+    ## Examples
+
+        iex> conn = Plug.Test.conn(:post, "https://docs.example.com/notes?draft=1", "hello")
+        iex> RequestSeal.Plug.capture(conn)
+        :error
+        iex> opts =
+        ...>   RequestSeal.Plug.Capture.init(origin: :connection, max_body_bytes: 1_024, read_timeout: 5_000)
+        iex> conn = RequestSeal.Plug.Capture.call(conn, opts)
+        iex> {:ok, capture} = RequestSeal.Plug.capture(conn)
+        iex> {capture.message.authority, capture.message.raw_target, capture.message.body.bytes}
+        {"docs.example.com", "/notes?draft=1", "hello"}
+        iex> {capture.origin.source, capture.ingress.scheme}
+        {:connection, :https}
+    """
     @spec capture(Plug.Conn.t()) :: {:ok, RequestSeal.Plug.Capture.t()} | :error
     def capture(%Plug.Conn{
           private: %{request_seal: %State{capture: %RequestSeal.Plug.Capture{} = capture}}
@@ -95,7 +122,47 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     def capture(_), do: :error
 
-    @doc "Return successful verification only; failure never supplies partial facts."
+    @doc """
+    Returns the successful verification recorded by `RequestSeal.Plug.Verify`; failure never supplies partial facts.
+
+    ## Parameters
+
+      * `conn` - a `Plug.Conn`.
+
+    ## Returns
+
+      * `{:ok, %RequestSeal.Verification{}}` - Verify accepted the captured
+        request. The result grants no authorization.
+      * `:error` - Verify has not run, rejected the request, or `conn` is not a
+        `Plug.Conn`. A rejection's bounded `RequestSeal.Adapter.Error` stays in
+        private state as `{:error, error}` under `:verification`.
+
+    ## Examples
+
+        iex> {:ok, policy} =
+        ...>   RequestSeal.Policy.new(%{
+        ...>     algorithms: ["ed25519"],
+        ...>     components: ~s[("@method" "@authority" "@path")],
+        ...>     key_resolver: fn _ -> :error end,
+        ...>     freshness: :not_evaluated,
+        ...>     content: :not_required,
+        ...>     replay: :not_required
+        ...>   })
+        iex> capture =
+        ...>   RequestSeal.Plug.Capture.init(origin: :connection, max_body_bytes: 1_024, read_timeout: 5_000)
+        iex> verify = RequestSeal.Plug.Verify.init(policy: policy, label: "sig", on_reject: :continue)
+        iex> conn =
+        ...>   Plug.Test.conn(:post, "https://messages.example.com/inbox", "hi")
+        ...>   |> RequestSeal.Plug.Capture.call(capture)
+        ...>   |> RequestSeal.Plug.Verify.call(verify)
+        iex> RequestSeal.Plug.verification(conn)
+        :error
+        iex> {:error, error} = conn.private.request_seal.verification
+        iex> {error.reason, error.source.reason}
+        {:request_rejected, :missing_signature_input}
+
+    `RequestSeal.Plug.Verify.call/2` shows a successful verification.
+    """
     @spec verification(Plug.Conn.t()) :: {:ok, RequestSeal.Verification.t()} | :error
     def verification(%Plug.Conn{private: %{request_seal: %State{verification: {:ok, result}}}}),
       do: {:ok, result}
