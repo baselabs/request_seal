@@ -58,7 +58,7 @@ defmodule RequestSeal.MixProject do
       app: :request_seal,
       version: "0.4.1",
       # Libraries declare a consumer range; development and notebook tools stay pinned.
-      # OTP 27 supplies :json; both supported CI lanes are recorded in ADR 0008.
+      # OTP 27 supplies :json; all three CI lanes are recorded in ADR 0008.
       elixir: "~> 1.18",
       name: "RequestSeal",
       source_url: "https://github.com/baselabs/request_seal",
@@ -70,10 +70,14 @@ defmodule RequestSeal.MixProject do
       package: [
         licenses: ["Apache-2.0", "BSD-3-Clause"],
         files: ["lib/**/*.ex", "mix.exs" | @public_documents],
-        links: %{"GitHub" => "https://github.com/baselabs/request_seal"}
+        links: %{
+          "GitHub" => "https://github.com/baselabs/request_seal",
+          "Changelog" => "https://hexdocs.pm/request_seal/changelog.html"
+        }
       ],
       docs: [
         main: "readme",
+        source_ref: "v0.4.1",
         extras:
           Enum.map(@public_documents, fn
             "livebooks/README.md" -> {"livebooks/README.md", filename: "livebooks"}
@@ -81,7 +85,7 @@ defmodule RequestSeal.MixProject do
           end),
         groups_for_extras: [
           "Start here": ["README.md"],
-          Guides: ~r/docs\/guides\//,
+          Guides: ~r/docs\/guides\/(?!getting-started|testing)/,
           Reference: ~r/docs\/reference\//,
           "Design and decisions": [~r/docs\/design\//, ~r/docs\/adr\//],
           Livebooks: ~r/livebooks\//,
@@ -97,6 +101,7 @@ defmodule RequestSeal.MixProject do
           Core: [
             RequestSeal,
             RequestSeal.Message,
+            RequestSeal.Message.Error,
             RequestSeal.Body,
             RequestSeal.FieldOccurrence,
             RequestSeal.TransportFacts,
@@ -104,6 +109,7 @@ defmodule RequestSeal.MixProject do
             RequestSeal.Verification,
             RequestSeal.Error,
             RequestSeal.SignatureBase,
+            RequestSeal.SignatureBase.Error,
             ~r/^RequestSeal\.(StructuredFields|Digest|Crypto|Quorum|AcceptSignature)(\.|$)/
           ],
           "Keys and custody": [

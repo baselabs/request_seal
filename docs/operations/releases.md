@@ -1,25 +1,29 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-10 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
 
 # Release and maintenance runbook
 
 
 ## Release conditions
 
-The TypeScript counterpart is designed and in progress as a separate npm package
-named `request-seal`. Both repositories use the [conformance corpus](../reference/corpus-format.md).
+The TypeScript implementation is published on npm as `@request-seal/core` from
+`baselabs/request-seal-typescript`. Both repositories use the
+[conformance corpus](../reference/corpus-format.md).
 
 Release acceptance must establish the advertised scope through the actual public entry points,
 package artifact, documentation, and required counterpart checks. The current checkout
 implements generic RFC 9421 signing, single-label and quorum verification, caller-owned
-custody, discovery, nonce replay, optional Req/Finch and Plug/Phoenix adapters, Ash
-scope mapping, generic compact JWS/JWE, one-level JWS-in-JWE nesting, and
+custody, discovery, nonce replay with ETS, ash_onetime, and PostgreSQL stores, optional
+Req/Finch and Plug/Phoenix adapters, Ash scope mapping, ash_hooks delivery signing and
+ingress verification, generic compact JWS/JWE, one-level JWS-in-JWE nesting, and
 source-selected Web Bot Auth protocol-00 signing and identity attribution.
 Other named application profiles belong in extension packages.
 
-1. Set the package version in `mix.exs` to `0.4.1`, update every install to
-   `{:request_seal, "~> 0.4.1"}`, and record the release in `CHANGELOG.md`.
-   Keep the 0.4.1 changelog date as `Unreleased` until publishing; replace it with
-   the actual release date in that event.
+1. Set the package version and the docs `source_ref` (`v<version>`) in `mix.exs`, update every install
+   string (currently `{:request_seal, "~> 0.4.1"}`; the document check rejects any
+   other), and set `elixir_release` in `corpus/index.json` to `v<version>`; the
+   corpus release workflow refuses a tag that differs from it. Record the release in
+   `CHANGELOG.md` under `## <version> - Unreleased` and replace `Unreleased` with
+   the actual release date when publishing.
    Confirm the public document allowlist, supported profiles, and accepted ADRs.
 2. Use Elixir 1.20.4 / OTP 29.1.1, the exact development pins. Run focused checks
    while editing, then run the declared gate once on the final source:
@@ -41,7 +45,7 @@ Other named application profiles belong in extension packages.
    mix run --no-start -e 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])' && mix hex.build
    ```
 
-   Inspect `contents.tar.gz` inside `request_seal-0.4.1.tar`. Its files must be only
+   Inspect `contents.tar.gz` inside `request_seal-<version>.tar`. Its files must be only
    `lib/**/*.ex`, `mix.exs`, and the public documents explicitly allowlisted in
    `mix.exs`, including README, CHANGELOG, LICENSE, and NOTICE. Exclude tests,
    scripts, local credentials, internal records, and key fixtures. Record the list
@@ -60,7 +64,7 @@ Other named application profiles belong in extension packages.
    gh run watch RUN_ID --exit-status
    ```
 
-5. Before changing visibility, scan the full history of every branch and tag,
+5. Before publishing, scan the full history of every branch and tag,
    including commit messages. Use a nonempty literal private-term list kept outside
    public source, referenced by `RELEASE_PRIVATE_TERMS_FILE`. Keep scan output local;
    resolve every match before proceeding. Fetch complete history first:
@@ -100,26 +104,25 @@ Other named application profiles belong in extension packages.
    This scans all fetched history, including deleted file contents. The term-file
    self-match is the scanner's positive control. An empty result establishes only
    that the configured terms were not found; inspect package/source disclosure too.
-6. Make GitHub public and publish Hex 0.4.1 in the same release event. From the
-   pinned Elixir 1.20 checkout, load `HEX_API_KEY` from the project's gitignored
-   `.env`; refer to the key by name and never print its value. Verify the security
-   reporting channel and package ownership, then run:
+6. Publish to Hex. From the pinned Elixir 1.20 checkout, load `HEX_API_KEY` from
+   the project's gitignored `.env`; refer to the key by name and never print its
+   value. Verify the security reporting channel and package ownership, then run:
 
    ```sh
    set -a
    . ./.env
    set +a
    : "${HEX_API_KEY:?Set HEX_API_KEY in the project .env}"
-   gh repo edit baselabs/request_seal --visibility public --accept-visibility-change-consequences
+   : "${VERSION:?Set VERSION to the version being published}"
    mix hex.publish --yes
-   gh repo view baselabs/request_seal --json visibility --jq .visibility
-   mix hex.info request_seal 0.4.1
-   curl --fail --location --silent --show-error --output /dev/null https://hexdocs.pm/request_seal/0.4.1/index.html
+   mix hex.info request_seal "$VERSION"
+   curl --fail --location --silent --show-error --output /dev/null "https://hexdocs.pm/request_seal/$VERSION/index.html"
    ```
 
-   Confirm GitHub reports `PUBLIC`, Hex reports version 0.4.1, and
-   [HexDocs 0.4.1](https://hexdocs.pm/request_seal/0.4.1/index.html) serves the expected
-   guides and source links. Inspect actual registry checksums and optional metadata.
+   Confirm Hex reports that version and
+   HexDocs serves the expected guides, with source links pointing at the `v<version>`
+   tag (`source_ref` in `mix.exs`). Inspect actual registry checksums and optional
+   metadata.
 7. Install from Hex in a clean consumer, without a path or Git override. Use an
    empty Mix install directory and verify the installed application version and
    an actual public entry point:
@@ -137,14 +140,15 @@ Other named application profiles belong in extension packages.
    ```
 
    Repeat the documented signing/verifying journey in that consumer. Record the
-   exact source commit, CI result, artifact checksum, public visibility, HexDocs,
-   and clean-consumer output locally. Local checks do not establish hosted CI,
+   exact source commit, CI result, artifact checksum, HexDocs, and clean-consumer
+   output locally. Local checks do not establish hosted CI,
    provider acceptance, or registry delivery.
 
 ## Dependency updates
 
-The root uses ExDoc for development and tests, SimpleSat for tests, and optional Ash,
-Req, Finch, and Postgrex dependencies. Livebook lives in `tools/notebooks` with a
+The root uses ExDoc for development and tests; SimpleSat, Bandit, Phoenix, and
+StreamData for tests; and optional Ash, ash_onetime, ash_hooks, Req, Finch, Plug, and
+Postgrex dependencies. Livebook lives in `tools/notebooks` with a
 separate lockfile. It pins application dependencies that may need explicit security overrides;
 each override has a reason in its Mix file and must pass the real importer/exporter checks.
 Review `mix hex.outdated` in both environments and run `mix hex.audit` after any change.
@@ -165,6 +169,7 @@ automatic rollback semantics. Changing an installed application's dependency is 
 Tag the verified release commit as `v<version>` after package checks. A tag must
 identify the same contents as the Hex release. The tag workflow verifies
 `corpus/index.json` file digests and publishes deterministic `corpus.tar.gz` and
-`corpus.sha256` assets. Verify the release assets against those digests before
-vendoring. The TypeScript repository pins tag, commit and index SHA-256 together;
+`corpus.sha256` assets. Confirm the workflow succeeded and that
+`gh release view v<version>` lists both assets, then verify them against those
+digests before vendoring. The TypeScript repository pins tag, commit and index SHA-256 together;
 its corpus is repository tooling and excluded from the npm package.

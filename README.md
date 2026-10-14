@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-10 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # RequestSeal
 
@@ -13,51 +13,12 @@ Use it to:
 - Turn a verified caller into an Ash actor and tenant.
 - Protect against replayed requests.
 
-## Concepts in one minute
+## What RequestSeal does not do
 
-- **Key handle:** a private key held in its own process, used through an opaque handle.
-- **Message:** the request or response, including its exact body and ordered headers.
-- **Signing spec:** the label, algorithm, coverage, and lifetime of a signature.
-- **Covered components:** the `("@method" ...)` list is RFC 9421's syntax for which parts of the request are signed.
-- **Policy:** the verifier's explicit choices about keys, coverage, freshness, body integrity, and replay.
-- **Verification result:** the facts established by those checks; your application decides access.
-
-## Hello world
-
-The examples cover `@scheme` as well as `@authority`: default HTTP port 80 and
-HTTPS port 443 are omitted from the authority, so authority alone does not bind
-the scheme. See [coverage choices](docs/guides/signing-and-verifying.md).
-
-```elixir
-{_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
-{:ok, key} = RequestSeal.Custody.public_key(handle)
-components = ~s[("@method" "@scheme" "@authority" "@path")]
-{:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
-spec = %{label: "sig", algorithm: "ed25519", components: components, expires_in: 60}
-{:ok, signed} = RequestSeal.sign(message, spec, handle)
-resolve = fn _ -> {:ok, %{algorithm: "ed25519", key: key}} end
-clock = fn -> System.system_time(:second) end
-
-{:ok, policy} =
-  RequestSeal.Policy.new(%{
-    algorithms: ["ed25519"],
-    components: components,
-    key_resolver: resolve,
-    freshness: %{clock: clock, max_age: 60, skew: 5, require_expires: true},
-    content: :not_required,
-    replay: :not_required
-  })
-
-{:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
-IO.inspect(verification.signature.crypto)
-```
-
-Expected output:
-
-```text
-:valid
-```
+- **Decide access.** A verification result states facts about a signature; your application, or Ash policies, decide what the caller may do.
+- **Choose trust for you.** Every policy names its algorithms, keys, covered components, freshness, body integrity, and replay rules. Keys come from your resolver or from discovery sources you configure; a key ID or URL in a request never selects one by itself.
+- **Run in the background.** Loading the library starts no process, pool, store, or network fetch. You start and supervise key holders, replay stores, discovery caches, and HTTP pools.
+- **Validate JWT claims.** The JOSE modules handle compact JWS and JWE envelopes only.
 
 ## Installation
 
@@ -95,6 +56,54 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
   {:jason, "~> 1.0"}
 ]
 ```
+
+## Concepts in one minute
+
+- **Key handle:** an opaque reference to a key held by a custodian, such as a local holder process or an SSH agent. Private key bytes stay with the custodian.
+- **Message:** the request or response, including its exact body and ordered headers.
+- **Signing spec:** the label, algorithm, coverage, and lifetime of a signature.
+- **Covered components:** the `("@method" ...)` list is RFC 9421's syntax for which parts of the request are signed.
+- **Policy:** the verifier's explicit choices about keys, coverage, freshness, body integrity, and replay.
+- **Verification result:** the facts established by those checks; your application decides access.
+
+## Hello world
+
+Sign a request and verify it. Run this in `iex -S mix` in a project that has RequestSeal installed:
+
+```elixir
+{_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, key} = RequestSeal.Custody.public_key(handle)
+components = ~s[("@method" "@scheme" "@authority" "@path")]
+{:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+spec = %{label: "sig", algorithm: "ed25519", components: components, expires_in: 60}
+{:ok, signed} = RequestSeal.sign(message, spec, handle)
+resolve = fn _ -> {:ok, %{algorithm: "ed25519", key: key}} end
+clock = fn -> System.system_time(:second) end
+
+{:ok, policy} =
+  RequestSeal.Policy.new(%{
+    algorithms: ["ed25519"],
+    components: components,
+    key_resolver: resolve,
+    freshness: %{clock: clock, max_age: 60, skew: 5, require_expires: true},
+    content: :not_required,
+    replay: :not_required
+  })
+
+{:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
+IO.inspect(verification.signature.crypto)
+```
+
+Expected output:
+
+```text
+:valid
+```
+
+The examples cover `@scheme` as well as `@authority`: default HTTP port 80 and
+HTTPS port 443 are omitted from the authority, so authority alone does not bind
+the scheme. See [coverage choices](docs/guides/signing-and-verifying.md).
 
 ## Send and receive a signed webhook
 
@@ -235,8 +244,9 @@ Expected output (Bandit may first log one `[info] Running WebhookReceiver ...` l
 Save as `req.exs` and run `mix run req.exs` with the dependency list above.
 The webhook example shows how a receiver verifies a signed request.
 
-Configure `:my_app, :outgoing_url` in `config/config.exs` with the URL of a
-receiver you own, for example `config :my_app, :outgoing_url, "https://your-receiver.example/"`.
+Configure `:my_app, :outgoing_url` with the URL of a receiver you own. `mix new`
+does not create a config file, so add `config/config.exs` containing
+`import Config` and `config :my_app, :outgoing_url, "https://your-receiver.example/"`.
 Start that receiver first; the expected status below assumes it returns 200.
 The example sends an actual HTTP request to your configured URL.
 
@@ -466,19 +476,22 @@ Expected output:
 :replayed
 ```
 
-Here one trusted key uses one namespace. Define your own commitment for your trust and tenant boundaries. ETS is local and loses claims when its owner stops; supervise the store in your application. [Replay protection](docs/guides/replay-protection.md) covers retention, sweeping, and PostgreSQL storage.
+Here one trusted key uses one namespace. Define your own commitment for your trust and tenant boundaries. ETS is local and loses claims when its owner stops; supervise the store in your application. [Replay protection](docs/guides/replay-protection.md) covers retention, sweeping, and durable storage with ash_onetime or PostgreSQL.
 
 ## What's included
 
 | Capability | Module | Standard |
 | --- | --- | --- |
 | HTTP request/response signatures and quorum | `RequestSeal`, `RequestSeal.Quorum` | [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) |
+| Signature negotiation with `Accept-Signature` | `RequestSeal.AcceptSignature` | [RFC 9421 Section 5](https://www.rfc-editor.org/rfc/rfc9421.html#section-5) |
 | Structured HTTP fields | `RequestSeal.StructuredFields` | [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651.html), with explicit RFC 8941 schemas where required |
 | Content and representation digests | `RequestSeal.Digest` | [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) |
 | Compact JWS/JWE and one JWS inside one JWE | `RequestSeal.JOSE` | [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [7516](https://www.rfc-editor.org/rfc/rfc7516.html), [7518](https://www.rfc-editor.org/rfc/rfc7518.html) |
 | Public keys and SHA-256 JWK thumbprints | `RequestSeal.PublicKey` | [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), [8037](https://www.rfc-editor.org/rfc/rfc8037.html) |
 | Web Bot Auth signing and verification | `RequestSeal.WebBotAuth` | [Web Bot Auth protocol-00 draft](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html) |
 | Bounded HTTPS key discovery: JWKS, key directories, CIMD | `RequestSeal.Discovery` | [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), Web Bot Auth protocol-00, [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html) |
+
+HTTP signature algorithms (`RequestSeal.Crypto.algorithms/0`): `ed25519`, `ecdsa-p256-sha256`, `ecdsa-p384-sha384`, `rsa-pss-sha512`, `rsa-v1_5-sha256`, and `hmac-sha256`. HTTP signatures can also use the JWS algorithms `RS256`, `PS256`, `PS384`, `PS512`, `HS256`, `ES256`, `ES384`, and `EdDSA` by explicit `{:jws, name}` selection.
 
 ## Integrations
 
@@ -500,6 +513,10 @@ Elixir 1.18 or newer on OTP 27 or newer. CI tests 1.18.4/27, 1.19.5/28, and 1.20
 
 A valid signature proves which key signed which covered bytes; a trusted association establishes who holds that key. Your application still decides what that signer may do. Read the [threat model](docs/design/threat-model.md) for the trust boundaries and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
+## Conformance corpus
+
+RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. GitHub releases attach it as `corpus.tar.gz` with `corpus.sha256`; the latest corpus release is v0.4.0. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
+
 ## Documentation
 
 ### Guides
@@ -514,7 +531,9 @@ A valid signature proves which key signed which covered bytes; a trusted associa
 - [Key discovery](docs/guides/key-discovery.md)
 - [JOSE: JWS and JWE](docs/guides/jose.md)
 - [Key custody](docs/guides/key-custody.md)
-- [Livebooks](livebooks/README.md)
+- [Livebooks](livebooks/README.md): executable notebooks for the core flow, a published RFC vector, Plug, Web Bot Auth, and JOSE
+
+API reference: [HexDocs](https://hexdocs.pm/request_seal). Release notes: [CHANGELOG](CHANGELOG.md).
 
 ### Contributing
 
@@ -527,9 +546,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor checks.
 
 [Apache-2.0](LICENSE). RFC code components use BSD-3-Clause under [NOTICE](NOTICE); external vectors retain their attribution there.
 
-## Conformance corpus
-
-The TypeScript counterpart is designed and in progress as a separate npm package
-named `request-seal`. Both implementations use the independently sourced
-[conformance corpus format](docs/reference/corpus-format.md). Corpus data lives in
-`corpus/` and is published as a checksummed release asset.

@@ -10,6 +10,33 @@ defmodule RequestSeal.ReadmeTest do
     binding =
       E.eval(
         ~S'''
+        {:request_seal, "~> 0.4.1"}
+        ''',
+        binding,
+        "README.md",
+        1
+      )
+
+    binding =
+      E.eval(
+        ~S'''
+        [
+          {:request_seal, "~> 0.4.1"},
+          {:req, "~> 0.7.4"},
+          {:finch, ">= 0.23.0 and < 0.25.0"},
+          {:plug, "~> 1.20.3"},
+          {:bandit, "~> 1.12.5"},
+          {:jason, "~> 1.0"}
+        ]
+        ''',
+        binding,
+        "README.md",
+        2
+      )
+
+    binding =
+      E.eval(
+        ~S'''
         {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
         {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
         {:ok, key} = RequestSeal.Custody.public_key(handle)
@@ -35,37 +62,10 @@ defmodule RequestSeal.ReadmeTest do
         ''',
         binding,
         "README.md",
-        1
+        3
       )
 
     assert Keyword.fetch!(binding, :verification).signature.crypto == :valid
-
-    binding =
-      E.eval(
-        ~S'''
-        {:request_seal, "~> 0.4.1"}
-        ''',
-        binding,
-        "README.md",
-        2
-      )
-
-    binding =
-      E.eval(
-        ~S'''
-        [
-          {:request_seal, "~> 0.4.1"},
-          {:req, "~> 0.7.4"},
-          {:finch, ">= 0.23.0 and < 0.25.0"},
-          {:plug, "~> 1.20.3"},
-          {:bandit, "~> 1.12.5"},
-          {:jason, "~> 1.0"}
-        ]
-        ''',
-        binding,
-        "README.md",
-        3
-      )
 
     binding =
       E.eval(

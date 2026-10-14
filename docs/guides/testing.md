@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-09 · Governed by: public architecture, threat model, and accepted ADRs · Review when: an advertised capability, test runner, or evidence source changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture, threat model, and accepted ADRs · Review when: an advertised capability, test runner, or evidence source changes -->
 
 # Testing and evidence
 
@@ -17,16 +17,21 @@ mix deps.get
 python3 scripts/check.py
 ```
 
-The gate checks formatting, warnings-as-errors compilation, tests, public-document
-inclusion and links, ExDoc output, dependency advisories, and official Livebook
-import/export and execution. It runs each notebook in a fresh Elixir process and
+The gate checks the toolchain pins, formatting, warnings-as-errors compilation, tests
+(including doctests and every Elixir example in the public Markdown documents), corpus
+mutation checks, the optional-client matrix, the Python document tests, public-document
+inclusion and links, ExDoc output, dependency advisories, the built Hex package's
+metadata, and official Livebook import/export and execution. It runs each notebook in a fresh Elixir process and
 requires evidence that the export reached its final assertion. Integration tests start
 temporary local HTTP/TLS listeners and a real OpenSSH agent; the notebook runner
 starts no Livebook web server. Tests clean up their listeners and agent processes.
 
 Default tests use repository fixtures, real local cryptography, and local integration
 processes. The SSH custody tests require `ssh-agent`, `ssh-add`, and `ssh-keygen`.
-Database and deployed-source checks are opt-in. Public
+Database and deployed-source checks are opt-in. Deployed-source checks fetch a live
+public key directory over HTTPS: run them with `mix test --include live_source`, and set
+`REQUESTSEAL_DISCOVERY_CACERTS` to a PEM bundle to replace the operating system's trust
+roots. Public
 documentation and notebooks are enumerated explicitly in mix.exs. The document
 checker rejects unapproved documents, missing metadata, private targets, machine
 paths, and known internal-process prose. This is a bounded disclosure check;
@@ -37,7 +42,7 @@ maintainers still review the actual content before approving an inclusion.
 The declared gate includes `test/property/`. Each property executes 300 successful
 generated cases with an explicit fixed seed and no elapsed-time cutoff:
 
-| Suite | Properties | Seed |
+| Suite | Property definitions | Seed |
 | --- | ---: | ---: |
 | Structured Fields | 4 | 9651 |
 | Signature base | 4 | 9421 |
@@ -65,7 +70,7 @@ connection, SQL, or contention failures fail the property without a skip fallbac
 
 ## Replay stores
 
-The default gate excludes database tests and starts no database. ETS tests exercise
+Without `REQUESTSEAL_REPLAY_PG_URL`, the gate excludes database tests; it never starts a database. ETS tests exercise
 64 concurrent claims, exact capacity, cancellation, outages, retention, and the
 published RFC 9421 B.2.1 signature. Required replay never invokes commitment on
 invalid cryptography, unknown keys, expired input, or mismatched body content.
@@ -81,7 +86,8 @@ checks create and drop their own tables, race 64 tasks across two independent
 pools and one additional claim on an OTP peer node, block a primary key in a real
 transaction, terminate a backend over SQL, and drop a table. The caller must
 allow these operations on a disposable database. No container is started by tests.
-CI runs this database check separately from the offline default gate.
+CI supplies a PostgreSQL 18 service URL to every lane, so these tests run in the floor
+and mid `mix test` steps and inside the latest lane's declared gate.
 
 To run the optional server restart persistence test, also supply a command that
 restarts the PostgreSQL server process while preserving its data directory. The command must
@@ -140,12 +146,13 @@ and signature conformance remain separate acceptance.
 | Deployed counterpart exchange | Acceptance or rejection by that exact peer under its stated preconditions. |
 | Headless notebook execution | The selected code assertions completed; interactive UI behavior is separate. |
 
-The [RFC Ed25519 notebook](../../livebooks/rfc-ed25519.livemd) checks OTP against
-independently published signature bytes and rejects altered path/signature bytes.
-The [environment notebook](../../livebooks/environment.livemd) checks installation
-and prerequisites against the real checkout; the runner validates the published
-Hex install cell before substituting that checkout. The release runbook checks
-registry installation separately. Neither establishes RequestSeal parser, profile, or peer support.
+The [RFC Ed25519 notebook](../../livebooks/rfc-ed25519.livemd) checks OTP and then
+RequestSeal's signature-base construction and policy verification against independently
+published RFC 9421 bytes, and rejects altered bytes. The other
+[notebooks](../../livebooks/README.md) are local round trips with generated keys. The
+runner validates each published Hex install cell before substituting the real checkout;
+the release runbook checks registry installation separately. No notebook establishes
+acceptance by a deployed peer.
 
 ## Web Bot Auth evidence
 

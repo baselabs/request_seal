@@ -1,7 +1,10 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-10 · Governed by: public architecture and accepted ADRs · Review when: the public contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public contract or implementation changes -->
 
 # Contributing
 
+Open issues and pull requests at [baselabs/request_seal](https://github.com/baselabs/request_seal).
+Contributions are licensed under Apache-2.0, as section 5 of the [license](LICENSE) describes.
+Report vulnerabilities as [SECURITY.md](SECURITY.md) describes, never in a public issue.
 
 Read the [architecture](docs/design/architecture.md),
 [threat model](docs/design/threat-model.md), [technical decisions](docs/adr/0001-library-boundary.md),
@@ -25,9 +28,8 @@ ordered/raw transport information, caller-owned custody, explicit profiles, and 
 results. Document each option and error at its public boundary. Add the corresponding
 guide, executable example, notebook, and corpus case as capabilities are implemented.
 
-Run the declared gate, `python3 scripts/check.py`, before delivering a change. It checks
-formatting, compilation, tests, public documentation, optional clients, dependency
-advisories, and shipped notebooks. Run the actual profile,
+Run the declared gate, `python3 scripts/check.py`, before delivering a change;
+[testing and evidence](docs/guides/testing.md) lists what it checks. Run the actual profile,
 corpus, and counterpart checks required by the behavior being changed. Record which
 checks executed; avoid performance or conformance claims from a local self-round-trip.
 
@@ -36,6 +38,8 @@ Review should challenge unnecessary complexity and lost required behavior. Resol
 findings and inspect the repair diff. Document incomplete external evidence honestly.
 
 The public document list in mix.exs is shared by ExDoc and the Hex package. New public
-guides and notebooks require deliberate inclusion. Keep execution plans, private
+guides and notebooks require deliberate inclusion. A notebook that needs credentials
+must use named secrets, redact its output, and never perform a side effect simply
+because a reader opened it. Keep execution plans, private
 integration details, local tooling state, credentials, and review transcripts out of
 public files. Follow [SECURITY.md](SECURITY.md) for sensitive reports.
