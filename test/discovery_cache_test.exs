@@ -432,6 +432,22 @@ defmodule RequestSeal.DiscoveryCacheTest do
     end
   end
 
+  test "every operation on a stopped cache reports the same retryable unavailability" do
+    {:ok, cache} = Cache.start_link()
+
+    {:ok, source} =
+      Source.new(%{type: :jwks_uri, location: "https://keys.example/jwks.json"})
+
+    thumbprint = Base.url_encode64(:crypto.hash(:sha256, "stopped cache"), padding: false)
+    :ok = GenServer.stop(cache)
+    unavailable = {:error, %Discovery.Error{reason: :source_unavailable, retryable: true}}
+
+    assert Cache.resolve(cache, source, thumbprint, algorithms: ["ed25519"]) == unavailable
+    assert Cache.refresh(cache, source) == unavailable
+    assert Cache.remove(cache, source, thumbprint) == unavailable
+    assert Cache.invalidate(cache, source) == unavailable
+  end
+
   test "bounded source enrollment and cache options reject safely" do
     {_, _, source, cache, kid} = setup_cache(%{}, max_sources: 1)
     assert {:ok, _} = Cache.resolve(cache, source, kid, [])

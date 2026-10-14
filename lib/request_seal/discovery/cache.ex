@@ -117,9 +117,9 @@ defmodule RequestSeal.Discovery.Cache do
     * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
       `:invalid_source`, `:invalid_options`, `:unknown_key` (malformed ID, or no
       fresh, compatible key with that ID), `:revoked_key`, `:source_unavailable`
-      (negative freshness, invalidation, or a failed fetcher), `:cache_overloaded`,
-      `:deadline_exceeded`, `:invalid_response` (also when the cache process is not
-      running), and any error from `RequestSeal.Discovery.fetch/2`. Meanings:
+      (negative freshness, invalidation, a failed fetcher, or a cache that is not
+      running), `:cache_overloaded`, `:deadline_exceeded`, and any error from
+      `RequestSeal.Discovery.fetch/2`. Meanings:
       `RequestSeal.Discovery.Error`.
 
   ## Examples
@@ -170,9 +170,7 @@ defmodule RequestSeal.Discovery.Cache do
           {:resolve, source, keyid, algorithms, Keyword.get(opts, :clock),
            min(timeout, source.timeout)}
 
-        Support.run(min(timeout, source.timeout), fn _ ->
-          GenServer.call(cache, request, :infinity)
-        end)
+        Support.run(min(timeout, source.timeout), fn _ -> call(cache, request, :infinity) end)
       end,
       :source_unavailable
     )
@@ -196,10 +194,9 @@ defmodule RequestSeal.Discovery.Cache do
     * `{:ok, %RequestSeal.Discovery.KeySet{}}` - the new snapshot, without
       thumbprints denied by `remove/3`.
     * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
-      `:invalid_source`, `:invalid_options`, `:source_unavailable` (invalidation
-      or a failed fetcher), `:cache_overloaded`, `:deadline_exceeded`,
-      `:invalid_response` (also when the cache process is not running), and any
-      error from `RequestSeal.Discovery.fetch/2`. Meanings:
+      `:invalid_source`, `:invalid_options`, `:source_unavailable` (invalidation,
+      a failed fetcher, or a cache that is not running), `:cache_overloaded`,
+      `:deadline_exceeded`, and any error from `RequestSeal.Discovery.fetch/2`. Meanings:
       `RequestSeal.Discovery.Error`.
 
   ## Examples
@@ -222,9 +219,7 @@ defmodule RequestSeal.Discovery.Cache do
       fn ->
         Source.validate!(source)
 
-        Support.run(source.timeout, fn _ ->
-          GenServer.call(cache, {:refresh, source}, :infinity)
-        end)
+        Support.run(source.timeout, fn _ -> call(cache, {:refresh, source}, :infinity) end)
       end,
       :source_unavailable
     )
@@ -305,10 +300,18 @@ defmodule RequestSeal.Discovery.Cache do
       fn ->
         Source.validate!(source)
         if is_tuple(action), do: ensure(Source.thumbprint?(elem(action, 1)), :unknown_key)
-        GenServer.call(cache, {:admin, source, action})
+        call(cache, {:admin, source, action}, 5000)
       end,
       :source_unavailable
     )
+  end
+
+  # A cache that is not running (or exits during the call) is unavailable, the
+  # same closed, retryable reason for every operation.
+  defp call(cache, request, timeout) do
+    GenServer.call(cache, request, timeout)
+  catch
+    :exit, _ -> throw({:discovery_error, :source_unavailable})
   end
 
   @impl true
