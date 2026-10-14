@@ -152,19 +152,52 @@ defmodule RequestSeal.ReplayPostgresTest do
         Keyword.merge(ctx.options, pool_size: 1, queue_target: 10, queue_interval: 20)
       )
 
-    holder =
-      Task.async(fn -> Postgrex.query(queued, "SELECT pg_sleep(1.5)", [], timeout: 5000) end)
+    # Wait until the single connection is up, then hold it in a transaction so
+    # every claim below queues behind it and the pool drops it.
+    wait_until_connected!(queued, System.monotonic_time(:millisecond) + 10_000)
+    owner = self()
 
-    Process.sleep(100)
+    holder =
+      Task.async(fn ->
+        Postgrex.transaction(
+          queued,
+          fn _conn ->
+            send(owner, :held)
+
+            receive do
+              :release -> :ok
+            end
+          end,
+          timeout: 15_000
+        )
+      end)
+
+    assert_receive :held, 10_000
     context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 5000}
 
-    outcomes =
-      for n <- 1..4, do: Postgres.claim({queued, ctx.table}, claim("a", "q#{n}", 100), context)
+    try do
+      outcomes =
+        for n <- 1..4, do: Postgres.claim({queued, ctx.table}, claim("a", "q#{n}", 100), context)
 
-    assert {:error, :timeout} in outcomes
-    refute Enum.any?(outcomes, &(&1 == {:error, :unavailable}))
-    assert {:ok, _} = Task.await(holder, 5000)
-    GenServer.stop(queued)
+      assert {:error, :timeout} in outcomes
+      refute Enum.any?(outcomes, &(&1 == {:error, :unavailable}))
+    after
+      send(holder.pid, :release)
+      assert {:ok, :ok} = Task.await(holder, 15_000)
+      GenServer.stop(queued)
+    end
+  end
+
+  defp wait_until_connected!(pool, deadline) do
+    case Postgrex.query(pool, "SELECT 1", []) do
+      {:ok, _} ->
+        :ok
+
+      {:error, _} ->
+        if System.monotonic_time(:millisecond) > deadline, do: flunk("pool never connected")
+        Process.sleep(50)
+        wait_until_connected!(pool, deadline)
+    end
   end
 
   defp slow_insert!(admin, table) do
