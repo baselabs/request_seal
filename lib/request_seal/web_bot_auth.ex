@@ -329,17 +329,7 @@ defmodule RequestSeal.WebBotAuth do
       :invalid_member
     )
 
-    uri = URI.parse(location)
-
-    ensure(
-      byte_size(location) in 1..2048 and Regex.match?(~r/\A[\x21-\x7e]+\z/, location) and
-        String.downcase(uri.scheme || "") == "https" and is_binary(uri.host) and uri.host != "" and
-        uri.userinfo == nil and uri.port in 1..65535 and not String.contains?(location, "\\") and
-        not Regex.match?(~r/%(?![a-fA-F0-9]{2})/, location),
-      :invalid_signature_agent,
-      :fields,
-      :invalid_member
-    )
+    ensure(agent_location?(location), :invalid_signature_agent, :fields, :invalid_member)
 
     type =
       case List.keyfind(params, "type", 0) do
@@ -354,6 +344,15 @@ defmodule RequestSeal.WebBotAuth do
   end
 
   defp agent_member(_), do: fail(:invalid_signature_agent, :fields, :invalid_member)
+
+  defp agent_location?(location) do
+    uri = URI.parse(location)
+
+    byte_size(location) in 1..2048 and Regex.match?(~r/\A[\x21-\x7e]+\z/, location) and
+      String.downcase(uri.scheme || "") == "https" and is_binary(uri.host) and uri.host != "" and
+      uri.userinfo == nil and uri.port in 1..65535 and not String.contains?(location, "\\") and
+      not Regex.match?(~r/%(?![a-fA-F0-9]{2})/, location)
+  end
 
   defp resolve(agent, label, params, policy, deadline) do
     association = protect(fn -> associated(agent, params, policy, deadline) end)
@@ -709,9 +708,9 @@ defmodule RequestSeal.WebBotAuth do
 
     * `{:ok, message}` - the message with the appended fields.
     * `{:error, %RequestSeal.Error{}}` - established reasons: `:invalid_options`
-      (option, spec, key, lifetime, or signer form), `:invalid_message`,
-      `:invalid_signature_agent` (invalid `:agent` location, or an invalid existing
-      `Signature-Agent` field), `:limit`, `:nested_coverage_incomplete` (`components` name
+      (option, spec, key, lifetime, signer form, or an invalid `:agent`
+      location), `:invalid_message`, `:invalid_signature_agent` (an invalid
+      existing `Signature-Agent` field), `:limit`, `:nested_coverage_incomplete` (`components` name
       a signature that is absent or not covered completely), existing-dictionary
       reasons `:missing_signature_input`, `:missing_signature`, `:label_mismatch`,
       `:duplicate_label`, `:duplicate_parameter`, `:invalid_signature_input`,
@@ -736,8 +735,8 @@ defmodule RequestSeal.WebBotAuth do
       iex> error.reason
       :invalid_options
       iex> {:error, error} = RequestSeal.WebBotAuth.sign(message, %{spec | agent: %{location: "http://crawler.example", type: :directory}}, signer)
-      iex> {error.reason, error.detail}
-      {:invalid_signature_agent, :invalid_member}
+      iex> {error.reason, error.layer}
+      {:invalid_options, :input}
       iex> RequestSeal.Custody.Local.release(handle)
       :ok
   """
@@ -833,7 +832,8 @@ defmodule RequestSeal.WebBotAuth do
   defp signing_agent(message, spec) do
     ensure(
       is_map(spec.agent) and map_size(spec.agent) == 2 and Map.has_key?(spec.agent, :location) and
-        Map.has_key?(spec.agent, :type) and spec.agent.type in [:directory, :jwks_uri, :cimd],
+        Map.has_key?(spec.agent, :type) and spec.agent.type in [:directory, :jwks_uri, :cimd] and
+        is_binary(spec.agent.location) and agent_location?(spec.agent.location),
       :invalid_options,
       :input
     )

@@ -47,4 +47,25 @@ defmodule RequestSeal.ReasonAlignmentTest do
                KeyManagement.wrap("A256GCMKW", cek, %{}, material)
     end
   end
+
+  test "a Web Bot Auth signing agent URL the caller supplies is checked as an option", c do
+    {:ok, key} = RequestSeal.Custody.public_key(c.http)
+    {:ok, message} = RequestSeal.Message.request("GET", "https://docs.example.org/", [], nil)
+    signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(c.http, bytes) end
+
+    for location <- ["http://crawler.example", "https://user@crawler.example", "crawler.example"] do
+      spec = %{
+        label: "agent",
+        agent: %{location: location, type: :jwks_uri},
+        key: key,
+        algorithm: "ed25519",
+        created: 1_760_000_000,
+        expires: 1_760_000_060,
+        nonce: nil
+      }
+
+      assert {:error, %RequestSeal.Error{reason: :invalid_options, layer: :input}} =
+               RequestSeal.WebBotAuth.sign(message, spec, signer)
+    end
+  end
 end
