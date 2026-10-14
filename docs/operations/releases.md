@@ -25,8 +25,9 @@ Other named application profiles belong in extension packages.
    version, and the corpus release workflow refuses a tag that differs from it.
    Changing `index.json` changes its digest: update the pin in
    `test/support/conformance_pin.ex` in the same commit. Record the release in
-   `CHANGELOG.md` under `## <version> - Unreleased` and replace `Unreleased` with
-   the actual release date when publishing.
+   `CHANGELOG.md` under a `## <version> - Unreleased` heading (currently
+   `## 0.5.0 - Unreleased`) and replace `Unreleased` with the release date in
+   `YYYY-MM-DD` form when publishing, as in `## 0.4.1 - 2026-10-10`.
    Confirm the public document allowlist, supported profiles, and accepted ADRs.
 2. Use Elixir 1.20.4 / OTP 29.1.1, the exact development pins. Run focused checks
    while editing, then run the declared gate once on the final source:
