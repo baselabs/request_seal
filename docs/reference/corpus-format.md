@@ -26,7 +26,7 @@ Source files themselves retain their original numeric and binary encodings.
 
 Format `request-seal-conformance-corpus-index/1` requires:
 
-- `elixir_release`: the release tag that published this corpus (currently `v0.4.0`; the first was `v0.3.0`).
+- `elixir_release`: `v` followed by the package version in `mix.exs` (currently `v0.4.1`). The declared gate fails when they differ, and the release workflow publishes the corpus only for a tag equal to both. Corpus releases exist for `v0.3.0` through `v0.4.0`.
 - `files`: every regular file below sources and cases, sorted by relative path,
   each with `path` and lowercase hexadecimal `sha256`.
 - `cases`: unique `id`, `manifest`, `surface` and `class` entries. A batch also
@@ -208,7 +208,7 @@ its pinned index digest, and verifies the inventory, creates a deterministic
 asset plus `corpus.sha256` on the tag's GitHub release. The archive root contains exactly `index.json`, `sources/`, and `cases/`;
 both consumers refuse other paths in the corpus root. Existing assets are downloaded
 and compared byte for byte; a differing digest fails publication without replacement.
-Missing assets are uploaded to existing releases. A tag whose package version differs from `elixir_release` fails this workflow and publishes nothing; v0.4.1 changed no corpus files and has no corpus release. The TypeScript package `@request-seal/core` vendors `conformance/` from one
+Missing assets are uploaded to existing releases. A tag whose package version differs from `elixir_release` fails this workflow and publishes nothing. The v0.4.1 tag failed it because `elixir_release` still named v0.4.0, so v0.4.1 has no corpus release; its corpus files are identical to v0.4.0's apart from that field. The TypeScript package `@request-seal/core` vendors `conformance/` from one
 release tag. Its source pin records tag, commit and index SHA-256; updating the
 pin and vendored bytes is a reviewed commit. Corpus data stays outside published
 runtime packages.

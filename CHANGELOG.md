@@ -17,6 +17,7 @@
 - `RequestSeal.Plug.Verify` called again on a verified connection now keeps the first result and its assign, records `:already_verified` as the connection's private `:error`, and applies `on_reject`; it replaced the result with the error and removed the assign. `Verify.init/1` now rejects a Boolean `:assign`.
 - `RequestSeal.JOSE.JWS.sign/4` and `RequestSeal.JOSE.JWE.encrypt/4` now return `:invalid_header` for a header that is not a list of `{name, value}` pairs; it returned `:limit`. More than 64 pairs remains `:limit`.
 - `RequestSeal.WebBotAuth.sign/4` now rejects an invalid caller-supplied `:agent` location, such as a non-HTTPS URL, with `:invalid_options` at `:input`; it returned `:invalid_signature_agent` at `:fields`, which describes a received header. An invalid existing `Signature-Agent` field keeps that reason.
+- `corpus/index.json` now names `v0.4.1`, matching the package version, and the declared gate fails whenever `elixir_release` differs from `v` plus the `mix.exs` version. The v0.4.1 tag's corpus release workflow failed on the stale `v0.4.0` value, so v0.4.1 has no corpus release; its corpus files match v0.4.0's apart from that field. The next release publishes its corpus once the gate passes.
 
 ### Documentation
 

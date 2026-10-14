@@ -188,6 +188,28 @@ def check_toolchain():
     print("PASS: consumer range, development/notebook pins, and all three CI lanes agree; owned optional integrations require Elixir 1.20+; CI actions use immutable commits")
 
 
+def corpus_release_errors(sources):
+    """The corpus release workflow refuses a tag unless these agree; fail before tagging."""
+    import json
+    match = re.search(r'\bversion: "([^"]+)"', sources["mix.exs"])
+    try:
+        release = json.loads(sources["corpus/index.json"]).get("elixir_release")
+    except (ValueError, AttributeError):
+        release = None
+    if not match:
+        return ["mix.exs: package version not found"]
+    if release != "v" + match.group(1):
+        return [f"corpus/index.json: elixir_release must be v{match.group(1)} to match mix.exs"]
+    return []
+
+
+def check_corpus_release():
+    errors = corpus_release_errors({path: (ROOT / path).read_text() for path in ("mix.exs", "corpus/index.json")})
+    if errors:
+        raise ValueError("\n".join(errors))
+    print("PASS: corpus/index.json elixir_release matches the package version")
+
+
 RELEASE_RUNTIME_CHECK = 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])'
 
 
@@ -264,6 +286,7 @@ if __name__ == "__main__":
             raise SystemExit(0)
         check_toolchain()
         if not args.notebooks_only:
+            check_corpus_release()
             run(["mix", "format", "--check-formatted"])
             run(["mix", "compile", "--warnings-as-errors"])
             run(["mix", "test", "--warnings-as-errors"])

@@ -556,3 +556,18 @@ class EvaluatedFenceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CorpusReleasePinTest(unittest.TestCase):
+    def test_actual_corpus_release_matches_the_package_version(self):
+        sources = {path: (ROOT / path).read_text() for path in ("mix.exs", "corpus/index.json")}
+        self.assertEqual([], gate.corpus_release_errors(sources))
+
+    def test_stale_or_missing_corpus_release_is_rejected(self):
+        mix = 'version: "0.5.0",'
+        for index in ['{"elixir_release":"v0.4.1"}', '{"elixir_release":"0.5.0"}', '{}', "not json"]:
+            with self.subTest(index=index):
+                errors = gate.corpus_release_errors({"mix.exs": mix, "corpus/index.json": index})
+                self.assertTrue(any("elixir_release" in error for error in errors))
+        self.assertEqual([], gate.corpus_release_errors({"mix.exs": mix, "corpus/index.json": '{"elixir_release":"v0.5.0"}'}))
+

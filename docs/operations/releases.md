@@ -20,8 +20,11 @@ Other named application profiles belong in extension packages.
 
 1. Set the package version and the docs `source_ref` (`v<version>`) in `mix.exs`, update every install
    string (currently `{:request_seal, "~> 0.4.1"}`; the document check rejects any
-   other), and set `elixir_release` in `corpus/index.json` to `v<version>`; the
-   corpus release workflow refuses a tag that differs from it. Record the release in
+   other), and set `elixir_release` in `corpus/index.json` to `v<version>`. The
+   declared gate fails until `elixir_release` equals `v` plus the `mix.exs`
+   version, and the corpus release workflow refuses a tag that differs from it.
+   Changing `index.json` changes its digest: update the pin in
+   `test/support/conformance_pin.ex` in the same commit. Record the release in
    `CHANGELOG.md` under `## <version> - Unreleased` and replace `Unreleased` with
    the actual release date when publishing.
    Confirm the public document allowlist, supported profiles, and accepted ADRs.
