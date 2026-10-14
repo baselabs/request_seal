@@ -135,6 +135,38 @@ defmodule RequestSeal.ReplayPostgresTest do
     refute_receive {_, :claimed}, 100
   end
 
+  test "a server-side statement timeout while the key is locked is a store timeout", ctx do
+    {:ok, limited} =
+      Postgrex.start_link(
+        Keyword.merge(ctx.options, pool_size: 1, parameters: [statement_timeout: "100"])
+      )
+
+    holder =
+      Task.async(fn ->
+        Postgrex.transaction(ctx.b, fn conn ->
+          Postgrex.query!(conn, "INSERT INTO #{ctx.table} VALUES ($1,$2,$3)", ["a", "nonce", 100])
+          send(ctx.test_pid, :locked)
+
+          receive do
+            :release -> :ok
+          end
+        end)
+      end)
+
+    assert_receive :locked, 1000
+
+    try do
+      assert {:error, %{reason: :store_timeout, retryable: false}} =
+               Replay.claim(Postgres.store(limited, table: ctx.table), claim("a", "nonce", 100),
+                 timeout: 3000
+               )
+    after
+      send(holder.pid, :release)
+      Task.await(holder)
+      GenServer.stop(limited)
+    end
+  end
+
   test "terminated backend mid-call table outage and stopped connection fail closed", ctx do
     {:ok, dedicated} = Postgrex.start_link(Keyword.put(ctx.options, :pool_size, 1))
     [[backend]] = Postgrex.query!(dedicated, "SELECT pg_backend_pid()", []).rows
@@ -166,7 +198,7 @@ defmodule RequestSeal.ReplayPostgresTest do
       assert [[true]] =
                Postgrex.query!(ctx.admin, "SELECT pg_terminate_backend($1)", [backend]).rows
 
-      assert {:error, %{reason: :store_failed, retryable: false}} = Task.await(task)
+      assert {:error, %{reason: :store_unavailable, retryable: false}} = Task.await(task)
     after
       send(holder.pid, :release)
       Task.await(holder)

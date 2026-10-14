@@ -6,6 +6,8 @@
 
 - `RequestSeal.Discovery.Cache.resolve/4` and `refresh/2` on a cache that is not running now return `:source_unavailable` (retryable), like `remove/3` and `invalidate/2`; they returned a nonretryable `:invalid_response`.
 
+- `RequestSeal.Replay.Postgres` now reports a lost connection or a shutting-down server as `:store_unavailable`, and a server-side statement cancellation or lock timeout as `:store_timeout`, matching `RequestSeal.Replay.AshOnetime`; both were `:store_failed`. Other database errors remain `:store_failed`.
+
 ### Documentation
 
 - Every public function now documents its parameters, options with defaults and bounds, return shape, the error reasons it can return, and executed doctest examples. `RequestSeal.Req.attach/2`, `RequestSeal.Req.verification/1`, the `RequestSeal.Finch` functions, `RequestSeal.JOSE.JWS.sign/4`, `RequestSeal.JOSE.KeyManagement.wrap/4` and `unwrap/4`, and `RequestSeal.JOSE.Nested.verify/4` had no documentation before. Replay store callbacks are documented on each adapter.

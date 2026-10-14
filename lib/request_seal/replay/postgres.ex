@@ -114,11 +114,16 @@ if Code.ensure_loaded?(Postgrex) do
 
       * `:claimed` - one row was inserted.
       * `:already_claimed` - the namespace and key were already stored.
-      * `{:error, :timeout}` - the deadline had expired before the query, or the
-        query call exited with a timeout.
-      * `{:error, :unavailable}` - the connection process is not running.
-      * `{:error, :failure}` - an invalid table name or claim, a Postgrex error
-        result, or any other failure.
+      * `{:error, :timeout}` - the deadline had expired before the query, the
+        query call exited with a timeout, the connection timed out, or the server
+        canceled the statement or could not take a lock (`query_canceled`,
+        `lock_not_available`). The claim may have committed.
+      * `{:error, :unavailable}` - the connection process is not running or
+        exited, the connection was lost, or the server is shutting down or
+        refusing connections (`admin_shutdown`, `crash_shutdown`,
+        `cannot_connect_now`, `too_many_connections`).
+      * `{:error, :failure}` - an invalid table name or claim, any other
+        database error, or any other failure.
 
     ## Examples
 
@@ -172,11 +177,16 @@ if Code.ensure_loaded?(Postgrex) do
     ## Returns
 
       * `{:ok, removed}` - the number of rows deleted.
-      * `{:error, :timeout}` - the deadline had expired before the query, or the
-        query call exited with a timeout.
-      * `{:error, :unavailable}` - the connection process is not running.
+      * `{:error, :timeout}` - the deadline had expired before the query, the
+        query call exited with a timeout, the connection timed out, or the server
+        canceled the statement or could not take a lock (`query_canceled`,
+        `lock_not_available`). The claim may have committed.
+      * `{:error, :unavailable}` - the connection process is not running or
+        exited, the connection was lost, or the server is shutting down or
+        refusing connections (`admin_shutdown`, `crash_shutdown`,
+        `cannot_connect_now`, `too_many_connections`).
       * `{:error, :failure}` - `now` is outside the range, the table name is
-        invalid, a Postgrex error result, or any other failure.
+        invalid, any other database error, or any other failure.
 
     ## Examples
 
@@ -219,16 +229,39 @@ if Code.ensure_loaded?(Postgrex) do
       else
         case Postgrex.query(conn, sql, params, timeout: remaining) do
           {:ok, result} -> {:ok, result}
-          {:error, _} -> {:error, :failure}
+          {:error, error} -> query_error(error)
         end
       end
     rescue
+      error in [DBConnection.ConnectionError, Postgrex.Error] -> query_error(error)
       _ -> {:error, :failure}
     catch
       :exit, {:noproc, _} -> {:error, :unavailable}
       :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, _ -> {:error, :unavailable}
       _, _ -> {:error, :failure}
     end
+
+    # The same classification as RequestSeal.Replay.AshOnetime: connection loss
+    # and server shutdown are unavailability; cancellation and lock waits are
+    # timeouts (indeterminate); other database errors remain failures.
+    defp query_error(%DBConnection.ConnectionError{reason: :timeout}), do: {:error, :timeout}
+    defp query_error(%DBConnection.ConnectionError{}), do: {:error, :unavailable}
+
+    defp query_error(%Postgrex.Error{postgres: %{code: code}})
+         when code in [:query_canceled, :lock_not_available],
+         do: {:error, :timeout}
+
+    defp query_error(%Postgrex.Error{postgres: %{code: code}})
+         when code in [
+                :admin_shutdown,
+                :crash_shutdown,
+                :cannot_connect_now,
+                :too_many_connections
+              ],
+         do: {:error, :unavailable}
+
+    defp query_error(_), do: {:error, :failure}
 
     defp table?(name),
       do:
