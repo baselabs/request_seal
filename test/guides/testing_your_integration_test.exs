@@ -133,6 +133,7 @@ defmodule RequestSeal.GuideTestingYourIntegrationTest do
         5
       )
 
+    assert :ok = RequestSeal.Message.validate(Keyword.fetch!(binding, :first))
     E.assert_fences("docs/guides/testing-your-integration.md", 5)
   end
 end
