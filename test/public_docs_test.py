@@ -554,10 +554,6 @@ class EvaluatedFenceTest(unittest.TestCase):
                 self.assertTrue(self.check_pair(document, source, ''))
                 self.assertEqual([], self.check_pair(document, source, self.paired('x = 1\n', document)))
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CorpusReleasePinTest(unittest.TestCase):
     def test_actual_corpus_release_matches_the_package_version(self):
         sources = {path: (ROOT / path).read_text() for path in ("mix.exs", "corpus/index.json")}
@@ -571,3 +567,6 @@ class CorpusReleasePinTest(unittest.TestCase):
                 self.assertTrue(any("elixir_release" in error for error in errors))
         self.assertEqual([], gate.corpus_release_errors({"mix.exs": mix, "corpus/index.json": '{"elixir_release":"v0.5.0"}'}))
 
+
+if __name__ == "__main__":
+    unittest.main()
