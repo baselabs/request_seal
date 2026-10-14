@@ -287,8 +287,10 @@ defmodule RequestSeal.Signing do
     timeout = sign_options!(opts)
     ensure(is_function(signer, 2) or match?(%KeyHandle{}, signer), :invalid_options)
 
-    if match?(%KeyHandle{}, signer),
-      do: ensure(signer.algorithm == spec.algorithm, :invalid_options)
+    # Same closed reason as the explicit form; adapters keep :invalid_options
+    # with the core error as their bounded source.
+    if match?(%KeyHandle{}, signer) and signer.algorithm != spec.algorithm,
+      do: fail(:invalid_options, RequestSeal.Error.new(:signer_algorithm_mismatch, :input))
 
     ensure(not body_required?(input, spec) or message.body.state == :retained, :body_unavailable)
     message = digest(message, spec.digest)

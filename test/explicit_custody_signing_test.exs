@@ -166,6 +166,32 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
              RequestSeal.sign(c.message, c.spec, other)
   end
 
+  test "generated signing specs report a handle algorithm mismatch the same way", c do
+    assert {:ok, other} = Local.new("hmac-sha256", {:hmac, :crypto.strong_rand_bytes(32)})
+
+    spec = %{
+      label: "generated",
+      algorithm: "ed25519",
+      components: ~s[("@method" "@authority")],
+      expires_in: 60
+    }
+
+    assert {:error,
+            %{
+              reason: :signer_algorithm_mismatch,
+              layer: :input,
+              message: "signer algorithm does not match signature specification"
+            }} = RequestSeal.sign(c.message, spec, other)
+
+    request = Finch.build(:get, "https://example.com/reports")
+
+    assert {:error,
+            %RequestSeal.Adapter.Error{
+              reason: :invalid_options,
+              source: %{reason: :signer_algorithm_mismatch}
+            }} = RequestSeal.Finch.sign(request, spec, other)
+  end
+
   test "invalid explicit deadlines reject before invoking custody", c do
     for timeout <- [0, -1, 300_001, 1.0, :infinity, nil] do
       assert {:error, %Error{reason: :invalid_options}} =

@@ -170,8 +170,9 @@ if Code.ensure_loaded?(Finch) do
 
       * `{:ok, %Finch.Request{}}` - the signed request.
       * `{:error, %RequestSeal.Adapter.Error{stage: :sign}}` - reasons:
-        `:invalid_options` (option, spec, signer, handle algorithm, or clock
-        value), `:invalid_request` (request translation as in
+        `:invalid_options` (option, spec, signer, or clock value; for a handle
+        bound to another algorithm, `source` is a `:signer_algorithm_mismatch`
+        core error), `:invalid_request` (request translation as in
         `request_message/2`, or a covered `content-length` that disagrees with
         the bytes), `:unsupported_component` (`host`, `tr`, or `req`
         components, or a component the message cannot supply),

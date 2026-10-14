@@ -224,8 +224,9 @@ The existing arity-two function signer stays synchronous; a valid timeout option
 does not interrupt it. A handle's algorithm must equal `spec.algorithm`.
 Mismatch returns `RequestSeal.Error` with reason `:signer_algorithm_mismatch`,
 layer `:input`, and the exact message string
-`"signer algorithm does not match signature specification"`. Generated signing
-specs return `:invalid_options` at `:input` for the same mismatch.
+`"signer algorithm does not match signature specification"`, for both the
+explicit and the generated signing spec. Req, Finch, and Plug report it as an
+adapter `:invalid_options` error whose `source` is that core error.
 Custody failures return `RequestSeal.Error` with reason `:signing_failed`, layer
 `:crypto`, and a bounded `RequestSeal.Custody.Error` in `source`. This preserves
 `:key_not_found` and `:deadline_exceeded` for explicit and generated signing specs.

@@ -28,8 +28,8 @@ defmodule RequestSeal.Error do
     or missing options/specification), `:algorithm_mismatch` (signing `alg` differs
     from the explicit algorithm or accompanies JWS), `:limit` (wire/member/component
     bounds, including a decoded `Signature` member or nonce exceeding 1,024 bytes).
-    `:signer_algorithm_mismatch` means the explicit form's KeyHandle algorithm
-    differs from the specification's algorithm, before custody is invoked.
+    `:signer_algorithm_mismatch` means a KeyHandle's algorithm differs from the
+    specification's algorithm, in either signing form, before custody is invoked.
   * `:input` additionally includes `:invalid_quorum` (malformed composite policy)
     and `:invalid_profile` (invalid extension profile namespace, keys, values or size,
     or a generic verification `:profile` or `:principal` option).

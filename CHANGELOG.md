@@ -7,6 +7,7 @@
 - `RequestSeal.Discovery.Cache.resolve/4` and `refresh/2` on a cache that is not running now return `:source_unavailable` (retryable), like `remove/3` and `invalidate/2`; they returned a nonretryable `:invalid_response`.
 
 - `RequestSeal.Replay.Postgres` now reports a lost connection or a shutting-down server as `:store_unavailable`, and a server-side statement cancellation or lock timeout as `:store_timeout`, matching `RequestSeal.Replay.AshOnetime`; both were `:store_failed`. Other database errors remain `:store_failed`.
+- `RequestSeal.sign/4` with a generated signing spec now returns `:signer_algorithm_mismatch` (layer `:input`) for a key handle bound to another algorithm, like the explicit form; it returned `:invalid_options`. Req, Finch, and Plug keep `:invalid_options` and carry the core error in `source`.
 
 ### Documentation
 
