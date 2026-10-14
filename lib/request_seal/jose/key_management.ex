@@ -13,13 +13,14 @@ defmodule RequestSeal.JOSE.KeyManagement do
   published unwrap stages belonging to other content algorithms without enabling
   those algorithms.
 
-  `unwrap/4` reports every failure to recover a CEK, including a descriptor or
-  KEK that does not fit the algorithm, as `:decryption_failed`, so a custodian
-  that relays its errors cannot distinguish key configuration from forged input.
-  `RequestSeal.JOSE.JWE.decrypt/2` additionally replaces any unwrap failure with
-  a random CEK and returns the same `:decryption_failed` as an authentication
-  failure. `wrap/4` runs on the sender's own configuration and reports a
-  descriptor or KEK that does not fit the algorithm as `:algorithm_mismatch`.
+  `wrap/4` reports a descriptor or KEK that does not fit the algorithm as
+  `:algorithm_mismatch`. `unwrap/4` reports a KEK of the wrong size as
+  `:algorithm_mismatch` (rule `jose/key.algorithm_mismatch` in the
+  cross-language conformance corpus) and every other failure to recover a CEK,
+  including a descriptor of the wrong kind, as `:decryption_failed`. These
+  primitive reasons never reach a decrypting peer: `RequestSeal.JOSE.JWE.decrypt/2`
+  replaces any unwrap failure with a random CEK and returns the same
+  `:decryption_failed` as an authentication failure.
   """
   import RequestSeal.JOSE.Support
   alias RequestSeal.{Crypto, PublicKey}
@@ -111,10 +112,10 @@ defmodule RequestSeal.JOSE.KeyManagement do
       against a content cipher; `RequestSeal.JOSE.JWE.decrypt/2` does.
     * `{:error, %RequestSeal.JOSE.Error{}}` - reasons this function can return:
       `:algorithm_not_permitted`, `:invalid_header` (non-map header),
-      `:invalid_serialization` (non-binary input), `:limit`, `:invalid_base64`,
-      `:invalid_iv`, `:invalid_tag`, and `:decryption_failed` (descriptor or
-      KEK size does not fit `alg`, invalid private key, wrong encrypted-key
-      width, or authentication failure). Meanings:
+      `:invalid_serialization` (non-binary input), `:limit`, `:algorithm_mismatch`
+      (KEK of the wrong size), `:invalid_base64`, `:invalid_iv`, `:invalid_tag`,
+      and `:decryption_failed` (descriptor does not fit `alg`, invalid private
+      key, wrong encrypted-key width, or authentication failure). Meanings:
       `RequestSeal.JOSE.Error`.
 
   ## Examples
@@ -181,9 +182,7 @@ defmodule RequestSeal.JOSE.KeyManagement do
   end
 
   defp unwrap_bytes(alg, bytes, h, {:aes, kek}) when alg in ["A128GCMKW", "A256GCMKW"] do
-    # Unwrap reports every failure to recover a CEK uniformly, including a KEK
-    # of the wrong size; wrap/4 reports that configuration error as a mismatch.
-    ensure(kek?(alg, kek), :decryption_failed, :crypto)
+    kek!(alg, kek)
     iv = decode(h["iv"])
     ensure(byte_size(iv) == 12, :invalid_iv)
     tag = decode(h["tag"])
@@ -204,9 +203,6 @@ defmodule RequestSeal.JOSE.KeyManagement do
   end
 
   defp unwrap_bytes(_, _, _, _), do: fail(:decryption_failed, :crypto)
-
-  defp kek?(alg, kek),
-    do: is_binary(kek) and byte_size(kek) == if(alg == "A128GCMKW", do: 16, else: 32)
 
   defp kek!(alg, kek),
     do:

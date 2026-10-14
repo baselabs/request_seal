@@ -31,20 +31,52 @@ defmodule RequestSeal.ReasonAlignmentTest do
     assert {:error, %RequestSeal.JOSE.Error{reason: :limit}} = JWS.sign(too_many, "r", c.jws)
   end
 
-  test "unwrap reports every failure to recover a CEK as decryption failure; wrap reports mismatches" do
-    alias RequestSeal.JOSE.KeyManagement
+  test "unwrap keeps the corpus-pinned KEK size reason and decryption stays uniform" do
+    alias RequestSeal.JOSE.{JWE, KeyManagement}
     cek = :crypto.strong_rand_bytes(32)
     kek = {:aes, :crypto.strong_rand_bytes(32)}
 
     {:ok, %{encrypted_key: wrapped, header: header}} =
       KeyManagement.wrap("A256GCMKW", cek, %{}, kek)
 
-    for material <- [{:aes, :crypto.strong_rand_bytes(16)}, {:cek, cek}, {:rsa, :none}, :none] do
-      assert {:error, %RequestSeal.JOSE.Error{reason: :decryption_failed}} =
-               KeyManagement.unwrap("A256GCMKW", wrapped, header, material)
+    short = {:aes, :crypto.strong_rand_bytes(16)}
 
-      assert {:error, %RequestSeal.JOSE.Error{reason: :algorithm_mismatch}} =
+    assert {:error, %{reason: :algorithm_mismatch}} =
+             KeyManagement.unwrap("A256GCMKW", wrapped, header, short)
+
+    for material <- [{:cek, cek}, {:rsa, :none}, :none] do
+      assert {:error, %{reason: :decryption_failed}} =
+               KeyManagement.unwrap("A256GCMKW", wrapped, header, material)
+    end
+
+    for material <- [short, {:cek, cek}, {:rsa, :none}, :none] do
+      assert {:error, %{reason: :algorithm_mismatch}} =
                KeyManagement.wrap("A256GCMKW", cek, %{}, material)
+    end
+
+    wrap = fn alg, key -> KeyManagement.wrap(alg, key, %{}, kek) end
+    {:ok, token} = JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}], "reading", wrap)
+
+    policy = fn material ->
+      %{
+        algorithms: ["A256GCMKW"],
+        encryption: ["A256GCM"],
+        max_plaintext: 1_024,
+        timeout: 5_000,
+        key_resolver: fn _ ->
+          {:ok,
+           %{
+             algorithm: "A256GCMKW",
+             unwrap: fn bytes, h -> KeyManagement.unwrap("A256GCMKW", bytes, h, material) end
+           }}
+        end
+      }
+    end
+
+    # Every unwrap failure reaches a decrypting peer as the same error.
+    for material <- [short, {:cek, cek}, {:aes, :crypto.strong_rand_bytes(32)}] do
+      assert {:error, %{reason: :decryption_failed, layer: :crypto}} =
+               JWE.decrypt(token, policy.(material))
     end
   end
 

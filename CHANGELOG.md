@@ -16,7 +16,6 @@
 - `RequestSeal.Req.attach/2` now rejects a `verify` map whose `max_stream_bytes` is not a nonnegative integer, including nil, with `:invalid_options`; nil returned `:unsupported_delivery`.
 - `RequestSeal.Plug.Verify` called again on a verified connection now keeps the first result and its assign, records `:already_verified` as the connection's private `:error`, and applies `on_reject`; it replaced the result with the error and removed the assign. `Verify.init/1` now rejects a Boolean `:assign`.
 - `RequestSeal.JOSE.JWS.sign/4` and `RequestSeal.JOSE.JWE.encrypt/4` now return `:invalid_header` for a header that is not a list of `{name, value}` pairs; it returned `:limit`. More than 64 pairs remains `:limit`.
-- `RequestSeal.JOSE.KeyManagement.unwrap/4` now returns `:decryption_failed` for a KEK of the wrong size, like every other failure to recover a CEK; it returned `:algorithm_mismatch`. `wrap/4` keeps `:algorithm_mismatch` for mismatched sender configuration.
 - `RequestSeal.WebBotAuth.sign/4` now rejects an invalid caller-supplied `:agent` location, such as a non-HTTPS URL, with `:invalid_options` at `:input`; it returned `:invalid_signature_agent` at `:fields`, which describes a received header. An invalid existing `Signature-Agent` field keeps that reason.
 
 ### Documentation
