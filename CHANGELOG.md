@@ -8,6 +8,7 @@
 
 - `RequestSeal.Replay.Postgres` now reports a lost connection or a shutting-down server as `:store_unavailable`, and a server-side statement cancellation or lock timeout as `:store_timeout`, matching `RequestSeal.Replay.AshOnetime`; both were `:store_failed`. Other database errors remain `:store_failed`.
 - `RequestSeal.sign/4` with a generated signing spec now returns `:signer_algorithm_mismatch` (layer `:input`) for a key handle bound to another algorithm, like the explicit form; it returned `:invalid_options`. Req, Finch, and Plug keep `:invalid_options` and carry the core error in `source`.
+- `RequestSeal.Profile.dictionaries/2` now rejects an invalid message (`:invalid_message`) and a `max` outside 1..64 (`:invalid_options`) before parsing; both returned `:invalid_signature_input`. `RequestSeal.Profile.preflight/4` now rejects an `extra` other than `:allow` or `:reject` and invalid freshness values, such as a negative skew, with `:invalid_policy`; it used them as given.
 
 ### Documentation
 

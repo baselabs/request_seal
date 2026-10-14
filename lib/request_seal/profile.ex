@@ -84,9 +84,9 @@ defmodule RequestSeal.Profile do
   Parse paired signature dictionaries in encounter order under a member limit.
 
   Parses `Signature-Input` and `Signature` header fields with the same rules as
-  `RequestSeal.verify/3` and checks that their labels pair exactly. It does
-  not validate the message or the selected Inner List; pass the returned
-  values to `preflight/4` and `verify_label/6`.
+  `RequestSeal.verify/3` and checks that their labels pair exactly. It
+  validates the message and `max` first but not the selected Inner List; pass
+  the returned values to `preflight/4` and `verify_label/6`.
 
   ## Parameters
 
@@ -104,9 +104,10 @@ defmodule RequestSeal.Profile do
       `:invalid_signature_input`, `:invalid_signature_field`,
       `:duplicate_label`, `:duplicate_parameter`, `:label_mismatch` (layer
       `:fields`); `:limit` (layer `:input`); `:invalid_policy` (layer
-      `:input`) for an unexpected fault. Input that cannot be parsed,
-      including a non-message or an invalid `max`, returns
-      `:invalid_signature_input`. Meanings: `RequestSeal.Error`.
+      `:input`) for an unexpected fault; `:invalid_options` (layer `:input`)
+      when `max` is not an integer from 1 to 64; `:invalid_message` (layer
+      `:input`) when `message` is not a valid `RequestSeal.Message`. Both are
+      checked before parsing. Meanings: `RequestSeal.Error`.
 
   ## Examples
 
@@ -127,7 +128,13 @@ defmodule RequestSeal.Profile do
   @spec dictionaries(Message.t(), pos_integer()) ::
           {:ok, {[{binary(), Value.t()}], %{binary() => Value.t()}}} | {:error, Error.t()}
   def dictionaries(message, max) do
-    protect(fn -> Authentication.dictionaries(message, max) end)
+    protect(fn ->
+      cond do
+        not (is_integer(max) and max in 1..64) -> error(:invalid_options, :input)
+        Message.validate(message) != :ok -> error(:invalid_message, :input)
+        true -> Authentication.dictionaries(message, max)
+      end
+    end)
   end
 
   @doc """
@@ -147,7 +154,7 @@ defmodule RequestSeal.Profile do
       `:extra_components`.
     * `freshness_policy` - `:not_evaluated` or a freshness map with `:clock`,
       `:max_age`, `:skew`, and `:require_expires`, as in `RequestSeal.Policy`.
-      The map is not validated here.
+      It is validated like `RequestSeal.Policy.new/1`'s freshness.
 
   ## Returns
 
@@ -159,7 +166,9 @@ defmodule RequestSeal.Profile do
       `:created_in_future`, `:expired`, `:too_old` (layer `:freshness`);
       `:invalid_signature_input` (layer `:fields`) or `:limit` (layer
       `:input`) for unparsable `components`; `:invalid_policy` (layer
-      `:input`) for a malformed argument that faults.
+      `:input`) when `extra` is not `:allow` or `:reject`, when the freshness
+      policy is invalid (for example a negative `skew`), or for a malformed
+      argument that faults.
       Meanings: `RequestSeal.Error`.
 
   ## Examples
@@ -183,7 +192,11 @@ defmodule RequestSeal.Profile do
   @spec preflight(Value.t(), binary(), :allow | :reject, :not_evaluated | map()) ::
           {:ok, :not_evaluated | map()} | {:error, Error.t()}
   def preflight(input, components, extra, freshness_policy) do
-    protect(fn -> Authentication.preflight(input, components, extra, freshness_policy) end)
+    protect(fn ->
+      if extra in [:allow, :reject] and Policy.freshness_valid?(freshness_policy),
+        do: Authentication.preflight(input, components, extra, freshness_policy),
+        else: error(:invalid_policy, :input)
+    end)
   end
 
   @doc """

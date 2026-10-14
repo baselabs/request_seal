@@ -194,6 +194,10 @@ defmodule RequestSeal.Policy do
   defp proper_list?([_ | tail]), do: proper_list?(tail)
   defp proper_list?(_), do: false
 
+  @doc false
+  # Shared with RequestSeal.Profile.preflight/4 so both validate freshness alike.
+  def freshness_valid?(freshness), do: freshness?(freshness)
+
   defp freshness?(:not_evaluated), do: true
 
   defp freshness?(%{clock: clock, max_age: age, skew: skew, require_expires: req} = f),

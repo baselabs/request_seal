@@ -28,6 +28,49 @@ defmodule RequestSeal.ProfileTest do
     end
   end
 
+  test "dictionaries validates its message and signature limit before parsing", c do
+    for max <- [0, 65, -1, 1.5, nil, :all] do
+      assert {:error, %Error{reason: :invalid_options, layer: :input}} =
+               Profile.dictionaries(c.message, max)
+    end
+
+    assert {:error, %Error{reason: :invalid_message, layer: :input}} =
+             Profile.dictionaries(:not_a_message, 16)
+
+    assert {:error, %Error{reason: :invalid_message, layer: :input}} =
+             Profile.dictionaries(%{c.message | method: "bad method"}, 16)
+
+    assert {:ok, {[{"sig-b26", _}], _}} = Profile.dictionaries(c.message, 64)
+  end
+
+  test "preflight validates extra coverage and freshness before checking", c do
+    components = ~s[("date")]
+    clock = fn -> 1_618_884_473 end
+    valid = %{clock: clock, max_age: 300, skew: 5, require_expires: false}
+
+    for extra <- [:deny, nil, "reject", true] do
+      assert {:error, %Error{reason: :invalid_policy, layer: :input}} =
+               Profile.preflight(c.input, components, extra, :not_evaluated)
+    end
+
+    for freshness <- [
+          %{valid | skew: -100},
+          %{valid | skew: 86_401},
+          %{valid | max_age: 0},
+          %{valid | require_expires: :yes},
+          %{valid | clock: :now},
+          Map.delete(valid, :skew),
+          Map.put(valid, :extra, true),
+          :unknown
+        ] do
+      assert {:error, %Error{reason: :invalid_policy, layer: :input}} =
+               Profile.preflight(c.input, components, :allow, freshness)
+    end
+
+    assert {:ok, %{created: 1_618_884_473}} =
+             Profile.preflight(c.input, components, :allow, valid)
+  end
+
   test "selected verification enforces the policy signature limit", c do
     message = S.signed()
     policy = S.policy(max_signatures: 1)
