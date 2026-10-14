@@ -107,7 +107,7 @@ end
 {:ok, _} = RequestSeal.verify(after_switch, overlap_policy, label: "sig")
 ```
 
-Keep the overlap at least as long as your verifiers accept a signature: the policy's `max_age` or the signer's `expires_in`, plus clock skew.
+Keep trusting the old key until no signature it made can still be accepted. A signature created at second `C` with the signer's `expires_in` passes the expiry check while the verifier's clock is below `C + expires_in + skew`, and, when the policy sets `max_age`, passes the age check while the clock is at most `C + max_age + skew`. Both checks apply, so the tighter one governs: keep the overlap for at least `min(expires_in, max_age) + skew` seconds after the last request signed with the old key (`expires_in + skew` when the policy has no `max_age`). In this example that is `min(60, 60) + 5`, or 65 seconds.
 
 ## 4. Retire the old key
 
