@@ -2,23 +2,14 @@ defmodule RequestSeal.AcceptSignature do
   @moduledoc """
   RFC 9421 Section 5 signature requests and nonce challenges.
 
-  `parse/2` accepts one field value or ordered field occurrences, with explicit
-  `target: :request | :response`. It returns ordered requests, each a map with
-  `:label`, `:components` (a metadata-free Structured Fields Inner List), and
-  `:parameters` (a map). Created/expires requests must be bare true; nonce,
-  keyid, tag, and alg must be strings. Algorithms are exact HTTP registry tokens,
-  never JWS selections. Unknown parameters reject. Components include their
-  exact parameters; request targets cannot cover @status or related requests.
-  Response targets require `req` for request-derived components.
-
-  `serialize/1` writes a deterministic dictionary. `fulfill/5` validates the
-  target and asks an arity-one chooser for `{:ok, %{algorithm: algorithm,
-  created: integer_or_nil, expires: integer_or_nil}}` or `:error`. Requested alg
-  must agree; keyid, nonce, and tag are copied verbatim. Requested times come
-  from the chooser. Signatures are appended in request order via
-  `RequestSeal.sign/4` and its caller signer; options are its `:field_schemas`.
-  The chooser and signer own custody. Unavailable components or choices reject
-  with `:negotiation_unfulfillable`, without a partial message.
+  A requester serializes ordered requests with `serialize/1` into an
+  `Accept-Signature` field. The other party parses them with `parse/2` for its
+  own message kind and signs them with `fulfill/5`, whose chooser and signer
+  own key selection and custody. Created/expires requests are bare true;
+  nonce, keyid, tag, and alg are strings. Algorithms are exact HTTP registry
+  tokens, never JWS selections. Unknown parameters reject. Components include
+  their exact parameters; request targets cannot cover `@status` or related
+  requests. Response targets require `req` for request-derived components.
 
   Passing requests as `accept_signature:` to `RequestSeal.verify_quorum/3`
   requires each exact label in the verified, selector-eligible pool after key-unit
@@ -40,7 +31,46 @@ defmodule RequestSeal.AcceptSignature do
           parameters: %{optional(binary()) => true | binary()}
         }
 
-  @doc "Parse ordered signature requests for an explicit target message kind."
+  @doc """
+  Parse ordered signature requests for an explicit target message kind.
+
+  ## Parameters
+
+    * `wire` - one `Accept-Signature` field value, or a list of at most 1,024
+      ordered field occurrences (joined with `", "`). At most 65,536 bytes in
+      total, at most 16 dictionary members.
+    * `opts` - exactly `[target: :request]` or `[target: :response]`: the kind
+      of message that will carry the requested signatures.
+
+  ## Returns
+
+    * `{:ok, [request]}` - `t:request/0` maps in wire order, each with
+      `:label`, `:components` (a metadata-free Structured Fields Inner List),
+      and `:parameters` (a map of `"created"`/`"expires"` to `true` and
+      `"nonce"`, `"keyid"`, `"tag"`, `"alg"` to strings). An empty field
+      value or list returns `{:ok, []}`.
+    * `{:error, %RequestSeal.Error{}}` - reasons this function can return:
+      `:invalid_options` and `:limit` (layer `:input`); `:duplicate_label` and
+      `:duplicate_parameter` (layer `:fields`); `:invalid_accept_signature`
+      and `:inapplicable_component` (layer `:negotiation`).
+      Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {:ok, [request]} =
+      ...>   RequestSeal.AcceptSignature.parse(
+      ...>     ~s[reply=("@method" "@path" "content-digest");created;nonce="chat-7f3a";keyid="relay"],
+      ...>     target: :request
+      ...>   )
+      iex> {request.label, request.parameters}
+      {"reply", %{"created" => true, "keyid" => "relay", "nonce" => "chat-7f3a"}}
+      iex> {:error, error} = RequestSeal.AcceptSignature.parse(~s[reply=("@status")], target: :request)
+      iex> {error.reason, error.layer}
+      {:inapplicable_component, :negotiation}
+      iex> {:error, error} = RequestSeal.AcceptSignature.parse(~s[reply=("@method");alg="RS256"], target: :request)
+      iex> error.reason
+      :invalid_accept_signature
+  """
   @spec parse(binary() | [binary()], keyword()) :: {:ok, [request()]} | {:error, Error.t()}
   def parse(wire, opts) do
     protect(fn ->
@@ -87,7 +117,38 @@ defmodule RequestSeal.AcceptSignature do
     end)
   end
 
-  @doc "Serialize ordered requests with deterministic signature metadata ordering."
+  @doc """
+  Serialize ordered requests with deterministic signature metadata ordering.
+
+  Requests keep their order; parameters are written in the order keyid, alg,
+  created, expires, nonce, tag. No target applicability check is made.
+
+  ## Parameters
+
+    * `requests` - list of at most 16 `t:request/0` maps with unique labels,
+      shaped as `parse/2` returns them.
+
+  ## Returns
+
+    * `{:ok, binary}` - the `Accept-Signature` field value.
+    * `{:error, %RequestSeal.Error{}}` - reasons this function can return:
+      `:invalid_accept_signature` (layer `:negotiation`), `:duplicate_label`
+      (layer `:fields`), `:limit` (layer `:input`).
+      Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {:ok, requests} =
+      ...>   RequestSeal.AcceptSignature.parse(
+      ...>     ~s[reply=("@method" "@path");nonce="chat-7f3a";created;keyid="relay"],
+      ...>     target: :request
+      ...>   )
+      iex> RequestSeal.AcceptSignature.serialize(requests)
+      {:ok, ~s[reply=("@method" "@path");keyid="relay";created;nonce="chat-7f3a"]}
+      iex> {:error, error} = RequestSeal.AcceptSignature.serialize(requests ++ requests)
+      iex> {error.reason, error.layer}
+      {:duplicate_label, :fields}
+  """
   @spec serialize([request()]) :: {:ok, binary()} | {:error, Error.t()}
   def serialize(requests) do
     protect(fn ->
@@ -110,7 +171,61 @@ defmodule RequestSeal.AcceptSignature do
     end)
   end
 
-  @doc "Fulfill requests in order through caller-owned key selection and signing."
+  @doc """
+  Fulfill requests in order through caller-owned key selection and signing.
+
+  For each request the chooser returns the algorithm and times to use.
+  A requested `alg` must equal the chosen algorithm; keyid, nonce, tag, and
+  alg are copied verbatim. Requested `created` and `expires` take the
+  chooser's values, which must then be integers; times that were not
+  requested are not written. Signatures are appended in request order through
+  the explicit form of `RequestSeal.sign/4`. Any failure returns an error and
+  no partially signed message.
+
+  ## Parameters
+
+    * `message` - the valid `RequestSeal.Message` to sign; its kind is the
+      target every request must apply to.
+    * `requests` - list of at most 16 `t:request/0` maps with unique labels.
+    * `chooser` - arity-one function receiving each request and returning
+      `{:ok, %{algorithm: algorithm, created: integer_or_nil, expires: integer_or_nil}}`
+      (an HTTP registry algorithm; times from -999,999,999,999,999 through
+      999,999,999,999,999) or `:error`.
+    * `signer` - arity-two function `(algorithm, base)` returning
+      `{:ok, signature_bytes}` or `{:error, term}`.
+    * `opts` - `[]` or `[field_schemas: schemas]`, passed to `RequestSeal.sign/4`.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Message{}}` - the message with one `Signature-Input`
+      and one `Signature` occurrence appended per request.
+    * `{:error, %RequestSeal.Error{}}` - reasons this function can return:
+      `:invalid_options` and `:invalid_message` (layer `:input`);
+      `:duplicate_label` (layer `:fields`); `:invalid_accept_signature`,
+      `:inapplicable_component`, and `:negotiation_unfulfillable` (layer
+      `:negotiation`; unavailable component, incompatible chooser,
+      unfulfillable parameter, callback fault, or signing failure).
+      Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> {:ok, message} =
+      ...>   RequestSeal.Message.request("POST", "https://chat.example/rooms/7/messages", [], "hello")
+      iex> {:ok, requests} =
+      ...>   RequestSeal.AcceptSignature.parse(~s[reply=("@method" "@path");created;nonce="chat-7f3a"], target: :request)
+      iex> chooser = fn _request -> {:ok, %{algorithm: "ed25519", created: 1_700_000_000, expires: nil}} end
+      iex> signer = fn "ed25519", base -> RequestSeal.Custody.sign(handle, base) end
+      iex> {:ok, signed} = RequestSeal.AcceptSignature.fulfill(message, requests, chooser, signer, [])
+      iex> signed.fields |> hd() |> Map.fetch!(:value)
+      ~s[reply=("@method" "@path");created=1700000000;nonce="chat-7f3a"]
+      iex> {:error, error} = RequestSeal.AcceptSignature.fulfill(message, requests, fn _ -> :error end, signer, [])
+      iex> {error.reason, error.layer}
+      {:negotiation_unfulfillable, :negotiation}
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+  """
   @spec fulfill(
           Message.t(),
           [request()],

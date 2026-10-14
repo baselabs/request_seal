@@ -8,14 +8,7 @@ defmodule RequestSeal.Profile do
   parse paired signature fields, `preflight/4` to check coverage and freshness
   before discovery, and `verify_label/6` to verify its selected dictionary
   member under an explicit `RequestSeal.Policy`. The input and signature values
-  come from the same label returned by `dictionaries/2`. Verification re-parses
-  the message under the policy's `max_signatures` and checks that both supplied
-  values equal that label's entries before resolving a key.
-
-  `verify_label/6` does not accept `:representation` or `:digest_state` options.
-  Content checks can use retained message body bytes only; representation
-  policies and stream digest states require generic `RequestSeal.verify/3`
-  with its validated options.
+  come from the same label returned by `dictionaries/2`.
 
   Profile maps contain at most eight atom keys and require
   `name: {package, kind}`, where both values are atoms and `package` is not
@@ -55,8 +48,20 @@ defmodule RequestSeal.Profile do
   Parse or validate the Structured Fields representation first under an RFC 8941
   schema. This predicate checks signature semantics, not the complete Structured
   Fields grammar, parameter uniqueness, freshness, key trust, or cryptography.
-  It does not parse wire binaries. Non-inner lists and malformed structures that
-  cannot be inspected return false.
+  It does not parse wire binaries.
+
+  ## Parameters
+
+    * `input` - any term; only a parsed `RequestSeal.StructuredFields.Value`
+      Inner List can pass.
+
+  ## Returns
+
+    * `true` - the Inner List satisfies the rules above.
+    * `false` - otherwise, including binaries, non-inner lists, and malformed
+      structures that cannot be inspected. This function never raises.
+
+  ## Examples
 
       iex> alias RequestSeal.StructuredFields.{Schema, Value}
       iex> {:ok, schema} = Schema.new(%{revision: :rfc8941, type: :list, item_types: [:string], inner_lists: true})
@@ -75,21 +80,178 @@ defmodule RequestSeal.Profile do
     _, _ -> false
   end
 
-  @doc "Parse paired signature dictionaries in encounter order under a member limit."
+  @doc """
+  Parse paired signature dictionaries in encounter order under a member limit.
+
+  Parses `Signature-Input` and `Signature` header fields with the same rules as
+  `RequestSeal.verify/3` and checks that their labels pair exactly. It does
+  not validate the message or the selected Inner List; pass the returned
+  values to `preflight/4` and `verify_label/6`.
+
+  ## Parameters
+
+    * `message` - a `RequestSeal.Message`.
+    * `max` - dictionary encounter ceiling for each field, normally the
+      policy's `:max_signatures` (1 to 64).
+
+  ## Returns
+
+    * `{:ok, {entries, signatures}}` - `entries` is a list of
+      `{label, input}` Signature-Input members in encounter order; `signatures`
+      maps each label to its `Signature` byte-sequence value.
+    * `{:error, %RequestSeal.Error{}}` - reasons this function can return:
+      `:missing_signature_input`, `:missing_signature`,
+      `:invalid_signature_input`, `:invalid_signature_field`,
+      `:duplicate_label`, `:duplicate_parameter`, `:label_mismatch` (layer
+      `:fields`); `:limit` (layer `:input`); `:invalid_policy` (layer
+      `:input`) for an unexpected fault. Input that cannot be parsed,
+      including a non-message or an invalid `max`, returns
+      `:invalid_signature_input`. Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> {:ok, message} = RequestSeal.Message.request("GET", "https://crawl.example.org/sitemap.xml", [], nil)
+      iex> spec = %{label: "crawl", algorithm: "ed25519", components: ~s[("@method" "@authority" "@path")], expires_in: 60, keyid: "crawler-key", tag: "example-crawl"}
+      iex> {:ok, signed} = RequestSeal.sign(message, spec, handle, clock: fn -> 1_700_000_000 end)
+      iex> {:ok, {[{"crawl", input}], signatures}} = RequestSeal.Profile.dictionaries(signed, 16)
+      iex> {RequestSeal.Profile.valid_signature_input?(input), Map.keys(signatures)}
+      {true, ["crawl"]}
+      iex> {:error, error} = RequestSeal.Profile.dictionaries(message, 16)
+      iex> {error.reason, error.layer}
+      {:missing_signature_input, :fields}
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+  """
   @spec dictionaries(Message.t(), pos_integer()) ::
           {:ok, {[{binary(), Value.t()}], %{binary() => Value.t()}}} | {:error, Error.t()}
   def dictionaries(message, max) do
     protect(fn -> Authentication.dictionaries(message, max) end)
   end
 
-  @doc "Check required coverage and freshness before resolving a selected key."
+  @doc """
+  Check required coverage and freshness before resolving a selected key.
+
+  Lets an extension reject a selected signature before key discovery. It
+  applies the same coverage and freshness rules as `RequestSeal.verify/3`
+  and reads the freshness clock once. `verify_label/6` repeats these checks
+  under a validated policy.
+
+  ## Parameters
+
+    * `input` - the selected Signature-Input Inner List from `dictionaries/2`.
+    * `components` - serialized Inner List of required component identifiers,
+      as in `RequestSeal.Policy`.
+    * `extra` - `:allow` or `:reject` (exact coverage), as the policy's
+      `:extra_components`.
+    * `freshness_policy` - `:not_evaluated` or a freshness map with `:clock`,
+      `:max_age`, `:skew`, and `:require_expires`, as in `RequestSeal.Policy`.
+      The map is not validated here.
+
+  ## Returns
+
+    * `{:ok, :not_evaluated}` - when freshness is not evaluated.
+    * `{:ok, facts}` - freshness facts `%{now: _, created: _, expires: _, max_age: _, skew: _}`.
+    * `{:error, %RequestSeal.Error{}}` - reasons this function can return:
+      `:missing_required_component`, `:unexpected_component` (layer
+      `:policy`); `:invalid_clock`, `:missing_created`, `:missing_expires`,
+      `:created_in_future`, `:expired`, `:too_old` (layer `:freshness`);
+      `:invalid_signature_input` (layer `:fields`) or `:limit` (layer
+      `:input`) for unparsable `components`; `:invalid_policy` (layer
+      `:input`) for a malformed argument that faults.
+      Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> {:ok, message} = RequestSeal.Message.request("GET", "https://crawl.example.org/sitemap.xml", [], nil)
+      iex> spec = %{label: "crawl", algorithm: "ed25519", components: ~s[("@method" "@authority" "@path")], expires_in: 60, keyid: "crawler-key", tag: "example-crawl"}
+      iex> {:ok, signed} = RequestSeal.sign(message, spec, handle, clock: fn -> 1_700_000_000 end)
+      iex> {:ok, {[{"crawl", input}], _signatures}} = RequestSeal.Profile.dictionaries(signed, 16)
+      iex> freshness = %{clock: fn -> 1_700_000_030 end, max_age: 300, skew: 0, require_expires: true}
+      iex> {:ok, facts} = RequestSeal.Profile.preflight(input, ~s[("@method" "@authority" "@path")], :reject, freshness)
+      iex> {facts.created, facts.expires}
+      {1_700_000_000, 1_700_000_060}
+      iex> {:error, error} = RequestSeal.Profile.preflight(input, ~s[("@method" "@path")], :reject, :not_evaluated)
+      iex> {error.reason, error.layer}
+      {:unexpected_component, :policy}
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+  """
   @spec preflight(Value.t(), binary(), :allow | :reject, :not_evaluated | map()) ::
           {:ok, :not_evaluated | map()} | {:error, Error.t()}
   def preflight(input, components, extra, freshness_policy) do
     protect(fn -> Authentication.preflight(input, components, extra, freshness_policy) end)
   end
 
-  @doc "Verify a selected member under an explicit policy and package-namespaced profile."
+  @doc """
+  Verify a selected member under an explicit policy and package-namespaced profile.
+
+  Runs the generic verification pipeline of `RequestSeal.verify/3` on one
+  label, stamping `profile` into the result and into replay commitment facts.
+  Verification re-parses the message under the policy's `max_signatures` and
+  checks that both supplied values equal that label's entries before
+  resolving a key.
+
+  `verify_label/6` does not accept `:representation` or `:digest_state` options.
+  Content checks can use retained message body bytes only; representation
+  policies and stream digest states require generic `RequestSeal.verify/3`
+  with its validated options.
+
+  ## Parameters
+
+    * `message` - a `RequestSeal.Message`.
+    * `policy` - a valid `RequestSeal.Policy`.
+    * `label` - the selected signature label.
+    * `input` - the label's Signature-Input value from `dictionaries/2`.
+    * `signature` - the label's Signature value from `dictionaries/2`
+      (a byte sequence of 1 to 1,024 bytes).
+    * `profile` - a `t:stamp/0` with a package-namespaced `name`, as
+      described in the module documentation.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Verification{}}` - with `profile` set to the stamp,
+      `principal: :unattributed`, and `authorization: :not_evaluated`.
+    * `{:error, %RequestSeal.Error{}}` - reasons this function can return:
+      `:invalid_profile`, `:invalid_policy`, `:invalid_options` (invalid
+      label), `:invalid_message`, `:limit` (layer `:input`);
+      `:invalid_signature_field`, `:unknown_label`, `:invalid_signature_input`,
+      and the dictionary reasons of `dictionaries/2` (layer `:fields`); and
+      every `:policy`, `:freshness`, `:key`, `:crypto`, `:content`, and
+      `:replay` reason of `RequestSeal.verify/3`. An unexpected fault returns
+      `:invalid_policy`. Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> {:ok, message} = RequestSeal.Message.request("GET", "https://crawl.example.org/sitemap.xml", [], nil)
+      iex> spec = %{label: "crawl", algorithm: "ed25519", components: ~s[("@method" "@authority" "@path")], expires_in: 60, keyid: "crawler-key", tag: "example-crawl"}
+      iex> {:ok, signed} = RequestSeal.sign(message, spec, handle, clock: fn -> 1_700_000_000 end)
+      iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
+      iex> {:ok, policy} =
+      ...>   RequestSeal.Policy.new(%{
+      ...>     algorithms: ["ed25519"],
+      ...>     components: ~s[("@method" "@authority" "@path")],
+      ...>     key_resolver: fn %{keyid: "crawler-key"} -> {:ok, %{algorithm: "ed25519", key: key}} end,
+      ...>     freshness: %{clock: fn -> 1_700_000_030 end, max_age: 300, skew: 0, require_expires: true},
+      ...>     content: :not_required,
+      ...>     replay: :not_required
+      ...>   })
+      iex> {:ok, {[{"crawl", input}], signatures}} = RequestSeal.Profile.dictionaries(signed, policy.max_signatures)
+      iex> stamp = %{name: {:example_crawl, :sitemap_fetch}, revision: 1}
+      iex> {:ok, verification} = RequestSeal.Profile.verify_label(signed, policy, "crawl", input, signatures["crawl"], stamp)
+      iex> {verification.profile, verification.principal}
+      {%{name: {:example_crawl, :sitemap_fetch}, revision: 1}, :unattributed}
+      iex> {:error, error} = RequestSeal.Profile.verify_label(signed, policy, "crawl", input, signatures["crawl"], %{name: :rfc9421})
+      iex> {error.reason, error.layer}
+      {:invalid_profile, :input}
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
+  """
   @spec verify_label(Message.t(), Policy.t(), binary(), Value.t(), Value.t(), stamp()) ::
           {:ok, Verification.t()} | {:error, Error.t()}
   def verify_label(message, policy, label, input, signature, profile) do

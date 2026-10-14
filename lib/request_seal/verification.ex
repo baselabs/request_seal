@@ -16,8 +16,9 @@ defmodule RequestSeal.Verification do
   map, optional keyid and `crypto: :valid`. It does not retain signature bytes,
   base bytes or keys.
 
-  `content` is `:not_required` or the `RequestSeal.Digest.check/3` result
-  (`kind`, `checked`, `bytes`, `unsupported`). `freshness` is `:not_evaluated` or
+  `content` is `:not_required` or the `RequestSeal.Digest.check/3` or
+  `RequestSeal.Digest.check_stream/3` result (`kind`, `checked`, `bytes`,
+  `unsupported`). `freshness` is `:not_evaluated` or
   a map of `now`, `created`, `expires`, `max_age`, and `skew`. `replay` is
   `:not_required` or a `RequestSeal.Replay.Receipt` after one atomic claim.
   The receipt contains only adapter module and exclusive retention end. Generic `principal` is

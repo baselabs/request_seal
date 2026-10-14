@@ -2,13 +2,11 @@ defmodule RequestSeal.SignatureBase do
   @moduledoc """
   Exact ordered RFC 9421 Section 2 signature-base construction.
 
-  `build/3` consumes a validated `RequestSeal.Message` and one signature's
-  parameterized Inner List, either serialized bytes or a
-  `RequestSeal.StructuredFields.Value` of type `:inner_list`. It returns
-  `{:ok, bytes}` or a bounded `RequestSeal.SignatureBase.Error`, never a partial
-  base. Components and all parameters retain their order; equivalent component
+  `build/3` turns a validated `RequestSeal.Message` and one signature's
+  parameterized Inner List into the exact signature base, never a partial base.
+  Components and all parameters retain their order; equivalent component
   identifiers with reordered parameters reject. The final `"@signature-params"`
-  line has no trailing newline. This function performs no signing, verification,
+  line has no trailing newline. Construction performs no signing, verification,
   key operation, body read, network request, or authorization.
 
   All nine derived components are supported. `@request-target`, `@path`, and
@@ -35,20 +33,13 @@ defmodule RequestSeal.SignatureBase do
   whose unquoted commas make occurrence boundaries significant, callers must
   select `bs` (RFC 9421 Sections 2.1.3 and 7.5.6).
 
-  Options:
-
-  * `:field_schemas` — map of lowercase field names to explicit Structured Fields
-    schemas, default `%{}`. `sf` and `key` require this knowledge. `key` requires
-    a Dictionary schema and strictly serializes only the selected member. Schemas
-    apply equally to headers, trailers, and the related request; the field's
-    public specification selects its revision, never the input's syntax.
-  * `:max_components` — positive ceiling, default/maximum 256.
-  * `:max_bytes` — positive ceiling for the final base, default/maximum 1,048,576.
-
-  The Structured Fields parser's documented ceilings also apply to signature
+  Structured Fields (`sf`) and dictionary member (`key`) components need an
+  explicit schema for the field; `key` requires a Dictionary schema and
+  strictly serializes only the selected member. Schemas apply equally to
+  headers, trailers, and the related request; the field's public
+  specification selects its revision, never the input's syntax. The
+  Structured Fields parser's documented ceilings also apply to signature
   parameters and `sf`/`key` fields (including 65,536 serialized bytes).
-  Unknown/duplicate options, malformed direct values, unknown or incompatible
-  component parameters, wrong parameter types, and unavailable components reject.
   Extension signature metadata retains RFC 8941 types; registered `created` and
   `expires` require Integers, and `nonce`, `alg`, `keyid`, and `tag` require Strings.
   Successful construction establishes bytes only, not authentication.
@@ -68,7 +59,71 @@ defmodule RequestSeal.SignatureBase do
     inner_lists: true
   }
 
-  @doc "Build one ASCII signature base from preserved message facts and ordered parameters."
+  @doc """
+  Build one ASCII signature base from preserved message facts and ordered parameters.
+
+  ## Parameters
+
+    * `message` - a `RequestSeal.Message`; it is validated first.
+    * `parameters` - one signature's parameterized Inner List: serialized
+      bytes such as `~s[("@method" "@path");created=1700000000]`, or a
+      `RequestSeal.StructuredFields.Value` of type `:inner_list`.
+    * `opts` - keyword list of the options below. Unknown and duplicate
+      options reject with `:invalid_options`.
+
+  ## Options
+
+    * `:field_schemas` - map of at most 1,024 lowercase field names to
+      explicit `RequestSeal.StructuredFields.Schema` values, required for
+      `sf` and `key` components. Default `%{}`.
+    * `:max_components` - component ceiling, 1 to 256. Default 256.
+    * `:max_bytes` - ceiling for the final base, 1 to 1,048,576. Default 1,048,576.
+
+  ## Returns
+
+    * `{:ok, bytes}` - the signature base: one `identifier: value` line per
+      component in order, then the `"@signature-params"` line.
+    * `{:error, %RequestSeal.SignatureBase.Error{}}` - reasons this function
+      can return: `:invalid_message`, `:invalid_options`,
+      `:invalid_signature_parameters`, `:limit`; component reasons
+      `:invalid_component`, `:unknown_component`, `:duplicate_component`,
+      `:invalid_component_parameters`, `:incompatible_parameters`; context
+      reasons `:wrong_message_kind`, `:missing_request_context`,
+      `:unavailable_origin`, `:unavailable_trailers`, `:missing_field`; field
+      reasons `:non_ascii`, `:unknown_field_schema`, `:invalid_field_schema`,
+      `:invalid_structured_field`, `:missing_dictionary_key`; query reasons
+      `:noncanonical_query_name`, `:invalid_query_encoding`,
+      `:missing_query_parameter`, `:ambiguous_query_parameter`.
+      Meanings: `RequestSeal.SignatureBase.Error`.
+
+  ## Examples
+
+      iex> {:ok, message} =
+      ...>   RequestSeal.Message.request(
+      ...>     "POST",
+      ...>     "https://Telemetry.Example:443/v1/metrics?batch=7",
+      ...>     [{"Content-Type", " application/json "}],
+      ...>     "{}"
+      ...>   )
+      iex> {:ok, base} =
+      ...>   RequestSeal.SignatureBase.build(
+      ...>     message,
+      ...>     ~s[("@method" "@authority" "@path" "@query-param";name="batch" "content-type");created=1700000000]
+      ...>   )
+      iex> String.split(base, "\\n")
+      [
+        ~s["@method": POST],
+        ~s["@authority": telemetry.example],
+        ~s["@path": /v1/metrics],
+        ~s["@query-param";name="batch": 7],
+        ~s["content-type": application/json],
+        ~s["@signature-params": ("@method" "@authority" "@path" "@query-param";name="batch" "content-type");created=1700000000]
+      ]
+      iex> RequestSeal.SignatureBase.build(message, ~s[("@status")])
+      {:error, %RequestSeal.SignatureBase.Error{reason: :wrong_message_kind}}
+      iex> RequestSeal.SignatureBase.build(message, ~s[("x-sensor-id")])
+      {:error, %RequestSeal.SignatureBase.Error{reason: :missing_field}}
+  """
   @spec build(Message.t(), binary() | Value.t(), keyword()) ::
           {:ok, binary()} | {:error, Error.t()}
   def build(message, parameters, opts \\ []) do

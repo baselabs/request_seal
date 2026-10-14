@@ -10,6 +10,7 @@ defmodule RequestSeal do
   replay `:not_required` or a `RequestSeal.Replay.Receipt`, and authorization
   `:not_evaluated`. Required replay invokes the caller commitment only after
   validation, then makes one atomic claim through the caller-owned store.
+  Composite verification uses `verify_quorum/3` with explicit `RequestSeal.Quorum`.
 
   `RequestSeal.Custody` supplies algorithm-bound `RequestSeal.KeyHandle` capabilities,
   local OTP private-key import, symmetric-secret verification, and an optional
@@ -17,53 +18,11 @@ defmodule RequestSeal do
   caller cancellation; public-key resolution and internal key equivalence exclude
   private material. Custody verification establishes mathematical validity only.
 
-
-  Verification options (unknown and duplicate options reject):
-
-  `:profile` and `:principal` options return `:invalid_profile` at the `:input`
-  layer. Named-profile packages use `RequestSeal.Profile` and enforce their own
-  source-specific rules; caller options cannot stamp generic verification.
-
-  * `:label` — required case-sensitive Structured Fields dictionary key.
-  * `:representation` — optional validated `RequestSeal.Body`, for a required
-    representation digest only. No content body substitutes for it.
-  * `:digest_state` — optional caller-fed `RequestSeal.Digest` state, matching
-    the policy's required kind. Caller establishes EOF; the library never reads
-    a stream handle. Mutually exclusive with `:representation`.
-
-  Before the key resolver: options, policy and message validation, both signature
-  dictionaries and label pairing, selected label and component/metadata validation,
-  the 1,024-byte nonce bound, exact coverage, freshness, then the sender `alg`
-  allowlist check when present.
-  After the resolver: cross-check sender `alg` against the authoritative algorithm
-  (JWS requires absent `alg`), check that algorithm against the policy allowlist,
-  build the signature base, verify cryptography, check the content digest, then
-  perform required replay commitment and storage.
-  Dictionaries are RFC 8941: Signature-Input
-  members must be string Inner Lists; Signature members byte sequences at most
-  1,024 bytes. Encounters are bounded by policy `:max_signatures` before
-  duplicate-label rejection. Repeated parameter names on either dictionary reject
-  with `:duplicate_parameter`; other Signature member parameters are ignored
-  per Structured Fields;
-  duplicate labels reject with `:duplicate_label`, including across field occurrences.
-  Composite verification uses `verify_quorum/3` with explicit `RequestSeal.Quorum`.
-  Every Signature label must have a matching Signature-Input label.
-
-  The explicit-input form of `sign/4` takes a map with exactly `:label`, `:signature_input` (serialized Inner
-  List or `RequestSeal.StructuredFields.Value`), and `:algorithm`, plus an
-  `RequestSeal.KeyHandle` or arity-two caller signer `(algorithm, base)` returning
-  `{:ok, signature_bytes}` or `{:error, term}`. It appends two caller-provenance header occurrences and
-  validates the resulting Message and dictionaries. Existing labels reject.
-  Options are `:field_schemas`, default `%{}`, with the same schema rules as Policy,
-  and `:signing_timeout` (1–300,000 ms, default 5,000) for custody handles.
-  Sign dictionaries have a 16-encounter ceiling and signatures must
-  be nonempty and at most 1,024 bytes. HTTP alg must equal the explicit algorithm;
-  JWS selection requires no HTTP alg. Signing establishes local construction.
-
-  `sign/4` also accepts `t:signing_spec/0` to generate metadata from `:clock`,
-  compute/check content digests, and use bounded custody signing. This is the
-  shared Req/Finch signing path; `Message.request/5` and `Message.response/4`
-  build lossless messages from ordered headers and exact retained bytes.
+  `sign/4` appends one signature, either from a caller-built Signature-Input
+  (`t:signature_spec/0`) or from a `t:signing_spec/0` that generates metadata.
+  The spec form is the shared Req/Finch signing path; `Message.request/5` and
+  `Message.response/4` build lossless messages from ordered headers and exact
+  retained bytes. Signing establishes local construction only.
 
   Callback exceptions, exits, throws and malformed results reject without
   retaining their text. `RequestSeal.Error` documents every reason and layer;
@@ -115,40 +74,231 @@ defmodule RequestSeal do
         }
 
   @doc """
-  Verify one explicit label under a fully explicit generic policy.
+  Verify one explicitly labeled signature under a fully explicit generic policy.
 
-  An optional `:identity` member in the resolver result is accepted and used only by quorum verification.
+  The message must carry `Signature-Input` and `Signature` fields whose labels
+  pair exactly; only the member named by `:label` is verified. Checks run in
+  this order. Before the key resolver: options, policy and message validation,
+  both signature dictionaries and label pairing, the selected label's
+  component and metadata validation, the 1,024-byte nonce bound, required
+  coverage, freshness, then the sender `alg` allowlist check when `alg` is
+  present. After the resolver: sender `alg` must equal the authoritative
+  algorithm (JWS requires `alg` to be absent), that algorithm must be in the
+  policy allowlist, then the signature base is built, the cryptography
+  verified, the content digest checked, and required replay commitment and
+  storage performed.
+
+  Dictionaries are RFC 8941: Signature-Input members must be string Inner
+  Lists; Signature members are byte sequences of at most 1,024 bytes.
+  Encounters are bounded by policy `:max_signatures` before duplicate-label
+  rejection. Repeated parameter names on either dictionary reject with
+  `:duplicate_parameter`; other Signature member parameters are ignored per
+  Structured Fields. Duplicate labels reject with `:duplicate_label`, including
+  across field occurrences. Every Signature label must have a matching
+  Signature-Input label, and every Signature-Input label a matching Signature.
+
+  The key resolver result may carry an optional `:identity`. Here it is only
+  checked (a public key's derived identity must agree with it, otherwise
+  `:key_resolver_failed`); it affects counting only in `verify_quorum/3`.
+
+  ## Parameters
+
+    * `message` - a `RequestSeal.Message`; it is validated before parsing.
+    * `policy` - a `RequestSeal.Policy` from `RequestSeal.Policy.new/1`.
+      Directly built structs are revalidated and reject with `:invalid_policy`.
+    * `opts` - keyword list of the options below. Unknown and duplicate
+      options reject with `:invalid_options`.
+
+  ## Options
+
+    * `:label` - required. The case-sensitive Structured Fields dictionary key
+      to verify: 1 to 256 bytes, a lowercase letter or `*` followed by
+      lowercase letters, digits, `_`, `-`, `.` or `*`.
+    * `:representation` - optional validated `RequestSeal.Body`, accepted only
+      when the policy requires a representation digest. No content body
+      substitutes for it.
+    * `:digest_state` - optional caller-fed `RequestSeal.Digest` state whose
+      kind matches the policy's required digest kind. The caller establishes
+      end of stream; the library never reads a stream handle. Mutually
+      exclusive with `:representation`.
+
+  `:profile` and `:principal` options reject with `:invalid_profile`.
+  Named-profile packages use `RequestSeal.Profile` and enforce their own
+  source-specific rules; caller options cannot stamp generic verification.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Verification{}}` - with `profile: %{name: :rfc9421}`,
+      `principal: :unattributed`, `authorization: :not_evaluated`, and `replay`
+      either `:not_required` or a `RequestSeal.Replay.Receipt`.
+    * `{:error, %RequestSeal.Error{}}` - reasons this function can return, by layer:
+      * `:input` - `:invalid_options`, `:invalid_profile`, `:invalid_policy`,
+        `:invalid_message`, `:limit`.
+      * `:fields` - `:missing_signature_input`, `:missing_signature`,
+        `:invalid_signature_input`, `:invalid_signature_field`,
+        `:duplicate_label`, `:duplicate_parameter`, `:label_mismatch`,
+        `:unknown_label`.
+      * `:policy` - `:missing_required_component`, `:unexpected_component`,
+        `:algorithm_not_permitted`, `:algorithm_mismatch`.
+      * `:freshness` - `:invalid_clock`, `:missing_created`, `:missing_expires`,
+        `:created_in_future`, `:expired`, `:too_old`.
+      * `:key` - `:unknown_key`, `:key_resolver_failed`.
+      * `:crypto` - `:signature_base_failed` (`detail` is the signature-base
+        reason), `:invalid_signature`, `:verifier_failed`.
+      * `:content` - `:digest_not_covered`, `:digest_unsupported`,
+        `:digest_mismatch`, `:body_unavailable`.
+      * `:replay` - `:missing_replay_identifier`, `:retention_exceeded`,
+        `:commitment_failed`, `:replayed`, `:store_unavailable`,
+        `:store_timeout`, `:store_failed`.
+
+      Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {public, seed} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+      iex> {:ok, key} = RequestSeal.PublicKey.import({:ed25519, public}, :raw)
+      iex> clock = fn -> 1_700_000_000 end
+      iex> {:ok, message} =
+      ...>   RequestSeal.Message.request("PUT", "https://docs.example.com/documents/42", [], "draft")
+      iex> spec = %{
+      ...>   label: "sig",
+      ...>   algorithm: "ed25519",
+      ...>   components: ~s[("@method" "@authority" "@path")],
+      ...>   expires_in: 60,
+      ...>   keyid: "docs-key"
+      ...> }
+      iex> {:ok, signed} = RequestSeal.sign(message, spec, handle, clock: clock)
+      iex> {:ok, policy} =
+      ...>   RequestSeal.Policy.new(%{
+      ...>     algorithms: ["ed25519"],
+      ...>     components: ~s[("@method" "@authority" "@path")],
+      ...>     key_resolver: fn
+      ...>       %{keyid: "docs-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
+      ...>       _ -> :error
+      ...>     end,
+      ...>     freshness: %{clock: clock, max_age: 300, skew: 5, require_expires: true},
+      ...>     content: :not_required,
+      ...>     replay: :not_required
+      ...>   })
+      iex> {:ok, verification} = RequestSeal.verify(signed, policy, label: "sig")
+      iex> {verification.signature.keyid, verification.principal, verification.authorization}
+      {"docs-key", :unattributed, :not_evaluated}
+      iex> {:error, error} = RequestSeal.verify(%{signed | method: "DELETE"}, policy, label: "sig")
+      iex> {error.reason, error.layer}
+      {:invalid_signature, :crypto}
+      iex> {:error, error} = RequestSeal.verify(signed, policy, label: "other")
+      iex> {error.reason, error.layer}
+      {:unknown_label, :fields}
+      iex> RequestSeal.Custody.Local.release(handle)
+      :ok
   """
   @spec verify(Message.t(), Policy.t(), keyword()) ::
           {:ok, Verification.t()} | {:error, Error.t()}
   def verify(message, policy, opts), do: Authentication.verify(message, policy, opts)
 
   @doc """
-  Verify explicit signer slots, counting units, bindings, and negotiated requests.
+  Verify a composite set of signatures against explicit signer slots.
 
-  Each assigned slot, signature label, and merged identity class is unique.
-  Every mode fills all required slots; bound slots must be filled and meet their
-  nested (both inner dictionary members) or equal, non-nil parameter binding.
-  Every assigned signature meets its own complete slot policy; coverage never pools.
-  Assignment maximizes counting units, then filled slots, using canonical slot
-  and candidate order (challenge labels first), while result lists retain the
-  configured slot order. Optional additions preserve a feasible quorum except
-  when new evidence bridges identity classes: one label observed under multiple
-  identities merges those classes, including the shared unknown pool. A label
-  with any known observation survives key-unit filtering; unknown-only labels
-  cannot count in a key quorum.
+  Each signature label is verified independently against the policy of every
+  slot whose `:label` and `:tag` selectors match it; coverage never pools. The
+  verified candidates are then assigned to slots and counted by the quorum's
+  unit. Assignment, identity classes, bindings, negotiation, and the search
+  budget are specified in `RequestSeal.Quorum`. A label that fails every
+  eligible slot is recorded in `nonqualifying`; it rejects the call only under
+  `invalid: :reject`.
 
-  Bindings inspect alternative verified candidates. Negotiation reads the
-  verified, selector-eligible pool after key-unit filtering, so a valid challenge
-  can fulfill negotiation without being counted. It appears in `qualifying` and
-  `signatures` only when assigned; tampered challenges fail.
+  ## Parameters
 
-  At most 64 × 16 label-slot verifications run. Unbound key, principal, and
-  shared-principal role units use polynomial matching; other assignments use
-  exact search bounded at 131,072 nodes. Exhaustion returns best-so-far only when
-  the mode, required slots, and bindings hold, otherwise `:limit`, layer `:input`.
-  Trusted signers populating selector-free bound slots can reach this budget.
-  See `RequestSeal.Quorum` for the complete policy contract.
+    * `message` - a `RequestSeal.Message`; it is validated before parsing.
+    * `quorum` - a `RequestSeal.Quorum` from `RequestSeal.Quorum.new/1`.
+      Directly built structs are revalidated and reject with `:invalid_quorum`.
+    * `opts` - keyword list with at most the option below. `[]` is valid.
+
+  ## Options
+
+    * `:accept_signature` - list of signature requests from
+      `RequestSeal.AcceptSignature.parse/2`, at most 16, each applicable to the
+      message kind. Every request must be met by a verified, selector-eligible
+      label after key-unit filtering, with the same covered component identity
+      set and every requested parameter. Default `[]` (no negotiation).
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Quorum.Verification{}}` - the assigned slots, unit
+      count, per-label results and nonqualifying facts.
+    * `{:error, %RequestSeal.Error{}}` - reasons this function can return, by layer:
+      * `:input` - `:invalid_options`, `:invalid_quorum`, `:invalid_policy`
+        (a slot policy requires replay; see `RequestSeal.Quorum`),
+        `:invalid_message`, `:limit` (dictionary bounds or an exhausted
+        assignment search).
+      * `:fields` - `:missing_signature_input`, `:missing_signature`,
+        `:invalid_signature_input`, `:invalid_signature_field`,
+        `:duplicate_label`, `:duplicate_parameter`, `:label_mismatch`.
+      * `:negotiation` - `:invalid_accept_signature`, `:inapplicable_component`,
+        `:negotiation_unfulfilled`.
+      * `:quorum` - `:unexpected_signature`, `:nonqualifying_signature`
+        (`detail` is the label's last failure reason), `:ambiguous_key_identity`,
+        `:quorum_not_met`, `:binding_unsatisfied`.
+
+      Failures of individual labels against individual slots are not returned
+      directly; they appear in `nonqualifying`. Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {public_a, seed_a} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {public_b, seed_b} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, handle_a} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed_a})
+      iex> {:ok, handle_b} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed_b})
+      iex> {:ok, key_a} = RequestSeal.PublicKey.import({:ed25519, public_a}, :raw)
+      iex> {:ok, key_b} = RequestSeal.PublicKey.import({:ed25519, public_b}, :raw)
+      iex> keys = %{"builder" => key_a, "reviewer" => key_b}
+      iex> clock = fn -> 1_700_000_000 end
+      iex> {:ok, message} =
+      ...>   RequestSeal.Message.request("POST", "https://builds.example/releases", [], "artifact")
+      iex> spec = fn label, keyid ->
+      ...>   %{
+      ...>     label: label,
+      ...>     algorithm: "ed25519",
+      ...>     components: ~s[("@method" "@path")],
+      ...>     expires_in: 60,
+      ...>     keyid: keyid
+      ...>   }
+      ...> end
+      iex> {:ok, once} = RequestSeal.sign(message, spec.("build", "builder"), handle_a, clock: clock)
+      iex> {:ok, twice} = RequestSeal.sign(once, spec.("review", "reviewer"), handle_b, clock: clock)
+      iex> {:ok, policy} =
+      ...>   RequestSeal.Policy.new(%{
+      ...>     algorithms: ["ed25519"],
+      ...>     components: ~s[("@method" "@path")],
+      ...>     key_resolver: fn %{keyid: keyid} ->
+      ...>       if key = keys[keyid], do: {:ok, %{algorithm: "ed25519", key: key}}, else: :error
+      ...>     end,
+      ...>     freshness: %{clock: clock, max_age: 300, skew: 0, require_expires: true},
+      ...>     content: :not_required,
+      ...>     replay: :not_required
+      ...>   })
+      iex> {:ok, quorum} =
+      ...>   RequestSeal.Quorum.new(%{
+      ...>     mode: {:threshold, 2},
+      ...>     unit: :key,
+      ...>     slots: [
+      ...>       %{id: :build, policy: policy, required: true, label: "build"},
+      ...>       %{id: :review, policy: policy, required: false, label: "review"}
+      ...>     ],
+      ...>     unexpected: :reject,
+      ...>     invalid: :reject
+      ...>   })
+      iex> {:ok, result} = RequestSeal.verify_quorum(twice, quorum, [])
+      iex> {result.satisfied, result.count, result.authorization}
+      {[:build, :review], 2, :not_evaluated}
+      iex> {:error, error} = RequestSeal.verify_quorum(once, quorum, [])
+      iex> {error.reason, error.layer}
+      {:quorum_not_met, :quorum}
+      iex> RequestSeal.Custody.Local.release(handle_a)
+      :ok
+      iex> RequestSeal.Custody.Local.release(handle_b)
+      :ok
   """
   @spec verify_quorum(Message.t(), RequestSeal.Quorum.t(), keyword()) ::
           {:ok, RequestSeal.Quorum.Verification.t()} | {:error, Error.t()}
@@ -158,36 +308,108 @@ defmodule RequestSeal do
   @doc """
   Append one signature through caller-owned custody or an arity-two signer.
 
-  A `t:signing_spec/0` requires `:label`, `:algorithm`, serialized `:components`,
-  and `:expires_in` (a positive integer of seconds). Defaults are `created: true`,
-  `nonce: :random`, `alg: true` (false for JWS algorithm tuples), `keyid: nil`,
-  `tag: nil`, `digest: nil`, and `field_schemas: %{}`. Caller clocks range from 0 through 253,402,300,799 Unix seconds. Wire
+  `spec` selects one of two forms. A map containing `:components` is a
+  `t:signing_spec/0`: metadata is generated from a clock, `Content-Digest` can
+  be computed or checked, and both signer kinds run through custody's
+  monitored deadline and cancellation workers. Any other map is the explicit
+  `t:signature_spec/0`: a caller-built Signature-Input is signed as given and
+  no metadata is generated. Both forms append a `Signature-Input` and a
+  `Signature` header occurrence with caller provenance, then revalidate the
+  message and both dictionaries. No framework is required; Req and Finch
+  accept the same spec defaults through this shared signing construction.
+
+  The message's existing signature dictionaries are parsed with a
+  16-encounter ceiling; with 16 labels present, signing rejects with `:limit`.
+  An existing label rejects with `:label_in_use`. Signatures must be nonempty
+  and at most 1,024 bytes.
+
+  ## Parameters
+
+    * `message` - a valid `RequestSeal.Message`.
+    * `spec` - a `t:signing_spec/0` or `t:signature_spec/0`, described below.
+    * `signer` - a `RequestSeal.KeyHandle` whose algorithm equals the spec's
+      `:algorithm`, or an arity-two function `(algorithm, base)` returning
+      `{:ok, signature_bytes}` or `{:error, term}`.
+    * `opts` - keyword list; the permitted options depend on the form. Unknown
+      and duplicate options reject with `:invalid_options`.
+
+  ### Signing spec
+
+  A `t:signing_spec/0` requires `:label`, `:algorithm`, serialized
+  `:components` (an Inner List without list parameters), and `:expires_in` (a
+  positive integer of seconds, at most 999,999,999,999,999). Defaults are
+  `created: true`, `nonce: :random`, `alg: true` (false for JWS algorithm
+  tuples), `keyid: nil`, `tag: nil`, `digest: nil`, and `field_schemas: %{}`.
+  The parameter keys may also be nested under `:parameters`. A complete spec
+  (all six parameter keys under `:parameters`, plus `:digest` and
+  `:field_schemas`) also accepts `expires_in: nil`; a non-nil `expires_in`
+  requires `created: true`.
+
+  Parameter order is created, expires, nonce, alg, keyid, tag. JWS requires
+  `alg: false`. `keyid` and `tag` are printable ASCII of at most 1,024 bytes.
+  Caller clocks range from 0 through 253,402,300,799 Unix seconds; wire
   `created` and `expires` retain the Structured Fields integer range.
-  Req and Finch accept the same defaults through shared signing construction.
-  Complete full specs (all parameter keys, digest, and field_schemas) also support
-  expires_in nil. The short form requires a positive integer.
-  Parameter order is created, expires, nonce, alg, keyid, tag. JWS requires alg false.
-  Digest is nil or a unique SHA-256/SHA-512 list. Existing digests are checked
-  against retained bytes; covered Content-Length is supplied from those bytes.
-  Host and trailer components reject; related-request components need a response.
+  `digest` is nil or a unique list of `"sha-256"` and `"sha-512"`. An absent
+  `Content-Digest` is computed from the retained body and appended; an existing
+  one is checked against the retained bytes and must carry exactly the
+  requested algorithms. A covered `content-length` is supplied from the
+  retained bytes when absent and must equal it when present. A digest request
+  or a covered `content-digest`, `repr-digest`, or `content-length` requires a
+  retained body. `host` and trailer (`tr`) components reject; related-request
+  (`req`) components need a response.
 
-  Spec options are `:clock` (arity zero, default system seconds),
-  `:signing_timeout` (1–300,000 ms, default 5,000), and `:nonce` (optional
-  caller-owned 32-byte entropy, encoded as unpadded Base64url when nonce is
-  selected). Without that option nonce uses the CSPRNG. Supply fresh entropy on
-  every attempt. Spec signers accept a KeyHandle or function; both run through
-  custody's monitored deadline/cancellation workers. No framework is required.
+  ### Explicit signature spec
 
-  The original three-key specification (`:label`, `:signature_input`,
-  `:algorithm`) accepts an algorithm-matching KeyHandle with `:signing_timeout`
-  (1–300,000 ms, default 5,000), or the existing synchronous function signer.
-  `:field_schemas` defaults to `%{}`. A valid timeout does not wrap or interrupt
-  the synchronous function. A handle algorithm mismatch returns
-  `:signer_algorithm_mismatch` at `:input`, with message
-  `"signer algorithm does not match signature specification"`. Custody failures
-  return `:signing_failed` at `:crypto` with a bounded `RequestSeal.Custody.Error` source.
-  It never generates metadata. Both forms append ordered signature
-  headers and return bounded `RequestSeal.Error` on rejection.
+  A `t:signature_spec/0` has exactly `:label`, `:signature_input` (a
+  serialized Inner List or `RequestSeal.StructuredFields.Value`), and
+  `:algorithm`. An HTTP `alg` parameter must equal `:algorithm`; JWS selection
+  requires no `alg` parameter. A function signer runs synchronously in the
+  caller.
+
+  ## Options
+
+  Signing spec:
+
+    * `:clock` - arity-zero function returning integer Unix seconds, read only
+      when `created` is true. Default: system time in seconds.
+    * `:signing_timeout` - 1 to 300,000 ms for either signer kind. Default 5,000.
+    * `:nonce` - 32 bytes of caller-owned entropy, encoded as unpadded
+      Base64url when nonce is selected. Without it the nonce uses the CSPRNG.
+      Supply fresh entropy on every attempt.
+
+  Explicit signature spec:
+
+    * `:field_schemas` - lowercase field names to `RequestSeal.StructuredFields.Schema`
+      values, with the same rules as `RequestSeal.Policy`. Default `%{}`.
+    * `:signing_timeout` - 1 to 300,000 ms, applied to a `RequestSeal.KeyHandle`.
+      A valid timeout does not wrap or interrupt a function signer. Default 5,000.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Message{}}` - the message with the two signature
+      header occurrences appended.
+    * `{:error, %RequestSeal.Error{}}` - reasons this function can return, by layer:
+      * `:input` - `:invalid_options`, `:invalid_message`, `:limit`. Signing
+        spec only: `:unsupported_component` (a `host`, trailer, or unavailable
+        component), `:invalid_request` (covered `Content-Length` conflicts with
+        the retained bytes); a KeyHandle algorithm mismatch is
+        `:invalid_options`. Explicit spec only: `:algorithm_mismatch`, and
+        `:signer_algorithm_mismatch` for a KeyHandle algorithm mismatch,
+        before custody is invoked, with message
+        `"signer algorithm does not match signature specification"`.
+      * `:fields` - `:label_in_use`, `:label_mismatch`, `:duplicate_label`,
+        `:duplicate_parameter`, `:invalid_signature_input`,
+        `:invalid_signature_field`.
+      * `:content` (signing spec only) - `:body_unavailable`, `:digest_mismatch`.
+      * `:crypto` - `:signing_failed` for a failing KeyHandle, with a bounded
+        `RequestSeal.Custody.Error` `source`; `:signer_failed` for a failing
+        function signer (fault, error, malformed result, empty or oversized
+        signature). Explicit spec only: `:signature_base_failed` (`detail` is
+        the signature-base reason).
+
+      Meanings: `RequestSeal.Error`.
+
+  ## Examples
 
       iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
       iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
@@ -196,6 +418,13 @@ defmodule RequestSeal do
       iex> {:ok, signed} = RequestSeal.sign(message, spec, handle)
       iex> Enum.map(signed.fields, & &1.name)
       ["Signature-Input", "Signature"]
+      iex> {:error, error} = RequestSeal.sign(signed, spec, handle)
+      iex> {error.reason, error.layer}
+      {:label_in_use, :fields}
+      iex> explicit = %{label: "order", signature_input: ~s[("@method");created=1700000000], algorithm: "hmac-sha256"}
+      iex> {:error, error} = RequestSeal.sign(message, explicit, handle)
+      iex> {error.reason, error.message}
+      {:signer_algorithm_mismatch, "signer algorithm does not match signature specification"}
       iex> RequestSeal.Custody.Local.release(handle)
       :ok
   """

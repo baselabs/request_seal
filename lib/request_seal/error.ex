@@ -1,6 +1,6 @@
 defmodule RequestSeal.Error do
   @moduledoc """
-  Bounded failures from `RequestSeal.verify/3`, `RequestSeal.sign/4`, `RequestSeal.Policy.new/1`, `RequestSeal.Ash.scope/2`, `RequestSeal.Profile`, quorum verification, and signature negotiation.
+  Bounded failures from `RequestSeal.verify/3`, `RequestSeal.sign/4`, `RequestSeal.Policy.new/1`, `RequestSeal.Quorum.new/1`, `RequestSeal.Ash.scope/2`, `RequestSeal.Profile`, Web Bot Auth, quorum verification, and signature negotiation.
 
   Every error has `retryable: false`, a library-generated random 16-character
   lowercase hex `correlation`, and `detail: nil` except the Web Bot Auth reasons listed below and `:signature_base_failed`,
@@ -63,14 +63,17 @@ defmodule RequestSeal.Error do
     (base construction rejects), `:verifier_failed` (verification callback fault,
     malformed result or invalid key), `:signer_failed` (signer fault, error,
     malformed result, empty signature or more than 1,024 bytes).
-    `:signing_failed` retains a bounded custody `source` for handle signing and
-    metadata-generating spec signing failures.
+    `:signing_failed` retains a bounded custody `source` when a KeyHandle
+    signer fails in either `RequestSeal.sign/4` form; a failing function
+    signer returns `:signer_failed` in both forms.
   * Spec signing `:input`: `:unsupported_component` (unavailable covered component),
     `:invalid_request` (covered Content-Length conflicts with retained bytes).
   * `:content`: `:digest_not_covered` (exact complete selected digest not signed),
     `:digest_unsupported` (no usable selected digest or invalid digest field),
-    `:digest_mismatch` (checksum disagrees), `:body_unavailable` (required body or
-    representation unavailable).
+    `:digest_mismatch` (checksum disagrees; in spec signing, an existing
+    Content-Digest disagrees with the retained bytes or the requested
+    algorithms), `:body_unavailable` (required body or representation
+    unavailable).
   * `:quorum`: `:quorum_not_met` (required slots or distinct-unit count unmet),
     `:unexpected_signature` (unmatched label with rejection selected),
     `:nonqualifying_signature` (matched label failed every eligible slot;

@@ -2,19 +2,20 @@ defmodule RequestSeal.Quorum do
   @moduledoc """
   Explicit composite RFC 9421 verification policy.
 
-  `new/1` requires `:mode` (`:all`, `:any`, or `{:threshold, n}`), `:unit`
-  (`:key`, `:principal`, or `{:role, shared_principal: boolean}`), `:slots`,
-  `:unexpected`, and `:invalid` (each `:reject` or `:ignore`). Labels never count.
-  Every mode requires all configured required slots and at least one qualifying
-  signature. `:all` requires at least one required slot; `:any` requires one
-  eligible signer; thresholds count distinct qualifying units. Every signature must meet
-  its own slot's complete policy. Each slot receives at most one signature;
-  each label and each identity class occupies at most one slot across every
-  counting unit. Observations of one label merge all its known identities and
-  any unknown observation into one class. Unknown observations share a pool.
-  A label is known if any eligible verification supplies a known identity.
-  Required slots must be filled in every mode; an unfilled bound slot fails its
-  binding. No coverage union is performed.
+  `new/1` builds the policy that `RequestSeal.verify_quorum/3` evaluates:
+  a mode, a counting unit, 1 to 16 signer slots (each with its own
+  `RequestSeal.Policy`), and the handling of unexpected and invalid labels.
+  Labels never count. Every mode requires all configured required slots and
+  at least one qualifying signature. `:all` requires at least one required
+  slot; `:any` requires one eligible signer; thresholds count distinct
+  qualifying units. Every signature must meet its own slot's complete policy.
+  Each slot receives at most one signature; each label and each identity
+  class occupies at most one slot across every counting unit. Observations of
+  one label merge all its known identities and any unknown observation into
+  one class. Unknown observations share a pool. A label is known if any
+  eligible verification supplies a known identity. Required slots must be
+  filled in every mode; an unfilled bound slot fails its binding. No coverage
+  union is performed.
 
   `verify_quorum/3` requires `replay: :not_required` in every slot policy.
   A required replay policy returns `:invalid_policy`, layer `:input`, before
@@ -23,11 +24,8 @@ defmodule RequestSeal.Quorum do
   and negotiation pass; per-label claims can consume nonqualifying candidates.
   Required replay is rejected until that composite replay design exists.
 
-  Slot `:content` must be `:not_required` or a Content-Digest policy
-  (`kind: :content`) checked against the message's retained body. `new/1`
-  rejects representation digest policies and caller-fed digest state with
-  `:invalid_quorum`, layer `:input`, including optional or unmatched slots.
-  Quorum verification accepts no `:representation` or `:digest_state` option;
+  Slot content checks use the message's retained body only. Quorum
+  verification accepts no `:representation` or `:digest_state` option;
   streamed or unavailable content cannot qualify when a digest is required.
 
   Assignment maximizes counting units, then filled slots, in canonical slot-id
@@ -48,28 +46,12 @@ defmodule RequestSeal.Quorum do
   bound slot or inconsistent binding returns `:binding_unsatisfied`. After a valid
   assignment is found, an unmet mode or threshold returns `:quorum_not_met`.
 
-  Slots number 1–16 and require unique atom `:id`, `RequestSeal.Policy` `:policy`,
-  and Boolean `:required`. Optional `:label` and `:tag` selectors default to nil
-  (any); `:principal` and `:role` default to nil. Principal counting requires
-  a nonempty caller-bound principal in every slot. Role counting additionally
-  requires an atom role. With `shared_principal: false`, one principal counts
-  toward only one role. These counting bindings establish no attribution.
-
-  `:bindings` defaults to `[]`, at most 64 entries: `{:nested, outer: id,
-  inner: id}` requires the outer to cover both the inner's actual
-  `"signature-input";key="<inner-label>"` and
-  `"signature";key="<inner-label>"` dictionary members; `{:same_parameter, name, ids}` requires identical, present
-  nonce, tag, or created parameters across the selected slots. Bindings must
-  reference configured slots and cannot bind a nested signature to itself.
-  `:max_signatures` defaults to 16 (1–64); thresholds cannot exceed this bound.
-
-  Unknown units, malformed choices, and ambiguous bindings return
-  `:invalid_quorum`, layer `:input`, before callbacks run. Key identities stay
-  internal. Unknown key equivalence cannot count in key-unit quorums; optional
-  unknown identities are ignored, while a required slot with only unknown
-  candidates rejects with `:ambiguous_key_identity`. Principal/role policies
-  conservatively assign the shared unknown pool to at most one slot. Inspection
-  omits slots.
+  Principal and role counting bindings establish no attribution. Key
+  identities stay internal. Unknown key equivalence cannot count in key-unit
+  quorums; optional unknown identities are ignored, while a required slot with
+  only unknown candidates rejects with `:ambiguous_key_identity`.
+  Principal/role policies conservatively assign the shared unknown pool to at
+  most one slot.
 
   Bindings search the complete eligible candidate pool, including alternatives
   with the same key. Nested bindings require both inner dictionary members;
@@ -101,7 +83,91 @@ defmodule RequestSeal.Quorum do
         }
   @required [:mode, :unit, :slots, :unexpected, :invalid]
   @optional [:bindings, :max_signatures]
-  @doc "Construct a bounded composite policy without invoking a callback."
+  @doc """
+  Construct a bounded composite policy without invoking a callback.
+
+  ## Parameters
+
+    * `attrs` - map with all five required keys and any of the two optional
+      keys. Unknown keys reject.
+      * `:mode` - `:all`, `:any`, or `{:threshold, n}` with `n` from 1 to
+        `:max_signatures`. `:all` requires at least one required slot.
+      * `:unit` - `:key`, `:principal`, or `{:role, shared_principal: boolean}`.
+      * `:slots` - list of 1 to 16 slot maps, described below.
+      * `:unexpected` - `:reject` or `:ignore`, for a label with no
+        selector-eligible slot.
+      * `:invalid` - `:reject` or `:ignore`, for an eligible label that fails
+        every slot policy.
+      * `:bindings` - optional, default `[]`, at most 64 unique entries:
+        `{:nested, outer: id, inner: id}` requires the outer to cover both the
+        inner's actual `"signature-input";key="<inner-label>"` and
+        `"signature";key="<inner-label>"` dictionary members;
+        `{:same_parameter, name, ids}` (`name` is `"nonce"`, `"tag"`, or
+        `"created"`; 1 to 16 unique slot ids) requires identical, present
+        values across the selected slots. Bindings must reference configured
+        slots and cannot bind a nested signature to itself.
+      * `:max_signatures` - optional, default 16 (1 to 64); thresholds cannot
+        exceed this bound.
+
+  Each slot requires a unique atom `:id` (not `nil`, `true`, or `false`), a
+  valid `RequestSeal.Policy` as `:policy`, and Boolean `:required`. Optional
+  `:label` (a valid signature label) and `:tag` (1 to 256 bytes) selectors
+  default to nil (any); `:principal` (1 to 256 bytes) and `:role` (an atom)
+  default to nil. Principal counting requires a principal in every slot. Role
+  counting additionally requires a role in every slot. With
+  `shared_principal: false`, one principal counts toward only one role.
+  Slot policy `:content` must be `:not_required` or a Content-Digest policy
+  (`kind: :content`); representation digest policies reject, including in
+  optional or unmatched slots.
+
+  ## Returns
+
+    * `{:ok, %RequestSeal.Quorum{}}` - slots normalized with nil `:label`,
+      `:tag`, `:principal`, and `:role` defaults. Inspection shows only
+      `mode`, `unit`, and `max_signatures`.
+    * `{:error, %RequestSeal.Error{}}` - always reason `:invalid_quorum`,
+      layer `:input`, for unknown units, malformed choices, duplicate or
+      invalid bindings, or a non-map argument. Meanings: `RequestSeal.Error`.
+
+  ## Examples
+
+      iex> {public, _secret} = :crypto.generate_key(:eddsa, :ed25519)
+      iex> {:ok, key} = RequestSeal.PublicKey.import({:ed25519, public}, :raw)
+      iex> {:ok, policy} =
+      ...>   RequestSeal.Policy.new(%{
+      ...>     algorithms: ["ed25519"],
+      ...>     components: ~s[("@method" "@path")],
+      ...>     key_resolver: fn _ -> {:ok, %{algorithm: "ed25519", key: key}} end,
+      ...>     freshness: %{clock: fn -> System.system_time(:second) end, max_age: 300, skew: 5, require_expires: false},
+      ...>     content: :not_required,
+      ...>     replay: :not_required
+      ...>   })
+      iex> slots = [
+      ...>   %{id: :author, policy: policy, required: true, label: "author", principal: "writer@example.org", role: :author},
+      ...>   %{id: :editor, policy: policy, required: true, label: "editor", principal: "editor@example.org", role: :editor}
+      ...> ]
+      iex> {:ok, quorum} =
+      ...>   RequestSeal.Quorum.new(%{
+      ...>     mode: :all,
+      ...>     unit: {:role, shared_principal: false},
+      ...>     slots: slots,
+      ...>     unexpected: :ignore,
+      ...>     invalid: :reject,
+      ...>     bindings: [{:nested, outer: :editor, inner: :author}]
+      ...>   })
+      iex> {quorum.mode, quorum.max_signatures, Enum.map(quorum.slots, & &1.tag)}
+      {:all, 16, [nil, nil]}
+      iex> {:error, error} =
+      ...>   RequestSeal.Quorum.new(%{
+      ...>     mode: :all,
+      ...>     unit: :key,
+      ...>     slots: [%{id: :author, policy: policy, required: false}],
+      ...>     unexpected: :ignore,
+      ...>     invalid: :ignore
+      ...>   })
+      iex> {error.reason, error.layer}
+      {:invalid_quorum, :input}
+  """
   @spec new(map()) :: {:ok, t()} | {:error, Error.t()}
   def new(attrs) when is_map(attrs) do
     if Enum.all?(@required, &Map.has_key?(attrs, &1)) and
