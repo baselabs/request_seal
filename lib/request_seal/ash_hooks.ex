@@ -198,7 +198,7 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       * any other option - passed unchanged to `AshHooks.Http.Bounded`, with
         `:timeout` replaced by the remaining time and `:request_seal` removed.
 
-    Every attempt regenerates `created`, `expires`, and a random nonce. From 0.5.0 (unreleased),
+    Every attempt regenerates `created`, `expires`, and a random nonce. From 0.5.0,
     a nonce is required on every signed attempt: a spec with `nonce: nil` is
     refused as a signing failure before any request is sent.
 
@@ -257,31 +257,38 @@ if Code.ensure_loaded?(AshHooks.Provider) do
     @spec request(atom() | binary(), binary(), map(), binary() | nil, keyword()) ::
             {:ok, %{status: integer(), headers: list(), body: binary() | nil}} | {:error, term()}
     def request(method, url, headers, body, opts \\ []) do
-      timeout = Keyword.get(opts, :timeout, 15_000)
+      if Keyword.keyword?(opts) do
+        timeout = Keyword.get(opts, :timeout, 15_000)
 
-      if is_integer(timeout) and timeout in 1..300_000 do
-        deadline = System.monotonic_time(:millisecond) + timeout
+        if is_integer(timeout) and timeout in 1..300_000 do
+          deadline = System.monotonic_time(:millisecond) + timeout
 
-        with {:ok, signed} <- signed(method, url, headers, body, opts, deadline),
-             {:ok, signed_headers} <- signed_headers(signed) do
-          remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+          with {:ok, signed} <- signed(method, url, headers, body, opts, deadline),
+               {:ok, signed_headers} <- signed_headers(signed) do
+            remaining = max(deadline - System.monotonic_time(:millisecond), 0)
 
-          if remaining == 0 do
-            {:error, :timeout}
-          else
-            transport = opts |> Keyword.delete(:request_seal) |> Keyword.put(:timeout, remaining)
+            if remaining == 0 do
+              {:error, :timeout}
+            else
+              transport =
+                opts |> Keyword.delete(:request_seal) |> Keyword.put(:timeout, remaining)
 
-            AshHooks.Http.Bounded.request(
-              method,
-              url,
-              signed_headers,
-              body,
-              transport
-            )
+              AshHooks.Http.Bounded.request(
+                method,
+                url,
+                signed_headers,
+                body,
+                transport
+              )
+            end
           end
+        else
+          {:error, :timeout}
         end
       else
-        {:error, :timeout}
+        # A malformed options container is bounded like every other signing-side
+        # fault here, instead of raising out of the ash_hooks callback.
+        {:error, {:terminal, :request_seal_signing_failed}}
       end
     end
 

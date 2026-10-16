@@ -59,7 +59,7 @@ defmodule RequestSeal.MixProject do
 
     [
       app: :request_seal,
-      version: "0.4.1",
+      version: "0.5.0",
       # Libraries declare a consumer range; development and notebook tools stay pinned.
       # OTP 27 supplies :json; all three CI lanes are recorded in ADR 0008.
       elixir: "~> 1.18",
@@ -69,6 +69,12 @@ defmodule RequestSeal.MixProject do
         "Sign and verify HTTP requests and responses in Elixir: RFC 9421 HTTP Message Signatures, Web Bot Auth for AI agents, JWS/JWE, digests and replay protection, with Plug (including Phoenix), Req, Finch and Ash integrations.",
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: dependencies(),
+      dialyzer: [
+        # Optional integration adapters compile in dev; their apps belong in
+        # the PLT so their calls resolve instead of reporting unknowns.
+        plt_add_apps: [:req, :finch, :plug, :postgrex, :telemetry],
+        list_unused_filters: true
+      ],
       aliases: ["hex.publish": [&release_runtime_check!/1, "hex.publish"]],
       package: [
         licenses: ["Apache-2.0", "BSD-3-Clause"],
@@ -80,7 +86,7 @@ defmodule RequestSeal.MixProject do
       ],
       docs: [
         main: "readme",
-        source_ref: "v0.4.1",
+        source_ref: "v0.5.0",
         extras:
           Enum.map(@public_documents, fn
             "livebooks/README.md" -> {"livebooks/README.md", filename: "livebooks"}
@@ -149,6 +155,11 @@ defmodule RequestSeal.MixProject do
 
     [
       {:ex_doc, "~> 0.40.4", only: [:dev, :test], runtime: false},
+      # Static analysis in the declared gate; PLT is cached in CI.
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      # The only required dependency: the versioned telemetry contract emits
+      # through it (ADR 0006). No transitive dependencies.
+      {:telemetry, "~> 1.0"},
       # Require the Ash security patch line used by the optional integrations.
       {:ash, "~> 3.34 and >= 3.34.3", optional: true},
       {:simple_sat, "~> 0.1", only: :test},
@@ -157,7 +168,7 @@ defmodule RequestSeal.MixProject do
       {:req, "~> 0.7.4", optional: true, runtime: false},
       {:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false},
       {:plug, "~> 1.20.3", optional: true, runtime: false},
-      {:bandit, "~> 1.12.5", only: :test},
+      {:bandit, "~> 1.13.1", only: :test},
       {:phoenix, "~> 1.8.15", only: :test},
       {:postgrex, "~> 0.22.4", optional: true, runtime: false}
     ] ++ test_dependencies ++ owned_integrations()

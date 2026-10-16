@@ -323,9 +323,12 @@ class NotebookProcessTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "did not complete"):
             self.execute('System.halt(0)')
 
-    def test_actual_child_uses_repository_toolchain_context(self):
+    def test_actual_child_runs_outside_the_repository_project(self):
+        # A Mix.install with a path dependency must not land inside this
+        # repository's Mix project: the project's environment gates
+        # dependencies the notebook never declared.
         output, _ = self.execute('IO.puts(File.cwd!()); IO.puts("COMPLETED_TEST")')
-        self.assertIn(str(ROOT), output.splitlines())
+        self.assertNotEqual(str(ROOT), output.splitlines()[0])
 
     def test_actual_child_failure_output_is_retained(self):
         with self.assertRaisesRegex(ValueError, "diagnostic before early exit"):

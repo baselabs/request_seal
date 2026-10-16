@@ -42,6 +42,7 @@ defmodule RequestSeal.JOSE.Support do
 
     Enum.each(v, fn {k, x} ->
       ensure(is_binary(k), :invalid_header)
+      ensure(byte_size(k) <= 16_384, :limit)
       tree(x)
     end)
   end
@@ -54,7 +55,11 @@ defmodule RequestSeal.JOSE.Support do
   def tree(v) when is_integer(v),
     do: ensure(v in -999_999_999_999_999..999_999_999_999_999, :limit)
 
-  def tree(v) when is_binary(v), do: ensure(String.valid?(v), :invalid_header)
+  def tree(v) when is_binary(v) do
+    ensure(String.valid?(v), :invalid_header)
+    ensure(byte_size(v) <= 16_384, :limit)
+  end
+
   def tree(v) when v in [nil, true, false], do: :ok
   def tree(_), do: fail(:invalid_header)
   defp depth(<<>>, d, string, _), do: ensure(d == 0 and not string, :invalid_header)
@@ -74,9 +79,13 @@ defmodule RequestSeal.JOSE.Support do
 
   defp depth(<<_, r::binary>>, d, s, e), do: depth(r, d, s, e)
 
+  @spec ensure(term(), term(), atom()) :: :ok | no_return()
   def ensure(true, _, _), do: :ok
   def ensure(_, reason, layer), do: fail(reason, layer)
+  @spec ensure(term(), term()) :: :ok | no_return()
   def ensure(value, reason), do: ensure(value, reason, :input)
+  @spec fail(term()) :: no_return()
+  @spec fail(term(), atom()) :: no_return()
   def fail(reason, layer \\ :input), do: throw({:jose_error, reason, layer})
 
   def safe(fun, fallback \\ :invalid_header, layer \\ :input) do
@@ -247,6 +256,9 @@ defmodule RequestSeal.JOSE.Support do
         fail(:unknown_key, :key)
 
       {:ok, entry} when is_map(entry) ->
+        # An entry without an authoritative algorithm is an invalid entry;
+        # :algorithm_mismatch stays reserved for a present, different algorithm.
+        ensure(is_map_key(entry, :algorithm), :key_resolver_failed, :key)
         ensure(entry[:algorithm] == request.algorithm, :algorithm_mismatch, :key)
         entry
 

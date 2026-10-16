@@ -28,22 +28,29 @@ defmodule RequestSeal.SignatureFields do
 
   def field_name?(name), do: Validation.token?(name, 256) and name == String.downcase(name)
 
+  # Every rejection is {:error, %SF.Error{}}: wire-shaped inputs reject with
+  # :syntax, hand-built values with :invalid_value, limits with :limit.
   def inner(bytes) when is_binary(bytes) do
     case SF.parse(bytes, schema(:list)) do
       {:ok, %Value{value: [%Value{type: :inner_list} = value]}} -> inner(value)
       {:error, _} = error -> error
-      _ -> :error
+      _ -> {:error, %SF.Error{reason: :syntax}}
     end
   end
 
   def inner(%Value{type: :inner_list} = value) do
     case SF.serialize(%Value{type: :list, value: [value]}, schema(:list)) do
-      {:ok, _} -> if valid_inner?(value), do: {:ok, value}, else: :error
-      error -> error
+      {:ok, _} ->
+        if valid_inner?(value),
+          do: {:ok, value},
+          else: {:error, %SF.Error{reason: :invalid_value}}
+
+      error ->
+        error
     end
   end
 
-  def inner(_), do: :error
+  def inner(_), do: {:error, %SF.Error{reason: :invalid_value}}
 
   def valid_inner?(%Value{type: :inner_list, value: items, parameters: params}) do
     is_list(items) and length(items) <= 256 and Enum.all?(items, &component?/1) and
@@ -81,12 +88,17 @@ defmodule RequestSeal.SignatureFields do
         {name, Enum.sort(params)}
       end)
 
-  def identifiers(items),
-    do:
-      Enum.map(items, fn item ->
-        {:ok, wire} = SF.serialize(item, schema(:item, [:string], false))
-        wire
-      end)
+  def identifiers(items) do
+    case Enum.reduce_while(items, {:ok, []}, fn item, {:ok, wires} ->
+           case SF.serialize(item, schema(:item, [:string], false)) do
+             {:ok, wire} -> {:cont, {:ok, [wire | wires]}}
+             {:error, _} -> {:halt, :error}
+           end
+         end) do
+      {:ok, wires} -> {:ok, Enum.reverse(wires)}
+      :error -> :error
+    end
+  end
 
   def parameters(value), do: Map.new(value.parameters, fn {key, {_, value}} -> {key, value} end)
 end

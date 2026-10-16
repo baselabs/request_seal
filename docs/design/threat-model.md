@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: design · Updated: 2026-10-14 · Governed by: architecture and ADRs 0002–0007 · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
+<!-- Status: current · Kind: design · Updated: 2026-10-16 · Governed by: architecture and ADRs 0002–0007 · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
 
 # RequestSeal threat model
 
@@ -39,7 +39,7 @@ The caller controls accepted profiles, trusted origins/proxies, trust anchors, d
 | Forwarded-header spoofing | Explicit trusted-proxy policy and authoritative external origin; retain ingress and reconstructed facts. | Actual proxy route with trusted and untrusted hops. |
 | Retry/redirect reuse | Req re-signs each final attempt and requires cross-origin policy; selected nonce/time parameters regenerate. Finch signs each explicit caller invocation; callers own its retry/redirect loop. Responses bind to the supplied request. | Actual redirect/retry flows, including cross-origin denial. |
 | Parser/resource exhaustion | Bounded bytes, members, depth, signature/component/key counts, numeric magnitudes, deadlines, and streaming work. | Just-inside/outside bounds, fuzz corpus, timeout/cancel paths, measured resource receipts. |
-| Error oracle/data leak | Stable bounded public reasons and redacted default inspection. Opt-in diagnostic redactors and a versioned telemetry contract remain proposed in ADR 0006. | Real negative paths with sensitive canaries absent from output. |
+| Error oracle/data leak | Stable bounded public reasons and redacted default inspection. The versioned telemetry contract (from 0.5.0, ADR 0006) carries only low-cardinality outcome/reason/layer atoms; opt-in diagnostic redactors remain proposed. | Real negative paths with sensitive canaries absent from output, event metadata, and event names. |
 | Cross-profile replay | Commitment facts carry the selected profile stamp; the caller's namespace and commitment separate profiles. No fallback. | Same nonce under generic, Web Bot Auth, and package-namespaced extension profiles; tag substitution rejection. |
 | Corpus compromise | Immutable provenance, independent expected values, digest manifest, source review, and the Elixir consumer prohibited from regenerating expectations. | Tampered-case red proof in Elixir and manifest verification. |
 | Supply-chain substitution | Exact development pins, locked dependencies, package content allowlist, advisory/license review, provenance/checksums, isolated notebook toolchain. CI actions use immutable commit SHAs; the PostgreSQL service uses the moving `postgres:18` tag, not a digest pin. | Fresh clone, package inspection, audit output, and consumer install on required platforms; the service tag does not establish immutable image identity. |
@@ -84,11 +84,13 @@ RequestSeal cannot establish that a caller's trust anchors, proxy configuration,
 
 ## Measured input ceilings
 
-OBSERVED on October 8, 2026 by `MIX_ENV=test mix run bench/ceilings.exs`:
-Darwin arm64, 64-bit words, Erlang/OTP 29.1.1 (ERTS 17.1), Elixir 1.20.4
-(compiled for OTP 29). CPU model not recorded; the machine
-identity recorded by `uname -sm` is Darwin arm64. The runtime OTP patch version
-was read from its `OTP_VERSION` file.
+OBSERVED on October 16, 2026 by `MIX_ENV=test mix run bench/ceilings.exs`:
+Apple M4 (Darwin arm64), 64-bit words, Erlang/OTP 29.1.1 (ERTS 17.1), Elixir
+1.20.4 (compiled for OTP 29). The runtime OTP patch version was read from its
+`OTP_VERSION` file. This run follows the 0.5.0 hot-path changes (binary-part
+OWS trimming, single-pass builder counting, validate-once verification
+plumbing); the signature-base candidate measures ~2.5× faster at p50 than the
+October 8 run on the same machine class.
 
 Each adversarial candidate has 10 warmups and 100 measured samples, with garbage
 collection before each measurement. Time uses integer microseconds;
@@ -100,13 +102,13 @@ resource measurements for this run, rather than universal latency bounds.
 
 | Parser | Time candidate / input ceilings | Time p50 / p99 / max (µs) | Reduction candidate | Reductions p50 / p99 / max |
 | --- | --- | ---: | --- | ---: |
-| Structured Fields | dictionary / bytes:65536,members:1024 | 4896 / 11065 / 22136 | dictionary | 360088 / 363107 / 363290 |
-| Signature base | base / bytes:1048576,components:256 | 20107 / 34829 / 43177 | base | 3928094 / 4077568 / 4077579 |
-| Compact JWS | compact / compact_bytes:1048576,header_bytes:16384,depth:4 | 2620 / 6138 / 10671 | compact | 2397568 / 2397632 / 2397632 |
-| Compact JWE | compact / compact_bytes:1048576,header_bytes:16384,depth:4 | 2649 / 7787 / 9971 | compact | 2400029 / 2400090 / 2400091 |
-| JOSE protected JSON | bytes_depth / bytes:16384,depth:4 | 131 / 714 / 1154 | bytes_depth | 33023 / 33089 / 33090 |
-| JWKS body | json_shape / bytes:65536,keys:32,members:256,array:256,depth:32 | 723 / 1224 / 1269 | body_keys | 148493 / 148512 / 148513 |
-| Key directory body | body_keys / bytes:65536,keys:32 | 337 / 1218 / 1431 | body_keys | 148741 / 148908 / 148909 |
+| Structured Fields | dictionary / bytes:65536, members:1024 | 4 696 / 7 193 / 7 946 | dictionary | 360 110 / 363 061 / 363 291 |
+| Signature base | base / bytes:1048576, components:256 | 8 799 / 10 651 / 10 922 | base | 3 332 590 / 3 333 645 / 3 333 660 |
+| Compact JWS | whitespace_storm / compact_bytes:1048576, segments:under-limit | 2 239 / 4 333 / 4 397 | compact | 2 397 577 / 2 397 641 / 2 397 642 |
+| Compact JWE | compact / compact_bytes:1048576, header_bytes:16384, depth:4 | 2 944 / 8 899 / 9 307 | compact | 2 400 050 / 2 400 112 / 2 400 114 |
+| JOSE protected JSON | bytes_depth / bytes:16384, depth:4 | 55 / 123 / 135 | bytes_depth | 33 032 / 33 098 / 33 099 |
+| JWKS body | json_shape / bytes:65536, keys:32, members:256, array:256, depth:32 | 844 / 1 565 / 1 799 | body_keys | 148 488 / 148 513 / 148 513 |
+| Key directory body | body_keys / bytes:65536, keys:32 | 335 / 1 227 / 1 347 | body_keys | 148 739 / 148 908 / 148 909 |
 
 Structured Fields also measures the byte, parameter, inner-item, value-byte, and
 node ceilings. Its fixed grammar depth accepts container → inner list → item
@@ -144,16 +146,16 @@ and re-encodes it canonically; other token bytes remain identical.
 
 | Algorithm | Outcome | Samples | Time p50 / p99 (µs) | Min / max (µs) |
 | --- | --- | ---: | ---: | ---: |
-| RSA-OAEP | valid | 1,000 | 611 / 1830 | 585 / 2800 |
-| RSA-OAEP | leading_zero | 1,000 | 612 / 1743 | 585 / 5251 |
-| RSA-OAEP | masked_seed | 1,000 | 611 / 1948 | 587 / 3349 |
-| RSA-OAEP | padding | 1,000 | 611 / 1866 | 587 / 4131 |
-| RSA-OAEP | tag | 1,000 | 612 / 1961 | 585 / 9605 |
-| RSA-OAEP-256 | valid | 1,000 | 618 / 2659 | 585 / 16538 |
-| RSA-OAEP-256 | leading_zero | 1,000 | 619 / 2426 | 583 / 4855 |
-| RSA-OAEP-256 | masked_seed | 1,000 | 619 / 2911 | 585 / 7508 |
-| RSA-OAEP-256 | padding | 1,000 | 617 / 2803 | 581 / 8893 |
-| RSA-OAEP-256 | tag | 1,000 | 618 / 2720 | 583 / 11821 |
+| RSA-OAEP | valid | 1000 | 624 / 1 923 | 588 / 3 000 |
+| RSA-OAEP | leading_zero | 1000 | 623 / 2 046 | 585 / 4 316 |
+| RSA-OAEP | masked_seed | 1000 | 623 / 2 161 | 583 / 3 292 |
+| RSA-OAEP | padding | 1000 | 624 / 2 052 | 587 / 12 597 |
+| RSA-OAEP | tag | 1000 | 622 / 2 067 | 580 / 2 551 |
+| RSA-OAEP-256 | valid | 1000 | 625 / 1 755 | 587 / 4 670 |
+| RSA-OAEP-256 | leading_zero | 1000 | 624 / 1 939 | 587 / 4 371 |
+| RSA-OAEP-256 | masked_seed | 1000 | 625 / 2 013 | 587 / 10 568 |
+| RSA-OAEP-256 | padding | 1000 | 625 / 1 490 | 587 / 2 795 |
+| RSA-OAEP-256 | tag | 1000 | 626 / 2 000 | 585 / 4 944 |
 
 A paired bootstrap with 1,000 resamples reports the 99% interval for each
 corruption-minus-comparison mean. The two-sample Kolmogorov–Smirnov distance uses
@@ -164,18 +166,18 @@ it has no joint 99% confidence or multiple-comparison error control.
 
 | Algorithm | Corruption versus | Rank probability | KS distance | Mean delta 99% interval (µs) |
 | --- | --- | ---: | ---: | ---: |
-| RSA-OAEP | leading_zero vs. valid | 0.509 | 0.034 | [-15.16,23.649] |
-| RSA-OAEP | leading_zero vs. tag | 0.5116 | 0.039 | [-41.939,23.825] |
-| RSA-OAEP | masked_seed vs. valid | 0.5066 | 0.054 | [-8.533,29.728] |
-| RSA-OAEP | masked_seed vs. tag | 0.5089 | 0.039 | [-31.286,28.25] |
-| RSA-OAEP | padding vs. valid | 0.4939 | 0.047 | [-21.847,20.286] |
-| RSA-OAEP | padding vs. tag | 0.4966 | 0.03 | [-42.929,13.476] |
-| RSA-OAEP-256 | leading_zero vs. valid | 0.5019 | 0.025 | [-118.583,1.585] |
-| RSA-OAEP-256 | leading_zero vs. tag | 0.5112 | 0.031 | [-78.756,9.779] |
-| RSA-OAEP-256 | masked_seed vs. valid | 0.4967 | 0.022 | [-93.473,17.276] |
-| RSA-OAEP-256 | masked_seed vs. tag | 0.506 | 0.026 | [-74.027,37.994] |
-| RSA-OAEP-256 | padding vs. valid | 0.4904 | 0.028 | [-103.127,28.032] |
-| RSA-OAEP-256 | padding vs. tag | 0.4993 | 0.023 | [-70.725,31.83] |
+| RSA-OAEP | leading_zero vs. valid | 0.5079 | 0.027 | [-11.918,21.919] |
+| RSA-OAEP | leading_zero vs. tag | 0.5081 | 0.03 | [-11.29,25.263] |
+| RSA-OAEP | masked_seed vs. valid | 0.4988 | 0.023 | [-24.611,13.23] |
+| RSA-OAEP | masked_seed vs. tag | 0.4992 | 0.025 | [-22.77,12.912] |
+| RSA-OAEP | padding vs. valid | 0.5013 | 0.02 | [-20.989,47.896] |
+| RSA-OAEP | padding vs. tag | 0.5015 | 0.021 | [-16.988,40.329] |
+| RSA-OAEP-256 | leading_zero vs. valid | 0.4975 | 0.028 | [-13.925,18.377] |
+| RSA-OAEP-256 | leading_zero vs. tag | 0.5042 | 0.033 | [-20.127,24.116] |
+| RSA-OAEP-256 | masked_seed vs. valid | 0.502 | 0.022 | [-16.767,41.462] |
+| RSA-OAEP-256 | masked_seed vs. tag | 0.5088 | 0.046 | [-13.359,36.373] |
+| RSA-OAEP-256 | padding vs. valid | 0.5036 | 0.024 | [-26.491,11.981] |
+| RSA-OAEP-256 | padding vs. tag | 0.5104 | 0.043 | [-22.441,10.166] |
 
 OBSERVED: no timing separation was detected for leading-zero, masked-seed, or
 masked-data-block corruption versus valid ciphertext or tag failure in this run

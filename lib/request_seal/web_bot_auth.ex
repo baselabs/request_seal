@@ -161,6 +161,8 @@ defmodule RequestSeal.WebBotAuth do
   @spec verify(Message.t(), Policy.t(), keyword()) ::
           {:ok, Verification.t()} | {:error, Error.t()}
   def verify(message, policy, opts \\ []) do
+    start = System.monotonic_time()
+
     protect(fn ->
       ensure(Policy.valid?(policy), :invalid_policy, :input)
       options(opts, [:representation, :digest_state, :timeout])
@@ -287,6 +289,17 @@ defmodule RequestSeal.WebBotAuth do
          replay: replay
        }}
     end)
+    |> emit_verify(start)
+  end
+
+  defp emit_verify(result, start) do
+    RequestSeal.Telemetry.emit(
+      [:request_seal, :web_bot_auth, :verify, :stop],
+      System.monotonic_time() - start,
+      RequestSeal.Telemetry.meta(result)
+    )
+
+    result
   end
 
   defp agents(message) do
@@ -528,6 +541,7 @@ defmodule RequestSeal.WebBotAuth do
     end
   end
 
+  @spec discovery_error(term()) :: no_return()
   defp discovery_error(reason) when reason in [:unknown_key, :revoked_key],
     do: fail(:agent_unresolved, :key, reason)
 
@@ -708,7 +722,7 @@ defmodule RequestSeal.WebBotAuth do
 
     * `{:ok, message}` - the message with the appended fields.
     * `{:error, %RequestSeal.Error{}}` - established reasons: `:invalid_options`
-      (option, spec, key, lifetime, signer form, or, from 0.5.0 (unreleased), an invalid `:agent`
+      (option, spec, key, lifetime, signer form, or, from 0.5.0, an invalid `:agent`
       location), `:invalid_message`, `:invalid_signature_agent` (an invalid
       existing `Signature-Agent` field), `:limit`, `:nested_coverage_incomplete` (`components` name
       a signature that is absent or not covered completely), existing-dictionary
@@ -926,15 +940,22 @@ defmodule RequestSeal.WebBotAuth do
   defp ensure(true, _, _, _), do: :ok
   defp ensure(_, reason, layer, detail), do: fail(reason, layer, detail)
 
+  @spec fail(term(), atom()) :: no_return()
+  @spec fail(term(), atom(), atom() | nil) :: no_return()
   defp fail(reason, layer, detail \\ nil),
     do: throw({:web_bot_auth_error, Error.new(reason, layer, detail)})
 
   defp protect(fun) do
     fun.()
   rescue
-    _ -> {:error, Error.new(:invalid_options, :input)}
+    # An unexpected fault is internal, not an options fault; the class rides in
+    # detail and telemetry.
+    exception -> {:error, Error.new(:internal, :internal, exception_class(exception))}
   catch
     {:web_bot_auth_error, error} -> {:error, error}
-    _, _ -> {:error, Error.new(:invalid_options, :input)}
+    :exit, _ -> {:error, Error.new(:internal, :internal, :exit)}
+    _, _ -> {:error, Error.new(:internal, :internal, :throw)}
   end
+
+  defp exception_class(%{__struct__: module}), do: module
 end

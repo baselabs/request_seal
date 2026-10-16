@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: an error struct, reason, layer, or retry rule changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture and accepted ADRs · Review when: an error struct, reason, layer, or retry rule changes -->
 
 # Diagnose and handle errors
 
@@ -10,15 +10,15 @@ Every failure is a bounded struct with a closed `reason` atom. No error carries 
 
 | Struct | Returned by | Fields to use | Retryable |
 | --- | --- | --- | --- |
-| `RequestSeal.Error` | `sign/4`, `verify/3`, `verify_quorum/3`, `Policy.new/1`, Web Bot Auth, Ash scope, negotiation | `reason`, `layer`, `detail`, `correlation`, `source` | Never |
+| `RequestSeal.Error` | `sign/4`, `verify/3`, `verify_quorum/3`, `Policy.new/1`, Web Bot Auth, Ash scope, negotiation | `reason`, `layer`, `detail`, `correlation`, `source` | Only `:deadline` |
 | `RequestSeal.Adapter.Error` | Req, Finch, Plug | `reason`, `adapter`, `stage`, `attempt`, `correlation`, `source` | Never |
 | `RequestSeal.Custody.Error` | `RequestSeal.Custody`, key handles | `reason`, `retryable` | `:deadline_exceeded`, `:custodian_unavailable` |
 | `RequestSeal.JOSE.Error` | JWS, JWE, nested JOSE, key management | `reason`, `layer` | `:deadline_exceeded` |
-| `RequestSeal.Discovery.Error` | Discovery fetch and cache | `reason`, `retryable` | `:connect_failed`, `:deadline_exceeded`, `:source_unavailable`, `:cache_overloaded`, and `:unexpected_status` for a 5xx response |
+| `RequestSeal.Discovery.Error` | Discovery fetch and cache | `reason`, `retryable` | `:connect_failed`, `:deadline_exceeded`, `:resolution_failed`, `:source_unavailable`, `:cache_overloaded`, and `:unexpected_status` for a 5xx response |
 | `RequestSeal.Replay.Error` | `RequestSeal.Replay.claim/3` | `reason` | Never; a timeout may already have committed |
 | `RequestSeal.Message.Error`, `RequestSeal.Digest.Error`, `RequestSeal.SignatureBase.Error`, `RequestSeal.StructuredFields.Error`, `RequestSeal.Crypto.Error` | Message construction, digests, signature bases, Structured Fields, primitives | `reason` | Correct the input |
 
-Each struct's module documentation lists every reason with its meaning. For `RequestSeal.Error`, match `layer` first: it names the check that rejected the message (`:input`, `:fields`, `:policy`, `:key`, `:crypto`, `:content`, `:freshness`, `:replay`, `:quorum`, `:negotiation`, `:binding`, or `:profile`), and `reason` names the rule. A `:signing_failed` error keeps the custody failure in `source`; an adapter's `:request_rejected` or `:response_rejected` keeps the core error in `source`.
+Each struct's module documentation lists every reason with its meaning. For `RequestSeal.Error`, match `layer` first: it names the check that rejected the message (`:input`, `:fields`, `:policy`, `:key`, `:crypto`, `:content`, `:freshness`, `:replay`, `:quorum`, `:negotiation`, `:binding`, `:profile`, or `:internal`), and `reason` names the rule. A `:signing_failed` error keeps the custody failure in `source`; an adapter's `:request_rejected` or `:response_rejected` keeps the core error in `source`.
 
 ## Log safely
 
@@ -38,6 +38,25 @@ end
 ```
 
 Do not log `verification.signature.parameters`, `verification.signature.keyid`, or header values; default inspection already hides them.
+
+## Observe with telemetry
+
+From 0.5.0, RequestSeal emits a versioned `:telemetry` contract (`RequestSeal.Telemetry` documents every event name and key): a stop event for `RequestSeal.verify/3`, `RequestSeal.verify_quorum/3`, and Web Bot Auth verification with `outcome`, `reason`, `layer`, and `detail`, plus a claim event for every replay commitment and a stop event for the shared custody signing path. Metadata carries only closed reason and layer atoms — never labels, key IDs, URLs, or bytes — so a handler can record it unredacted:
+
+```elixir
+:telemetry.detach("request-seal-ops")
+
+:telemetry.attach_many("request-seal-ops", [
+  [:request_seal, :verify, :stop],
+  [:request_seal, :verify_quorum, :stop]
+], fn _event, _measurements, metadata, _config ->
+  send(self(), {:verified, metadata.outcome})
+end, nil)
+
+:telemetry.detach("request-seal-ops")
+```
+
+Resource exhaustion is observable the same way: a `:limit` reason marks a documented bound and the retryable `:deadline` reason marks the caller wall-clock bound on `verify_quorum/3`. An `:internal` reason at layer `:internal` marks an unexpected internal fault, not a property of the input; its `detail` is the exception class, and the correlation token pairs it with your logs.
 
 ## Reproduce each rejection
 
@@ -158,5 +177,7 @@ Replay is claimed only after every other check passes, so a rejected request nev
 Retry only an error whose struct says `retryable: true`: custody `:deadline_exceeded` or `:custodian_unavailable`, JOSE `:deadline_exceeded`, and the discovery reasons in the table above. Retrying never authorizes repeating an application operation; decide that separately.
 
 Never retry a `RequestSeal.Error` by resending the same signed bytes: the verifier rejects them for the same reason, or as a replay. A replay store `:store_timeout` is indeterminate because the claim may have committed; treat that request as rejected and ask the sender to sign a new one.
+
+The one retryable `RequestSeal.Error` is `:deadline` at `:quorum` (from 0.5.0): the caller's `:deadline` wall-clock bound on `verify_quorum/3` expired during the assignment search. Verification established nothing, so retrying with a later deadline is safe and can succeed under less load.
 
 Next: [signing and verifying](signing-and-verifying.md) for the full policy, [replay protection](replay-protection.md) for store failures, and [key custody](key-custody.md) for handle lifecycles.

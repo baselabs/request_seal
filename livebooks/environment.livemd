@@ -2,10 +2,10 @@
 
 # Inspect RequestSeal
 
-This notebook installs RequestSeal 0.4.1 from Hex and checks that your runtime can use it: the pinned Elixir and OTP versions, Ed25519 support in OTP's crypto, the public entry points, and the supported HTTP signature algorithms. No key, secret, or provider account is required. Use the pinned Elixir/OTP runtime below.
+This notebook installs RequestSeal 0.5.0 from Hex and checks that your runtime can use it: the pinned Elixir and OTP versions, Ed25519 support in OTP's crypto, the public entry points, and the supported HTTP signature algorithms. No key, secret, or provider account is required. Use the pinned Elixir/OTP runtime below.
 
 ```elixir
-Mix.install([{:request_seal, "~> 0.4.1"}])
+Mix.install([{:request_seal, "~> 0.5.0"}])
 ```
 
 ## Inspect actual capabilities

@@ -15,11 +15,15 @@ defmodule RequestSeal.Quorum.Evaluation do
   def verify(message, quorum, opts) do
     protect(fn ->
       ensure(
-        Quorum.bounded_list?(opts, 0, 1) and Keyword.keyword?(opts) and
-          Enum.all?(Keyword.keys(opts), &(&1 == :accept_signature)),
+        Quorum.bounded_list?(opts, 0, 2) and Keyword.keyword?(opts) and
+          Keyword.keys(opts) == Enum.uniq(Keyword.keys(opts)) and
+          Enum.all?(Keyword.keys(opts), &(&1 in [:accept_signature, :deadline])),
         :invalid_options,
         :input
       )
+
+      deadline = Keyword.get(opts, :deadline)
+      ensure(deadline == nil or is_integer(deadline), :invalid_options, :input)
 
       ensure(Quorum.valid?(quorum), :invalid_quorum, :input)
 
@@ -83,7 +87,7 @@ defmodule RequestSeal.Quorum.Evaluation do
           :ok
       end)
 
-      {qualified, pool} = assign(qualified, quorum, requests)
+      {qualified, pool} = assign(qualified, quorum, requests, deadline)
       count = count(qualified, quorum.unit)
       required = for s <- quorum.slots, s.required, do: s.id
       satisfied = for s <- quorum.slots, Enum.any?(qualified, &(&1.slot.id == s.id)), do: s.id
@@ -153,7 +157,7 @@ defmodule RequestSeal.Quorum.Evaluation do
 
   @node_budget 131_072
 
-  defp assign(records, quorum, requests) do
+  defp assign(records, quorum, requests, deadline) do
     records = merge_identity_classes(records)
     records = drop_unknown_for_key_unit(records, quorum)
     labels = Enum.map(requests, & &1.label)
@@ -176,7 +180,7 @@ defmodule RequestSeal.Quorum.Evaluation do
       if quorum.bindings == [] and quorum.unit != {:role, [shared_principal: false]} do
         maximize_units_by_matching(slots, edges, required_match, quorum.unit)
       else
-        search_assignment(slots, edges, bound, quorum)
+        search_assignment(slots, edges, bound, quorum, deadline)
       end
 
     ensure(
@@ -363,7 +367,7 @@ defmodule RequestSeal.Quorum.Evaluation do
     end)
   end
 
-  defp search_assignment(slots, edges, bound, quorum) do
+  defp search_assignment(slots, edges, bound, quorum, deadline) do
     classes =
       edges
       |> Map.values()
@@ -372,68 +376,87 @@ defmodule RequestSeal.Quorum.Evaluation do
       |> MapSet.new()
       |> MapSet.size()
 
-    ctx = %{edges: edges, bound: bound, quorum: quorum, classes: classes}
+    ctx = %{edges: edges, bound: bound, quorum: quorum, classes: classes, deadline: deadline}
     {best, _, exhausted} = search(slots, %{}, %{}, ctx, {nil, 0, false})
-    if exhausted and (best == nil or not mode_met?(best, quorum)), do: fail(:limit, :input)
+
+    # Best-so-far acceptance is unchanged: exhaustion of either bound still
+    # succeeds when the mode, required slots, and bindings hold; only the
+    # bounded rejection reason differs. The deadline is the caller's wall-clock
+    # control, so its rejection is retryable.
+    if exhausted != false and (best == nil or not mode_met?(best, quorum)) do
+      if exhausted == :deadline, do: fail(:deadline, :quorum), else: fail(:limit, :input)
+    end
+
     ensure(best != nil, :binding_unsatisfied, :quorum)
     best
   end
 
-  defp search(_, _, _, _, {best, nodes, true}), do: {best, nodes, true}
+  defp search(_, _, _, _, {best, nodes, exhausted}) when exhausted != false,
+    do: {best, nodes, exhausted}
 
   defp search(slots, matched, fixed, ctx, {best, nodes, false}) do
-    if nodes >= @node_budget do
-      {best, nodes, true}
-    else
-      state = {best, nodes + 1, false}
-      records = Map.values(matched)
+    cond do
+      nodes >= @node_budget ->
+        {best, nodes, :nodes}
 
-      cond do
-        slots == [] ->
-          if bindings_hold?(records, ctx.quorum.bindings) and
-               better?(records, best, ctx.quorum.unit),
-             do: {records, nodes + 1, false},
-             else: state
+      expired?(ctx) ->
+        {best, nodes, :deadline}
 
-        pruned?(slots, records, best, ctx) ->
-          state
+      true ->
+        state = {best, nodes + 1, false}
+        records = Map.values(matched)
 
-        true ->
-          [slot | rest] = slots
+        cond do
+          slots == [] ->
+            if bindings_hold?(records, ctx.quorum.bindings) and
+                 better?(records, best, ctx.quorum.unit),
+               do: {records, nodes + 1, false},
+               else: state
 
-          if MapSet.member?(ctx.bound, slot.id) do
-            Enum.reduce_while(Map.get(ctx.edges, slot.id, []), state, fn {class, record}, acc ->
-              chosen = Map.put(fixed, slot.id, record)
+          pruned?(slots, records, best, ctx) ->
+            state
 
-              acc =
-                if partial_bindings_hold?(Map.values(chosen), ctx.quorum.bindings) do
-                  edges = fixed_edges(ctx.edges, chosen)
+          true ->
+            [slot | rest] = slots
 
-                  case assign_slot(slot.id, edges, matched, MapSet.new()) do
-                    {:ok, updated} -> search(rest, updated, chosen, ctx, acc)
-                    {:error, _} -> acc
+            if MapSet.member?(ctx.bound, slot.id) do
+              Enum.reduce_while(Map.get(ctx.edges, slot.id, []), state, fn {class, record}, acc ->
+                chosen = Map.put(fixed, slot.id, record)
+
+                acc =
+                  if partial_bindings_hold?(Map.values(chosen), ctx.quorum.bindings) do
+                    edges = fixed_edges(ctx.edges, chosen)
+
+                    case assign_slot(slot.id, edges, matched, MapSet.new()) do
+                      {:ok, updated} -> search(rest, updated, chosen, ctx, acc)
+                      {:error, _} -> acc
+                    end
+                  else
+                    acc
                   end
-                else
-                  acc
+
+                # A fixed class cannot be reused; retain the record, not merely
+                # its identity, throughout later augmenting paths.
+                _ = class
+                if elem(acc, 2), do: {:halt, acc}, else: {:cont, acc}
+              end)
+            else
+              state =
+                case assign_slot(slot.id, fixed_edges(ctx.edges, fixed), matched, MapSet.new()) do
+                  {:ok, updated} -> search(rest, updated, fixed, ctx, state)
+                  {:error, _} -> state
                 end
 
-              # A fixed class cannot be reused; retain the record, not merely
-              # its identity, throughout later augmenting paths.
-              _ = class
-              if elem(acc, 2), do: {:halt, acc}, else: {:cont, acc}
-            end)
-          else
-            state =
-              case assign_slot(slot.id, fixed_edges(ctx.edges, fixed), matched, MapSet.new()) do
-                {:ok, updated} -> search(rest, updated, fixed, ctx, state)
-                {:error, _} -> state
-              end
-
-            if slot.required, do: state, else: search(rest, matched, fixed, ctx, state)
-          end
-      end
+              if slot.required, do: state, else: search(rest, matched, fixed, ctx, state)
+            end
+        end
     end
   end
+
+  defp expired?(%{deadline: nil}), do: false
+
+  defp expired?(%{deadline: deadline}),
+    do: System.monotonic_time(:millisecond) >= deadline
 
   defp fixed_edges(edges, fixed),
     do: Enum.reduce(fixed, edges, fn {id, r}, acc -> Map.put(acc, id, [{r.class, r}]) end)
@@ -587,12 +610,20 @@ defmodule RequestSeal.Quorum.Evaluation do
   defp ensure(true, _, _), do: :ok
   defp ensure(_, reason, layer), do: fail(reason, layer)
 
+  @spec fail(term(), atom()) :: no_return()
+  @spec fail(term(), atom(), atom() | nil) :: no_return()
   defp fail(reason, layer, detail \\ nil),
     do: throw({:quorum_error, Error.new(reason, layer, detail)})
 
   defp protect(fun) do
     fun.()
+  rescue
+    exception -> {:error, Error.new(:internal, :internal, exception_class(exception))}
   catch
     {:quorum_error, error} -> {:error, error}
+    :exit, _ -> {:error, Error.new(:internal, :internal, :exit)}
+    _, _ -> {:error, Error.new(:internal, :internal, :throw)}
   end
+
+  defp exception_class(%{__struct__: module}), do: module
 end

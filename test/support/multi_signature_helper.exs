@@ -201,10 +201,11 @@ defmodule RequestSeal.MultiSignatureSupport do
   end
 
   def error(result, reason, layer \\ :quorum) do
-    assert {:error,
-            %RequestSeal.Error{reason: ^reason, layer: ^layer, detail: detail, retryable: false} =
-              e} = result
+    assert {:error, %RequestSeal.Error{reason: ^reason, layer: ^layer, detail: detail} = e} =
+             result
 
+    # :deadline is the one retryable reason; everything else stays false.
+    assert e.retryable == (reason == :deadline)
     assert detail == nil or is_atom(detail)
     refute inspect(e) =~ "test-key"
     refute inspect(e) =~ "published-secret"

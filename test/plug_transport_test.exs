@@ -288,11 +288,16 @@ defmodule RequestSeal.PlugTransportTest do
     assert T.raw(origin, T.wire("B.2.6")) =~ "HTTP/1.1 400"
     assert_receive {:observed, conn, {:ok, _}, :error}, 5_000
 
-    assert {:error, %Error{reason: :response_rejected, stage: :verify, source: nil} = error} =
+    # The malformed components reject through the core verifier's bounded
+    # policy rejection (with its bounded source), not through a rescued
+    # internal crash; the poisoned components value never appears.
+    assert {:error, %Error{reason: :request_rejected, stage: :verify, source: core} = error} =
              conn.private[:request_seal].verification
 
+    assert %RequestSeal.Error{} = core
     assert byte_size(Exception.message(error)) < 100
     refute inspect(error) =~ "policy-canary"
+    refute inspect(core) =~ "policy-canary"
     refute_received {:resolved, _}
   end
 

@@ -142,7 +142,7 @@ if Code.ensure_loaded?(Req) do
         `RequestSeal.Policy`), `:label` (the response signature label), and
         `:max_stream_bytes` (a nonnegative integer bound on buffered response
         bytes; any other value, including nil, rejects with `:invalid_options`,
-        from 0.5.0 (unreleased); 0.4.1 rejects nil with `:unsupported_delivery`). With a map, the request
+        from 0.5.0; 0.4.1 rejects nil with `:unsupported_delivery`). With a map, the request
         must keep `http_errors: :return` (the default), must not set
         `cache: true`, and must not have a response step ahead of
         verification. A non-nil `into` destination must be a two-arity
@@ -165,7 +165,9 @@ if Code.ensure_loaded?(Req) do
         query, fragment, or userinfo, at most 2,048 bytes. An origin is scheme,
         lowercased host, and port. Allowed cross-origin attempts strip
         `authorization`, `cookie`, `proxy-authorization`, and
-        `:credential_headers`, even with Req's `redirect_trusted`.
+        `:credential_headers`, even with Req's `redirect_trusted`. Stripping is
+        monotonic: once removed, credential headers stay removed for later
+        attempts, including a later redirect back to the first origin.
       * `:credential_headers` - at most 64 HTTP header names of 1..256 token
         bytes, matched case insensitively, stripped on allowed cross-origin
         attempts. Default `[]`.

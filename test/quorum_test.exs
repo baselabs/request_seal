@@ -695,8 +695,8 @@ defmodule RequestSeal.QuorumTest do
     tracer = spawn_link(fn -> trace_counts(owner, %{}) end)
 
     patterns = [
-      {RequestSeal.StructuredFields, :parse_field, 5},
-      {RequestSeal.SignatureBase, :build, 3},
+      {RequestSeal.StructuredFields, :parse_field_validated, 5},
+      {RequestSeal.SignatureBase, :build_validated, 3},
       {RequestSeal.Authentication, :verify_label, 7}
     ]
 
@@ -714,7 +714,7 @@ defmodule RequestSeal.QuorumTest do
       assert_receive {:trace_delivered, _, ^ref}
       send(tracer, {:counts, ref})
       assert_receive {:counts, ^ref, counts}
-      assert counts == %{parse_field: 2, build: 1, verify_label: 2}
+      assert counts == %{parse_field_validated: 2, build_validated: 1, verify_label: 2}
     after
       :erlang.trace(self(), false, [:call])
       Enum.each(patterns, &:erlang.trace_pattern(&1, false, []))
@@ -1393,6 +1393,85 @@ defmodule RequestSeal.QuorumTest do
     assert {:ok, %{count: 1, satisfied: satisfied}} = result
     assert length(satisfied) == 15
     IO.puts("ROLE_FALSE_WORST #{us} us")
+  end
+
+  # The node budget bounds work, not time; a crafted message can still pin a
+  # verifier for the whole budget. The caller wall-clock bound closes that gap.
+  describe "verify_quorum/3 deadline" do
+    defp slots_for(%{slots: slots}), do: slots
+
+    setup do
+      {message, p} = generated_pool(64, 1)
+
+      slots =
+        for id <- assignment_ids() do
+          slot(id,
+            policy: p,
+            required: false,
+            label: if(id == :p, do: "absent", else: nil),
+            principal: if(id == :p, do: "unreachable", else: "shared"),
+            role: id
+          )
+        end
+
+      %{
+        message: message,
+        quorum:
+          quorum(slots, mode: :any, unit: {:role, shared_principal: false}, max_signatures: 64),
+        slots: slots
+      }
+    end
+
+    test "a deadline already in the past rejects before the search runs", c do
+      past = System.monotonic_time(:millisecond) - 1
+      error(verify_quorum(c.message, c.quorum, deadline: past), :deadline, :quorum)
+    end
+
+    test "a generous deadline leaves the documented worst case accepted", c do
+      future = System.monotonic_time(:millisecond) + 10_000
+      assert {:ok, %{count: 1}} = verify_quorum(c.message, c.quorum, deadline: future)
+    end
+
+    test "a short deadline bounds the worst-case wall-clock mid-search", c do
+      # An unreachable threshold (16 distinct roles from 15 usable slots) means
+      # best-so-far can never satisfy the mode, so expiry must surface as the
+      # bounded :deadline rejection rather than an accepted partial answer.
+      unreachable =
+        quorum(slots_for(c),
+          mode: {:threshold, 16},
+          unit: {:role, shared_principal: false},
+          max_signatures: 64
+        )
+
+      short = System.monotonic_time(:millisecond) + 50
+      {us, result} = :timer.tc(fn -> verify_quorum(c.message, unreachable, deadline: short) end)
+      # The unbounded search measures ~650 ms CPU on this fixture; ignoring the
+      # deadline cannot fit inside 300 ms. Overshoot past the 50 ms deadline is
+      # bounded by one node of search work.
+      assert us < 300_000
+      assert {:error, %RequestSeal.Error{reason: :deadline, layer: :quorum}} = result
+    end
+
+    test "a deadline that expires is the first retryable quorum error", c do
+      past = System.monotonic_time(:millisecond) - 1
+
+      assert {:error, %RequestSeal.Error{retryable: true}} =
+               verify_quorum(c.message, c.quorum, deadline: past)
+    end
+
+    test "the deadline option validates", c do
+      for bad <- [:soon, 1.5, "100"] do
+        error(verify_quorum(c.message, c.quorum, deadline: bad), :invalid_options, :input)
+      end
+
+      error(verify_quorum(c.message, c.quorum, deadline: 5, other: 1), :invalid_options, :input)
+
+      error(
+        verify_quorum(c.message, c.quorum, deadline: 5, deadline: 6),
+        :invalid_options,
+        :input
+      )
+    end
   end
 
   test "an unmatched required slot takes precedence over an unsatisfied binding" do

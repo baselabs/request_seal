@@ -50,7 +50,15 @@ no principal attribution and reject required replay. A negotiated label can be
 verified without being assigned to that map. Default single-label inspection
 omits principals and signature metadata.
 
-The Decision's opt-in diagnostic redactors and versioned telemetry contracts
-remain proposed observability requirements. The implemented core error is a
-bounded nonretryable value with a random correlation token; it retains no
+The Decision's opt-in diagnostic redactors remain a proposed observability
+requirement. The versioned telemetry contract is implemented from 0.5.0:
+`RequestSeal.Telemetry` documents the v1 events — stop events for
+`RequestSeal.verify/3`, `RequestSeal.verify_quorum/3`, and Web Bot Auth
+verification, a claim event for every replay commitment, and a stop event for
+the shared custody signing path — with duration measurements and
+low-cardinality `outcome`/`reason`/`layer`/`detail` metadata only. The
+`:telemetry` library is the package's single required dependency. The one
+retryable core error is `:deadline`, the caller's wall-clock bound on the
+quorum assignment search (also from 0.5.0); every other core error remains a
+bounded nonretryable value with a random correlation token retaining no
 callback text. See `RequestSeal.Error` for its reason/layer contract.

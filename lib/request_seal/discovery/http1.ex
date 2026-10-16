@@ -7,7 +7,7 @@ defmodule RequestSeal.Discovery.HTTP1 do
   import Support, only: [ensure: 2, unwrap: 1]
   @header_cap 16_384
 
-  def request(socket, uri, source, deadline) do
+  def request(socket, uri, source, deadline, etag \\ nil) do
     target =
       if(uri.path in [nil, ""], do: "/", else: uri.path) <>
         if(uri.query == nil, do: "", else: "?" <> uri.query)
@@ -19,6 +19,11 @@ defmodule RequestSeal.Discovery.HTTP1 do
         do: "application/http-message-signatures-directory+json",
         else: "application/json, application/jwk-set+json"
 
+    conditional =
+      if is_binary(etag),
+        do: [{"If-None-Match", etag}],
+        else: []
+
     request_fields =
       Enum.map(
         [
@@ -26,7 +31,7 @@ defmodule RequestSeal.Discovery.HTTP1 do
           {"Accept", accept},
           {"Accept-Encoding", "gzip"},
           {"Connection", "close"}
-        ],
+        ] ++ conditional,
         fn {name, value} -> field(name <> ": " <> value) end
       )
 
@@ -49,18 +54,8 @@ defmodule RequestSeal.Discovery.HTTP1 do
       wire_cap: source.max_bytes * 16 + @header_cap * 2
     }
 
-    {head, state} = section(state, @header_cap)
-    [status | lines] = :binary.split(head, "\r\n", [:global])
+    {code, fields, state} = final_section(state)
 
-    code =
-      case Regex.run(~r/\AHTTP\/1\.[01] ([0-9]{3})(?: [\x20-\x7e]*)?\z/, status) do
-        [_, digits] -> String.to_integer(digits)
-        _ -> ensure(false, :invalid_response)
-      end
-
-    fields = Enum.map(lines, &field/1)
-    ensure(code in 100..599, :invalid_response)
-    validate_framing(fields)
     # Redirect/error bodies are never needed and never consumed.
     if code != 200 do
       {code, fields, nil, nil}
@@ -109,6 +104,25 @@ defmodule RequestSeal.Discovery.HTTP1 do
 
       {code, fields, message, decoded}
     end
+  end
+
+  # RFC 9110 Section 15.2: one or more 1xx interim responses may precede the
+  # final one (103 Early Hints from CDN-fronted directories). Skip them, boundedly.
+  defp final_section(state, interim \\ 0) do
+    ensure(interim < 5, :invalid_response)
+    {head, state} = section(state, @header_cap)
+    [status | lines] = :binary.split(head, "\r\n", [:global])
+
+    code =
+      case Regex.run(~r/\AHTTP\/1\.[01] ([0-9]{3})(?: [\x20-\x7e]*)?\z/, status) do
+        [_, digits] -> String.to_integer(digits)
+        _ -> ensure(false, :invalid_response)
+      end
+
+    fields = Enum.map(lines, &field/1)
+    ensure(code in 100..599, :invalid_response)
+    validate_framing(fields)
+    if code in 100..199, do: final_section(state, interim + 1), else: {code, fields, state}
   end
 
   def value(fields, name) do

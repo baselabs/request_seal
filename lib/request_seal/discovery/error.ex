@@ -2,8 +2,9 @@ defmodule RequestSeal.Discovery.Error do
   @moduledoc """
   Bounded discovery failures, containing only `reason` and `retryable`.
 
-  Connect failure, deadline expiry, source unavailability, cache overload and
-  `:unexpected_status` from 5xx responses are retryable; 4xx responses are not.
+  Connect failure, deadline expiry, DNS resolution trouble, source unavailability, cache overload and
+  `:unexpected_status` from 5xx responses are retryable; 4xx responses and a
+  configured host that does not exist are not.
   Retryability never authorizes replay of an application operation.
   No host, URL, key ID, exception, bytes, or peer text is retained.
 
@@ -13,11 +14,15 @@ defmodule RequestSeal.Discovery.Error do
       `RequestSeal.Discovery.Source`.
     * `:invalid_options` - unknown, duplicate or out-of-range options, an invalid
       clock, or an invalid `negative_ttl`.
+    * `:domain_not_found` - DNS answered authoritatively that the configured
+      host does not exist (NXDOMAIN on every queried family): a configuration
+      error, not resolver trouble.
 
   Transport failures:
 
     * `:transport_unavailable` - the caller has not started the `:ssl` application.
-    * `:resolution_failed` - DNS returned no address, or more than 64.
+    * `:resolution_failed` - DNS returned no usable address, or more than 64;
+      possibly transient resolver trouble, so retryable.
     * `:address_denied` - a resolved or connected address is private or
       special-purpose and not in `permitted_addresses`.
     * `:connect_failed` - no address accepted a connection, or the request could
@@ -60,7 +65,8 @@ defmodule RequestSeal.Discovery.Error do
     * `:cache_overloaded` - the cache's source, in-flight or waiter bound is reached.
   """
   defstruct [:reason, :retryable]
-  @reasons ~w(invalid_source invalid_options transport_unavailable resolution_failed
+
+  @reasons ~w(invalid_source invalid_options domain_not_found transport_unavailable resolution_failed
     address_denied connect_failed tls_failed deadline_exceeded redirect_denied
     redirect_limit unexpected_status unexpected_media_type limit invalid_response
     invalid_key_set client_id_mismatch ambiguous_key_source directory_unsigned
@@ -74,7 +80,13 @@ defmodule RequestSeal.Discovery.Error do
     %__MODULE__{
       reason: reason,
       retryable:
-        reason in [:connect_failed, :deadline_exceeded, :source_unavailable, :cache_overloaded]
+        reason in [
+          :connect_failed,
+          :deadline_exceeded,
+          :resolution_failed,
+          :source_unavailable,
+          :cache_overloaded
+        ]
     }
   end
 end

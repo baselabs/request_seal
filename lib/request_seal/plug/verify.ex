@@ -37,8 +37,16 @@ if Code.ensure_loaded?(Plug.Conn) do
       * `:on_reject` (required) - `:continue`, or `{:halt, status}` with a final
         status in 200..599.
       * `:assign` - a non-Boolean atom or nil (default nil; Booleans reject
-        from 0.5.0 (unreleased)). When set, a
+        from 0.5.0). When set, a
         successful verification is also assigned under that key.
+      * `:name` - a stable repeat-identity atom (or 1..256-byte binary),
+        default nil. When set, a later Verify on the same connection reuses
+        the first result when its `:name` and `:label` are equal, even if the
+        `:policy` value is a rebuilt-equivalent policy whose function fields
+        make `==` fail — the name is the caller's explicit assertion that the
+        policy is the same one. A repeat with a different name, no name, or a
+        different label still fails closed `:already_verified`; a policy-based
+        repeat of a named verification never matches.
 
     ## Returns
 
@@ -59,11 +67,11 @@ if Code.ensure_loaded?(Plug.Conn) do
     @impl Plug
     def init(opts) do
       case Signing.protect(:plug, :attach, 0, fn ->
-             Signing.options(opts, [:policy, :label, :on_reject, :assign])
+             Signing.options(opts, [:policy, :label, :on_reject, :assign, :name])
 
              Signing.ensure(
                policy_source?(opts[:policy]) and SignatureFields.label?(opts[:label]) and
-                 assign?(opts[:assign]) and rejection?(opts[:on_reject]),
+                 assign?(opts[:assign]) and rejection?(opts[:on_reject]) and name?(opts[:name]),
                :invalid_options
              )
 
@@ -99,6 +107,11 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     defp assign?(assign), do: assign == nil or (is_atom(assign) and not is_boolean(assign))
 
+    defp name?(name),
+      do:
+        name == nil or (is_atom(name) and not is_boolean(name)) or
+          (is_binary(name) and byte_size(name) in 1..256)
+
     defp rejection?(:continue), do: true
     defp rejection?({:halt, status}), do: is_integer(status) and status in 200..599
     defp rejection?(_), do: false
@@ -106,7 +119,7 @@ if Code.ensure_loaded?(Plug.Conn) do
     @doc """
     Verifies the captured request once and records the result in private state.
 
-    From 0.5.0 (unreleased), a connection is verified at most once. A later Verify with the same
+    From 0.5.0, a connection is verified at most once. A later Verify with the same
     `:policy` and `:label` values as the first is idempotent: it reuses the
     first result (assigning it under its own `:assign` on success) and applies
     `:on_reject` again on a rejection. A later Verify with any other policy or
@@ -214,12 +227,20 @@ if Code.ensure_loaded?(Plug.Conn) do
         state.verification == nil ->
           verify(conn, state, opts)
 
-        state.verified_by == {opts[:policy], opts[:label]} ->
+        state.verified_by == identity(opts) ->
           apply_result(conn, state, opts, state.verification)
 
         true ->
           refuse_repeat(conn, state, opts)
       end
+    end
+
+    # With :name set, repeat identity is the caller's stable name plus label;
+    # without it, the policy value plus label, compared with == as before.
+    defp identity(opts) do
+      if opts[:name] == nil,
+        do: {:policy, opts[:label], opts[:policy]},
+        else: {:name, opts[:label], opts[:name]}
     end
 
     # A repeat with any other policy or label must not inherit the earlier
@@ -264,7 +285,7 @@ if Code.ensure_loaded?(Plug.Conn) do
           end
         end)
 
-      apply_result(conn, %{state | verified_by: {opts[:policy], opts[:label]}}, opts, result)
+      apply_result(conn, %{state | verified_by: identity(opts)}, opts, result)
     end
 
     defp apply_result(conn, state, opts, result) do

@@ -148,6 +148,28 @@ defmodule RequestSeal.Replay do
 
   @doc false
   def commit(replay, facts, retain_until) do
+    start = System.monotonic_time()
+
+    result = run_claim(replay, facts, retain_until)
+
+    RequestSeal.Telemetry.emit(
+      [:request_seal, :replay, :claim],
+      System.monotonic_time() - start,
+      claim_meta(result)
+    )
+
+    result
+  end
+
+  defp claim_meta({:ok, _}), do: %{outcome: :claimed, reason: nil}
+
+  defp claim_meta({:error, %RequestSeal.Error{reason: :replayed} = error}),
+    do: %{outcome: :already_claimed, reason: error.reason}
+
+  defp claim_meta({:error, %RequestSeal.Error{} = error}),
+    do: %{outcome: :error, reason: error.reason}
+
+  defp run_claim(replay, facts, retain_until) do
     context = context!(timeout: replay.timeout)
 
     run(context, fn ->

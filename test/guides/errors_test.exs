@@ -27,6 +27,25 @@ defmodule RequestSeal.GuideErrorsTest do
     binding =
       E.eval(
         ~S'''
+        :telemetry.detach("request-seal-ops")
+
+        :telemetry.attach_many("request-seal-ops", [
+          [:request_seal, :verify, :stop],
+          [:request_seal, :verify_quorum, :stop]
+        ], fn _event, _measurements, metadata, _config ->
+          send(self(), {:verified, metadata.outcome})
+        end, nil)
+
+        :telemetry.detach("request-seal-ops")
+        ''',
+        binding,
+        "docs/guides/errors.md",
+        2
+      )
+
+    binding =
+      E.eval(
+        ~S'''
         {_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
         {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
         {:ok, key} = RequestSeal.Custody.public_key(handle)
@@ -71,7 +90,7 @@ defmodule RequestSeal.GuideErrorsTest do
         ''',
         binding,
         "docs/guides/errors.md",
-        2
+        3
       )
 
     binding =
@@ -128,7 +147,7 @@ defmodule RequestSeal.GuideErrorsTest do
         ''',
         binding,
         "docs/guides/errors.md",
-        3
+        4
       )
 
     binding =
@@ -143,7 +162,7 @@ defmodule RequestSeal.GuideErrorsTest do
         ''',
         binding,
         "docs/guides/errors.md",
-        4
+        5
       )
 
     log_fields = Keyword.fetch!(binding, :log_fields)
@@ -162,6 +181,6 @@ defmodule RequestSeal.GuideErrorsTest do
            }
 
     assert length(Keyword.fetch!(binding, :cases)) == 11
-    E.assert_fences("docs/guides/errors.md", 4)
+    E.assert_fences("docs/guides/errors.md", 5)
   end
 end

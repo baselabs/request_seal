@@ -2,7 +2,9 @@ defmodule RequestSeal.Error do
   @moduledoc """
   Bounded failures from `RequestSeal.verify/3`, `RequestSeal.sign/4`, `RequestSeal.Policy.new/1`, `RequestSeal.Quorum.new/1`, `RequestSeal.Ash.scope/2`, `RequestSeal.Profile`, Web Bot Auth, quorum verification, and signature negotiation.
 
-  Every error has `retryable: false`, a library-generated random 16-character
+  Every error has `retryable: false` — except `:deadline`, the one retryable
+  reason (the same call may succeed with a later deadline or under less load) —
+  a library-generated random 16-character
   lowercase hex `correlation`, and `detail: nil` except the Web Bot Auth reasons listed below and `:signature_base_failed`,
   whose detail is one of these bounded signature-base reason atoms (or
   `:nonqualifying_signature`, whose detail is the rejected signature reason):
@@ -29,7 +31,7 @@ defmodule RequestSeal.Error do
     from the explicit algorithm or accompanies JWS), `:limit` (wire/member/component
     bounds, including a decoded `Signature` member or nonce exceeding 1,024 bytes).
     `:signer_algorithm_mismatch` means a KeyHandle's algorithm differs from the
-    specification's algorithm, in either signing form (from 0.5.0 (unreleased) for a
+    specification's algorithm, in either signing form (from 0.5.0 for a
     generated spec), before custody is invoked.
   * `:input` additionally includes `:invalid_quorum` (malformed composite policy)
     and `:invalid_profile` (invalid extension profile namespace, keys, values or size,
@@ -79,7 +81,12 @@ defmodule RequestSeal.Error do
     `:unexpected_signature` (unmatched label with rejection selected),
     `:nonqualifying_signature` (matched label failed every eligible slot;
     `detail` is its last bounded reason), `:ambiguous_key_identity` (trusted
-    key equivalence unknown), `:binding_unsatisfied` (nested or parameter binding).
+    key equivalence unknown), `:binding_unsatisfied` (nested or parameter binding),
+    `:deadline` (the caller's `:deadline` wall-clock bound on `verify_quorum/3`
+    expired during assignment search; retryable).
+  * `:internal`: `:internal` (an unexpected internal fault, not named by the
+    input; `detail` is the exception class — the raised exception's module, or
+    `:exit` or `:throw`). Report the correlation token.
   * `:negotiation`: `:invalid_accept_signature` (malformed request or unsupported
     parameter), `:inapplicable_component` (wrong target context),
     `:negotiation_unfulfilled` (eligible verified label, component set, or parameter differs),
@@ -117,20 +124,22 @@ defmodule RequestSeal.Error do
             | :binding
             | :replay
             | :quorum
-            | :negotiation,
-          retryable: false,
+            | :negotiation
+            | :internal,
+          retryable: boolean(),
           detail: atom() | nil,
           message: binary() | nil,
           source: RequestSeal.Custody.Error.t() | nil,
           correlation: binary()
         }
   @doc false
-  def new(reason, layer, detail \\ nil, source \\ nil) do
+  def new(reason, layer, detail \\ nil, source \\ nil, retryable \\ false) do
     %__MODULE__{
       reason: reason,
       layer: layer,
       detail: detail,
       source: source,
+      retryable: retryable or reason == :deadline,
       message: message(reason),
       correlation: Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     }

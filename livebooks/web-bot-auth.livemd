@@ -5,7 +5,7 @@
 This notebook signs a crawler's request under [Web Bot Auth protocol-00](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html) and verifies it against a held public key, the mode for an agent whose key you configured directly. It also shows what the verifier rejects. No network access is needed beyond the Hex install. Authenticating an agent's URL through HTTPS key discovery needs a real publisher; the [Web Bot Auth guide](../docs/guides/web-bot-auth.md) covers it.
 
 ```elixir
-Mix.install([{:request_seal, "~> 0.4.1"}])
+Mix.install([{:request_seal, "~> 0.5.0"}])
 ```
 
 ## Create the agent's key

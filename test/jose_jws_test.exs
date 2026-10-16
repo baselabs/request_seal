@@ -207,8 +207,37 @@ defmodule RequestSeal.JOSEJWSTest do
     assert {:error, %{reason: :algorithm_mismatch}} =
              JWS.verify(v["compact"], %{policy | key_resolver: resolver})
 
+    # An entry with no authoritative algorithm is an invalid entry, not a mismatch.
+    missing = fn _ -> {:ok, %{key: public(v["key"])}} end
+
+    assert {:error, %{reason: :key_resolver_failed}} =
+             JWS.verify(v["compact"], %{policy | key_resolver: missing})
+
     assert {:error, %{reason: :unknown_key}} =
              JWS.verify(v["compact"], %{policy | key_resolver: fn _ -> :error end})
+  end
+
+  test "oversized caller header strings reject at the value before serialization" do
+    v = fixture("rfc7515.json")["A.2"]
+    assert {:ok, handle} = RequestSeal.Custody.Local.new({:jws, "RS256"}, material(v["key"]))
+
+    try do
+      assert {:error, %{reason: :limit}} =
+               JWS.sign(
+                 [{"alg", "RS256"}, {"kid", String.duplicate("k", 100_000)}],
+                 "payload",
+                 handle
+               )
+
+      assert {:error, %{reason: :limit}} =
+               JWS.sign(
+                 [{"alg", "RS256"}, {String.duplicate("k", 100_000), "v"}],
+                 "payload",
+                 handle
+               )
+    after
+      RequestSeal.Custody.Local.release(handle)
+    end
   end
 
   test "duplicate members, critical extensions, Base64 variants and segment bounds reject" do

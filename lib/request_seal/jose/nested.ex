@@ -13,10 +13,18 @@ defmodule RequestSeal.JOSE.Nested do
   Decrypt one compact JWE, then verify the compact JWS it carries.
 
   The outer protected `cty` must be one of the selected content types. Inner
-  envelopes (plaintext that is not a three-segment compact JWS) or an inner JWS
-  with a `cty` header reject as `:nesting_depth`. Only complete success returns a
-  result. Each policy supplies its own stage timeout; there is no combined timeout
-  option.
+  envelopes (plaintext that is not a three-segment compact JWS) reject as
+  `:nesting_depth`. So does an inner JWS whose `cty` names a JOSE content type
+  — the registered `application/jose` and `application/jose+json`, the
+  per-structure `application/jws` and `application/jwe`, and RFC 7519's
+  `application/jwt` — all case-insensitively, with RFC 7515 Section 4.1.10's
+  abbreviation rule (a value with no `/` prepends `application/`, so `jose`,
+  `JWS`, and `JWT` land in that set) — because such a value declares the
+  payload is another JOSE envelope and this module verifies exactly one level.
+  Any other inner `cty` (for example `application/json`) names ordinary typed
+  payload content and is the application's business. Only complete success
+  returns a result. Each policy supplies its own stage timeout; there is no
+  combined timeout option.
 
   ## Parameters
 
@@ -86,7 +94,7 @@ defmodule RequestSeal.JOSE.Nested do
 
           case JWS.verify(jwe.plaintext, jws_policy) do
             {:ok, jws} ->
-              ensure(not Map.has_key?(jws.header, "cty"), :nesting_depth, :nesting)
+              ensure(not nesting_cty?(jws.header["cty"]), :nesting_depth, :nesting)
               {:ok, %{jwe: jwe, jws: jws}}
 
             error ->
@@ -98,4 +106,27 @@ defmodule RequestSeal.JOSE.Nested do
       end
     end)
   end
+
+  # RFC 7515 Section 4.1.10: a cty value with no "/" is read with
+  # "application/" prepended. The recursion-implying set is the registered
+  # JOSE media types (Section 9.2.1: application/jose, application/jose+json),
+  # their per-structure spellings application/jws and application/jwe, and
+  # RFC 7519's application/jwt (abbreviated "JWT"): each declares the payload
+  # is another JOSE envelope, which this one-level module refuses.
+  defp nesting_cty?(cty) when is_binary(cty) do
+    # Media-type parameters (RFC 7515 Section 4.1.10) do not change the
+    # type/subtype classification, so strip them before the abbreviation rule.
+    base = cty |> String.split(";", parts: 2) |> hd() |> String.trim()
+    expanded = if String.contains?(base, "/"), do: base, else: "application/" <> base
+
+    String.downcase(expanded) in [
+      "application/jose",
+      "application/jose+json",
+      "application/jws",
+      "application/jwe",
+      "application/jwt"
+    ]
+  end
+
+  defp nesting_cty?(_), do: false
 end

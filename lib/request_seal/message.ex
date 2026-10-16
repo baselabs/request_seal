@@ -191,7 +191,9 @@ defmodule RequestSeal.Message do
 
     * `:digest` - `nil` (default) or a nonempty unique list of `"sha-256"` and/or
       `"sha-512"`. A list appends one `content-digest` header computed by
-      `RequestSeal.Digest.compute/3` over the exact bytes, in list order. Existing
+      `RequestSeal.Digest.compute/3` over the exact bytes, in list order. The
+      appended occurrence counts toward the same combined 1,024 field bound as
+      `:headers`. Existing
       Content-Digest headers (any case) reject when generating a digest; omit the
       option to keep caller-supplied headers.
 
@@ -340,7 +342,7 @@ defmodule RequestSeal.Message do
 
   defp builder_parts(headers, bytes, opts) do
     with {:ok, body} <- builder_body(bytes),
-         {:ok, fields} <- builder_fields(headers, []),
+         {:ok, fields} <- builder_fields(headers, [], 0),
          {:ok, fields} <- builder_digest(fields, body, Keyword.get(opts, :digest)),
          {:ok, transport} <- TransportFacts.new(%{}) do
       {:ok, %{fields: fields, body: body, trailers: :unavailable, transport: transport}}
@@ -350,15 +352,16 @@ defmodule RequestSeal.Message do
   defp builder_body(nil), do: builder_body("")
   defp builder_body(bytes), do: Body.new(%{state: :retained, bytes: bytes})
 
-  defp builder_fields([], fields), do: {:ok, Enum.reverse(fields)}
+  # The count rides along: length/1 per element is quadratic at the 1,024 bound.
+  defp builder_fields([], fields, _count), do: {:ok, Enum.reverse(fields)}
 
-  defp builder_fields([{name, value} | rest], fields) when length(fields) < 1024 do
+  defp builder_fields([{name, value} | rest], fields, count) when count < 1024 do
     with {:ok, field} <- FieldOccurrence.new(%{name: name, value: value, section: :headers}) do
-      builder_fields(rest, [field | fields])
+      builder_fields(rest, [field | fields], count + 1)
     end
   end
 
-  defp builder_fields(_, _), do: Validation.error(:invalid_field)
+  defp builder_fields(_, _, _), do: Validation.error(:invalid_field)
 
   defp builder_digest(fields, _, nil), do: {:ok, fields}
 

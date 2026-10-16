@@ -119,7 +119,7 @@ With an existing pending `delivery` row, run the real driver:
 
 The driver records success only after the receiver returns 2xx. It owns retries,
 redirect refusal, 410 handling, and delivery leases. Every attempt regenerates
-`created`, `expires`, and a random nonce. From 0.5.0 (unreleased), a nonce is required on every
+`created`, `expires`, and a random nonce. From 0.5.0, a nonce is required on every
 signed attempt: a spec with `nonce: nil` returns `{:error, {:terminal,
 :request_seal_signing_failed}}` before any request is sent. A `:nonce` key in the
 `request_seal` options rejects;

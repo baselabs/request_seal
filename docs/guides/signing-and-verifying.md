@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Sign and verify HTTP messages
 
@@ -109,7 +109,7 @@ instead. Responses can cover related-request components.
 
 Spec signing accepts a custody handle or an arity-two signer `(algorithm, base)`.
 A handle whose algorithm differs from the spec's `algorithm` returns
-`:signer_algorithm_mismatch` at `:input` (from 0.5.0 (unreleased); 0.4.1 returns `:invalid_options`). Both forms use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
+`:signer_algorithm_mismatch` at `:input` (from 0.5.0; 0.4.1 returns `:invalid_options`). Both forms use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
 accepts 1–300,000 ms. Optional `nonce:` supplies caller-owned 32-byte entropy
 instead of generating it; callers must provide fresh entropy for each signing
 attempt. It is ignored when the spec sets `nonce: nil`; omitting `nonce` keeps the
@@ -219,7 +219,7 @@ parameters.
 
 `RequestSeal.Verification` reports the selected label, profile, covered identifiers, authoritative algorithm, signature parameters, digest checks, freshness checks, and replay receipt. Generic results have `principal: :unattributed` and `authorization: :not_evaluated`. A cryptographically valid shared-secret signature also supplies no identity attribution. Do not log parameters or key IDs; default inspection hides them.
 
-`RequestSeal.Quorum.Verification.signatures` maps assigned labels to those results. `qualifying` records assigned slots and caller counting bindings; `count` counts distinct configured units. `nonqualifying` lists the bounded label, slot, reason, and layer of each ignored label or failed slot attempt; read it to diagnose `:quorum_not_met`. `required` lists required slots and `satisfied` includes assigned optional slots. Negotiation checks the verified eligible pool: a valid `Accept-Signature` challenge can be fulfilled without being assigned or appearing in the result map. Nested bindings require both inner signature dictionary members; equal-parameter bindings require the same non-nil value. See `RequestSeal.AcceptSignature` and `RequestSeal.Quorum` for negotiation and assignment limits.
+`RequestSeal.Quorum.Verification.signatures` maps assigned labels to those results. `qualifying` records assigned slots and caller counting bindings; `count` counts distinct configured units. `nonqualifying` lists the bounded label, slot, reason, and layer of each ignored label or failed slot attempt; read it to diagnose `:quorum_not_met`. `required` lists required slots and `satisfied` includes assigned optional slots. Negotiation checks the verified eligible pool: a valid `Accept-Signature` challenge can be fulfilled without being assigned or appearing in the result map. Nested bindings require both inner signature dictionary members; equal-parameter bindings require the same non-nil value. See `RequestSeal.AcceptSignature` and `RequestSeal.Quorum` for negotiation and assignment limits. From 0.5.0, `verify_quorum/3` accepts a `:deadline` — an absolute `System.monotonic_time(:millisecond)` value bounding the assignment search's wall-clock time; on expiry a policy-satisfying best-so-far assignment still succeeds, otherwise the retryable `:deadline` reason returns, which also surfaces on the `[:request_seal, :verify_quorum, :stop]` telemetry event.
 
 ## Errors and next steps
 

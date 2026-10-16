@@ -33,8 +33,11 @@ defmodule RequestSeal.Signing do
   defp fault(:attach), do: :invalid_options
   defp fault(:sign), do: :signing_failed
   defp fault(:verify), do: :response_rejected
+  @spec ensure(term(), term()) :: :ok | no_return()
   def ensure(true, _), do: :ok
   def ensure(_, reason), do: fail(reason)
+  @spec fail(term()) :: no_return()
+  @spec fail(term(), term()) :: no_return()
   def fail(reason, source \\ nil), do: throw({:adapter, reason, source})
 
   def options(opts, allowed) do
@@ -203,6 +206,9 @@ defmodule RequestSeal.Signing do
       :ok -> {:ok, sign(message, spec, signer, opts, related: message.kind == :response)}
       _ -> {:error, RequestSeal.Error.new(:invalid_message, :input)}
     end
+  rescue
+    exception ->
+      {:error, RequestSeal.Error.new(:internal, :internal, exception.__struct__)}
   catch
     {:adapter, _, %RequestSeal.Error{} = source} ->
       {:error, source}
@@ -308,7 +314,6 @@ defmodule RequestSeal.Signing do
       case invoke(signer, spec.algorithm, base, timeout) do
         {:ok, bytes} when is_binary(bytes) -> bytes
         {:error, %Custody.Error{} = source} -> fail(:signing_failed, source)
-        _ -> fail(:signing_failed)
       end
 
     case RequestSeal.sign(
@@ -344,11 +349,33 @@ defmodule RequestSeal.Signing do
       ref: fn -> signer end
     }
 
-    Custody.sign(handle, base, timeout: timeout)
+    # Through custody_sign: the shared output bounds and the custody
+    # telemetry event apply to function signers as well as handles.
+    custody_sign(handle, base, timeout)
   end
 
   # Both HTTP signing forms share output bounds and custody error normalization.
   def custody_sign(handle, base, timeout) do
+    start = System.monotonic_time()
+
+    result = custody_sign_result(handle, base, timeout)
+
+    meta =
+      case result do
+        {:ok, _} -> %{outcome: :ok, reason: nil}
+        {:error, %Custody.Error{reason: reason}} -> %{outcome: :error, reason: reason}
+      end
+
+    RequestSeal.Telemetry.emit(
+      [:request_seal, :custody, :sign, :stop],
+      System.monotonic_time() - start,
+      meta
+    )
+
+    result
+  end
+
+  defp custody_sign_result(handle, base, timeout) do
     case Custody.sign(handle, base, timeout: timeout) do
       {:ok, signature} when is_binary(signature) and byte_size(signature) in 1..1024 ->
         {:ok, signature}

@@ -5,7 +5,7 @@
 This notebook walks the core RequestSeal journey with locally generated keys: sign a request with a covered body digest, verify it under an explicit policy, sign a response bound to that request, accept a request only once, require two signers, and read the errors each layer returns. It uses only the core library: no framework, server, or network access beyond the Hex install. Every cell asserts its result, so a changed outcome stops the notebook.
 
 ```elixir
-Mix.install([{:request_seal, "~> 0.4.1"}])
+Mix.install([{:request_seal, "~> 0.5.0"}])
 ```
 
 ## Hold a key behind a handle
@@ -94,6 +94,31 @@ IO.puts("Request verified with body integrity")
 ```
 
 The result states facts about the signature. `authorization: :not_evaluated` is a reminder that your application decides what the caller may do.
+
+## Observe the verification with telemetry
+
+Every verification entry point emits a versioned telemetry event with only low-cardinality outcome, reason, and layer atoms plus a duration — never labels, key IDs, or bytes (`RequestSeal.Telemetry` documents the contract):
+
+```elixir
+:telemetry.detach("notebook-verify")
+
+events =
+  :telemetry.attach_many("notebook-verify", [[:request_seal, :verify, :stop]], fn _event, _measurements, metadata, _config ->
+    send(self(), {:verified, metadata.outcome, metadata.reason})
+  end, nil)
+
+{:ok, _} = RequestSeal.verify(signed, policy, label: "sig")
+{:error, _} = RequestSeal.verify(signed, policy, label: "absent")
+
+receive do
+  {:verified, :ok, nil} -> :ok
+after
+  1_000 -> raise "no telemetry event"
+end
+
+:telemetry.detach("notebook-verify")
+IO.puts("Verification outcomes are observable through telemetry")
+```
 
 ## Reject a changed body
 

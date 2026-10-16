@@ -204,8 +204,9 @@ defmodule RequestSeal.AcceptSignature do
       `:duplicate_label` (layer `:fields`); `:invalid_accept_signature`,
       `:inapplicable_component`, and `:negotiation_unfulfillable` (layer
       `:negotiation`; unavailable component, incompatible chooser,
-      unfulfillable parameter, callback fault, or signing failure).
-      Meanings: `RequestSeal.Error`.
+      unfulfillable parameter, callback fault, or signing failure). When an
+      underlying signing step fails, its bounded reason appears in the error's
+      `detail`. Meanings: `RequestSeal.Error`.
 
   ## Examples
 
@@ -278,8 +279,16 @@ defmodule RequestSeal.AcceptSignature do
                  signer,
                  opts
                ) do
-            {:ok, signed} -> signed
-            _ -> fail(:negotiation_unfulfillable)
+            {:ok, signed} ->
+              signed
+
+            # The bounded signing reason rides along in detail; the public
+            # reason stays :negotiation_unfulfillable.
+            {:error, %RequestSeal.Error{reason: signing_reason}} ->
+              fail(:negotiation_unfulfillable, :negotiation, signing_reason)
+
+            _ ->
+              fail(:negotiation_unfulfillable)
           end
         end)
 
@@ -379,8 +388,11 @@ defmodule RequestSeal.AcceptSignature do
   defp ensure(true, _, _), do: :ok
   defp ensure(_, reason, layer), do: fail(reason, layer)
 
-  defp fail(reason, layer \\ :negotiation),
-    do: throw({:negotiation_error, Error.new(reason, layer)})
+  @spec fail(term()) :: no_return()
+  @spec fail(term(), atom()) :: no_return()
+  @spec fail(term(), atom(), atom() | nil) :: no_return()
+  defp fail(reason, layer \\ :negotiation, detail \\ nil),
+    do: throw({:negotiation_error, Error.new(reason, layer, detail)})
 
   defp protect(fun) do
     fun.()

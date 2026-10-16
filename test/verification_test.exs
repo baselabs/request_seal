@@ -1097,8 +1097,8 @@ defmodule RequestSeal.VerificationTest do
     owner = self()
     tracer = spawn(fn -> digest_trace(owner, 0) end)
     Code.ensure_loaded!(Digest)
-    assert :erlang.trace_pattern({Digest, :check, 3}, true, [:local]) == 1
-    assert :erlang.trace_pattern({Digest, :check_stream, 3}, true, [:local]) == 1
+    assert :erlang.trace_pattern({Digest, :check_validated, 3}, true, [:local]) == 1
+    assert :erlang.trace_pattern({Digest, :check_stream_validated, 3}, true, [:local]) == 1
     :erlang.trace(self(), true, [:call, {:tracer, tracer}])
 
     try do
@@ -1133,8 +1133,8 @@ defmodule RequestSeal.VerificationTest do
       assert digest_calls(tracer) == 1
     after
       :erlang.trace(self(), false, [:call])
-      :erlang.trace_pattern({Digest, :check, 3}, false, [:local])
-      :erlang.trace_pattern({Digest, :check_stream, 3}, false, [:local])
+      :erlang.trace_pattern({Digest, :check_validated, 3}, false, [:local])
+      :erlang.trace_pattern({Digest, :check_stream_validated, 3}, false, [:local])
       send(tracer, :stop)
     end
   end

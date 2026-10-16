@@ -31,6 +31,17 @@ defmodule RequestSeal.AshConsumerTest do
     warning_consumer = Path.join(scratch, "warning_consumer")
     {mix, warning_env} = consumer(warning_consumer, warning_source)
 
+    # request_seal's one required Hex dependency comes from the local offline
+    # package cache; the consumer must converge it before compiling.
+    {deps_output, deps_status} =
+      System.cmd(mix, ["deps.get"],
+        cd: warning_consumer,
+        env: warning_env,
+        stderr_to_stdout: true
+      )
+
+    assert deps_status == 0, deps_output
+
     {warning_output, _status} =
       System.cmd(mix, ["compile", "--warnings-as-errors"],
         cd: warning_consumer,
@@ -49,6 +60,11 @@ defmodule RequestSeal.AshConsumerTest do
     File.rm_rf!(warning_source)
 
     {mix, env} = consumer(scratch, root)
+
+    {deps_output, deps_status} =
+      System.cmd(mix, ["deps.get"], cd: scratch, env: env, stderr_to_stdout: true)
+
+    assert deps_status == 0, deps_output
 
     {output, status} =
       System.cmd(mix, ["compile", "--warnings-as-errors"],

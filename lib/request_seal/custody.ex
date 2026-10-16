@@ -39,7 +39,7 @@ defmodule RequestSeal.Custody do
   @callback verify(term(), RequestSeal.Crypto.algorithm(), binary(), binary(), Context.t()) ::
               :ok | {:error, Error.reason()}
   @callback public_key(term()) :: {:ok, PublicKey.t()} | {:error, Error.reason()}
-  @callback identity(term()) :: KeyIdentity.t()
+  @callback identity(term()) :: KeyIdentity.t() | {:error, Error.reason()}
   @callback unwrap(term(), unwrap_algorithm(), binary(), Context.t()) ::
               {:ok, binary()} | {:error, Error.reason()}
   @optional_callbacks verify: 5, unwrap: 4

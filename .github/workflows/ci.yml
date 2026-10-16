@@ -53,6 +53,16 @@ jobs:
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get --check-locked
+      # The declared gate runs dialyzer; its PLT is worth caching on the lane
+      # that runs the gate (floor/mid lanes do not analyze).
+      - if: matrix.lane == 'latest'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            _build/dev/dialyxir_*.plt
+            _build/dev/dialyxir_*.plt.hash
+          key: dialyzer-plt-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
+          restore-keys: dialyzer-plt-${{ matrix.elixir }}-${{ matrix.otp }}-
       - if: matrix.lane == 'floor'
         run: mix test --warnings-as-errors
         env:

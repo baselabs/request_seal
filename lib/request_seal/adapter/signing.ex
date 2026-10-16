@@ -3,6 +3,8 @@ defmodule RequestSeal.Adapter.Signing do
   @type spec :: RequestSeal.Signing.spec()
   defdelegate protect(adapter, stage, attempt, fun), to: RequestSeal.Signing
   defdelegate ensure(value, reason), to: RequestSeal.Signing
+  @spec fail(term()) :: no_return()
+  @spec fail(term(), term()) :: no_return()
   def fail(reason, source \\ nil), do: RequestSeal.Signing.fail(reason, source)
   defdelegate options(opts, allowed), to: RequestSeal.Signing
   defdelegate normalize_spec!(spec), to: RequestSeal.Signing

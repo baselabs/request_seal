@@ -298,6 +298,32 @@ defmodule RequestSeal.DiscoveryLimitsTest do
     assert set.expires_at - set.fetched_at == 1
   end
 
+  test "interim 1xx responses are skipped before the final status" do
+    body = Peer.directory()
+
+    p =
+      peer(fn socket, _ ->
+        :ssl.send(socket, [
+          "HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\n",
+          "HTTP/1.1 100 Continue\r\n\r\n"
+        ])
+
+        Peer.reply(socket, body, [media()])
+      end)
+
+    assert {:ok, set} = Discovery.fetch(source(p), [])
+    assert map_size(set.keys) == 1
+  end
+
+  test "more than four interim responses reject" do
+    p =
+      peer(fn socket, _ ->
+        for _ <- 1..5, do: :ssl.send(socket, "HTTP/1.1 100 Continue\r\n\r\n")
+      end)
+
+    reason(source(p), :invalid_response)
+  end
+
   defp http_date(seconds),
     do: Calendar.strftime(DateTime.from_unix!(seconds), "%a, %d %b %Y %H:%M:%S GMT")
 
@@ -331,6 +357,13 @@ defmodule RequestSeal.DiscoveryLimitsTest do
           {[{"Expires", "Thu, 08 Xxx 2026 00:00:00 GMT"}], 0},
           {[{"Cache-Control", "no-cache"}, {"Expires", http_date(now + 120)}], 0},
           {[{"Cache-Control", "no-store"}, {"Expires", http_date(now + 120)}], 0},
+          {[{"Cache-Control", ~s(no-cache="content-type")}, {"Expires", http_date(now + 120)}],
+           0},
+          {[{"Cache-Control", ~s(no-cache="content-type")}, {"Cache-Control", "max-age=604800"}],
+           0},
+          {[{"Cache-Control", ~s(no-cache="Set-Cookie, Foo")}, {"Expires", http_date(now + 120)}],
+           0},
+          {[{"Cache-Control", ~s(no-cache=nope)}, {"Expires", http_date(now + 120)}], 0},
           {[{"Cache-Control", "max-age=0"}, {"Expires", http_date(now + 120)}], 0}
         ] do
       p = peer(fn socket, _ -> Peer.reply(socket, Peer.directory(), [media() | headers]) end)

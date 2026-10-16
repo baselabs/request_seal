@@ -47,6 +47,37 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
              RequestSeal.sign(c.message, c.spec, c.handle, signing_timeout: 300_000)
   end
 
+  test "a signature input at the serialization ceiling returns :limit, never a crash" do
+    # 255 components of 254-byte names serialize to exactly the 65,536-byte
+    # Structured Fields ceiling. Any label then pushes the one-entry
+    # Signature-Input dictionary past that ceiling, which must surface as the
+    # documented :limit reason at :input instead of an escaping MatchError.
+    names =
+      for i <- 0..254,
+          do: String.duplicate("x", 251) <> String.pad_leading(Integer.to_string(i), 3, "0")
+
+    input = "(" <> Enum.map_join(names, " ", &("\"" <> &1 <> "\"")) <> ")"
+    assert byte_size(input) == 65_536
+
+    fields = Enum.map(names, &{&1, "1"})
+    {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", fields, nil)
+
+    # Real custody signs the (huge) base; the ceiling rejects at serialization.
+    {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+    {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+
+    try do
+      for label <- ["sig", String.duplicate("l", 256)] do
+        spec = %{label: label, algorithm: "ed25519", signature_input: input}
+
+        assert {:error, %Error{reason: :limit, layer: :input}} =
+                 RequestSeal.sign(message, spec, handle)
+      end
+    after
+      :ok = RequestSeal.Custody.Local.release(handle)
+    end
+  end
+
   test "released explicit handle retains the bounded custody source", c do
     assert :ok = Local.release(c.handle)
 

@@ -49,7 +49,7 @@ defmodule RequestSeal.JOSE.JWS do
       `:invalid_options` (unknown, duplicate, or out-of-range option, or a signer
       that is neither form), `:invalid_serialization` (non-binary payload),
       `:detached_payload` (empty payload), `:limit` (more than 64 pairs or an
-      oversized result), `:invalid_header` (including, from 0.5.0 (unreleased), a header that
+      oversized result), `:invalid_header` (including, from 0.5.0, a header that
       is not a list of `{name, value}` pairs; 0.4.1 returns `:limit`), `:duplicate_member`, `:unsupported_critical_header`,
       `:compression_unsupported`, `:unsupported_header`, `:algorithm_not_permitted`,
       `:algorithm_mismatch` (handle bound to another algorithm), `:signer_failed`

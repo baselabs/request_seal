@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Sign JWS and encrypt JWE envelopes
 
@@ -75,7 +75,12 @@ inner.payload
 
 The wrapping key stays in your callback. Encryption uses fresh content-encryption keys and IVs from the CSPRNG. `RequestSeal.JOSE.Nested.verify/4` also supports one-level JWS-in-JWE verification with explicit outer/inner policies and `content_types: ["JWS"]` when the outer protected header declares `cty: "JWS"`.
 The envelope above omits `cty`; add `{"cty", "JWS"}` to the JWE header before using
-`Nested.verify/4`, or it rejects with `:content_type_mismatch`. Decryption withholds all plaintext until AEAD authentication succeeds. Recipient integrity alone does not establish sender origin, identity, or request association.
+`Nested.verify/4`, or it rejects with `:content_type_mismatch`. The inner JWS may
+itself carry a non-JOSE `cty` such as `application/json`; only values that name
+another JOSE envelope (`application/jose`, `application/jose+json`,
+`application/jws`, `application/jwe`, or RFC 7519's `application/jwt`, with RFC
+7515 Section 4.1.10's abbreviation rule) reject as `:nesting_depth`, because
+`Nested` verifies exactly one level. Decryption withholds all plaintext until AEAD authentication succeeds. Recipient integrity alone does not establish sender origin, identity, or request association.
 
 ## Decrypt with a recipient key handle
 

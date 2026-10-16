@@ -15,7 +15,7 @@ defmodule RequestSealNotebooks.MixProject do
         {:aws_credentials, "~> 1.1.1", override: true, runtime: false},
         # Override upstream application pins with advisory-fixed releases.
         # This tooling executes importer/exporter only; every override is lockfile-audited.
-        {:bandit, "~> 1.12.5", override: true, runtime: false},
+        {:bandit, "~> 1.13.1", override: true, runtime: false},
         {:phoenix, "~> 1.8.15", override: true, runtime: false},
         {:phoenix_live_view, "~> 1.2.12", override: true, runtime: false},
         {:plug, "~> 1.20.3", override: true, runtime: false},

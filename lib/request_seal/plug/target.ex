@@ -14,22 +14,26 @@ if Code.ensure_loaded?(Plug.Conn) do
     end
 
     def verification_supported?(message, policy, label) do
-      {:ok, required} = SignatureFields.inner(policy.components)
+      case SignatureFields.inner(policy.components) do
+        {:ok, required} ->
+          not dependent?(required) and
+            case StructuredFields.parse_field(
+                   message,
+                   "signature-input",
+                   SignatureFields.schema(:dictionary),
+                   :headers,
+                   unique_keys: :all,
+                   unique_parameters: true,
+                   max_members: policy.max_signatures
+                 ) do
+              {:ok, inputs} -> not dependent?(List.keyfind(inputs.value, label, 0))
+              # Invalid input still goes through the core's bounded field rejection.
+              _ -> true
+            end
 
-      not dependent?(required) and
-        case StructuredFields.parse_field(
-               message,
-               "signature-input",
-               SignatureFields.schema(:dictionary),
-               :headers,
-               unique_keys: :all,
-               unique_parameters: true,
-               max_members: policy.max_signatures
-             ) do
-          {:ok, inputs} -> not dependent?(List.keyfind(inputs.value, label, 0))
-          # Invalid input still goes through the core's bounded field rejection.
-          _ -> true
-        end
+        _ ->
+          true
+      end
     end
 
     def response_supported?(input) do

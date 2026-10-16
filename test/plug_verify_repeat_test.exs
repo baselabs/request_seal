@@ -47,7 +47,12 @@ defmodule RequestSeal.PlugVerifyRepeatTest do
         Capture.init(origin: :connection, max_body_bytes: 1_024, read_timeout: 5_000)
       )
 
-    %{conn: conn, loose: policy.(~s[("@method")]), strict: policy.(~s[("@method" "@authority")])}
+    %{
+      conn: conn,
+      key: key,
+      loose: policy.(~s[("@method")]),
+      strict: policy.(~s[("@method" "@authority")])
+    }
   end
 
   defp verify(conn, policy, opts \\ []) do
@@ -97,5 +102,66 @@ defmodule RequestSeal.PlugVerifyRepeatTest do
 
     assert {:error, %Error{reason: :request_rejected}} = again.private.request_seal.verification
     assert {again.status, again.halted} == {403, true}
+  end
+
+  test "a named repeat accepts a rebuilt-equivalent policy", c do
+    first = verify(c.conn, c.loose, name: :inbox, assign: :sig)
+    {:ok, verified} = RequestSeal.Plug.verification(first)
+
+    # A fresh Policy.new with the same choices: structurally equivalent, but
+    # its closure fields are new terms, so policy == fails. The stable :name
+    # is the caller's explicit assertion that the policy is the same.
+    {:ok, rebuilt} =
+      RequestSeal.Policy.new(%{
+        algorithms: ["ed25519"],
+        components: ~s[("@method")],
+        key_resolver: fn _ -> {:ok, %{algorithm: "ed25519", key: c.key}} end,
+        freshness: :not_evaluated,
+        content: :not_required,
+        replay: :not_required
+      })
+
+    refute rebuilt == c.loose
+
+    again = verify(first, rebuilt, name: :inbox, assign: :sig)
+    assert {:ok, ^verified} = RequestSeal.Plug.verification(again)
+    assert again.assigns.sig == verified
+    refute again.halted
+  end
+
+  test "a named repeat fails closed without the same name", c do
+    first = verify(c.conn, c.loose, name: :inbox, assign: :sig)
+
+    for opts <- [[name: :other], []] do
+      again = verify(first, c.loose, [assign: :sig] ++ opts)
+      assert {:error, %Error{reason: :already_verified}} = again.private.request_seal.verification
+      refute Map.has_key?(again.assigns, :sig)
+    end
+  end
+
+  test "the :name option validates at init", _c do
+    for bad <- [true, false, 1, ""] do
+      assert_raise Error, fn ->
+        Verify.init(policy: fn -> :unused end, label: "sig", on_reject: :continue, name: bad)
+      end
+    end
+
+    assert is_list(
+             Verify.init(
+               policy: fn -> :unused end,
+               label: "sig",
+               on_reject: :continue,
+               name: :inbox
+             )
+           )
+
+    assert is_list(
+             Verify.init(
+               policy: fn -> :unused end,
+               label: "sig",
+               on_reject: :continue,
+               name: "inbox-verified"
+             )
+           )
   end
 end

@@ -38,9 +38,11 @@ if Code.ensure_loaded?(Plug.Conn) do
     def replayed?(_), do: false
 
     # This measures bytes handed to readers, not transformations a reader makes later.
+    # The comparison hashes the retained bytes directly: the running digest state
+    # is never finalized here, so later replay reads keep updating a live state.
     def replay_matches?({__MODULE__, %{replay: r}}, bytes) when is_map(r) do
       r.offset == byte_size(r.bytes) and byte_size(bytes) == byte_size(r.bytes) and
-        :crypto.hash_final(r.digest) == :crypto.hash(:sha256, bytes)
+        :crypto.hash(:sha256, r.bytes) == :crypto.hash(:sha256, bytes)
     end
 
     def replay_matches?(_, _), do: false

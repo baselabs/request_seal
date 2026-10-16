@@ -69,7 +69,13 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
     if not completion or "\n" in completion or "\r" in completion:
         raise ValueError("Notebook completion must be one nonempty line")
     script = Path(script).resolve(strict=True)
-    process = subprocess.Popen(["elixir", str(script)], cwd=ROOT,
+    # Run from the script's own directory with a private Mix.install cache: a
+    # path dependency must not land inside this repository's Mix project, and
+    # an inherited MIX_HOME (version-manager shims export one) would otherwise
+    # gate the notebook on a shared install cache it never declared.
+    environment = dict(os.environ)
+    environment["MIX_INSTALL_DIR"] = str(script.parent / "mix_install")
+    process = subprocess.Popen(["elixir", str(script)], cwd=script.parent, env=environment,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     deadline = time.monotonic() + timeout
     output = bytearray()
@@ -289,6 +295,7 @@ if __name__ == "__main__":
             check_corpus_release()
             run(["mix", "format", "--check-formatted"])
             run(["mix", "compile", "--warnings-as-errors"])
+            run(["mix", "dialyzer"])
             run(["mix", "test", "--warnings-as-errors"])
             run(["mix", "run", "scripts/check_corpus_mutations.exs"], extra_env={"MIX_ENV": "test"})
             run([sys.executable, "scripts/check_optional_clients.py"])

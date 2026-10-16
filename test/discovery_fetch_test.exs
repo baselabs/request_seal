@@ -38,6 +38,36 @@ defmodule RequestSeal.DiscoveryFetchTest do
     refute inspect(error) =~ "canary"
   end
 
+  # RFC 2606 reserves the .invalid TLD: the real resolver returns an
+  # authoritative NXDOMAIN, separating a config error from resolver trouble.
+  test "NXDOMAIN is a nonretryable config error distinct from resolver failures" do
+    {:ok, source} =
+      Source.new(%{type: :directory, location: "https://request-seal-nxdomain.invalid"})
+
+    assert {:error, %{reason: :domain_not_found, retryable: false} = error} =
+             Discovery.fetch(source, [])
+
+    refute inspect(error) =~ "invalid"
+  end
+
+  # RFC 9111 Section 15.4.5: 304 only follows a conditional request this
+  # client made; unsolicited 304 rejects like any other unexpected status.
+  test "an unsolicited 304 response rejects" do
+    p =
+      peer(fn socket, _ ->
+        Peer.reply(
+          socket,
+          "",
+          [
+            {"Content-Type", "application/http-message-signatures-directory+json"}
+          ],
+          304
+        )
+      end)
+
+    reason(source(p, %{require_signed_directory: false}), :unexpected_status)
+  end
+
   test "real TLS directory proof binds key, body and authority with a resolver bridge" do
     p = peer(fn socket, req -> Peer.signed(socket, req, Peer.directory()) end)
     s = source(p)
@@ -291,7 +321,7 @@ defmodule RequestSeal.DiscoveryFetchTest do
   test "thumbprint IDs and HTTP algorithm restrictions reject malformed sets" do
     for jwk <- [
           Map.put(Peer.public_jwk(), "kid", "aPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"),
-          Map.put(Peer.public_jwk(), "alg", "EdDSA"),
+          Map.put(Peer.public_jwk(), "alg", "not-an-algorithm"),
           Map.put(Peer.public_jwk(), "nbf", "tomorrow"),
           Map.put(Peer.public_jwk(), "d", "canary")
         ] do
@@ -305,6 +335,33 @@ defmodule RequestSeal.DiscoveryFetchTest do
       reason(source(p, %{require_signed_directory: false}), :invalid_key_set)
     end
 
+    # RFC 7517 JWKS sources assert "alg" with standard JOSE names; either
+    # spelling normalizes once at import to the standard JOSE name.
+    for asserted <- ["ed25519", "EdDSA"] do
+      jwk = Map.put(Peer.public_jwk(), "alg", asserted)
+
+      p =
+        peer(fn socket, _ ->
+          Peer.reply(socket, Peer.directory([jwk]), [
+            {"Content-Type", "application/http-message-signatures-directory+json"}
+          ])
+        end)
+
+      assert {:ok, set} = Discovery.fetch(source(p, %{require_signed_directory: false}), [])
+      [resolution] = Map.values(set.keys)
+      assert resolution.key.algorithm == "EdDSA"
+      assert resolution.asserted_algorithm == "EdDSA"
+
+      # Either allowlist spelling selects the same key, and the tuple spelling
+      # selects PS256 too when the key fits it.
+      for allowlist <- [["ed25519"], [{:jws, "EdDSA"}]] do
+        assert {:ok, selected} = KeySet.lookup(set, resolution.key_id, allowlist)
+        assert selected.algorithm in ["ed25519", {:jws, "EdDSA"}]
+        assert selected.asserted_algorithm == "EdDSA"
+      end
+    end
+
+    # A JOSE-tuple allowlist also matches an HTTP-asserted set.
     jwk = Map.put(Peer.public_jwk(), "alg", "ed25519")
 
     p =
@@ -317,7 +374,9 @@ defmodule RequestSeal.DiscoveryFetchTest do
     assert {:ok, set} = Discovery.fetch(source(p, %{require_signed_directory: false}), [])
     [resolution] = Map.values(set.keys)
     assert resolution.key.algorithm == "EdDSA"
-    assert resolution.asserted_algorithm == "ed25519"
+    assert resolution.asserted_algorithm == "EdDSA"
+    assert {:ok, selected} = KeySet.lookup(set, resolution.key_id, [{:jws, "EdDSA"}])
+    assert selected.asserted_algorithm == "EdDSA"
   end
 
   test "source revocation excludes a still-published key from fetched snapshots" do

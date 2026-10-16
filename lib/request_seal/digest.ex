@@ -392,9 +392,12 @@ defmodule RequestSeal.Digest do
 
     * `{:ok, %RequestSeal.StructuredFields.Value{type: :dictionary}}`.
     * `{:error, %RequestSeal.Digest.Error{}}` - `:invalid_options` (another
-      section), `:invalid_field` (another field name), or `:invalid_preference`.
+      section), `:invalid_field` (another field name), `:invalid_preference`,
+      or `:invalid_message` (an invalid message; from 0.5.0 a
+      `RequestSeal.Digest.Error`, previously a
+      `RequestSeal.StructuredFields.Error`).
       Meanings: `RequestSeal.Digest.Error`.
-    * `{:error, %RequestSeal.StructuredFields.Error{}}` - `:invalid_message`,
+    * `{:error, %RequestSeal.StructuredFields.Error{}}` -
       `:unavailable_section`, `:missing_field`, `:limit`, `:syntax`,
       `:revision_type`, or `:schema_type`.
       Meanings: `RequestSeal.StructuredFields.Error`.
@@ -488,6 +491,14 @@ defmodule RequestSeal.Digest do
   def check(message, kind, opts \\ []) do
     protect(fn ->
       ensure(Message.validate(message) == :ok, :invalid_message)
+      check_validated(message, kind, opts)
+    end)
+  end
+
+  # Internal fast path: the calling entry point has validated the message once.
+  @doc false
+  def check_validated(message, kind, opts) do
+    protect(fn ->
       ensure(kind in [:content, :representation], :invalid_kind)
       options(opts, [:section, :max_bytes, :representation])
       section = section(opts)
@@ -557,6 +568,15 @@ defmodule RequestSeal.Digest do
   @spec check_stream(t(), Message.t(), keyword()) :: {:ok, map()} | failure()
   def check_stream(state, message, opts \\ []) do
     protect(fn ->
+      ensure(Message.validate(message) == :ok, :invalid_message)
+      check_stream_validated(state, message, opts)
+    end)
+  end
+
+  # Internal fast path: the calling entry point has validated the message once.
+  @doc false
+  def check_stream_validated(state, message, opts) do
+    protect(fn ->
       valid_state(state)
       options(opts, [:section])
 
@@ -594,7 +614,7 @@ defmodule RequestSeal.Digest do
   defp field(message, kind, section) do
     name = if kind == :content, do: "Content-Digest", else: "Repr-Digest"
 
-    case StructuredFields.parse_field(
+    case StructuredFields.parse_field_validated(
            message,
            name,
            schema(:bytes),

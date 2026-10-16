@@ -300,6 +300,131 @@ defmodule RequestSeal.DiscoveryCacheTest do
     assert {:ok, _} = Cache.resolve(cache, source, kid, [])
   end
 
+  test "a stored ETag drives conditional revalidation on refresh" do
+    now = System.system_time(:second)
+    {:ok, clock} = Agent.start_link(fn -> now end)
+    {:ok, seen} = Agent.start_link(fn -> %{requests: 0, conditional: false} end)
+    media = {"Content-Type", "application/http-message-signatures-directory+json"}
+
+    p =
+      Peer.start(fn socket, request ->
+        Agent.update(seen, fn st ->
+          %{
+            st
+            | requests: st.requests + 1,
+              conditional: st.conditional or request =~ ~r[\r\nIf-None-Match: "v1"\r\n]
+          }
+        end)
+
+        if Agent.get(seen, & &1.requests) == 1 do
+          Peer.reply(socket, Peer.directory(), [
+            media,
+            {"Cache-Control", "max-age=60"},
+            {"ETag", ~s("v1")}
+          ])
+        else
+          Peer.reply(socket, "", [media, {"Cache-Control", "max-age=60"}], 304)
+        end
+      end)
+
+    on_exit(fn -> Peer.stop(p) end)
+
+    {:ok, source} =
+      Source.new(%{
+        type: :directory,
+        location: "https://localhost:#{p.port}",
+        cacerts: p.cacerts,
+        permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}],
+        require_signed_directory: false
+      })
+
+    {:ok, cache} = Cache.start_link(clock: fn -> Agent.get(clock, & &1) end)
+    {:ok, public} = PublicKey.import(Peer.public_jwk(), :jwk)
+    {:ok, kid} = PublicKey.thumbprint(public)
+
+    assert {:ok, first} = Cache.refresh(cache, source)
+    assert first.etag == ~s("v1")
+
+    # Stale cache: revalidation sends If-None-Match; the 304 keeps the key set
+    # and extends freshness under the 304's own directives.
+    Agent.update(clock, &(&1 + 61))
+
+    assert {:ok, resolution} = Cache.resolve(cache, source, kid, algorithms: ["ed25519"])
+    assert resolution.thumbprint == kid
+
+    state = :sys.get_state(cache)
+    assert {:positive, stored} = state.entries[source]
+    assert stored.etag == ~s("v1")
+    assert stored.keys == first.keys
+    assert stored.expires_at > first.expires_at
+
+    assert Agent.get(seen, & &1.requests) == 2
+    assert Agent.get(seen, & &1.conditional)
+
+    Agent.update(clock, &(&1 + 30))
+    assert {:ok, _} = Cache.resolve(cache, source, kid, algorithms: ["ed25519"])
+    assert Agent.get(seen, & &1.requests) == 2
+  end
+
+  test "a stored ETag stops driving revalidation once any stored key expires" do
+    now = System.system_time(:second)
+    {:ok, clock} = Agent.start_link(fn -> now end)
+    {:ok, seen} = Agent.start_link(fn -> %{requests: 0, conditional: false} end)
+    media = {"Content-Type", "application/http-message-signatures-directory+json"}
+
+    # The key's own exp lapses well before the set's max-age freshness does.
+    expiring =
+      Map.put(Peer.public_jwk(), "exp", now + 60)
+
+    p =
+      Peer.start(fn socket, request ->
+        Agent.update(seen, fn st ->
+          %{
+            st
+            | requests: st.requests + 1,
+              conditional: st.conditional or request =~ ~r[\r\nIf-None-Match: "v1"\r\n]
+          }
+        end)
+
+        if Agent.get(seen, & &1.requests) == 1 do
+          Peer.reply(socket, Peer.directory([expiring]), [
+            media,
+            {"Cache-Control", "max-age=600"},
+            {"ETag", ~s("v1")}
+          ])
+        else
+          # Any later request must be an unconditional full fetch.
+          Peer.reply(socket, Peer.directory(), [media, {"Cache-Control", "max-age=600"}])
+        end
+      end)
+
+    on_exit(fn -> Peer.stop(p) end)
+
+    {:ok, source} =
+      Source.new(%{
+        type: :directory,
+        location: "https://localhost:#{p.port}",
+        cacerts: p.cacerts,
+        permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}],
+        require_signed_directory: false
+      })
+
+    {:ok, cache} = Cache.start_link(clock: fn -> Agent.get(clock, & &1) end)
+    {:ok, public} = PublicKey.import(Peer.public_jwk(), :jwk)
+    {:ok, kid} = PublicKey.thumbprint(public)
+
+    assert {:ok, _} = Cache.refresh(cache, source)
+    assert Agent.get(seen, & &1.requests) == 1
+
+    # Past both the key's exp and the set freshness: the dead key forces a full
+    # fetch instead of a 304 that would keep carrying it forward.
+    Agent.update(clock, &(&1 + 700))
+
+    assert {:ok, _} = Cache.resolve(cache, source, kid, algorithms: ["ed25519"])
+    assert Agent.get(seen, & &1.requests) == 2
+    refute Agent.get(seen, & &1.conditional)
+  end
+
   test "a failed refresh retains the observed directory without extending its freshness" do
     now = System.system_time(:second)
     {:ok, clock} = Agent.start_link(fn -> now end)

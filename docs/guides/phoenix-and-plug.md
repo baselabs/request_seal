@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Verify webhook signatures in Phoenix and Plug
 
@@ -163,7 +163,7 @@ Cover `@method`, `@scheme`, `@authority`, `@path`, headers, and retained content
 | `:untrusted_proxy` | Forwarded mode saw a peer outside `trusted_peers`; Capture halts with 400. |
 | `:invalid_request` | CONNECT, an empty host, or malformed forwarded fields; Capture halts with 400. |
 | `:invalid_options` | A plug option, or the policy returned by a policy function or MFA, is invalid. |
-| `:already_verified` | From 0.5.0 (unreleased): a second Verify with a different policy or label ran on a verified request. The request is no longer verified, Verify's assigns are removed, and `on_reject` applies. A repeat with the same policy and label reuses the first result. Install Verify once. |
+| `:already_verified` | From 0.5.0: a second Verify with a different policy or label ran on a verified request. The request is no longer verified, Verify's assigns are removed, and `on_reject` applies. A repeat with the same policy and label reuses the first result; with the `:name` option (also from 0.5.0), a repeat under the same name and label reuses the first result even when the policy value is a rebuilt-equivalent struct whose function fields differ — the name is your explicit assertion that it is the same policy. Install Verify once. |
 | `:signing_failed` | The response signer or its custody failed; SignResponse sends its `on_failure` status. |
 
 Capture's other failures halt with 400. Required verification does not authorize the action; apply your access policy afterward.

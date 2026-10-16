@@ -9,7 +9,8 @@ if Code.ensure_loaded?(Postgrex) do
 
     The optional dependency has `runtime: false`; callers explicitly start the
     Postgrex application and their connection/pool, then pass it to `store/2`
-    with an explicit table name. The caller executes the SQL from `ddl/1`.
+    with an explicit table name. The caller executes the SQL from `ddl/1` and
+    `ddl_index/1`.
     Queries propagate the remaining operation deadline. Errors expose no SQL,
     connection, namespace, key, or backend exception. Conflicts never update
     retention and claims never evict. Required claims fail closed on outages.
@@ -98,6 +99,45 @@ if Code.ensure_loaded?(Postgrex) do
     end
 
     @doc """
+    Return the SQL the caller executes to index the replay table for sweeps.
+
+    The primary key from `ddl/1` serves claims; `sweep/3` deletes by
+    `retain_until`, which without this index is a full-table scan that grows
+    with the table. Execute this once beside `ddl/1`; it builds statements and
+    runs nothing.
+
+    ## Parameters
+
+      * `name` - the table name, under the same rules as the `:table` option of
+        `store/2`, with one further bound: at most 46 bytes, so the derived
+        `<table>_retain_until_idx` identifier (17 more bytes) fits PostgreSQL's
+        63-byte name limit without server-side truncation.
+
+    ## Returns
+
+      * `binary()` - one `CREATE INDEX` statement with the name double-quoted.
+      * `{:error, %RequestSeal.Replay.Error{}}` - reason `:invalid_store` for a
+        malformed or over-long name. Meanings: `RequestSeal.Replay.Error`.
+
+    ## Examples
+
+        iex> RequestSeal.Replay.Postgres.ddl_index("replay_claims")
+        ~S|CREATE INDEX "replay_claims_retain_until_idx" ON "replay_claims" (retain_until)|
+        iex> RequestSeal.Replay.Postgres.ddl_index("1_claims")
+        {:error, %RequestSeal.Replay.Error{reason: :invalid_store, retryable: false}}
+        iex> RequestSeal.Replay.Postgres.ddl_index(String.duplicate("x", 47))
+        {:error, %RequestSeal.Replay.Error{reason: :invalid_store, retryable: false}}
+    """
+    @spec ddl_index(binary()) :: binary() | {:error, Error.t()}
+    def ddl_index(name) do
+      if table?(name) and byte_size(name) <= 46 do
+        "CREATE INDEX \"#{name}_retain_until_idx\" ON \"#{name}\" (retain_until)"
+      else
+        invalid()
+      end
+    end
+
+    @doc """
     Atomically insert `claim` unless the table already holds its namespace and key.
 
     Implements `c:RequestSeal.Replay.claim/3`; most callers use
@@ -115,13 +155,13 @@ if Code.ensure_loaded?(Postgrex) do
       * `:claimed` - one row was inserted.
       * `:already_claimed` - the namespace and key were already stored.
       * `{:error, :timeout}` - the deadline had expired before the query; or,
-        from 0.5.0 (unreleased), the query ran past the deadline (the pool closed the
+        from 0.5.0, the query ran past the deadline (the pool closed the
         connection at the client timeout), the pool dropped the queued request
         (DBConnection `:queue_timeout`), or the server canceled the statement or
         could not take a lock (`query_canceled`, `lock_not_available`). The claim
         may have committed.
       * `{:error, :unavailable}` - the connection process is not running or
-        exited; or, from 0.5.0 (unreleased), the connection was lost before the deadline or
+        exited; or, from 0.5.0, the connection was lost before the deadline or
         the server is shutting down or
         refusing connections (`admin_shutdown`, `crash_shutdown`,
         `cannot_connect_now`, `too_many_connections`).
@@ -181,7 +221,7 @@ if Code.ensure_loaded?(Postgrex) do
 
       * `{:ok, removed}` - the number of rows deleted.
       * `{:error, :timeout}` - the deadline had expired before the query; or,
-        from 0.5.0 (unreleased), the query ran past the deadline (the pool closed the
+        from 0.5.0, the query ran past the deadline (the pool closed the
         connection at the client timeout), the pool dropped the queued request
         (DBConnection `:queue_timeout`), or the server canceled the statement or
         could not take a lock (`query_canceled`, `lock_not_available`). The sweep's deletions
@@ -189,7 +229,7 @@ if Code.ensure_loaded?(Postgrex) do
         or may not have committed when the connection closed at the deadline; a
         later sweep with the same `now` removes whatever remains.
       * `{:error, :unavailable}` - the connection process is not running or
-        exited; or, from 0.5.0 (unreleased), the connection was lost before the deadline or
+        exited; or, from 0.5.0, the connection was lost before the deadline or
         the server is shutting down or
         refusing connections (`admin_shutdown`, `crash_shutdown`,
         `cannot_connect_now`, `too_many_connections`).

@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
 
 # Discover trusted public keys over HTTPS
 
@@ -84,9 +84,9 @@ Use `Discovery.resolver({cache, source}, algorithms: [...])` for a generic polic
 
 Choose `:directory`, `:jwks_uri`, or `:cimd`; each requires explicit HTTPS. A directory origin expands to its well-known path. Signed directory possession proofs are required by default and establish possession; your profile's trust policy owns principal attribution. CIMD requires the exact document `client_id` spelling and may resolve a same-origin JWKS subresource.
 
-Default key IDs are SHA-256 RFC 7638/8037 thumbprints. JWKS and CIMD may explicitly choose `key_id: :directory` for unique directory-assigned IDs; thumbprints still govern identity, revocation, and removal. Directory sources always require thumbprint IDs. Private, malformed, revoked, expired, not-yet-valid, or verification-forbidden keys cannot establish a resolver success.
+Default key IDs are SHA-256 RFC 7638/8037 thumbprints. JWKS and CIMD may explicitly choose `key_id: :directory` for unique directory-assigned IDs; thumbprints still govern identity, revocation, and removal. Directory sources always require thumbprint IDs. Private, malformed, revoked, expired, not-yet-valid, or verification-forbidden keys cannot establish a resolver success. From 0.5.0, a JWKS key's `alg` may use its standard RFC 7517 JOSE name (`"EdDSA"`) or the HTTP registry identifier (`"ed25519"`); either spelling normalizes once at import, and either allowlist spelling selects the key.
 
-HTTP freshness honors Cache-Control max-age before Expires, adjusted by Date/Age and source bounds. Without either field, fallback freshness defaults to 300 seconds. No-cache/no-store is not retained. Negative caching is at most 300 seconds; CIMD failures are not cached. Configure trusted clocks and do not silently reuse a stale snapshot. Discovery and custody workers terminate on deadlines or caller death.
+HTTP freshness honors Cache-Control max-age before Expires, adjusted by Date/Age and source bounds. Without either field, fallback freshness defaults to 300 seconds. No-cache/no-store is not retained, including their qualified spellings such as `no-cache="content-type"`, which RFC 9111 publishers use to demand revalidation. Interim 1xx responses (for example 103 Early Hints) are skipped, at most four, before the final status. From 0.5.0, a source that serves an `ETag` makes cache revalidation conditional: refetches send `If-None-Match` (RFC 9111 Section 13.1.1), and an unchanged source's 304 keeps the stored key set and extends freshness under the 304's own directives (the stored `etag` is visible on `RequestSeal.Discovery.KeySet`). Negative caching is at most 300 seconds; CIMD failures are not cached. Configure trusted clocks and do not silently reuse a stale snapshot. Discovery and custody workers terminate on deadlines or caller death.
 
 ## Errors
 

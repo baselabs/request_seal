@@ -148,7 +148,37 @@ defmodule RequestSeal.Discovery do
       Support.clock(clock)
 
       Support.run(min(timeout, source.timeout), fn deadline ->
-        fetch_source(source, clock, deadline)
+        fetch_source(source, clock, deadline, nil, nil)
+      end)
+    end)
+  end
+
+  # Conditional revalidation for a cache that holds a stored ETag: the request
+  # carries If-None-Match and a 304 keeps the stored representation under the
+  # 304's own freshness directives. `stored_lifetime` is the stored
+  # representation's freshness lifetime in seconds; RFC 9111 Section 3.2 keeps
+  # stored directives when a 304 omits them. No public option exposes this path.
+  @doc false
+  def fetch_with_validators(source, etag, stored_lifetime, opts) do
+    Support.safe(fn ->
+      Source.validate!(source)
+      Support.options(opts, [:timeout, :clock])
+      ensure(etag == nil or (is_binary(etag) and byte_size(etag) in 1..512), :invalid_options)
+
+      ensure(
+        stored_lifetime == nil or
+          (is_integer(stored_lifetime) and stored_lifetime >= 0 and
+             stored_lifetime <= 253_402_300_799),
+        :invalid_options
+      )
+
+      timeout = Keyword.get(opts, :timeout, source.timeout)
+      ensure(is_integer(timeout) and timeout in 1..300_000, :invalid_options)
+      clock = Keyword.get(opts, :clock, fn -> System.system_time(:second) end)
+      Support.clock(clock)
+
+      Support.run(min(timeout, source.timeout), fn deadline ->
+        fetch_source(source, clock, deadline, etag, stored_lifetime)
       end)
     end)
   end
@@ -305,9 +335,54 @@ defmodule RequestSeal.Discovery do
     json(bytes)
   end
 
-  defp fetch_source(source, clock, deadline) do
+  defp fetch_source(source, clock, deadline, etag, stored_lifetime) do
     uri = Source.url!(source.location)
-    {fields, message, location, decoded} = resource(uri, source, deadline, 0)
+
+    case resource(uri, source, deadline, 0, etag) do
+      {:not_modified, fields} ->
+        now = Support.clock(clock)
+
+        # RFC 9111 Sections 3.2 and 4.3.4: a 304's own directives recalculate
+        # freshness; without them the stored representation's lifetime
+        # persists. A different strong validator identifies a different
+        # representation, so it cannot renew this one.
+        updated = HTTP1.value(fields, "etag")
+        ensure(updated == nil or byte_size(updated) <= 512, :invalid_response)
+        ensure(updated in [nil, etag], :invalid_response)
+
+        fresh =
+          if freshness_directives?(fields),
+            do: expiry(fields, source, now),
+            else: now + (stored_lifetime || 0)
+
+        {:ok, {:not_modified, %{etag: etag, fetched_at: now, expires_at: fresh}}}
+
+      {fields, message, location, decoded} ->
+        fetched_set(fields, message, location, decoded, source, clock, deadline)
+    end
+  end
+
+  defp freshness_directives?(fields) do
+    controls = cache_controls(fields)
+
+    # Only freshness-changing names count: max-age, no-cache, no-store. A
+    # directive like `public` leaves the stored lifetime in force.
+    HTTP1.value(fields, "expires") != nil or
+      Enum.any?(controls, fn control ->
+        [name | _] = :binary.split(control, "=")
+        String.trim(name) in ["no-store", "no-cache", "max-age"]
+      end)
+  end
+
+  defp cache_controls(fields) do
+    HTTP1.values(fields, "cache-control")
+    |> Enum.join(",")
+    |> String.downcase()
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+  end
+
+  defp fetched_set(fields, message, location, decoded, source, clock, deadline) do
     now = Support.clock(clock)
     expires = expiry(fields, source, now)
 
@@ -328,11 +403,18 @@ defmodule RequestSeal.Discovery do
 
             Map.has_key?(doc, "jwks_uri") ->
               nested = Source.url!(doc["jwks_uri"])
-              ensure(Source.origin(nested) == Source.origin(uri), :redirect_denied)
+              # The nested key set must be same-origin with the origin that
+              # actually served this document (`location`), which under
+              # redirect_scope: :any_https may differ from the configured one.
+              ensure(
+                Source.origin(nested) == Source.origin(URI.parse(location)),
+                :redirect_denied
+              )
+
               nested_source = %{source | type: :jwks_uri}
 
               {nested_fields, nested_message, nested_location, nested_bytes} =
-                resource(nested, nested_source, deadline, 0)
+                resource(nested, nested_source, deadline, 0, nil)
 
               {body_document(nested_bytes, nested_source), nested_message, nested_fields,
                nested_location, min(expires, expiry(nested_fields, source, now)), nested_bytes}
@@ -363,6 +445,9 @@ defmodule RequestSeal.Discovery do
     expires = Enum.reduce(keys, expires, fn {_, key}, bound -> min(bound, key.expires_at) end)
     Support.remaining(deadline)
 
+    stored_etag = HTTP1.value(fields, "etag")
+    ensure(stored_etag == nil or byte_size(stored_etag) <= 512, :invalid_response)
+
     {:ok,
      %KeySet{
        source: source,
@@ -371,21 +456,28 @@ defmodule RequestSeal.Discovery do
        fetched_at: now,
        expires_at: expires,
        revision: Base.url_encode64(:crypto.hash(:sha256, key_bytes), padding: false),
-       proof: proof
+       proof: proof,
+       etag: stored_etag
      }}
   end
 
-  defp resource(uri, source, deadline, redirects) do
+  defp resource(uri, source, deadline, redirects, etag) do
     socket = Transport.connect(uri, source, deadline)
 
     response =
       try do
-        HTTP1.request(socket, uri, source, deadline)
+        HTTP1.request(socket, uri, source, deadline, etag)
       after
         :ssl.close(socket)
       end
 
     case response do
+      # RFC 9111 Section 15.4.5: 304 is valid only as the answer to the
+      # conditional this client sent; unsolicited 304 falls through to the
+      # unexpected-status rejection below.
+      {304, fields, _, _} when etag != nil ->
+        {:not_modified, fields}
+
       {200, fields, message, decoded} ->
         media = HTTP1.value(fields, "content-type")
         ensure(is_binary(media), :unexpected_media_type)
@@ -419,7 +511,7 @@ defmodule RequestSeal.Discovery do
           :redirect_denied
         )
 
-        resource(target, source, deadline, redirects + 1)
+        resource(target, source, deadline, redirects + 1, nil)
 
       {code, _, _, _} ->
         throw({:discovery_error, %Error{reason: :unexpected_status, retryable: code in 500..599}})
@@ -487,12 +579,21 @@ defmodule RequestSeal.Discovery do
     Enum.reduce(jwks, %{}, fn jwk, acc ->
       ensure(is_map(jwk) and map_size(jwk) <= 32, :invalid_key_set)
       asserted = jwk["alg"]
-      ensure(asserted == nil or asserted in Algorithm.http(), :invalid_key_set)
+
+      ensure(
+        asserted == nil or asserted in Algorithm.http() or asserted in Algorithm.jose_names(),
+        :invalid_key_set
+      )
+
+      # RFC 7517 sources assert standard JOSE names; either spelling normalizes
+      # once, here, to the JOSE name, which exists for every registry entry
+      # (PS256 and PS384 have no HTTP identifier).
+      asserted = asserted && Algorithm.jose_id(asserted)
 
       imported =
         if asserted == nil,
           do: jwk,
-          else: Map.put(jwk, "alg", elem(Algorithm.resolve(asserted), 0))
+          else: Map.put(jwk, "alg", asserted)
 
       public =
         case PublicKey.import(imported, :jwk) do
@@ -536,7 +637,7 @@ defmodule RequestSeal.Discovery do
           source_type: source.type,
           location: location,
           fetched_at: now,
-          expires_at: min(now + source.max_ttl, jwk["exp"] || now + source.max_ttl),
+          expires_at: jwk["exp"] || now + source.max_ttl,
           proof: :not_applicable
         }
 
@@ -554,7 +655,7 @@ defmodule RequestSeal.Discovery do
   defp default_algorithm(_), do: "rsa-pss-sha512"
 
   defp binding?(key, algorithm) do
-    PublicKey.bind!(key, Algorithm.resolve(algorithm))
+    PublicKey.bind!(key, Algorithm.resolve(Algorithm.reference(algorithm)))
     true
   catch
     _, _ -> false
@@ -629,7 +730,9 @@ defmodule RequestSeal.Discovery do
           # max-age=0 still permits this fetch to validate its possession proof.
           candidates =
             Enum.filter(Algorithm.http(), fn algorithm ->
-              entry.asserted_algorithm in [nil, algorithm] and binding?(entry.key, algorithm)
+              (entry.asserted_algorithm == nil or
+                 Algorithm.jose_id(entry.asserted_algorithm) == Algorithm.jose_id(algorithm)) and
+                binding?(entry.key, algorithm)
             end)
 
           valid =
@@ -687,14 +790,17 @@ defmodule RequestSeal.Discovery do
   end
 
   defp expiry(fields, source, now) do
-    controls =
-      HTTP1.values(fields, "cache-control")
-      |> Enum.join(",")
-      |> String.downcase()
-      |> String.split(",")
-      |> Enum.map(&String.trim/1)
+    controls = cache_controls(fields)
 
-    no_cache = Enum.any?(controls, &(&1 in ["no-store", "no-cache"]))
+    # RFC 9111 Sections 5.2.2.3 and 5.2.2.4: no-store and no-cache also arrive
+    # qualified, as in `no-cache="content-type"` (and the RFC 7234 `#field-name`
+    # form, whose quoted member can itself contain commas). Match the directive
+    # name before any "=", so every spelling still forces revalidation.
+    no_cache =
+      Enum.any?(controls, fn control ->
+        [name | _] = :binary.split(control, "=")
+        String.trim(name) in ["no-store", "no-cache"]
+      end)
 
     ages =
       for control <- controls,

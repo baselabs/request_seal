@@ -222,8 +222,16 @@ defmodule RequestSeal.StructuredFields do
           {:ok, Value.t()} | {:error, Error.t()}
   def parse_field(message, name, schema, section \\ :headers, opts \\ []) do
     protect(fn ->
-      state = setup(schema, opts, true)
       ensure(Message.validate(message) == :ok, :invalid_message)
+      parse_field_validated(message, name, schema, section, opts)
+    end)
+  end
+
+  # Internal fast path: the calling entry point has validated the message once.
+  @doc false
+  def parse_field_validated(message, name, schema, section, opts) do
+    protect(fn ->
+      state = setup(schema, opts, true)
       ensure(RequestSeal.Message.Validation.token?(name, 256), :invalid_field)
       ensure(section in [:headers, :trailers], :invalid_field)
       fields = if section == :headers, do: message.fields, else: message.trailers

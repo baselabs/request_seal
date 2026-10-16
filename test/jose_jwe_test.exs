@@ -449,6 +449,59 @@ defmodule RequestSeal.JOSESafetyTest do
     assert {:error, %{reason: :content_type_mismatch}} =
              Nested.verify(c, jp, sp, content_types: ["JWT"])
   end
+
+  test "an inner JWS may carry a non-JOSE cty; JOSE-typed cty still rejects" do
+    v = fixture("6.nesting_signatures_and_encryption.json")
+    jp = jwe_policy(v["encrypt"]["input"]["key"], "RSA-OAEP", "A128GCM")
+    sp = jws_policy(v["sign"]["input"]["key"], "PS256")
+    recipient = public(v["encrypt"]["input"]["key"])
+
+    signer = fn alg, base ->
+      RequestSeal.Crypto.sign(alg, base, rsa(v["sign"]["input"]["key"]))
+    end
+
+    # RFC 7515 Section 4.1.10: cty names the payload's media type and is the
+    # application's business; only JOSE-typed values imply another nesting level
+    # (application/jose, application/jose+json, and RFC 7519's abbreviated JWT).
+    for cty <- ["application/json", "text/plain", "exampleapp"] do
+      assert {:ok, inner} = JWS.sign([{"alg", "PS256"}, {"cty", cty}], "payload", signer)
+
+      assert {:ok, c} =
+               JWE.encrypt(
+                 [{"alg", "RSA-OAEP"}, {"enc", "A128GCM"}, {"cty", "JWT"}],
+                 inner,
+                 recipient
+               )
+
+      assert {:ok, %{jws: %{payload: "payload"}}} =
+               Nested.verify(c, jp, sp, content_types: ["JWT"])
+    end
+
+    # The Section 4.1.10 abbreviation rule: a value with no "/" prepends
+    # "application/", so "jose" means application/jose.
+    for cty <- [
+          "application/jose",
+          "application/jose+json",
+          "application/jws",
+          "application/jwe",
+          "jose",
+          "JOSE+json",
+          "JWS",
+          "JWT"
+        ] do
+      assert {:ok, inner} = JWS.sign([{"alg", "PS256"}, {"cty", cty}], "payload", signer)
+
+      assert {:ok, c} =
+               JWE.encrypt(
+                 [{"alg", "RSA-OAEP"}, {"enc", "A128GCM"}, {"cty", "JWT"}],
+                 inner,
+                 recipient
+               )
+
+      assert {:error, %{reason: :nesting_depth}} =
+               Nested.verify(c, jp, sp, content_types: ["JWT"])
+    end
+  end
 end
 
 defmodule RequestSeal.JOSEGuardTest do

@@ -50,6 +50,11 @@ defmodule RequestSeal.Discovery.Transport do
 
     ensure(not Enum.any?(answers, &match?({:error, :timeout}, &1)), :deadline_exceeded)
 
+    # An authoritative NXDOMAIN on every family is a configuration error:
+    # the configured host does not exist. Anything else that yields no usable
+    # address is resolver trouble, which can be transient.
+    ensure(not Enum.all?(answers, &match?({:error, :nxdomain}, &1)), :domain_not_found)
+
     addresses =
       Enum.flat_map(answers, fn
         {:ok, addresses} -> addresses

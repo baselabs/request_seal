@@ -82,7 +82,11 @@ The RSA private key stays in the sensitive local holder. The CEK passes through
 the sensitive custody runner and middle process to JWE's sensitive worker. Those
 four processes see the CEK; the outer JWE middle process and your decrypt caller
 receive only the authenticated result. A direct `Custody.unwrap/3` caller receives
-unwrapped bytes and owns their protection.
+unwrapped bytes and owns their protection. On the BEAM, binaries are immutable:
+a CEK that crossed those processes cannot be zeroed and stays in their heaps
+until garbage collection. The mitigation is process-level, not memory-level —
+every CEK-bearing process marks itself sensitive, and the JWE guide's trace test
+proves inspection and tracing cannot observe the CEK from outside.
 
 OAEP unwrap and GCM authentication failures return the identical complete
 `%RequestSeal.JOSE.Error{reason: :decryption_failed, layer: :crypto,
@@ -224,7 +228,7 @@ The existing arity-two function signer stays synchronous; a valid timeout option
 does not interrupt it. A handle's algorithm must equal `spec.algorithm`.
 Mismatch returns `RequestSeal.Error` with reason `:signer_algorithm_mismatch`,
 layer `:input`, and the exact message string
-`"signer algorithm does not match signature specification"`. From 0.5.0 (unreleased), the
+`"signer algorithm does not match signature specification"`. From 0.5.0, the
 generated signing spec returns the same; in 0.4.1 it returns `:invalid_options`. Req, Finch, and Plug report it as an
 adapter `:invalid_options` error whose `source` is that core error.
 Custody failures return `RequestSeal.Error` with reason `:signing_failed`, layer

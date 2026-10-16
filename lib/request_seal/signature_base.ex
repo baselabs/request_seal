@@ -9,10 +9,20 @@ defmodule RequestSeal.SignatureBase do
   line has no trailing newline. Construction performs no signing, verification,
   key operation, body read, network request, or authorization.
 
+  Two component rules are deliberately stricter than a plain RFC 9421 reading,
+  and cross-implementation peers should know them before relying on the edges
+  (RFC 9421 Section 2.5): duplicate component identity is exact — the same
+  component name with the same parameters in a different order rejects as
+  `:duplicate_component` rather than coalescing — and duplicate identifiers
+  that differ only in parameter order never merge.
+
   All nine derived components are supported. `@request-target`, `@path`, and
   `@query` preserve percent-encoded octets. `@target-uri` assembles the preserved
-  target URI without normalizing it. Only `@authority` and `@scheme` normalize
-  host/scheme case and the HTTP(S) default port. Origin-form requests need the
+  target URI without normalizing it: percent-escape hex case and IPvFuture
+  literal case pass through exactly, unlike `@authority`, which lowercases
+  host and IPvFuture case — signers targeting both components from one target
+  must send the bytes they signed for each. Only `@authority` and `@scheme`
+  normalize host/scheme case and the HTTP(S) default port. Origin-form requests need the
   caller's explicit `:scheme`/`:authority` for these three origin components;
   absolute-form requests provide them in the raw target. Host and Forwarded
   fields never supply missing origin facts. Authority/asterisk-form target URIs
@@ -128,6 +138,14 @@ defmodule RequestSeal.SignatureBase do
           {:ok, binary()} | {:error, Error.t()}
   def build(message, parameters, opts \\ []) do
     ensure(Message.validate(message) == :ok, :invalid_message)
+    build_validated(message, parameters, opts)
+  catch
+    {:signature_base, reason} -> {:error, %Error{reason: reason}}
+  end
+
+  # Internal fast path: the calling entry point has validated the message once.
+  @doc false
+  def build_validated(message, parameters, opts) do
     options = options(opts)
     {parameters, serialized} = parameters(parameters)
     metadata(parameters.parameters)
@@ -497,15 +515,27 @@ defmodule RequestSeal.SignatureBase do
     end
   end
 
+  # Binary-part trim: no integer-list round-trip, two bounded scans.
   defp trim_ows(value) do
-    value
-    |> :binary.bin_to_list()
-    |> Enum.drop_while(&(&1 in [32, 9]))
-    |> Enum.reverse()
-    |> Enum.drop_while(&(&1 in [32, 9]))
-    |> Enum.reverse()
-    |> :binary.list_to_bin()
+    prefix = ows_prefix(value, 0)
+    size = byte_size(value)
+    suffix = ows_suffix(value, size, prefix)
+    binary_part(value, prefix, suffix - prefix)
   end
+
+  defp ows_prefix(<<byte, rest::binary>>, count) when byte in [32, 9],
+    do: ows_prefix(rest, count + 1)
+
+  defp ows_prefix(_, count), do: count
+
+  defp ows_suffix(value, index, floor) when index > floor do
+    case binary_part(value, index - 1, 1) do
+      <<byte>> when byte in [32, 9] -> ows_suffix(value, index - 1, floor)
+      _ -> index
+    end
+  end
+
+  defp ows_suffix(_value, index, _floor), do: index
 
   defp ascii?(bytes), do: ascii_bytes?(bytes)
   defp ascii_bytes?(""), do: true

@@ -195,7 +195,19 @@ defmodule RequestSeal do
   """
   @spec verify(Message.t(), Policy.t(), keyword()) ::
           {:ok, Verification.t()} | {:error, Error.t()}
-  def verify(message, policy, opts), do: Authentication.verify(message, policy, opts)
+  def verify(message, policy, opts) do
+    start = System.monotonic_time()
+
+    result = Authentication.verify(message, policy, opts)
+
+    RequestSeal.Telemetry.emit(
+      [:request_seal, :verify, :stop],
+      System.monotonic_time() - start,
+      RequestSeal.Telemetry.meta(result)
+    )
+
+    result
+  end
 
   @doc """
   Verify a composite set of signatures against explicit signer slots.
@@ -206,14 +218,16 @@ defmodule RequestSeal do
   unit. Assignment, identity classes, bindings, negotiation, and the search
   budget are specified in `RequestSeal.Quorum`. A label that fails every
   eligible slot is recorded in `nonqualifying`; it rejects the call only under
-  `invalid: :reject`.
+  `invalid: :reject`. When a message both fails the quorum and carries an
+  `Accept-Signature` challenge, the quorum rejection is returned first and
+  negotiation is not evaluated.
 
   ## Parameters
 
     * `message` - a `RequestSeal.Message`; it is validated before parsing.
     * `quorum` - a `RequestSeal.Quorum` from `RequestSeal.Quorum.new/1`.
       Directly built structs are revalidated and reject with `:invalid_quorum`.
-    * `opts` - keyword list with at most the option below. `[]` is valid.
+    * `opts` - keyword list with at most the options below. `[]` is valid.
 
   ## Options
 
@@ -222,6 +236,15 @@ defmodule RequestSeal do
       message kind. Every request must be met by a verified, selector-eligible
       label after key-unit filtering, with the same covered component identity
       set and every requested parameter. Default `[]` (no negotiation).
+    * `:deadline` - optional integer, an absolute deadline in
+      `System.monotonic_time(:millisecond)` units bounding the wall-clock time
+      of the slot-assignment search. The deterministic node budget stays the
+      default bound when this option is absent; with it, expiry keeps the
+      best-so-far acceptance semantics (success only when the mode, required
+      slots, and bindings hold) and otherwise returns the retryable
+      `:deadline` reason at `:quorum`. Independent label verification and the
+      polynomial matching paths are not covered by this bound; `RequestSeal.verify/3`
+      has no such option because it runs no unbounded search.
 
   ## Returns
 
@@ -239,7 +262,8 @@ defmodule RequestSeal do
         `:negotiation_unfulfilled`.
       * `:quorum` - `:unexpected_signature`, `:nonqualifying_signature`
         (`detail` is the label's last failure reason), `:ambiguous_key_identity`,
-        `:quorum_not_met`, `:binding_unsatisfied`.
+        `:quorum_not_met`, `:binding_unsatisfied`, `:deadline` (retryable; the
+        caller's `:deadline` bound expired during assignment search).
 
       Failures of individual labels against individual slots are not returned
       directly; they appear in `nonqualifying`. Meanings: `RequestSeal.Error`.
@@ -302,8 +326,19 @@ defmodule RequestSeal do
   """
   @spec verify_quorum(Message.t(), RequestSeal.Quorum.t(), keyword()) ::
           {:ok, RequestSeal.Quorum.Verification.t()} | {:error, Error.t()}
-  def verify_quorum(message, quorum, opts),
-    do: RequestSeal.Quorum.Evaluation.verify(message, quorum, opts)
+  def verify_quorum(message, quorum, opts) do
+    start = System.monotonic_time()
+
+    result = RequestSeal.Quorum.Evaluation.verify(message, quorum, opts)
+
+    RequestSeal.Telemetry.emit(
+      [:request_seal, :verify_quorum, :stop],
+      System.monotonic_time() - start,
+      RequestSeal.Telemetry.meta(result)
+    )
+
+    result
+  end
 
   @doc """
   Append one signature through caller-owned custody or an arity-two signer.
@@ -313,7 +348,11 @@ defmodule RequestSeal do
   be computed or checked, and both signer kinds run through custody's
   monitored deadline and cancellation workers. Any other map is the explicit
   `t:signature_spec/0`: a caller-built Signature-Input is signed as given and
-  no metadata is generated. Both forms append a `Signature-Input` and a
+  no metadata is generated. The explicit form preserves caller metadata
+  beyond what `verify/3` accepts — a `nonce` parameter above verification's
+  1,024-byte bound still signs, and the verifier rejects it with `:limit` —
+  so keep nonces within that bound when signing for RequestSeal verifiers.
+  Both forms append a `Signature-Input` and a
   `Signature` header occurrence with caller provenance, then revalidate the
   message and both dictionaries. No framework is required; Req and Finch
   accept the same spec defaults through this shared signing construction.
@@ -391,9 +430,10 @@ defmodule RequestSeal do
     * `{:error, %RequestSeal.Error{}}` - reasons this function can return, by layer:
       * `:input` - `:invalid_options`, `:invalid_message`, `:limit`. Signing
         spec only: `:unsupported_component` (a `host`, trailer, or unavailable
-        component), `:invalid_request` (covered `Content-Length` conflicts with
+        component; `host` rejects even as a request-derived response component
+        with a `;req` parameter), `:invalid_request` (covered `Content-Length` conflicts with
         the retained bytes). Explicit spec only: `:algorithm_mismatch`. Both
-        forms (from 0.5.0 (unreleased); 0.4.1 returns `:invalid_options` for a generated
+        forms (from 0.5.0; 0.4.1 returns `:invalid_options` for a generated
         spec): `:signer_algorithm_mismatch` for a KeyHandle algorithm mismatch,
         before custody is invoked, with message
         `"signer algorithm does not match signature specification"`.

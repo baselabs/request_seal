@@ -12,7 +12,8 @@ if Code.ensure_loaded?(Plug.Conn) do
       verify_assigns: []
     ]
 
-    def get(conn), do: Map.get(conn.private, :request_seal, %__MODULE__{})
+    def get(%Plug.Conn{private: %{request_seal: %__MODULE__{} = state}}), do: state
+    def get(_conn), do: %__MODULE__{}
     def put(conn, state), do: Plug.Conn.put_private(conn, :request_seal, state)
     def error(conn, error), do: put(conn, %{get(conn) | error: error})
   end

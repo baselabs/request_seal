@@ -1,0 +1,36 @@
+# Grouped dependency updates. Toolchain pins in mix.exs, .tool-versions and CI
+# move together by contract; grouped updates keep related bumps in one review.
+# Hex requirements stay within the ranges mix.exs declares; reviewed updates
+# still rerun the declared gate before merging.
+version: 2
+updates:
+  - package-ecosystem: "mix"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      hex-development:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "Deps"
+  - package-ecosystem: "mix"
+    directory: "/tools/notebooks"
+    schedule:
+      interval: "weekly"
+    groups:
+      hex-notebooks:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "Notebooks"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "CI"

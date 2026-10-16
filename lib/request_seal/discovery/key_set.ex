@@ -6,13 +6,14 @@ defmodule RequestSeal.Discovery.KeySet do
   Default IDs are computed RFC thumbprints; directory-assigned IDs never replace
   cryptographic identity or thumbprint revocation. Key restrictions remain
   enforced by `RequestSeal.PublicKey`. The cache's `:clock` supports
-  caller-controlled time for resolution and fetching.
+  caller-controlled time for resolution and fetching. `etag` is the source's
+  ETag validator, if it sent one; the cache revalidates conditionally with it.
   """
   alias RequestSeal.{PublicKey, SignatureFields}
   alias RequestSeal.Crypto.Algorithm
   alias RequestSeal.Discovery.{Source, Resolution}
   @derive {Inspect, only: [:fetched_at, :expires_at, :proof]}
-  defstruct [:source, :origin, :keys, :fetched_at, :expires_at, :revision, :proof]
+  defstruct [:source, :origin, :keys, :fetched_at, :expires_at, :revision, :proof, :etag]
 
   @type t :: %__MODULE__{
           source: Source.t(),
@@ -21,7 +22,8 @@ defmodule RequestSeal.Discovery.KeySet do
           fetched_at: integer(),
           expires_at: integer(),
           revision: binary(),
-          proof: :signed | :unsigned | :not_applicable
+          proof: :signed | :unsigned | :not_applicable,
+          etag: binary() | nil
         }
   @doc """
   Find a fresh, nonrevoked key by its source-selected ID under an algorithm allowlist.
@@ -131,7 +133,12 @@ defmodule RequestSeal.Discovery.KeySet do
 
   defp compatible?(entry, algorithm) do
     PublicKey.bind!(entry.key, Algorithm.resolve(algorithm))
-    entry.asserted_algorithm in [nil, algorithm]
+
+    # Either allowlist spelling matches the source's normalized assertion; the
+    # JOSE name comparison is total, including algorithms without an HTTP
+    # identifier (PS256, PS384).
+    entry.asserted_algorithm == nil or
+      Algorithm.jose_id(entry.asserted_algorithm) == Algorithm.jose_id(algorithm)
   catch
     _, _ -> false
   end

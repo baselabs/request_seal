@@ -209,6 +209,16 @@ defmodule RequestSeal.AcceptSignatureTest do
     end
   end
 
+  test "a failed underlying signing step reports its bounded reason in detail" do
+    assert {:ok, requests} = AcceptSignature.parse(~s[s=("@method")], target: :request)
+    chooser = fn _ -> {:ok, %{algorithm: "ed25519", created: nil, expires: nil}} end
+
+    {:ok, signed} = AcceptSignature.fulfill(unsigned(), requests, chooser, signer("ed25519"), [])
+
+    assert {:error, %{reason: :negotiation_unfulfillable, detail: :label_in_use}} =
+             AcceptSignature.fulfill(signed, requests, chooser, signer("ed25519"), [])
+  end
+
   test "nonce challenges bind exact label, covered identities and requested parameters" do
     wire = corpus()["accept_signature"] <> ~s[;nonce="fresh-challenge";expires]
     assert {:ok, [request]} = AcceptSignature.parse(wire, target: :request)

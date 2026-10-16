@@ -110,13 +110,19 @@ defmodule RequestSeal.Authentication do
                     Map.get(opts, :profile, %{name: :rfc9421})
                   )
 
+                covered =
+                  case SignatureFields.identifiers(input.value) do
+                    {:ok, wires} -> wires
+                    :error -> fail(:invalid_signature_input, :fields)
+                  end
+
                 {:ok,
                  %Verification{
                    label: label,
                    profile: Map.get(opts, :profile, %{name: :rfc9421}),
                    signature: %{
                      algorithm: algorithm,
-                     covered: SignatureFields.identifiers(input.value),
+                     covered: covered,
                      parameters: params,
                      keyid: params["keyid"],
                      crypto: :valid
@@ -212,20 +218,28 @@ defmodule RequestSeal.Authentication do
 
       signature = sign_bytes(signer, spec.algorithm, bytes, timeout)
 
-      {:ok, input_wire} =
-        SF.serialize(
-          %Value{type: :dictionary, value: [{spec.label, input}]},
-          SignatureFields.schema(:dictionary)
-        )
+      input_wire =
+        case SF.serialize(
+               %Value{type: :dictionary, value: [{spec.label, input}]},
+               SignatureFields.schema(:dictionary)
+             ) do
+          {:ok, wire} -> wire
+          {:error, %{reason: :limit}} -> fail(:limit, :input)
+          _ -> fail(:invalid_signature_input, :fields)
+        end
 
-      {:ok, signature_wire} =
-        SF.serialize(
-          %Value{
-            type: :dictionary,
-            value: [{spec.label, %Value{type: :item, value: {:bytes, signature}}}]
-          },
-          SignatureFields.schema(:dictionary, [:bytes], false)
-        )
+      signature_wire =
+        case SF.serialize(
+               %Value{
+                 type: :dictionary,
+                 value: [{spec.label, %Value{type: :item, value: {:bytes, signature}}}]
+               },
+               SignatureFields.schema(:dictionary, [:bytes], false)
+             ) do
+          {:ok, wire} -> wire
+          {:error, %{reason: :limit}} -> fail(:signer_failed, :crypto)
+          _ -> fail(:signer_failed, :crypto)
+        end
 
       fields =
         message.fields ++
@@ -314,7 +328,7 @@ defmodule RequestSeal.Authentication do
         do: [max_members: max, max_value_bytes: 1024],
         else: [max_members: max]
 
-    case SF.parse_field(
+    case SF.parse_field_validated(
            message,
            name,
            schema,
@@ -437,7 +451,7 @@ defmodule RequestSeal.Authentication do
   defp identity(_, _), do: fail(:key_resolver_failed, :key)
 
   defp build(message, input, schemas) do
-    case SignatureBase.build(message, input, field_schemas: schemas) do
+    case SignatureBase.build_validated(message, input, field_schemas: schemas) do
       {:ok, bytes} -> bytes
       {:error, %{reason: reason}} -> fail(:signature_base_failed, :crypto, reason)
     end
@@ -563,7 +577,7 @@ defmodule RequestSeal.Authentication do
 
     result =
       if Map.has_key?(opts, :digest_state) do
-        Digest.check_stream(opts.digest_state, message, section: policy.section)
+        Digest.check_stream_validated(opts.digest_state, message, section: policy.section)
       else
         check_opts = [section: policy.section]
 
@@ -572,7 +586,7 @@ defmodule RequestSeal.Authentication do
             do: Keyword.put(check_opts, :representation, Map.get(opts, :representation)),
             else: check_opts
 
-        Digest.check(message, policy.kind, check_opts)
+        Digest.check_validated(message, policy.kind, check_opts)
       end
 
     case result do
@@ -595,10 +609,11 @@ defmodule RequestSeal.Authentication do
   end
 
   defp occurrence(name, value) do
-    {:ok, field} =
-      FieldOccurrence.new(%{name: name, value: value, section: :headers, provenance: :caller})
-
-    field
+    case FieldOccurrence.new(%{name: name, value: value, section: :headers, provenance: :caller}) do
+      {:ok, field} -> field
+      {:error, %{reason: :limit}} -> fail(:limit, :input)
+      _ -> fail(:invalid_signature_field, :fields)
+    end
   end
 
   defp callback(fun, reason, layer) do
@@ -612,13 +627,31 @@ defmodule RequestSeal.Authentication do
   defp ensure(true, _, _), do: :ok
   defp ensure(_, reason, layer), do: fail(reason, layer)
 
+  @spec fail(term(), atom()) :: no_return()
+  @spec fail(term(), atom(), atom() | nil) :: no_return()
+
+  @spec fail(term(), atom(), atom() | nil, RequestSeal.Custody.Error.t() | nil) ::
+          no_return()
   defp fail(reason, layer, detail \\ nil, source \\ nil),
     do: throw({:authentication_error, reason, layer, detail, source})
 
   defp protect(fun) do
     fun.()
+  rescue
+    # Verify and sign are total at their entry points: an unexpected fault is a
+    # bounded :internal error, never an escaping raise, with the exception class
+    # observable in detail and telemetry.
+    exception -> {:error, Error.new(:internal, :internal, exception_class(exception))}
   catch
     {:authentication_error, reason, layer, detail, source} ->
       {:error, Error.new(reason, layer, detail, source)}
+
+    :exit, _ ->
+      {:error, Error.new(:internal, :internal, :exit)}
+
+    _, _ ->
+      {:error, Error.new(:internal, :internal, :throw)}
   end
+
+  defp exception_class(%{__struct__: module}), do: module
 end

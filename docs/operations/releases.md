@@ -19,7 +19,7 @@ source-selected Web Bot Auth protocol-00 signing and identity attribution.
 Other named application profiles belong in extension packages.
 
 1. Set the package version and the docs `source_ref` (`v<version>`) in `mix.exs`, update every install
-   string (currently `{:request_seal, "~> 0.4.1"}`; the document check rejects any
+   string (currently `{:request_seal, "~> 0.5.0"}`; the document check rejects any
    other), and set `elixir_release` in `corpus/index.json` to `v<version>`. The
    declared gate fails until `elixir_release` equals `v` plus the `mix.exs`
    version, and the corpus release workflow refuses a tag that differs from it.
@@ -139,11 +139,11 @@ Other named application profiles belong in extension packages.
    consumer_dir=$(mktemp -d)
    trap 'rm -rf "$consumer_dir"' EXIT
    MIX_INSTALL_DIR="$consumer_dir" elixir -e '
-   Mix.install([{:request_seal, "~> 0.4.1"}])
-   "0.4.1" = Application.spec(:request_seal, :vsn) |> to_string()
+   Mix.install([{:request_seal, "~> 0.5.0"}])
+   "0.5.0" = Application.spec(:request_seal, :vsn) |> to_string()
    {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
    "GET" = message.method
-   IO.puts("PASS: RequestSeal 0.4.1 clean-consumer install and request construction")
+   IO.puts("PASS: RequestSeal 0.5.0 clean-consumer install and request construction")
    '
    ```
 

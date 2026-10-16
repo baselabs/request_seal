@@ -25,17 +25,17 @@ Use it to:
 Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 
 ```elixir
-{:request_seal, "~> 0.4.1"}
+{:request_seal, "~> 0.5.0"}
 ```
 
-Install RequestSeal 0.4.1 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
+Install RequestSeal 0.5.0 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
 
 Add optional dependencies for the integrations you use. The table is a reference; the complete webhook dependency list follows.
 
 | Dependency | Requirement | Use |
 | --- | --- | --- |
 | `:plug` | `~> 1.20.3` | Plug pipelines, also used by Phoenix |
-| `:bandit` | `~> 1.12.5` | To run the example receiver |
+| `:bandit` | `~> 1.13.1` | To run the example receiver |
 | `:phoenix` | `~> 1.8.15` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.23.0 and < 0.25.0` | Finch transport and caller-started pools |
@@ -48,11 +48,11 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 
 ```elixir
 [
-  {:request_seal, "~> 0.4.1"},
+  {:request_seal, "~> 0.5.0"},
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.23.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},
-  {:bandit, "~> 1.12.5"},
+  {:bandit, "~> 1.13.1"},
   {:jason, "~> 1.0"}
 ]
 ```
@@ -479,6 +479,8 @@ Expected output:
 Here one trusted key uses one namespace. Define your own commitment for your trust and tenant boundaries. ETS is local and loses claims when its owner stops; supervise the store in your application. [Replay protection](docs/guides/replay-protection.md) covers retention, sweeping, and durable storage with ash_onetime or PostgreSQL.
 
 ## What's included
+
+From 0.5.0, `RequestSeal.Telemetry` defines the versioned `:telemetry` contract — verification outcomes, replay claims, and custody signing results as low-cardinality reason/layer events with durations; see the [errors guide](docs/guides/errors.md) for the event list and safe logging.
 
 | Capability | Module | Standard |
 | --- | --- | --- |

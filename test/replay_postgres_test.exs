@@ -25,6 +25,14 @@ defmodule RequestSeal.ReplayPostgresTest do
     {:ok, admin} = Postgrex.start_link(Keyword.put(options, :pool_size, 1))
     table = "replay_" <> Integer.to_string(System.unique_integer([:positive]))
     assert {:ok, _} = Postgrex.query(admin, Postgres.ddl(table), [])
+    assert {:ok, _} = Postgrex.query(admin, Postgres.ddl_index(table), [])
+
+    assert %{rows: [[true]]} =
+             Postgrex.query!(
+               admin,
+               "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = $1)",
+               ["#{table}_retain_until_idx"]
+             )
 
     on_exit(fn ->
       {:ok, cleanup} = Postgrex.start_link(options)
@@ -105,7 +113,12 @@ defmodule RequestSeal.ReplayPostgresTest do
     for name <- ["", "x; DROP TABLE x", "public.x", String.duplicate("x", 64)] do
       assert {:error, %{reason: :invalid_store}} = Postgres.store(ctx.a, table: name)
       assert {:error, %{reason: :invalid_store}} = Postgres.ddl(name)
+      assert {:error, %{reason: :invalid_store}} = Postgres.ddl_index(name)
     end
+
+    assert is_binary(Postgres.ddl(String.duplicate("x", 63)))
+    assert is_binary(Postgres.ddl_index(String.duplicate("x", 46)))
+    assert {:error, %{reason: :invalid_store}} = Postgres.ddl_index(String.duplicate("x", 47))
   end
 
   test "primary key lock blocks until deadline without authenticated success", ctx do

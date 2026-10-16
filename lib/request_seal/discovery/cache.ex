@@ -117,7 +117,7 @@ defmodule RequestSeal.Discovery.Cache do
     * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
       `:invalid_source`, `:invalid_options`, `:unknown_key` (malformed ID, or no
       fresh, compatible key with that ID), `:revoked_key`, `:source_unavailable`
-      (negative freshness, invalidation, a failed fetcher, or, from 0.5.0 (unreleased), a
+      (negative freshness, invalidation, a failed fetcher, or, from 0.5.0, a
       cache that is not running; 0.4.1 returns `:invalid_response` for that case), `:cache_overloaded`, `:deadline_exceeded`, and any error from
       `RequestSeal.Discovery.fetch/2`. Meanings:
       `RequestSeal.Discovery.Error`.
@@ -195,7 +195,7 @@ defmodule RequestSeal.Discovery.Cache do
       thumbprints denied by `remove/3`.
     * `{:error, %RequestSeal.Discovery.Error{}}` - reasons this function can return:
       `:invalid_source`, `:invalid_options`, `:source_unavailable` (invalidation,
-      a failed fetcher, or, from 0.5.0 (unreleased), a cache that is not running; 0.4.1
+      a failed fetcher, or, from 0.5.0, a cache that is not running; 0.4.1
       returns `:invalid_response` for that case), `:cache_overloaded`,
       `:deadline_exceeded`, and any error from `RequestSeal.Discovery.fetch/2`. Meanings:
       `RequestSeal.Discovery.Error`.
@@ -446,10 +446,32 @@ defmodule RequestSeal.Discovery.Cache do
         owner = self()
         token = make_ref()
 
+        # A stored validator makes the revalidation conditional: an unchanged
+        # source answers 304 and its key set stays put. A CIMD document is not
+        # the key set itself — its 304 says nothing about the nested JWKS it
+        # names — so CIMD sources always revalidate unconditionally.
+        {etag, lifetime} =
+          case Map.get(state.entries, source) do
+            {:positive, set} when source.type != :cimd ->
+              now = Support.clock(state.clock)
+
+              if set.etag != nil and keys_alive?(set, now),
+                do: {set.etag, max(set.expires_at - set.fetched_at, 0)},
+                else: {nil, nil}
+
+            _ ->
+              {nil, nil}
+          end
+
         {pid, monitor} =
           :erlang.spawn_opt(
             fn ->
-              result = Discovery.fetch(source, clock: clock, timeout: timeout)
+              result =
+                Discovery.fetch_with_validators(source, etag, lifetime,
+                  clock: clock,
+                  timeout: timeout
+                )
+
               send(owner, {:fetched, source, token, result})
             end,
             [:link, :monitor]
@@ -483,6 +505,11 @@ defmodule RequestSeal.Discovery.Cache do
 
     %{state | enrolled: MapSet.put(state.enrolled, source)}
   end
+
+  # A 304 keeps the stored keys, so it can only renew a set whose every key
+  # is still inside its own expiry; any dead key forces a full fetch.
+  defp keys_alive?(set, now),
+    do: set.keys != %{} and Enum.all?(set.keys, fn {_, entry} -> now < entry.expires_at end)
 
   defp reject_removed(keys, tombstones),
     do: Map.reject(keys, fn {_, entry} -> MapSet.member?(tombstones, entry.thumbprint) end)
@@ -531,15 +558,40 @@ defmodule RequestSeal.Discovery.Cache do
     # Removal is applied at completion too, so in-flight snapshots cannot
     # resurrect a key removed after this fetch started.
     result =
-      case result do
-        {:ok, set} ->
+      case {result, Map.get(state.entries, source)} do
+        {{:ok, {:not_modified, fresh}}, {:positive, stored}} ->
+          # RFC 9111 Section 4.3.4: the stored representation stays; the 304's
+          # own freshness directives and validator replace the stored ones. The
+          # set never claims freshness beyond its earliest still-live key.
+          keys = reject_removed(stored.keys, Map.get(state.removed, source, MapSet.new()))
+
+          earliest =
+            Enum.reduce(keys, fresh.expires_at, fn {_, entry}, bound ->
+              min(bound, entry.expires_at)
+            end)
+
+          {:ok,
+           %{
+             stored
+             | etag: fresh.etag,
+               fetched_at: fresh.fetched_at,
+               expires_at: min(fresh.expires_at, earliest),
+               keys: keys
+           }}
+
+        {{:ok, {:not_modified, _}}, _} ->
+          # No stored representation survived (for example an invalidation that
+          # raced the fetch); a 304 cannot reconstruct one.
+          {:error, Error.new(:source_unavailable)}
+
+        {{:ok, set}, _} ->
           {:ok,
            %{
              set
              | keys: reject_removed(set.keys, Map.get(state.removed, source, MapSet.new()))
            }}
 
-        other ->
+        {other, _} ->
           other
       end
 

@@ -13,12 +13,29 @@ defmodule RequestSeal.Crypto.Algorithm do
   }
   @mapping Enum.zip(@http, ~w(PS512 RS256 HS256 ES256 ES384 EdDSA)) |> Map.new()
   def http, do: @http
+  def jose_names, do: Map.keys(@jws)
   def resolve({:jws, name}) when is_map_key(@jws, name), do: {name, Map.fetch!(@jws, name)}
 
   def resolve(name) when is_map_key(@mapping, name),
     do: resolve({:jws, Map.fetch!(@mapping, name)})
 
   def resolve(_), do: throw({:crypto_error, :unsupported_algorithm})
+
+  # The JOSE name for either allowlist spelling or an asserted source value.
+  # Total over every valid identifier: the HTTP names, the {:jws, name} tuples,
+  # and the JOSE names themselves (PS256 and PS384 exist only as JOSE names).
+  def jose_id({:jws, name}) when is_map_key(@jws, name), do: name
+  def jose_id(name) when is_map_key(@mapping, name), do: Map.fetch!(@mapping, name)
+  def jose_id(name) when is_map_key(@jws, name), do: name
+  def jose_id(_), do: throw({:crypto_error, :unsupported_algorithm})
+
+  # The resolve/1 argument for any valid identifier spelling, including bare
+  # JOSE names (internal: source-asserted algorithms normalize to them).
+  @doc false
+  def reference({:jws, _} = tuple), do: tuple
+  def reference(name) when is_map_key(@mapping, name), do: {:jws, Map.fetch!(@mapping, name)}
+  def reference(name) when is_map_key(@jws, name), do: {:jws, name}
+  def reference(_), do: throw({:crypto_error, :unsupported_algorithm})
 
   def curve("P-256"),
     do: {:secp256r1, 32, 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551}
