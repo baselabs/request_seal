@@ -10,7 +10,7 @@ Read the [architecture](docs/design/architecture.md),
 [threat model](docs/design/threat-model.md),
 and [testing guide](docs/guides/testing.md). Setup and commands are in
 [Develop RequestSeal](docs/guides/getting-started.md). Applications install from Hex
-with `{:request_seal, "~> 0.5.1"}` in their `mix.exs` dependency list.
+with `{:request_seal, "~> 0.5.2"}` in their `mix.exs` dependency list.
 
 Every public profile, corpus case, notebook, and integration example must derive from
 a cited public standard or public provider document. Owner clearance is required before

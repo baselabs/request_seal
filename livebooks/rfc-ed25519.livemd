@@ -9,7 +9,7 @@ It runs in two steps. First, OTP's Ed25519 implementation checks the RFC's signa
 The timestamp is deliberately historical: the policy pins its clock to April 20, 2021, and the notebook shows that today's clock rejects the same request as too old. No private key, account, or remote peer is needed. The only network access is the Hex install below.
 
 ```elixir
-Mix.install([{:request_seal, "~> 0.5.1"}])
+Mix.install([{:request_seal, "~> 0.5.2"}])
 ```
 
 ## Load the independent vector

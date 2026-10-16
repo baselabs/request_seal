@@ -25,7 +25,7 @@ Use it to:
 Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 
 ```elixir
-{:request_seal, "~> 0.5.1"}
+{:request_seal, "~> 0.5.2"}
 ```
 
 Install RequestSeal 0.5.1 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
@@ -48,7 +48,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 
 ```elixir
 [
-  {:request_seal, "~> 0.5.1"},
+  {:request_seal, "~> 0.5.2"},
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.23.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},

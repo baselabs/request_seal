@@ -8,7 +8,7 @@ Open the `.livemd` files in [Livebook](https://livebook.dev), or run all of them
 python3 scripts/check.py --notebooks-only
 ```
 
-Each notebook installs RequestSeal 0.5.1 from Hex, generates its own keys, and asserts every result, so a changed outcome stops it. None needs a secret, account, server, or network peer beyond the Hex install.
+Each notebook installs RequestSeal 0.5.2 from Hex, generates its own keys, and asserts every result, so a changed outcome stops it. None needs a secret, account, server, or network peer beyond the Hex install.
 
 | Notebook | What it covers |
 | --- | --- |

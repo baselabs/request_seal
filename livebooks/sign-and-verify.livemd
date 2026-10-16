@@ -5,7 +5,7 @@
 This notebook walks the core RequestSeal journey with locally generated keys: sign a request with a covered body digest, verify it under an explicit policy, sign a response bound to that request, accept a request only once, require two signers, and read the errors each layer returns. It uses only the core library: no framework, server, or network access beyond the Hex install. Every cell asserts its result, so a changed outcome stops the notebook.
 
 ```elixir
-Mix.install([{:request_seal, "~> 0.5.1"}])
+Mix.install([{:request_seal, "~> 0.5.2"}])
 ```
 
 ## Hold a key behind a handle
