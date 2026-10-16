@@ -148,6 +148,23 @@ defmodule RequestSeal.PlugTransport do
     if opts[:owner], do: send(opts[:owner], {:ingress_adapter, elem(conn.adapter, 0)})
     if opts[:target_evidence], do: send(opts[:owner], {:target_ingress, conn})
     if opts[:trace_body], do: :erlang.trace(self(), true, [:call, {:tracer, opts[:owner]}])
+
+    # Report from a before_send hook: it runs inside send_resp, strictly
+    # before the response leaves, so a client that receives the response and
+    # closes the socket (killing this handler mid-pipeline on some
+    # transports) can never beat the report to the owner.
+    conn =
+      Plug.Conn.register_before_send(conn, fn conn ->
+        if opts[:owner] do
+          send(
+            opts[:owner],
+            {:observed, conn, RequestSeal.Plug.capture(conn), RequestSeal.Plug.verification(conn)}
+          )
+        end
+
+        conn
+      end)
+
     conn = if opts[:connect_method], do: %{conn | method: "CONNECT"}, else: conn
 
     conn =
@@ -236,13 +253,6 @@ defmodule RequestSeal.PlugTransport do
       else
         conn
       end
-
-    if opts[:owner],
-      do:
-        send(
-          opts[:owner],
-          {:observed, conn, RequestSeal.Plug.capture(conn), RequestSeal.Plug.verification(conn)}
-        )
 
     cond do
       conn.halted ->

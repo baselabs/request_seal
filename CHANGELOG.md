@@ -5,6 +5,7 @@
 ### Changed
 
 - Architectural decision records moved out of the public repository and package into the maintainer's private records; the published documentation no longer references them. The architecture and threat model describe the accepted decisions in place (source-bound profiles, the extension surface, the atomic replay envelope), and the public document list shrank accordingly. No library behavior changed.
+- `RequestSeal.Plug.Verify`'s `{:halt, status}` rejection now sets the halted flag before sending the response instead of after. The wire behavior is identical (Plug reads the flag only after the pipeline returns); `register_before_send` callbacks now observe the final halted state. The Plug transport test harness reports its observed connection from a `before_send` hook, so the report strictly precedes the response bytes and can no longer be lost when a client closes the connection immediately after receiving a rejection.
 
 ## 0.5.1 - 2026-10-16
 

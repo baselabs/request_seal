@@ -306,8 +306,14 @@ if Code.ensure_loaded?(Plug.Conn) do
               else: conn
 
           case opts[:on_reject] do
-            :continue -> conn
-            {:halt, status} -> conn |> Plug.Conn.send_resp(status, "") |> Plug.Conn.halt()
+            :continue ->
+              conn
+
+            {:halt, status} ->
+              # Halt before sending so before_send callbacks observe the
+              # final halted state; Plug reads the flag only after the
+              # pipeline, so the wire behavior is identical.
+              conn |> Plug.Conn.halt() |> Plug.Conn.send_resp(status, "")
           end
       end
     end
