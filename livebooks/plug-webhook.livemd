@@ -5,7 +5,7 @@
 This notebook builds a webhook receiver with `Plug.Router` and RequestSeal's Plug integration, then sends it signed, unsigned, and altered requests through `Plug.Test`. Phoenix endpoints use the same plugs. The requests go straight into the pipeline in this process; no server, port, or network is involved beyond the Hex install.
 
 ```elixir
-Mix.install([{:request_seal, "~> 0.5.0"}, {:plug, "~> 1.20.3"}])
+Mix.install([{:request_seal, "~> 0.5.1"}, {:plug, "~> 1.20.3"}])
 ```
 
 ## Configure the sender and the policy

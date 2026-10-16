@@ -5,7 +5,7 @@
 This notebook signs a compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html)), encrypts it inside a compact JWE ([RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html)), and verifies both layers before reading the payload. It then decrypts with an RSA-OAEP recipient key held behind a handle and shows the bounded errors. Keys are generated locally; no network access is needed beyond the Hex install.
 
 ```elixir
-Mix.install([{:request_seal, "~> 0.5.0"}])
+Mix.install([{:request_seal, "~> 0.5.1"}])
 ```
 
 ## Sign and verify a JWS

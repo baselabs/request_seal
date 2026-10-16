@@ -580,75 +580,108 @@ defmodule RequestSeal.Discovery do
       ensure(is_map(jwk) and map_size(jwk) <= 32, :invalid_key_set)
       asserted = jwk["alg"]
 
+      # Leaked private members are a publisher blunder the whole set rejects
+      # loudly, before any skip decision: skipping must never hide them.
       ensure(
-        asserted == nil or asserted in Algorithm.http() or asserted in Algorithm.jose_names(),
+        not Enum.any?(~w(d p q dp dq qi oth k), &Map.has_key?(jwk, &1)),
         :invalid_key_set
       )
 
-      # RFC 7517 sources assert standard JOSE names; either spelling normalizes
-      # once, here, to the JOSE name, which exists for every registry entry
-      # (PS256 and PS384 have no HTTP identifier).
-      asserted = asserted && Algorithm.jose_id(asserted)
-
-      imported =
-        if asserted == nil,
-          do: jwk,
-          else: Map.put(jwk, "alg", asserted)
-
-      public =
-        case PublicKey.import(imported, :jwk) do
-          {:ok, public} -> public
-          _ -> ensure(false, :invalid_key_set)
-        end
-
-      {:ok, thumbprint} = PublicKey.thumbprint(public)
-      kid = if source.key_id == :directory, do: jwk["kid"], else: thumbprint
-      ensure(Source.key_id?(source, kid), :invalid_key_set)
-
-      ensure(
-        source.key_id == :directory or not Map.has_key?(jwk, "kid") or jwk["kid"] == thumbprint,
-        :invalid_key_set
-      )
-
-      for field <- ["nbf", "exp"] do
+      if unusable_alg?(asserted) do
+        acc
+      else
         ensure(
-          not Map.has_key?(jwk, field) or
-            (is_integer(jwk[field]) and jwk[field] in 0..999_999_999_999_999),
+          asserted == nil or asserted in Algorithm.http() or asserted in Algorithm.jose_names(),
           :invalid_key_set
         )
-      end
 
-      algorithm = asserted || default_algorithm(public)
+        # RFC 7517 sources assert standard JOSE names; either spelling normalizes
+        # once, here, to the JOSE name, which exists for every registry entry
+        # (PS256 and PS384 have no HTTP identifier).
+        asserted = asserted && Algorithm.jose_id(asserted)
 
-      valid_time =
-        (jwk["nbf"] == nil or now >= jwk["nbf"]) and (jwk["exp"] == nil or now < jwk["exp"])
+        imported =
+          if asserted == nil,
+            do: jwk,
+            else: Map.put(jwk, "alg", asserted)
 
-      # Temporal/operation restrictions exclude the key rather than changing it.
-      if binding?(public, algorithm) and valid_time and thumbprint not in source.revoked do
-        ensure(not Map.has_key?(acc, kid), :invalid_key_set)
+        public =
+          case PublicKey.import(imported, :jwk) do
+            {:ok, public} ->
+              public
 
-        entry = %Resolution{
-          key: public,
-          thumbprint: thumbprint,
-          key_id: kid,
-          algorithm: algorithm,
-          asserted_algorithm: asserted,
-          origin: origin,
-          source_type: source.type,
-          location: location,
-          fetched_at: now,
-          expires_at: jwk["exp"] || now + source.max_ttl,
-          proof: :not_applicable
-        }
+            # A well-formed key this verifier cannot import for signature work
+            # (an unknown kty or curve, RFC 7517 Section 5) is skipped like an
+            # out-of-registry alg; other import failures stay set rejections.
+            {:error, %{reason: :invalid_key}} ->
+              :skipped
 
-        Map.put(acc, kid, entry)
-      else
-        acc
+            _ ->
+              ensure(false, :invalid_key_set)
+          end
+
+        if public == :skipped do
+          acc
+        else
+          {:ok, thumbprint} = PublicKey.thumbprint(public)
+          kid = if source.key_id == :directory, do: jwk["kid"], else: thumbprint
+          ensure(Source.key_id?(source, kid), :invalid_key_set)
+
+          ensure(
+            source.key_id == :directory or not Map.has_key?(jwk, "kid") or
+              jwk["kid"] == thumbprint,
+            :invalid_key_set
+          )
+
+          for field <- ["nbf", "exp"] do
+            ensure(
+              not Map.has_key?(jwk, field) or
+                (is_integer(jwk[field]) and jwk[field] in 0..999_999_999_999_999),
+              :invalid_key_set
+            )
+          end
+
+          algorithm = asserted || default_algorithm(public)
+
+          valid_time =
+            (jwk["nbf"] == nil or now >= jwk["nbf"]) and (jwk["exp"] == nil or now < jwk["exp"])
+
+          # Temporal/operation restrictions exclude the key rather than changing it.
+          if binding?(public, algorithm) and valid_time and thumbprint not in source.revoked do
+            ensure(not Map.has_key?(acc, kid), :invalid_key_set)
+
+            entry = %Resolution{
+              key: public,
+              thumbprint: thumbprint,
+              key_id: kid,
+              algorithm: algorithm,
+              asserted_algorithm: asserted,
+              origin: origin,
+              source_type: source.type,
+              location: location,
+              fetched_at: now,
+              expires_at: jwk["exp"] || now + source.max_ttl,
+              proof: :not_applicable
+            }
+
+            Map.put(acc, kid, entry)
+          else
+            acc
+          end
+        end
       end
     end)
   end
 
   defp keys(_, _, _, _, _), do: ensure(false, :invalid_key_set)
+
+  # A key whose alg names an algorithm this verifier does not use — an
+  # encryption key, or a signing name outside both registries — cannot satisfy
+  # any signature policy: skip it and keep the rest of the set.
+  defp unusable_alg?(asserted) when is_binary(asserted),
+    do: asserted not in Algorithm.http() and asserted not in Algorithm.jose_names()
+
+  defp unusable_alg?(_), do: false
   defp default_algorithm(%{material: {:ed25519, _}}), do: "ed25519"
   defp default_algorithm(%{material: {:ec, "P-256", _}}), do: "ecdsa-p256-sha256"
   defp default_algorithm(%{material: {:ec, "P-384", _}}), do: "ecdsa-p384-sha384"

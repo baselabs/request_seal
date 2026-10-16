@@ -59,7 +59,7 @@ defmodule RequestSeal.MixProject do
 
     [
       app: :request_seal,
-      version: "0.5.0",
+      version: "0.5.1",
       # Libraries declare a consumer range; development and notebook tools stay pinned.
       # OTP 27 supplies :json; all three CI lanes are recorded in ADR 0008.
       elixir: "~> 1.18",
@@ -86,7 +86,7 @@ defmodule RequestSeal.MixProject do
       ],
       docs: [
         main: "readme",
-        source_ref: "v0.5.0",
+        source_ref: "v0.5.1",
         extras:
           Enum.map(@public_documents, fn
             "livebooks/README.md" -> {"livebooks/README.md", filename: "livebooks"}

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1 - 2026-10-16
+
+### Fixed
+
+- A JWKS key whose `alg` names an algorithm RequestSeal does not verify with — an encryption key (`"RSA-OAEP"`, `"A128GCM"`), or a signing name outside both the HTTP and JOSE registries (`"ES512"`) — is now skipped, and the rest of the key set still fetches and resolves. Previously any out-of-registry `alg` rejected the whole set with `:invalid_key_set`, so a publisher's JWKS that mixed signing keys with an encryption key was unusable. A malformed non-string `alg` still rejects the whole set. The `:max_keys` bound still counts every listed key.
+- The Plug target-fidelity test suite no longer flakes on saturated CI runners: each real-Bandit-transport assertion drains the helper's per-request reports so the mailbox never backs up between iterations, and the observed-result window is 15 seconds (a starved handler process can trail the client's received response by more than the previous 5-second window; the identical 0.5.0 tree passed one lane and failed a cold-cache rerun of another purely on this timing). No library code changed.
+
 ## 0.5.0 - 2026-10-16
 
 ### Breaking changes

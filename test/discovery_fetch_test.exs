@@ -38,6 +38,127 @@ defmodule RequestSeal.DiscoveryFetchTest do
     refute inspect(error) =~ "canary"
   end
 
+  # A JWKS set legitimately carries keys for algorithms this library does not
+  # verify with (encryption keys, unsupported signing names): those keys are
+  # skipped, and the rest of the set still resolves.
+  test "out-of-registry alg values skip that key instead of rejecting the set" do
+    encryption_key = %{
+      "kty" => "RSA",
+      "n" =>
+        "0vx7agoebGcQSuuPi1J6nRC05LiY_gEtBednLWZ3EuFhbcuVF3njD_5Bd5abFxdbFiXorSAkyNBI2dyIvdhWx1w-G2shZ8RlUTz3VBHUeGdZs7pW5z7KiW4Xyzp3fl9EMnI6yq6zUFxLKzhlSr-uQe2o0Cofgzg4mkZJz6qKBXsBBA"
+        |> String.slice(0..255),
+      "e" => "AQAB",
+      "alg" => "RSA-OAEP",
+      "use" => "enc"
+    }
+
+    unsupported = Map.put(Peer.public_jwk(), "alg", "ES512")
+    usable = Peer.public_jwk()
+    {:ok, usable_public} = PublicKey.import(usable, :jwk)
+    {:ok, usable_kid} = PublicKey.thumbprint(usable_public)
+
+    p =
+      peer(fn socket, _ ->
+        Peer.reply(socket, Peer.directory([encryption_key, unsupported, usable]), [
+          {"Content-Type", "application/http-message-signatures-directory+json"}
+        ])
+      end)
+
+    assert {:ok, set} = Discovery.fetch(source(p, %{require_signed_directory: false}), [])
+    [resolution] = Map.values(set.keys)
+    assert resolution.key_id == usable_kid
+    assert resolution.asserted_algorithm == nil
+    assert {:ok, _} = KeySet.lookup(set, resolution.key_id, ["ed25519"])
+
+    # A well-formed key of an unsupported kty is skipped the same way (RFC
+    # 7517 Section 5); leaked private members still reject the whole set
+    # loudly, before any skip decision.
+    x25519 = %{
+      "kty" => "OKP",
+      "crv" => "X25519",
+      "x" => Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
+    }
+
+    leaked = Map.put(usable, "d", Base.url_encode64(:crypto.strong_rand_bytes(32)))
+
+    mixed =
+      peer(fn socket, _ ->
+        Peer.reply(socket, Peer.directory([encryption_key, unsupported, x25519, usable]), [
+          {"Content-Type", "application/http-message-signatures-directory+json"}
+        ])
+      end)
+
+    assert {:ok, set} = Discovery.fetch(source(mixed, %{require_signed_directory: false}), [])
+    [resolution] = Map.values(set.keys)
+    assert resolution.key_id == usable_kid
+
+    for body <- [[leaked], [Map.put(Peer.public_jwk(), "d", "canary")]] do
+      leaky =
+        peer(fn socket, _ ->
+          Peer.reply(socket, Peer.directory([usable | body] ++ [Peer.public_jwk()]), [
+            {"Content-Type", "application/http-message-signatures-directory+json"}
+          ])
+        end)
+
+      reason(source(leaky, %{require_signed_directory: false}), :invalid_key_set)
+    end
+
+    # A set where every key is skipped resolves to an empty set, and lookups
+    # fail closed.
+    all_skipped =
+      peer(fn socket, _ ->
+        Peer.reply(socket, Peer.directory([encryption_key, unsupported]), [
+          {"Content-Type", "application/http-message-signatures-directory+json"}
+        ])
+      end)
+
+    assert {:ok, empty} =
+             Discovery.fetch(source(all_skipped, %{require_signed_directory: false}), [])
+
+    assert empty.keys == %{}
+    assert :error = KeySet.lookup(empty, usable_kid, ["ed25519"])
+
+    # Skipped keys still count toward the source's max_keys bound.
+    limited =
+      peer(fn socket, _ ->
+        Peer.reply(socket, Peer.directory([encryption_key, unsupported, usable]), [
+          {"Content-Type", "application/http-message-signatures-directory+json"}
+        ])
+      end)
+
+    reason(source(limited, %{require_signed_directory: false, max_keys: 2}), :limit)
+
+    # A :jwks_uri source shares the same key parser and the same skip.
+    jwks =
+      peer(fn socket, _ ->
+        Peer.reply(socket, Peer.directory([encryption_key, usable]), [
+          {"Content-Type", "application/json"},
+          {"Cache-Control", "max-age=30"}
+        ])
+      end)
+
+    assert {:ok, set} =
+             Discovery.fetch(
+               source(jwks, %{type: :jwks_uri, require_signed_directory: false}),
+               []
+             )
+
+    [resolution] = Map.values(set.keys)
+    assert resolution.key_id == usable_kid
+
+    # A malformed (non-string) alg still rejects the whole set.
+    malformed = Map.put(Peer.public_jwk(), "alg", 42)
+
+    bad =
+      peer(fn socket, _ ->
+        Peer.reply(socket, Peer.directory([usable, malformed]), [
+          {"Content-Type", "application/http-message-signatures-directory+json"}
+        ])
+      end)
+
+    reason(source(bad, %{require_signed_directory: false}), :invalid_key_set)
+  end
+
   # RFC 2606 reserves the .invalid TLD: the real resolver returns an
   # authoritative NXDOMAIN, separating a config error from resolver trouble.
   test "NXDOMAIN is a nonretryable config error distinct from resolver failures" do
@@ -321,7 +442,7 @@ defmodule RequestSeal.DiscoveryFetchTest do
   test "thumbprint IDs and HTTP algorithm restrictions reject malformed sets" do
     for jwk <- [
           Map.put(Peer.public_jwk(), "kid", "aPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"),
-          Map.put(Peer.public_jwk(), "alg", "not-an-algorithm"),
+          Map.put(Peer.public_jwk(), "alg", 42),
           Map.put(Peer.public_jwk(), "nbf", "tomorrow"),
           Map.put(Peer.public_jwk(), "d", "canary")
         ] do

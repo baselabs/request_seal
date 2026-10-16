@@ -37,8 +37,6 @@
   {"lib/request_seal/custody/support.ex", :call, 19},
   {"lib/request_seal/discovery.ex", :call, 423},
   {"lib/request_seal/discovery.ex", :call, 540},
-  {"lib/request_seal/discovery.ex", :call, 601},
-  {"lib/request_seal/discovery.ex", :call, 651},
   {"lib/request_seal/discovery/cache.ex", :call, 443},
   {"lib/request_seal/discovery/http1.ex", :call, 46},
   {"lib/request_seal/discovery/http1.ex", :call, 119},
@@ -83,4 +81,6 @@
   {"lib/finch/response.ex", :unknown_type, 16},
   {"lib/finch/response.ex", :unknown_type, 18},
   {"lib/finch/response.ex", :unknown_type, 19},
+  {"lib/request_seal/discovery.ex", :call, 620},
+  {"lib/request_seal/discovery.ex", :call, 676},
 ]

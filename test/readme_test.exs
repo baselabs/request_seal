@@ -10,7 +10,7 @@ defmodule RequestSeal.ReadmeTest do
     binding =
       E.eval(
         ~S'''
-        {:request_seal, "~> 0.5.0"}
+        {:request_seal, "~> 0.5.1"}
         ''',
         binding,
         "README.md",
@@ -21,7 +21,7 @@ defmodule RequestSeal.ReadmeTest do
       E.eval(
         ~S'''
         [
-          {:request_seal, "~> 0.5.0"},
+          {:request_seal, "~> 0.5.1"},
           {:req, "~> 0.7.4"},
           {:finch, ">= 0.23.0 and < 0.25.0"},
           {:plug, "~> 1.20.3"},
