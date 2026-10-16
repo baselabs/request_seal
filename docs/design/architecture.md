@@ -1,10 +1,10 @@
-<!-- Status: current · Kind: design · Updated: 2026-10-16 · Governed by: accepted ADRs 0001–0011 and 0013 · Review when: a supported standard, profile, public contract, or trust boundary changes -->
+<!-- Status: current · Kind: design · Updated: 2026-10-16 · Governed by: accepted architectural decisions · Review when: a supported standard, profile, public contract, or trust boundary changes -->
 
 # RequestSeal architecture
 
 
 RequestSeal is one framework-independent Elixir library for signing and verifying HTTP messages and generic compact JOSE, with Web Bot Auth protocol-00 and an explicit named-profile extension surface. The TypeScript counterpart is the separate npm package `@request-seal/core`. The lossless message value model (the Message/occurrence/body/transport portion of
-ADR 0002) is implemented by `RequestSeal.Message`, `FieldOccurrence`,
+the lossless-HTTP decision) is implemented by `RequestSeal.Message`, `FieldOccurrence`,
 `Body`, and `TransportFacts`; their module documentation is the API reference.
 Structured Fields parsing, serialization, and explicit type schemas are implemented
 by `RequestSeal.StructuredFields`; its module documentation defines limits and errors.
@@ -187,12 +187,12 @@ Named profiles are immutable source-bound definitions:
 
 There is no permissive fallback from one profile to another. Source revision
 selection is explicit in configuration and result data. Web Bot Auth accepts
-only the selected draft's field representation and predicates.
-[ADR 0003](../adr/0003-source-bound-profiles.md) defines source-bound acceptance.
-[ADR 0013](../adr/0013-extension-profile-boundary.md) defines the unstable
-`RequestSeal.Profile` extension surface: package-namespaced names, bounded
-metadata, explicit verification predicates, and consumer allowlists. A profile
-stamp records selection, not proof that an extension's rules ran.
+only the selected draft's field representation and predicates. Source-bound
+acceptance is an accepted architectural decision. The unstable
+`RequestSeal.Profile` extension surface is defined as: package-namespaced
+names, bounded metadata, explicit verification predicates, and consumer
+allowlists. A profile stamp records selection, not proof that an extension's
+rules ran.
 
 ## Multiple-signature policy
 
@@ -239,9 +239,8 @@ Replay protection is an optional but profile-required port where applicable. The
   {:ok, non_neg_integer()} | {:error, atom()}
 ```
 
-Stores implement atomic `claim/3` and explicit `sweep/3`.
-
-[ADR 0005](../adr/0005-atomic-replay-envelope.md) is the canonical replay contract.
+Stores implement atomic `claim/3` and explicit `sweep/3`; the atomic
+single-claim envelope they form is the canonical replay contract.
 The selected profile validates its required replay identifier. Only after validation
 does the caller commitment function receive the authenticated facts; missing or
 ambiguous required inputs fail closed. Retention metadata does not alter its result.

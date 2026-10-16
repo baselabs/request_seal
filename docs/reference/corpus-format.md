@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: ADR 0009 · Review when: corpus schema, surfaces, or publication changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: public architecture · Review when: corpus schema, surfaces, or publication changes -->
 
 # Conformance corpus format
 

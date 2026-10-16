@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: RFC 7515, RFC 7516, RFC 7518 and accepted ADRs · Review when: the JOSE API changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: RFC 7515, RFC 7516, RFC 7518 · Review when: the JOSE API changes -->
 
 # Sign JWS and encrypt JWE envelopes
 

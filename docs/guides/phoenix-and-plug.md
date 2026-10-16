@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # Verify webhook signatures in Phoenix and Plug
 

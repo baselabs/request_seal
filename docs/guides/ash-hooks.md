@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture and ADRs 0005, 0007, 0008, and 0011 · Review when: ash_hooks adapter or provider contracts change -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture · Review when: ash_hooks adapter or provider contracts change -->
 
 # Webhooks with ash_hooks
 

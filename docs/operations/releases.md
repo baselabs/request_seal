@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
 
 # Release and maintenance runbook
 
@@ -32,7 +32,7 @@ Other named application profiles belong in extension packages.
    when publishing, delete every ` (unreleased)` after that version in `docs/`,
    the guides, and `lib/`. The document check fails while a marker names the
    `mix.exs` version or a version other than the pending changelog section.
-   Confirm the public document allowlist, supported profiles, and accepted ADRs.
+   Confirm the public document allowlist and supported profiles.
 2. Use Elixir 1.20.4 / OTP 29.1.1, the exact development pins. Run focused checks
    while editing, then run the declared gate once on the final source:
 

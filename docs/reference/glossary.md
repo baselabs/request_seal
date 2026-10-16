@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
 
 # Domain glossary
 

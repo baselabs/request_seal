@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture and accepted ADRs · Review when: an error struct, reason, layer, or retry rule changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture · Review when: an error struct, reason, layer, or retry rule changes -->
 
 # Diagnose and handle errors
 

@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: design · Updated: 2026-10-16 · Governed by: architecture and ADRs 0002–0007 · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
+<!-- Status: current · Kind: design · Updated: 2026-10-16 · Governed by: public architecture · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
 
 # RequestSeal threat model
 
@@ -39,7 +39,7 @@ The caller controls accepted profiles, trusted origins/proxies, trust anchors, d
 | Forwarded-header spoofing | Explicit trusted-proxy policy and authoritative external origin; retain ingress and reconstructed facts. | Actual proxy route with trusted and untrusted hops. |
 | Retry/redirect reuse | Req re-signs each final attempt and requires cross-origin policy; selected nonce/time parameters regenerate. Finch signs each explicit caller invocation; callers own its retry/redirect loop. Responses bind to the supplied request. | Actual redirect/retry flows, including cross-origin denial. |
 | Parser/resource exhaustion | Bounded bytes, members, depth, signature/component/key counts, numeric magnitudes, deadlines, and streaming work. | Just-inside/outside bounds, fuzz corpus, timeout/cancel paths, measured resource receipts. |
-| Error oracle/data leak | Stable bounded public reasons and redacted default inspection. The versioned telemetry contract (from 0.5.0, ADR 0006) carries only low-cardinality outcome/reason/layer atoms; opt-in diagnostic redactors remain proposed. | Real negative paths with sensitive canaries absent from output, event metadata, and event names. |
+| Error oracle/data leak | Stable bounded public reasons and redacted default inspection. The versioned telemetry contract (from 0.5.0) carries only low-cardinality outcome/reason/layer atoms; opt-in diagnostic redactors remain proposed. | Real negative paths with sensitive canaries absent from output, event metadata, and event names. |
 | Cross-profile replay | Commitment facts carry the selected profile stamp; the caller's namespace and commitment separate profiles. No fallback. | Same nonce under generic, Web Bot Auth, and package-namespaced extension profiles; tag substitution rejection. |
 | Corpus compromise | Immutable provenance, independent expected values, digest manifest, source review, and the Elixir consumer prohibited from regenerating expectations. | Tampered-case red proof in Elixir and manifest verification. |
 | Supply-chain substitution | Exact development pins, locked dependencies, package content allowlist, advisory/license review, provenance/checksums, isolated notebook toolchain. CI actions use immutable commit SHAs; the PostgreSQL service uses the moving `postgres:18` tag, not a digest pin. | Fresh clone, package inspection, audit output, and consumer install on required platforms; the service tag does not establish immutable image identity. |

@@ -1,7 +1,8 @@
 # RequestSeal contributor and agent contract
 
 Read docs/design/architecture.md, docs/design/threat-model.md,
-docs/reference/glossary.md, and applicable docs/adr/ records before changing behavior.
+docs/reference/glossary.md, and applicable records under the gitignored
+`.kimosabe/adr/` before changing behavior.
 Proposed technical contracts do not establish implemented capability.
 
 ## Scope and ownership
@@ -38,5 +39,7 @@ out of public source, package contents, and generated documentation.
 No business material, named customer/prospect/sponsor/champion assessment, pricing,
 confidential design detail, machine path, or link into a private path belongs here.
 Use US English. Non-record Markdown carries Status, Kind, Updated, Governed by, and
-Review when metadata. ADRs and the changelog are records. Release summaries go in
-CHANGELOG.md; durable technical decisions go in ADRs. Keep this contract below 200 lines.
+Review when metadata. Architectural decision records (in `.kimosabe/adr/`)
+and the changelog are records. Release summaries go in
+CHANGELOG.md; durable technical decisions go in the gitignored
+`.kimosabe/adr/` records. Keep this contract below 200 lines.

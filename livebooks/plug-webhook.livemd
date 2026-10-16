@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the Plug integration or core verification API changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the Plug integration or core verification API changes -->
 
 # Verify signed webhooks in a Plug pipeline
 

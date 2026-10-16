@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: custody, key resolution, or discovery cache behavior changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: custody, key resolution, or discovery cache behavior changes -->
 
 # Rotate signing keys
 

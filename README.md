@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # RequestSeal
 
@@ -543,7 +543,7 @@ API reference: [HexDocs](https://hexdocs.pm/request_seal). Release notes: [CHANG
 ### Contributing
 
 - [Develop RequestSeal](docs/guides/getting-started.md) and [testing](docs/guides/testing.md)
-- [Architecture](docs/design/architecture.md), [threat model](docs/design/threat-model.md), [ADRs](docs/adr/0001-library-boundary.md), [glossary](docs/reference/glossary.md), and [standards](docs/reference/standards.md)
+- [Architecture](docs/design/architecture.md), [threat model](docs/design/threat-model.md), [glossary](docs/reference/glossary.md), and [standards](docs/reference/standards.md)
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor checks.
 

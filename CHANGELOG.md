@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Architectural decision records moved out of the public repository and package into the maintainer's private records; the published documentation no longer references them. The architecture and threat model describe the accepted decisions in place (source-bound profiles, the extension surface, the atomic replay envelope), and the public document list shrank accordingly. No library behavior changed.
+
 ## 0.5.1 - 2026-10-16
 
 ### Fixed

@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the public contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the public contract or implementation changes -->
 
 # Contributing
 
@@ -7,7 +7,7 @@ Contributions are licensed under Apache-2.0, as section 5 of the [license](LICEN
 Report vulnerabilities as [SECURITY.md](SECURITY.md) describes, never in a public issue.
 
 Read the [architecture](docs/design/architecture.md),
-[threat model](docs/design/threat-model.md), [technical decisions](docs/adr/0001-library-boundary.md),
+[threat model](docs/design/threat-model.md),
 and [testing guide](docs/guides/testing.md). Setup and commands are in
 [Develop RequestSeal](docs/guides/getting-started.md). Applications install from Hex
 with `{:request_seal, "~> 0.5.1"}` in their `mix.exs` dependency list.
@@ -33,7 +33,7 @@ Run the declared gate, `python3 scripts/check.py`, before delivering a change;
 corpus, and counterpart checks required by the behavior being changed. Record which
 checks executed; avoid performance or conformance claims from a local self-round-trip.
 
-Add a substantive ADR when ownership, wire acceptance, compatibility, or trust changes.
+Record a substantive architectural decision when ownership, wire acceptance, compatibility, or trust changes.
 Review should challenge unnecessary complexity and lost required behavior. Resolve
 findings and inspect the repair diff. Document incomplete external evidence honestly.
 

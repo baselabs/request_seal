@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture, threat model, and accepted ADRs · Review when: an advertised capability, test runner, or evidence source changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture, threat model, · Review when: an advertised capability, test runner, or evidence source changes -->
 
 # Testing and evidence
 

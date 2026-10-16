@@ -194,7 +194,7 @@ def content_errors(root, relative, source, paths, version=None):
     root = root.resolve()
     errors = []
     path = root / relative
-    record = relative in ("AGENTS.md", "CHANGELOG.md", "LICENSE", "NOTICE") or relative.startswith("docs/adr/")
+    record = relative in ("AGENTS.md", "CHANGELOG.md", "LICENSE", "NOTICE")
     if not record:
         comment = re.match(r"\A<!--\s*(.*?)\s*-->", source, re.DOTALL)
         line = comment.group(1) if comment else ""

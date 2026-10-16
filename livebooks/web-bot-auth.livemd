@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: draft-ietf-webbotauth-httpsig-protocol-00 and accepted ADRs · Review when: the Web Bot Auth API or the implemented draft revision changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: draft-ietf-webbotauth-httpsig-protocol-00 · Review when: the Web Bot Auth API or the implemented draft revision changes -->
 
 # Sign and verify a Web Bot Auth agent
 

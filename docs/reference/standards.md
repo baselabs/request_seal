@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: public architecture and accepted ADRs · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
 
 # Standards and counterpart contracts
 
@@ -30,8 +30,8 @@ Generic RFC 9421 requires caller-supplied coverage, algorithm, freshness, replay
 and trust policy. Web Bot Auth protocol-00 selects its exact dictionary-member
 `Signature-Agent` representation, labels, tags, discovery types, and nested
 coverage. Another source revision cannot silently broaden these predicates.
-The [profile decision](../adr/0003-source-bound-profiles.md) defines source-bound
-acceptance, and the [testing guide](../guides/testing.md) distinguishes published
+Source-bound acceptance is an accepted architectural decision, and the
+[testing guide](../guides/testing.md) distinguishes published
 vectors, independent construction, and deployed-peer evidence.
 
 Generic HTTP and JOSE identifiers are separate exact wire tokens. Structured
@@ -42,8 +42,8 @@ no spelling alias or automatic cross-profile fallback exists. Sources include
 [RFC 8941 Section 3.1.2](https://www.rfc-editor.org/rfc/rfc8941.html), and
 [RFC 8037 Section 3.1](https://www.rfc-editor.org/rfc/rfc8037.html#section-3.1).
 
-Application profiles live in extension packages through the bounded surface in
-[ADR 0013](../adr/0013-extension-profile-boundary.md). Core standards are not
+Application profiles live in extension packages through the bounded extension
+surface. Core standards are not
 weakened to accommodate conflicting examples. Definitive source evidence is
 required before advertising an ambiguity-dependent rule as conformant.
 
