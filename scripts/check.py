@@ -137,7 +137,7 @@ def toolchain_errors(sources):
         "mix.exs": ['elixir: "~> 1.18"', "unless Code.ensure_loaded?(:json) do",
             '{:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false}',
             '{:req, "~> 0.7.4", optional: true, runtime: false}',
-            '{:ash, "~> 3.34 and >= 3.34.3", optional: true}',
+            '{:ash, "~> 3.37 and >= 3.37.2", optional: true}',
             '] ++ test_dependencies ++ owned_integrations()',
             'defp owned_integrations do\n'
             '    if Version.match?(System.version(), ">= 1.20.0") do\n'

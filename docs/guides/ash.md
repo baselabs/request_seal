@@ -2,7 +2,7 @@
 
 # Map verified requests to Ash actors and tenants
 
-**What you will build:** An Ash resource with tenant isolation and a reader policy, plus a scope that maps a verified Web Bot Auth key to the actor and tenant for a read. Install Ash (`~> 3.34 and >= 3.34.3`) and RequestSeal; all keys and request values are defined below. This example uses the public [Ash scope contract](https://hexdocs.pm/ash/3.34.5/Ash.Scope.html) and [Ash policies](https://hexdocs.pm/ash/3.34.5/policies.html).
+**What you will build:** An Ash resource with tenant isolation and a reader policy, plus a scope that maps a verified Web Bot Auth key to the actor and tenant for a read. Install Ash (`~> 3.37 and >= 3.37.2`) and RequestSeal; all keys and request values are defined below. This example uses the public [Ash scope contract](https://hexdocs.pm/ash/3.34.5/Ash.Scope.html) and [Ash policies](https://hexdocs.pm/ash/3.34.5/policies.html).
 
 ## Verify the caller
 

@@ -149,14 +149,14 @@ defmodule RequestSeal.MixProject do
       # through it (ADR 0006). No transitive dependencies.
       {:telemetry, "~> 1.0"},
       # Require the Ash security patch line used by the optional integrations.
-      {:ash, "~> 3.34 and >= 3.34.3", optional: true},
+      {:ash, "~> 3.37 and >= 3.37.2", optional: true},
       {:simple_sat, "~> 0.1", only: :test},
       # Use stable Req; 0.8.0-rc.0 is a release candidate.
       # Consumers own client startup; importing this library starts no pool.
       {:req, "~> 0.7.4", optional: true, runtime: false},
       {:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false},
       {:plug, "~> 1.20.3", optional: true, runtime: false},
-      {:bandit, "~> 1.13.1", only: :test},
+      {:bandit, "~> 1.14", only: :test},
       {:phoenix, "~> 1.8.15", only: :test},
       {:postgrex, "~> 0.22.4", optional: true, runtime: false}
     ] ++ test_dependencies ++ owned_integrations()

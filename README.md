@@ -35,11 +35,11 @@ Add optional dependencies for the integrations you use. The table is a reference
 | Dependency | Requirement | Use |
 | --- | --- | --- |
 | `:plug` | `~> 1.20.3` | Plug pipelines, also used by Phoenix |
-| `:bandit` | `~> 1.13.1` | To run the example receiver |
+| `:bandit` | `~> 1.14` | To run the example receiver |
 | `:phoenix` | `~> 1.8.15` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.23.0 and < 0.25.0` | Finch transport and caller-started pools |
-| `:ash` | `>= 3.34.3 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
+| `:ash` | `>= 3.37.2 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
 | `:ash_onetime` | `~> 1.5` | Recommended durable replay; Elixir 1.20+ |
 | `:ash_hooks` | `~> 2.0` | Webhook signing and verification; Elixir 1.20+ |
 | `:postgrex` | `~> 0.22.4` | PostgreSQL replay storage using your existing connection |
@@ -52,7 +52,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.23.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},
-  {:bandit, "~> 1.13.1"},
+  {:bandit, "~> 1.14"},
   {:jason, "~> 1.0"}
 ]
 ```
