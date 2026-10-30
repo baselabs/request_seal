@@ -1,8 +1,7 @@
 # RequestSeal contributor and agent contract
 
-Read docs/design/architecture.md, docs/design/threat-model.md,
-docs/reference/glossary.md, and applicable records under the gitignored
-`.kimosabe/adr/` before changing behavior.
+Read docs/design/architecture.md, docs/design/threat-model.md, and
+docs/reference/glossary.md before changing behavior.
 Proposed technical contracts do not establish implemented capability.
 
 ## Scope and ownership
@@ -18,24 +17,12 @@ publishing a nonstandard private signing profile, verification-to-authorization 
 or private retry/recovery, key-purpose, or address-selection mechanism. Public sources
 establish protocol requirements; private consumer implementations do not establish them.
 
-## Workflow (owner ruling, October 28, 2026)
+## Workflow
 
-Process is sized to the risk of the specific change, never the repository. Each check, gate,
-record or review names the failure it prevents.
-
-- **Heavy** when the diff touches signing, verification, signature-base, structured-fields,
-  digest, crypto, JOSE, custody, key-identity, replay or Plug acceptance code under
-  `lib/request_seal/`, or the conformance corpus under `corpus/`. Write the failing test
-  first, get one independent review and do one fix round, and run the declared local gate
-  (`python3 scripts/check.py`) once before pushing. Heavy pushes need the owner's approval.
-- **Light** for everything else: focused checks on the changed behavior, then push; hosted CI
-  is the gate. No outcome record, gauge or review; the commit message is the record. A light
-  change the owner asked for lands without a separate push approval.
-- Publishing, deploying and pushes to mirrors always need the owner's approval for that action.
-- A test that fails on every run is a defect: fix it, or quarantine it with a reason, in the
-  change that finds it.
-- Update the CHANGELOG when behavior, a dependency or a contract changes; other docs only when
-  a contract changes.
+Make the change, run the tests that cover it, commit with named paths, and push to `main`.
+CI runs once on `main`; if it goes red, fix forward. CI runs `python3 scripts/check.py`; run
+the parts that cover your change. Publishing to Hex, deploying and pushes to mirrors need the
+owner's approval. Update the CHANGELOG when behavior, a dependency or a contract changes.
 
 ## Verification
 
@@ -57,7 +44,5 @@ out of public source, package contents, and generated documentation.
 No business material, named customer/prospect/sponsor/champion assessment, pricing,
 confidential design detail, machine path, or link into a private path belongs here.
 Non-record Markdown carries Status, Kind, Updated, Governed by, and
-Review when metadata. Architectural decision records (in `.kimosabe/adr/`)
-and the changelog are records. Release summaries go in
-CHANGELOG.md; durable technical decisions go in the gitignored
-`.kimosabe/adr/` records. Keep this contract below 200 lines.
+Review when metadata. The changelog is a record. Release summaries go in
+CHANGELOG.md.
