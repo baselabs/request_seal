@@ -4,6 +4,7 @@
 
 ### Security
 
+- Test and notebook tooling now lock `bandit` 1.14.1 (EEF-CVE-2026-116078) and the notebook tooling overrides Livebook's `phoenix_html` pin with 4.4.0 (EEF-CVE-2026-117645). Neither is a runtime dependency of the published package.
 - The optional Ash integration now requires `ash >= 3.37.2` (EEF-CVE-2026-96581, EEF-CVE-2026-114214). The test-only and documented `bandit` requirement moves to `~> 1.14` (EEF-CVE-2026-108525 and the other Bandit 1.13.1 advisories). The development lock moves to Ash 3.37.2, AshPostgres 2.15.2 (EEF-CVE-2026-115627, EEF-CVE-2026-115635; 2.14.5 was retired) and Bandit 1.14.0, and the notebook tooling lock to jose 1.11.13 (EEF-CVE-2026-65625 through EEF-CVE-2026-65632). No library code changed.
 
 ## 0.5.2 - 2026-10-16
