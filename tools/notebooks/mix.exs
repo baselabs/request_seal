@@ -16,6 +16,8 @@ defmodule RequestSealNotebooks.MixProject do
         # Override upstream application pins with advisory-fixed releases.
         # This tooling executes importer/exporter only; every override is lockfile-audited.
         {:bandit, "~> 1.14", override: true, runtime: false},
+        # Livebook 0.19.10 pins ecto 3.13.6 (EEF-CVE-2026-118391); 3.14.3 is the fixed release.
+        {:ecto, "~> 3.14.3", override: true, runtime: false},
         {:phoenix, "~> 1.8.15", override: true, runtime: false},
         {:phoenix_html, "~> 4.4", override: true, runtime: false},
         {:phoenix_live_view, "~> 1.2.12", override: true, runtime: false},
