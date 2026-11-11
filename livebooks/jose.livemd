@@ -1,6 +1,6 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: RFC 7515, RFC 7516, RFC 7518 · Review when: the JOSE API changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: RFC 7515, RFC 7516, RFC 7518 · Review when: the JOSE API changes -->
 
-# Sign JWS and encrypt JWE envelopes
+# JWS inside JWE in Livebook
 
 This notebook signs a compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html)), encrypts it inside a compact JWE ([RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html)), and verifies both layers before reading the payload. It then decrypts with an RSA-OAEP recipient key held behind a handle and shows the bounded errors. Keys are generated locally; no network access is needed beyond the Hex install.
 

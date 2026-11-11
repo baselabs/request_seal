@@ -152,7 +152,9 @@ def toolchain_errors(sources):
         "tools/notebooks/mix.exs": [f'elixir: "{elixir}"'],
         "config/config.exs": ["minimum_otp = 27", ":erlang.system_info(:otp_release) |> to_string() |> String.to_integer()", "if running_otp < minimum_otp do"],
         "tools/notebooks/config/config.exs": ['import_config "../../../config/config.exs"', f'expected_otp = "{major}"', 'to_string(:erlang.system_info(:otp_release))', "if running_otp != expected_otp do"],
-        "livebooks/environment.livemd": [f'"{elixir}" = System.version()', f'"{major}" = System.otp_release()'],
+        # The published notebook checks the supported floor (mix.exs `elixir:` and
+        # config.exs `minimum_otp`), not the maintainers' pin.
+        "livebooks/environment.livemd": ['true = Version.match?(System.version(), "~> 1.18")', "true = String.to_integer(System.otp_release()) >= 27"],
         ".github/workflows/ci.yml": [
             "runs-on: ubuntu-24.04", "timeout-minutes: 40", "fail-fast: false",
             "postgres:\n        image: postgres:18",

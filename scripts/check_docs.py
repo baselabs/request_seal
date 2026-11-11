@@ -16,7 +16,7 @@ INTERNAL_PROCESS = re.compile(
     r"private (?:review records|planning records)",
     re.IGNORECASE,
 )
-SOURCE_DOCUMENTS = {"AGENTS.md", "test/fixtures/web_bot_auth/PROVENANCE.md"} | {
+SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/web_bot_auth/PROVENANCE.md"} | {
     "corpus/sources/" + origin + "/PROVENANCE.md" for origin in (
         "rfc9421", "rfc6979", "rfc8032", "rfc7515", "rfc7516", "rfc7520",
         "rfc7517", "rfc8037", "wycheproof", "httpwg-structured-fields",
@@ -249,7 +249,7 @@ def content_errors(root, relative, source, paths, version=None):
 # Architecture fences are declaration-only types/specs/callbacks, including a
 # proposed API; evaluating them as scripts would misrepresent their purpose.
 FENCE_EXEMPTIONS = {
-    "docs/design/architecture.md": "declaration-only types/specs/callbacks, including a proposed API",
+    "docs/design/architecture.md": "declaration-only types/specs/callbacks",
 }
 
 

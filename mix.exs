@@ -26,7 +26,6 @@ defmodule RequestSeal.MixProject do
     "docs/guides/key-rotation.md",
     "docs/guides/testing-your-integration.md",
     "docs/guides/testing.md",
-    "docs/operations/releases.md",
     "docs/reference/compatibility.md",
     "docs/reference/corpus-format.md",
     "docs/reference/glossary.md",
@@ -81,6 +80,7 @@ defmodule RequestSeal.MixProject do
         extras:
           Enum.map(@public_documents, fn
             "livebooks/overview.md" -> {"livebooks/overview.md", filename: "livebooks"}
+            "livebooks/" <> name = path -> {path, filename: "livebook-" <> Path.rootname(name)}
             path -> path
           end),
         groups_for_extras: [
@@ -93,8 +93,7 @@ defmodule RequestSeal.MixProject do
             "CONTRIBUTING.md",
             "SECURITY.md",
             "docs/guides/getting-started.md",
-            "docs/guides/testing.md",
-            ~r/docs\/operations\//
+            "docs/guides/testing.md"
           ]
         ],
         groups_for_modules: [

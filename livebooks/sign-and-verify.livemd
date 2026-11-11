@@ -1,8 +1,8 @@
 <!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the core signing, verification, digest, or replay API changes -->
 
-# Sign and verify HTTP messages
+# Sign and verify HTTP messages in Livebook
 
-This notebook walks the core RequestSeal journey with locally generated keys: sign a request with a covered body digest, verify it under an explicit policy, sign a response bound to that request, accept a request only once, require two signers, and read the errors each layer returns. It uses only the core library: no framework, server, or network access beyond the Hex install. Every cell asserts its result, so a changed outcome stops the notebook.
+This notebook walks the core RequestSeal journey with locally generated keys: sign a request with a covered body digest, verify it under an explicit policy, sign a response bound to that request, accept a request only once, and read the errors each layer returns. It uses only the core library: no framework, server, or network access beyond the Hex install. Every cell asserts its result, so a changed outcome stops the notebook.
 
 ```elixir
 Mix.install([{:request_seal, "~> 1.0"}])
@@ -220,17 +220,13 @@ IO.puts("First delivery accepted; the repeat rejected as replayed")
 
 ETS loses its claims when the owner stops. For several nodes or restarts, use durable storage; see [replay protection](../docs/guides/replay-protection.md).
 
-## Multiple signatures
-
-RequestSeal verifies each signature label independently and returns its result; deciding how many signers or which signers an application requires, and mapping a verified signer to application identity or authority, is the application's job.
-
-## Release the keys
+## Release the key
 
 ```elixir
 :ok = RequestSeal.Custody.Local.release(handle)
 
 {:error, %{reason: :key_not_found}} = RequestSeal.Custody.sign(handle, "after release")
-IO.puts("Handles released; signing with a released handle fails")
+IO.puts("Handle released; signing with a released handle fails")
 ```
 
 In an application, a supervised owner holds keys for the life of the service; see [key custody](../docs/guides/key-custody.md). The [signing and verifying guide](../docs/guides/signing-and-verifying.md) covers hand-built messages, exact signature metadata, and every policy option.
