@@ -1,6 +1,6 @@
 defmodule RequestSeal.Adapter.Error do
   @moduledoc """
-  Bounded HTTP adapter failures, always nonretryable. `message/1` includes only
+  Bounded HTTP adapter failures, always nonretryable. [`RequestSeal.Adapter.Error.message/1`](RequestSeal.Adapter.Error.html#message/1) includes only
   the reason and random correlation token; inspection excludes source details.
 
   Closed reasons: `:invalid_options` (missing/unknown/duplicate/invalid choices),

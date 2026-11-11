@@ -1,6 +1,6 @@
 defmodule RequestSeal.Discovery.Source do
   @moduledoc """
-  Caller-configured discovery trust root, built with `new/1`.
+  Caller-configured discovery trust root, built with [`RequestSeal.Discovery.Source.new/1`](RequestSeal.Discovery.Source.html#new/1).
 
   A directory origin expands to `/.well-known/http-message-signatures-directory`.
   For CIMD, pass `:location` with exactly the spelling of the document's
