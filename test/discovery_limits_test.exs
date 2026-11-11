@@ -365,7 +365,10 @@ defmodule RequestSeal.DiscoveryLimitsTest do
         Peer.reply(socket, body, [media(), {"Cache-Control", "max-age=30"}, {"Age", "10"}])
       end)
 
-    assert {:ok, set} = Discovery.fetch(source(p), [])
+    # One pinned instant: no response delay, so the span is exactly max-age - Age
+    # (the delay's RFC 9111 Section 4.2.3 correction has its own test).
+    now = System.system_time(:second)
+    assert {:ok, set} = Discovery.fetch(source(p), clock: fn -> now end)
     assert set.expires_at - set.fetched_at == 20
 
     p =
@@ -385,7 +388,8 @@ defmodule RequestSeal.DiscoveryLimitsTest do
         Peer.reply(socket, body, [media(), {"Cache-Control", "max-age=1"}])
       end)
 
-    assert {:ok, set} = Discovery.fetch(source(p, %{min_ttl: 10}), [])
+    now = System.system_time(:second)
+    assert {:ok, set} = Discovery.fetch(source(p, %{min_ttl: 10}), clock: fn -> now end)
     assert set.expires_at - set.fetched_at == 1
   end
 

@@ -619,10 +619,13 @@ defmodule RequestSeal.DiscoveryFetchTest do
         end
       end)
 
+    # One pinned instant: no response delay, so the span is exactly max-age.
+    now = System.system_time(:second)
+
     assert {:ok, set} =
              Discovery.fetch(
                source(p, %{type: :cimd, location: "https://localhost:#{p.port}/card"}),
-               []
+               clock: fn -> now end
              )
 
     assert set.expires_at - set.fetched_at == 10
