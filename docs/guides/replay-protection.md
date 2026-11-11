@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # Reject repeated signed requests
 
@@ -146,7 +146,7 @@ call `AshOnetime.Transaction.nonce/2` inside that application's transaction.
 
 The Postgrex-only adapter remains available. For PostgreSQL, add `:postgrex` (`~> 0.22.4`), start the Postgrex application and your connection, execute the SQL returned by `RequestSeal.Replay.Postgres.ddl("signature_replay")` and `RequestSeal.Replay.Postgres.ddl_index("signature_replay")`, and select `RequestSeal.Replay.Postgres.store(connection, table: "signature_replay")`. The adapter starts no database or pool. Table names are explicit lowercase ASCII identifiers; namespace/key columns form a primary key, and the index keeps caller-scheduled `sweep/3` deletes from scanning the whole table (`ddl_index/1` accepts names of at most 46 bytes so its derived index identifier fits PostgreSQL's 63-byte limit). Persistence follows your database configuration. See [replay-store testing](testing.md#replay-stores) for actual database, concurrency, and restart checks.
 
-For Web Bot Auth, use the same generic replay policy fields on its policy. Bind the draft's nonce, key ID, and stable agent identifier in your commitment; one claim follows the complete verified envelope. Generic single-label verification requires bounded freshness and a nonempty nonce. Quorum verification rejects required replay until a composite claim contract is implemented.
+For Web Bot Auth, use the same generic replay policy fields on its policy. Bind the draft's nonce, key ID, and stable agent identifier in your commitment. Required replay accepts exactly one selected Web Bot Auth signature per message and rejects more with `:unexpected_signature`; its claim follows that verified signature, and the facts never include the uncovered label. Generic single-label verification requires bounded freshness and a nonempty nonce. Quorum verification rejects required replay until a composite claim contract is implemented.
 
 ## Errors
 

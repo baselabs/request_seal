@@ -49,9 +49,15 @@ defmodule RequestSeal.WebBotAuth do
   `"signature-agent";key="<label>"`. Published RFC 9421 test keys reject unless
   the policy sets `test_keys: :allow`. Each signature is then checked by
   `RequestSeal.verify/3` with the resolved key, and nested signatures must be
-  covered completely. A required replay claim runs once, after every selected
-  signature passes; a derived replay retention end above 253,402,300,799 rejects
-  with `:retention_exceeded` at `:replay` before commitment or storage.
+  covered completely. With required replay, the message must carry exactly one
+  selected signature, or verification returns `:unexpected_signature` at
+  `:policy` after the signatures pass and before any claim: labels are not
+  covered (RFC 9421 Section 7.2.5), and a claim over a set of signatures would
+  change whenever the set does, so a stripped or recombined envelope would claim
+  afresh. The claim's facts hold only covered values (nonce, algorithm, key ID,
+  attributed agent, `created`, `expires`), never the label. A derived replay
+  retention end above 253,402,300,799 rejects with `:retention_exceeded` at
+  `:replay` before commitment or storage.
 
   ## Parameters
 
@@ -644,8 +650,13 @@ defmodule RequestSeal.WebBotAuth do
   defp replay(:not_required, _), do: :not_required
 
   defp replay(policy, results) do
+    # One claim per verification, over covered values only: the uncovered label
+    # and the set of signatures stay out, so relabeling, stripping or
+    # recombining captured signatures cannot produce a fresh claim.
+    ensure(length(results) == 1, :unexpected_signature, :policy)
+
     facts =
-      Enum.map(results, fn {label, v} ->
+      Enum.map(results, fn {_label, v} ->
         p = v.signature.parameters
 
         ensure(
@@ -655,7 +666,6 @@ defmodule RequestSeal.WebBotAuth do
         )
 
         %{
-          label: label,
           identifier: p["nonce"],
           algorithm: v.signature.algorithm,
           keyid: p["keyid"],

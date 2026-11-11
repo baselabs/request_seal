@@ -47,7 +47,8 @@ defmodule RequestSeal.Error do
   * Web Bot Auth `:policy`: `:invalid_keyid` (not a canonical SHA-256 thumbprint),
     `:nested_coverage_incomplete` (inner input or components absent),
     `:test_key_rejected` (published test key forbidden), `:unexpected_signature`
-    (untagged label with rejection selected).
+    (untagged label with rejection selected, or more than one selected signature
+    under required replay).
   * Web Bot Auth `:freshness`: `:lifetime_exceeded` (nonpositive or excessive window).
   * Web Bot Auth `:key`: `:agent_unresolved` with detail `:missing_member`,
     `:unsupported_type`, `:not_an_origin`, `:untrusted_agent`, `:source_mismatch`,

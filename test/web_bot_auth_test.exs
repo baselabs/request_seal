@@ -657,10 +657,12 @@ defmodule RequestSeal.WebBotAuthTest do
     assert {:ok, _} = WebBotAuth.verify(original, p)
   end
 
-  test "whole envelope replay follows every signature and uses profile facts" do
+  test "required replay claims one selected signature over covered facts only" do
     pid = start_supervised!({ETS, max_entries: 20})
     owner = self()
 
+    # The commitment hashes every fact it receives, so any uncovered value in
+    # the facts would let a relabeled capture claim afresh.
     replay = %{
       identifier: :nonce,
       namespace: "webbot",
@@ -668,7 +670,7 @@ defmodule RequestSeal.WebBotAuthTest do
       store: ETS.store(pid),
       commitment: fn facts ->
         send(owner, {:facts, facts})
-        {:ok, "authenticated-envelope"}
+        {:ok, :crypto.hash(:sha256, :erlang.term_to_binary(facts))}
       end
     }
 
@@ -681,15 +683,43 @@ defmodule RequestSeal.WebBotAuthTest do
 
     assert {:error, _} = WebBotAuth.verify(broken, p)
     refute_received {:facts, _}
-    assert {:ok, result} = WebBotAuth.verify(request("nested"), p)
+
+    # A claim over a set of signatures changes whenever the set does, so a
+    # stripped or recombined envelope would claim afresh: refuse more than one.
+    assert {:ok, _} = WebBotAuth.verify(request("nested"), policy())
+    assert_error(WebBotAuth.verify(request("nested"), p), :unexpected_signature, :policy)
+    refute_received {:facts, _}
+
+    assert {:ok, result} = WebBotAuth.verify(request("directory"), p)
     assert_received {:facts, facts}
     assert facts.profile == %{name: :web_bot_auth, revision: @revision}
-    assert Enum.map(facts.signatures, & &1.label) == ["agent", "browser"]
-    assert Enum.all?(facts.signatures, &(&1.identifier == input_nonce()))
+    assert [signature] = facts.signatures
+    refute Map.has_key?(signature, :label)
+    assert signature.identifier == input_nonce()
     assert result.replay.retain_until == @now + 3600
-    assert_error(WebBotAuth.verify(request("nested"), p), :replayed, :replay)
+    assert_error(WebBotAuth.verify(request("directory"), p), :replayed, :replay)
+
+    # RFC 9421 Section 7.2.5: labels are uncovered, so a relabeled capture still
+    # verifies and must hit the same claim.
+    held = fn _ -> {:ok, %{algorithm: "ed25519", key: public("ed25519")}} end
+    m = request("held-key")
+
+    relabeled =
+      S.rewrite(m, fn n, b ->
+        if n in ["signature", "signature-input"],
+          do: String.replace_prefix(b, "agent=", "relabeled="),
+          else: b
+      end)
+
+    assert {:ok, %{signatures: %{"relabeled" => _}}} =
+             WebBotAuth.verify(relabeled, policy(unresolved: {:held_keys, held}))
+
+    held_replay = policy(replay: replay, unresolved: {:held_keys, held})
+    assert {:ok, _} = WebBotAuth.verify(m, held_replay)
+    assert_error(WebBotAuth.verify(relabeled, held_replay), :replayed, :replay)
+
     GenServer.stop(pid)
-    assert_error(WebBotAuth.verify(request("nested"), p), :store_unavailable, :replay)
+    assert_error(WebBotAuth.verify(request("held-key"), held_replay), :store_unavailable, :replay)
   end
 
   test "signer matches independent bytes and validates its contract" do
@@ -1380,13 +1410,13 @@ defmodule RequestSeal.WebBotAuthTest do
 
     assert {:ok, result} =
              WebBotAuth.verify(
-               request("nested"),
+               request("directory"),
                policy(replay: replay, freshness: %{clock: fn -> @now end, skew: 10, max_age: 120})
              )
 
     assert result.replay.retain_until == @now + 131
     assert_received {:commitment, facts}
-    assert length(facts.signatures) == 2
+    assert length(facts.signatures) == 1
     refute_received {:commitment, _}
 
     assert_error(

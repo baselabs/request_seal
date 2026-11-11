@@ -12,6 +12,7 @@
 
 ### Security
 
+- `RequestSeal.WebBotAuth.verify/3` with required replay accepts exactly one selected signature and claims over covered values only. It previously made one claim over the whole set of selected signatures, and each signature's facts included its label, which RFC 9421 Section 7.2.5 leaves uncovered. A captured request could therefore be accepted again by relabeling its signature (when the commitment used every fact), by removing one of several signatures, or by combining separately captured signatures. A message with more than one selected signature under required replay now returns `:unexpected_signature` at `:policy` after verification and before any claim; verify nested envelopes with `replay: :not_required`. Replay facts no longer include `label`.
 - Test and notebook tooling now lock `bandit` 1.14.1 (EEF-CVE-2026-116078) and the notebook tooling overrides Livebook's `phoenix_html` pin with 4.4.0 (EEF-CVE-2026-117645). Neither is a runtime dependency of the published package.
 - The optional Ash integration now requires `ash >= 3.37.2` (EEF-CVE-2026-96581, EEF-CVE-2026-114214). The test-only and documented `bandit` requirement moves to `~> 1.14` (EEF-CVE-2026-108525 and the other Bandit 1.13.1 advisories). The development lock moves to Ash 3.37.2, AshPostgres 2.15.2 (EEF-CVE-2026-115627, EEF-CVE-2026-115635; 2.14.5 was retired) and Bandit 1.14.0, and the notebook tooling lock to jose 1.11.13 (EEF-CVE-2026-65625 through EEF-CVE-2026-65632). No library code changed.
 
