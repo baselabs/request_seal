@@ -879,8 +879,8 @@ defmodule RequestSeal.WebBotAuthTest do
     assert principal.provenance.proof == :signed
     assert is_binary(principal.provenance.revision)
     assert principal.identifier == location <> "/.well-known/http-message-signatures-directory"
-    assert_received {:facts, first}
-    [facts] = first.signatures
+    assert_received {:facts, facts}
+    first = facts
     assert facts.identifier == spec.nonce
     assert facts.keyid == principal.thumbprint
 
