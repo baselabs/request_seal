@@ -400,7 +400,7 @@ class ToolchainTest(unittest.TestCase):
         for old, new in [
             ('Version.match?(System.version(), ">= 1.20.0")', 'true'),
             ('{:ash_onetime, "~> 1.5", optional: true}', '{:ash_onetime, "~> 1.5"}'),
-            ('{:ash_hooks, "~> 2.0", optional: true}', '{:ash_hooks, "== 2.0.3", optional: true}'),
+            ('{:ash_hooks, "~> 2.0 or ~> 3.0", optional: true}', '{:ash_hooks, "== 2.0.3", optional: true}'),
             ('{:ash, "~> 3.37 and >= 3.37.2", optional: true}', '{:ash, "~> 3.37", optional: true}'),
             ('] ++ test_dependencies ++ owned_integrations()', '] ++ test_dependencies'),
         ]:

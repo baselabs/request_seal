@@ -388,4 +388,86 @@ if Code.ensure_loaded?(AshHooks.Provider) do
                )
     end
   end
+
+  defmodule RequestSeal.AshHooksHeaderLinesTest do
+    use ExUnit.Case, async: true
+    alias RequestSeal.HooksTestSupport
+
+    @url "https://hooks.example.com/events"
+    @body ~s({"order":1})
+
+    # RFC 9421 Section 2.1: a field sent on several lines is covered as its
+    # trimmed values joined with ", ", or with ;bs as each line's own bytes.
+    # ash_hooks 3.0's :header_list keeps the lines; its :headers map joins them
+    # with ", ", and a 2.x host map keeps only the last line.
+    for {component, joined_map} <- [{~s["x-a"], :ok}, {~s["x-a";bs], :invalid}] do
+      test "a repeated #{component} verifies from header_list and not from a lossy map" do
+        {handle, key} = HooksTestSupport.key()
+        on_exit(fn -> RequestSeal.Custody.Local.release(handle) end)
+
+        components =
+          String.replace_suffix(HooksTestSupport.components(), ")", " #{unquote(component)})")
+
+        policy = HooksTestSupport.policy(key, components)
+        spec = %{HooksTestSupport.spec() | components: components}
+
+        {:ok, message} =
+          RequestSeal.Message.request(
+            "POST",
+            @url,
+            [
+              {"content-type", "application/json"},
+              {"x-a", "1"},
+              {"webhook-id", "event-1"},
+              {"x-a", "2"}
+            ],
+            @body
+          )
+
+        {:ok, signed} = RequestSeal.sign(message, spec, handle)
+        lines = Enum.map(signed.fields, &{String.downcase(&1.name), &1.value})
+
+        joined =
+          lines
+          |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+          |> Map.new(fn {name, values} -> {name, Enum.join(values, ", ")} end)
+
+        last_wins = Map.new(lines)
+        assert joined["x-a"] == "1, 2" and last_wins["x-a"] == "2"
+        opts = [policy: fn nil, "receiver-key" -> policy end, label: "sig"]
+
+        verify = fn context ->
+          RequestSeal.AshHooks.verify_signature(@body, context, "receiver-key", opts)
+        end
+
+        v3 = %{
+          method: "POST",
+          request_uri: @url,
+          headers: joined,
+          header_list: lines,
+          signature: joined["signature"],
+          tenant: nil
+        }
+
+        v2 = Map.delete(v3, :header_list)
+        assert :ok = verify.(v3)
+        assert {:error, :invalid_signature} = verify.(%{v2 | headers: last_wins})
+
+        if unquote(joined_map) == :ok,
+          do: assert(:ok = verify.(v2)),
+          else: assert({:error, :invalid_signature} = verify.(v2))
+
+        swapped =
+          Enum.map(lines, fn
+            {"x-a", "1"} -> {"x-a", "2"}
+            {"x-a", "2"} -> {"x-a", "1"}
+            line -> line
+          end)
+
+        for header_list <- [swapped, nil, :lines, [{"x-a", 1} | lines]] do
+          assert {:error, :invalid_signature} = verify.(%{v3 | header_list: header_list})
+        end
+      end
+    end
+  end
 end

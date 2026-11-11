@@ -28,7 +28,7 @@ Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 {:request_seal, "~> 0.5.2"}
 ```
 
-Install RequestSeal 0.5.1 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
+Install RequestSeal 0.5.2 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
 
 Add optional dependencies for the integrations you use. The table is a reference; the complete webhook dependency list follows.
 
@@ -41,7 +41,7 @@ Add optional dependencies for the integrations you use. The table is a reference
 | `:finch` | `>= 0.23.0 and < 0.25.0` | Finch transport and caller-started pools |
 | `:ash` | `>= 3.37.2 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
 | `:ash_onetime` | `~> 1.5` | Recommended durable replay; Elixir 1.20+ |
-| `:ash_hooks` | `~> 2.0` | Webhook signing and verification; Elixir 1.20+ |
+| `:ash_hooks` | `~> 2.0 or ~> 3.0` | Webhook signing and verification; Elixir 1.20+ |
 | `:postgrex` | `~> 0.22.4` | PostgreSQL replay storage using your existing connection |
 
 For both HTTP scripts below, paste this complete list into your `deps/0` function. Jason decodes the webhook JSON:

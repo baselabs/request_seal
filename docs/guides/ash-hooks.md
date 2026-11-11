@@ -1,8 +1,8 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-08 · Governed by: public architecture · Review when: ash_hooks adapter or provider contracts change -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: ash_hooks adapter or provider contracts change -->
 
 # Webhooks with ash_hooks
 
-Add optional `{:ash_hooks, "~> 2.0", optional: true}` with Elixir 1.20 or newer.
+Add optional `{:ash_hooks, "~> 2.0 or ~> 3.0", optional: true}` with Elixir 1.20 or newer.
 RequestSeal adds RFC 9421 signatures to ash_hooks deliveries and verifies inbound
 requests. ash_hooks owns delivery rows, retry/backoff, Retry-After, destination
 validation and pinning, secret references, and its ingress ledger. RequestSeal
@@ -135,22 +135,31 @@ case collisions, duplicate signed fields, insufficient coverage, and digest conf
 reject before sending. Signing failures return
 `{:error, {:terminal, :request_seal_signing_failed}}`; transport errors and exceptions
 retain the bounded transport's classification. The terminal tag identifies an
-adapter signing failure to callers. ash_hooks 2.0 treats returned adapter errors
-other than `:unsafe_destination` as retryable; callers must account for that driver
-behavior when configuring their delivery policy.
+adapter signing failure to callers. ash_hooks retries it like every returned
+adapter error except its own destination and certificate-pin refusals, such as
+`:unsafe_destination`; callers must account for that driver behavior when
+configuring their delivery policy.
 
 ## Delegate from a Provider
 
 A consumer's `c:AshHooks.Provider.verify_signature/3` can call
-`RequestSeal.AshHooks.verify_signature/4` with its raw body, provider context,
-nonempty binary key reference, and trusted policy source. For a received request
-whose exact `body`, header map `headers`, and absolute `destination` are supplied:
+`RequestSeal.AshHooks.verify_signature/4` with its raw body, the provider context
+unchanged, a nonempty binary key reference, and a trusted policy source. With
+ash_hooks 3.0, have the provider's `signature_source/0` return `:request`, since
+the signature travels in the request headers, and give ingress the host's ordered
+`conn.req_headers` as its `:headers`. The provider context's `:header_list` then
+holds every header line in arrival order, and the helper verifies repeated covered
+headers exactly. A context without `:header_list` (ash_hooks 2.x) verifies from the
+`:headers` map, which has already lost repeated lines and their order. For a
+received request whose exact `body`, header map `headers`, ordered header lines
+`header_lines`, and absolute `destination` are supplied, the context is:
 
 ```elixir
 context = %{
   method: "POST",
   request_uri: destination,
   headers: headers,
+  header_list: header_lines,
   signature: headers["signature"],
   tenant: nil
 }
@@ -158,10 +167,10 @@ context = %{
   policy: fn nil, "webhook-key" -> policy end, label: "sig")
 ```
 
-ash_hooks currently passes a headers map and accepts only `:ok` or its signature
-errors. The helper cannot restore lost duplicate lines/order or return verified
-facts through that callback. The upstream Plug pattern preserves those facts and
-ordered occurrences. An absent key reference returns `:no_webhook_secret`;
+The provider callback accepts only `:ok` or ash_hooks' signature errors, so the
+helper cannot return verified facts through it. Use the upstream Plug pattern when
+the application needs those facts or must reject before ash_hooks handles the
+request. An absent key reference returns `:no_webhook_secret`;
 verification or policy failures return `:invalid_signature`. Configure provider
 key-reference resolution independently of the inbound request. A policy callback
 receives both the provider context's tenant and the secret reference; resolve keys

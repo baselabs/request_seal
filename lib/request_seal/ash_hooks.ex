@@ -8,11 +8,14 @@ if Code.ensure_loaded?(AshHooks.Provider) do
     interprets the provider's secret/key reference as key material or
     authorizes an application action.
 
-    The provider's headers map has already lost duplicate lines and ordering;
-    the helper cannot recover them and returns only the provider's `:ok`/error
-    contract.
+    ash_hooks 3.0 adds `:header_list` to the provider context: every header
+    line in arrival order, duplicates kept, when the host passes an ordered
+    list such as `conn.req_headers`. The helper rebuilds the message from it, so
+    repeated covered headers verify exactly. Without it (ash_hooks 2.x) the
+    helper uses the `:headers` map, which has already lost duplicate lines and
+    ordering. Either way it returns only the provider's `:ok`/error contract.
     Prefer `RequestSeal.Plug.Capture` and `RequestSeal.Plug.Verify` before
-    ash_hooks ingress to retain ordered headers, exact body bytes, and facts.
+    ash_hooks ingress to retain verified facts or to reject before handling.
     The RequestSeal reader replays unchanged bytes to `AshHooks.BodyReader`.
     Provider errors never expose key references, body bytes, or callback errors.
     """
@@ -20,15 +23,16 @@ if Code.ensure_loaded?(AshHooks.Provider) do
     Verifies a provider's exact body under an explicit policy and signature label.
 
     The request is rebuilt with `RequestSeal.Message.request/5` from the
-    context's method, URI, and header map, with `body` as retained bytes, then
+    context's method, URI, and header lines, with `body` as retained bytes, then
     checked with `RequestSeal.verify/3`.
 
     ## Parameters
 
       * `body` - the exact raw request body bytes.
       * `context` - an `t:AshHooks.Provider.verify_context/0` map. Its `:method`,
-        absolute `:request_uri`, `:headers` map, and `:tenant` are used; other
-        keys are ignored.
+        absolute `:request_uri`, and `:tenant` are used, with its ordered
+        `:header_list` of `{name, value}` binaries when the key is present
+        (ash_hooks 3.0), otherwise its `:headers` map. Other keys are ignored.
       * `reference` - the provider's nonempty binary secret/key reference. It is
         passed only to a policy function, never used as key material.
       * `opts` - keyword list of the options below. Unknown or duplicate
@@ -116,20 +120,22 @@ if Code.ensure_loaded?(AshHooks.Provider) do
           policy -> policy
         end
 
-      with true <- is_map(context.headers),
+      with {:ok, lines} <- header_lines(context),
            {:ok, message} <-
-             RequestSeal.Message.request(
-               context.method,
-               context.request_uri,
-               Map.to_list(context.headers),
-               body
-             ),
+             RequestSeal.Message.request(context.method, context.request_uri, lines, body),
            {:ok, _} <- RequestSeal.verify(message, policy, label: opts[:label]) do
         :ok
       else
         _ -> {:error, :invalid_signature}
       end
     end
+
+    # ash_hooks 3.0 keeps every line in arrival order; its headers map joins or
+    # drops repeated lines. A present but malformed list fails closed.
+    defp header_lines(%{header_list: lines}) when is_list(lines), do: {:ok, lines}
+    defp header_lines(%{header_list: _}), do: :error
+    defp header_lines(%{headers: headers}) when is_map(headers), do: {:ok, Map.to_list(headers)}
+    defp header_lines(_), do: :error
   end
 
   defmodule RequestSeal.AshHooks.Http do
@@ -211,8 +217,9 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       * `{:error, {:terminal, :request_seal_signing_failed}}` - any signing
         failure: invalid `:request_seal` options or spec, missing coverage,
         a rejected header or method, or a `RequestSeal.sign/4` error. The
-        terminal tag is for caller classification; ash_hooks 2.0 retries
-        returned adapter errors other than `:unsafe_destination`.
+        terminal tag is for caller classification; ash_hooks retries it like
+        every returned adapter error except its own destination and
+        certificate-pin refusals, such as `:unsafe_destination`.
       * `{:error, term}` - any other error returned by
         `AshHooks.Http.Bounded`, such as `:unsafe_destination`.
         Transport exceptions propagate unchanged.

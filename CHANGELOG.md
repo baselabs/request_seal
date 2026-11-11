@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- The optional ash_hooks integration accepts ash_hooks 3.0 (`~> 2.0 or ~> 3.0`).
+
+### Fixed
+
+- `RequestSeal.AshHooks.verify_signature/4` rebuilds the message from the provider context's ordered `:header_list` when present (ash_hooks 3.0 with the host's `conn.req_headers`), so a covered header sent on several lines verifies exactly, including with `;bs`. It previously used the context's headers map, which had already lost repeated lines and their order, so such signatures failed. A present but malformed `:header_list` fails closed; contexts without it (ash_hooks 2.x) still verify from the map.
+
 ### Security
 
 - Test and notebook tooling now lock `bandit` 1.14.1 (EEF-CVE-2026-116078) and the notebook tooling overrides Livebook's `phoenix_html` pin with 4.4.0 (EEF-CVE-2026-117645). Neither is a runtime dependency of the published package.

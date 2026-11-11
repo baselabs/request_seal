@@ -9,7 +9,7 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       send(
         opts[:owner],
         {:guide_hooks, RequestSeal.Plug.verification(conn), conn.assigns[:webhook_body],
-         Map.new(conn.req_headers)}
+         conn.req_headers}
       )
 
       if conn.halted, do: conn, else: Plug.Conn.send_resp(conn, 204, "")
@@ -182,14 +182,18 @@ if Code.ensure_loaded?(AshHooks.Provider) do
           4
         )
 
-      assert_receive {:guide_hooks, {:ok, result}, body, headers}, 5_000
+      assert_receive {:guide_hooks, {:ok, result}, body, header_lines}, 5_000
+      headers = Map.new(header_lines)
       assert result.signature.crypto == :valid
       assert body == event.payload
       assert headers["webhook-id"] == event.id
       persisted = Ash.get!(RequestSeal.HooksDelivery, delivery.id, authorize?: false)
       assert persisted.status == :succeeded
       assert persisted.response_status == 204
-      binding = binding ++ [body: body, headers: headers, destination: destination]
+
+      binding =
+        binding ++
+          [body: body, headers: headers, header_lines: header_lines, destination: destination]
 
       binding =
         E.eval(
@@ -198,6 +202,7 @@ if Code.ensure_loaded?(AshHooks.Provider) do
             method: "POST",
             request_uri: destination,
             headers: headers,
+            header_list: header_lines,
             signature: headers["signature"],
             tenant: nil
           }

@@ -237,11 +237,11 @@ if Code.ensure_loaded?(AshHooks.Provider) do
         digest: ["sha-256"]
       }
 
-    def policy(key) do
+    def policy(key, components \\ components()) do
       {:ok, policy} =
         RequestSeal.Policy.new(%{
           algorithms: ["ed25519"],
-          components: components(),
+          components: components,
           key_resolver: fn
             %{keyid: "receiver-key"} -> {:ok, %{algorithm: "ed25519", key: key}}
             _ -> :error
