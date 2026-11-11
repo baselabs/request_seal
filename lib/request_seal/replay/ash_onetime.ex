@@ -3,9 +3,9 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     @moduledoc """
     Recommended durable replay store over `AshOnetime.Transaction.nonce/2`.
 
-    Requires optional ash_onetime 1.5 and Elixir 1.20. The caller owns the
-    existing Ecto repo, PostgreSQL database, and ash_onetime installation
-    migrations. Namespace and commitment bytes are base64url encoded into scope and key;
+    Requires optional ash_onetime 1.9.2 or newer within 1.x, and Elixir 1.20.
+    The caller owns the existing Ecto repo, PostgreSQL database, and ash_onetime
+    installation migrations. Namespace and commitment bytes are base64url encoded into scope and key;
     they never become SQL identifiers or logical partitions.
 
     Each claim owns a READ COMMITTED transaction under the remaining deadline.

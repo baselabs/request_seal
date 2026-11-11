@@ -5,6 +5,7 @@
 ### Changed
 
 - The optional ash_hooks integration accepts ash_hooks 3.0 (`~> 2.0 or ~> 3.0`).
+- The optional ash_onetime requirement rises from `~> 1.5` to `~> 1.9 and >= 1.9.2`, the oldest release with everything `RequestSeal.Replay.AshOnetime` relies on: AshSql at 0.8.6 or later (0.8.4 and 0.8.5 were retired for a security issue), AshPostgres at 2.15.2 or later, and the cleanup fixes that keep nonce retention running (a failed partition prune no longer rolls back nonce deletes; overlapping cleanups no longer deadlock or stall). The development lock moves to ash_onetime 1.9.2 and ash_hooks 3.0.0.
 
 ### Fixed
 

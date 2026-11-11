@@ -142,7 +142,7 @@ def toolchain_errors(sources):
             'defp owned_integrations do\n'
             '    if Version.match?(System.version(), ">= 1.20.0") do\n'
             '      [\n'
-            '        {:ash_onetime, "~> 1.5", optional: true},\n'
+            '        {:ash_onetime, "~> 1.9 and >= 1.9.2", optional: true},\n'
             '        {:ash_hooks, "~> 2.0 or ~> 3.0", optional: true}\n'
             '      ]\n'
             '    else\n'

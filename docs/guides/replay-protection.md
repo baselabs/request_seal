@@ -113,7 +113,7 @@ Use a trusted clock consistent with verification. Retention ends at the first re
 Supervise `RequestSeal.Replay.ETS` with an explicit `max_entries:` capacity (1 to 10,000,000) in your application. It serializes atomic claims and sweeps; owner termination loses the claims. It is local, not a distributed store.
 
 For durable replay, prefer `RequestSeal.Replay.AshOnetime` with optional
-`{:ash_onetime, "~> 1.5", optional: true}` on Elixir 1.20 or newer. Install
+`{:ash_onetime, "~> 1.9 and >= 1.9.2", optional: true}` on Elixir 1.20 or newer. Install
 ash_onetime's migrations in your existing repo using
 `mix ash_onetime.gen.migrations --repo MyApp.Repo`, then `mix ecto.migrate`, as
 specified by its public [migration task](https://hexdocs.pm/ash_onetime/Mix.Tasks.AshOnetime.Gen.Migrations.html)

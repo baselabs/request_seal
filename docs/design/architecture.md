@@ -246,7 +246,7 @@ does the caller commitment function receive the authenticated facts; missing or
 ambiguous required inputs fail closed. Retention metadata does not alter its result.
 The generic profile selects the authenticated nonce parameter. Required replay uses
 bounded freshness, one shared commitment/store deadline, and caller cancellation.
-ETS is caller-supervised and local; Postgres uses a caller connection and explicit DDL. `Replay.AshOnetime` (Elixir 1.20, ash_onetime 1.5) is the recommended durable store; its sweeping belongs to ash_onetime.
+ETS is caller-supervised and local; Postgres uses a caller connection and explicit DDL. `Replay.AshOnetime` (Elixir 1.20, ash_onetime 1.9.2 or newer within 1.x) is the recommended durable store; its sweeping belongs to ash_onetime.
 Claims never evict, and explicit sweeps delete only at the exclusive retention end.
 Expiration is exclusive; max-age is inclusive. Thus retention ends at the minimum
 of `expires + skew` and `created + max_age + skew + 1`, over present bounds.

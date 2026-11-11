@@ -167,7 +167,7 @@ defmodule RequestSeal.MixProject do
   defp owned_integrations do
     if Version.match?(System.version(), ">= 1.20.0") do
       [
-        {:ash_onetime, "~> 1.5", optional: true},
+        {:ash_onetime, "~> 1.9 and >= 1.9.2", optional: true},
         {:ash_hooks, "~> 2.0 or ~> 3.0", optional: true}
       ]
     else
