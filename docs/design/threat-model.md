@@ -19,7 +19,7 @@ The caller controls accepted profiles, trusted origins/proxies, trust anchors, d
 2. A signature authenticates only its covered components. A signed digest field authenticates body content only after digest recomputation succeeds.
 3. Key possession is not identity. Identity requires a trusted, profile-valid key association with provenance.
 4. Authentication is not authorization. RequestSeal never permits an application action or payment.
-5. Replay success requires one atomic claim over the complete authenticated-envelope namespace.
+5. Replay success requires one atomic claim, under the caller's namespace, over covered values of exactly one verified signature; uncovered values such as labels never enter a claim.
 6. Private keys stay behind custody handles. No error, telemetry, inspection, or serialization path exports them.
 7. Failed or incomplete verification never yields a partially trusted principal object that a caller can mistake for success.
 8. Profile labels do not weaken rules. There is no generic or legacy fallback after a named-profile failure.
@@ -39,7 +39,7 @@ The caller controls accepted profiles, trusted origins/proxies, trust anchors, d
 | Cross-origin relay | `@authority` coverage binds a signature to its origin, so the verifier's origin must come from its own configuration: a declared origin, or a connection origin only where the application answers for its own authorities alone (RFC 9421 Section 7.4.3). `origin: :connection` takes the authority from the sender's Host line. | A request signed for another authority sent to a server answering for any host. |
 | Retry/redirect reuse | Req re-signs each final attempt and requires cross-origin policy; selected nonce/time parameters regenerate. Finch signs each explicit caller invocation; callers own its retry/redirect loop. Responses bind to the supplied request. | Actual redirect/retry flows, including cross-origin denial. |
 | Parser/resource exhaustion | Bounded bytes, members, depth, signature/component/key counts, numeric magnitudes, deadlines, retained-body chunk counts and producer work. Dirty native work can overrun a deadline, and trusted callbacks must propagate cancellation to their own work. | Just-inside/outside bounds, fuzz corpus, timeout/cancel paths, measured resource receipts. |
-| Error oracle/data leak | Stable bounded public reasons and redacted default inspection. The versioned telemetry contract (from 0.5.0) carries only low-cardinality outcome/reason/layer atoms; opt-in diagnostic redactors remain proposed. | Real negative paths with sensitive canaries absent from output, event metadata, and event names. |
+| Error oracle/data leak | Stable bounded public reasons and redacted default inspection. The versioned telemetry contract carries only low-cardinality outcome/reason/layer atoms. | Real negative paths with sensitive canaries absent from output, event metadata, and event names. |
 | Cross-profile replay | Commitment facts carry the selected profile stamp; the caller's namespace and commitment separate profiles. No fallback. | Same nonce under generic, Web Bot Auth, and package-namespaced extension profiles; tag substitution rejection. |
 | Corpus compromise | Immutable provenance, independent expected values, digest manifest, source review, and the Elixir consumer prohibited from regenerating expectations. | Tampered-case red proof in Elixir and manifest verification. |
 | Supply-chain substitution | Exact development pins, locked dependencies, package content allowlist, advisory/license review, provenance/checksums, isolated notebook toolchain. CI actions use immutable commit SHAs; the PostgreSQL service uses the moving `postgres:18` tag, not a digest pin. | Fresh clone, package inspection, audit output, and consumer install on required platforms; the service tag does not establish immutable image identity. |
@@ -89,10 +89,7 @@ RequestSeal cannot establish that a caller's trust anchors, proxy configuration,
 OBSERVED on October 16, 2026 by `MIX_ENV=test mix run bench/ceilings.exs`:
 Apple M4 (Darwin arm64), 64-bit words, Erlang/OTP 29.1.1 (ERTS 17.1), Elixir
 1.20.4 (compiled for OTP 29). The runtime OTP patch version was read from its
-`OTP_VERSION` file. This run follows the 0.5.0 hot-path changes (binary-part
-OWS trimming, single-pass builder counting, validate-once verification
-plumbing); the signature-base candidate measures ~2.5× faster at p50 than the
-October 8 run on the same machine class.
+`OTP_VERSION` file.
 
 Each adversarial candidate has 10 warmups and 100 measured samples, with garbage
 collection before each measurement. Time uses integer microseconds;

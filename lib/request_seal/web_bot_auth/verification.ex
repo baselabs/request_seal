@@ -1,13 +1,14 @@
 defmodule RequestSeal.WebBotAuth.Verification do
   @moduledoc """
-  Complete protocol-00 envelope facts after every selected signature succeeds.
+  Protocol-00 envelope facts after every selected signature succeeds.
 
   `signatures` maps labels to `RequestSeal.Verification`; each records the exact
   profile revision and either an agent principal with trusted source provenance
   or a held-key thumbprint. `evidence` records inner labels whose entire component
   sets the outer signature covers, without implying delegation or authorization.
-  `ignored` contains labels outside this profile. `replay` is one whole-envelope
-  receipt or `:not_required`; authorization is always `:not_evaluated`.
+  `ignored` contains labels outside this profile. `replay` is the receipt for
+  the single selected signature's claim when replay is required, otherwise
+  `:not_required`; authorization is always `:not_evaluated`.
   Inspection omits principals, key IDs, parameters, and source URLs.
   """
   defstruct [

@@ -165,7 +165,7 @@ acceptance by a deployed peer.
 | Independent primitive: request | The published E.2.1 Ed25519 request signature is reproduced with OpenSSL. |
 | Independent primitive: directory | The OpenSSL-signed hand-derived directory response is verified by RequestSeal; this is separate from the published E.2.3 vector. |
 | Real adapter | The controlled TLS directory publisher and caller cache resolve keys, verify possession proof, enforce removal, and reject cross-directory key substitution. |
-| Real store | Caller-owned ETS receives one claim after all labels and nested coverage succeed; duplicate nonces, missing nonces, commitment failure, and outage reject. |
+| Real store | Caller-owned ETS receives one claim for the single selected signature after it and its coverage succeed; a second selected signature rejects with `:unexpected_signature` before any claim; duplicate nonces, missing nonces, commitment failure, and outage reject. |
 
 The request fixtures establish agreement with the pinned independent signer on
 these cases. Caller-trusted offline KeySets establish the explicit trust callback

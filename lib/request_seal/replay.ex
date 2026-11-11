@@ -1,6 +1,6 @@
 defmodule RequestSeal.Replay do
   @moduledoc """
-  Atomic whole-envelope replay port with caller-owned stores and commitments.
+  Atomic single-claim replay port with caller-owned stores and commitments.
 
   Adapters implement `c:claim/3` and `c:sweep/3`. Claiming never evicts entries.
   Generic and Web Bot Auth verification reject a derived retention end above

@@ -10,9 +10,11 @@ defmodule RequestSeal.WebBotAuth.Policy do
   thumbprint, never an unresolved agent URL. Test keys default to rejection
   under Section 6.8.
 
-  Within the caller's chosen replay namespace, commitments should hash each
-  signature's nonce, keyid, and agent identifier only (`identifier`, `keyid`, and
-  `agent.identifier` in the supplied facts; held keys have no agent identifier).
+  With required replay, the commitment receives one facts map, the same shape
+  generic verification passes: `identifier` (the nonce), `algorithm`, `keyid`,
+  `agent` (`kind`, `identifier`, `type`, `origin`, `thumbprint`; held keys have
+  no `identifier`), `created`, `expires`, and `profile`. Within the caller's
+  replay namespace, commit to `identifier`, `keyid`, and `agent[:identifier]`.
   Replay facts retain the agent's stable `kind`, `identifier`, `type`, `origin`,
   and `thumbprint` fields. They exclude provenance and cache-refresh fields such as
   `fetched_at` and `revision`, so hashing the supplied facts is stable across directory
@@ -87,7 +89,8 @@ defmodule RequestSeal.WebBotAuth.Policy do
       253,402,300,799 seconds). An optional `:require_expires` key is accepted,
       but expiration is always required.
     * `:content` - `:not_required` or a `RequestSeal.Policy` content map.
-    * `:replay` - `:not_required` or a `RequestSeal.Policy` replay map.
+    * `:replay` - `:not_required` or a `RequestSeal.Policy` replay map; its
+      commitment receives the facts described above.
 
   ## Options
 

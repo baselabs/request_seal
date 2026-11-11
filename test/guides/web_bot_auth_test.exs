@@ -93,6 +93,50 @@ defmodule RequestSeal.GuideWebBotAuthTest do
              thumbprint: Keyword.fetch!(binding, :thumbprint)
            }
 
+    binding =
+      E.eval(
+        ~S'''
+        {:ok, replay_pid} = RequestSeal.Replay.ETS.start_link(max_entries: 10_000)
+
+        agent_replay = %{
+          identifier: :nonce,
+          namespace: "agents",
+          commitment: fn facts ->
+            key = {facts.identifier, facts.keyid, facts.agent[:identifier]}
+            {:ok, :crypto.hash(:sha256, :erlang.term_to_binary(key))}
+          end,
+          store: RequestSeal.Replay.ETS.store(replay_pid),
+          timeout: 5_000
+        }
+
+        {:ok, once_policy} =
+          RequestSeal.WebBotAuth.Policy.new(%{
+            algorithms: ["ed25519"],
+            agents: fn _ -> :error end,
+            cache: nil,
+            unresolved:
+              {:held_keys,
+               fn
+                 %{keyid: ^thumbprint} -> {:ok, %{algorithm: "ed25519", key: key}}
+                 _ -> :error
+               end},
+            freshness: %{clock: fn -> System.system_time(:second) end, max_age: 60, skew: 5},
+            content: :not_required,
+            replay: agent_replay
+          })
+
+        {:ok, _first} = RequestSeal.WebBotAuth.verify(agent_request, once_policy)
+        RequestSeal.WebBotAuth.verify(agent_request, once_policy)
+        # => {:error, %RequestSeal.Error{reason: :replayed, layer: :replay}}
+        ''',
+        binding,
+        "docs/guides/web-bot-auth.md",
+        5
+      )
+
+    assert {:error, %RequestSeal.Error{reason: :replayed, layer: :replay}} =
+             Keyword.fetch!(binding, :example_result)
+
     binding = E.publisher(binding)
     E.configure(:my_app, :agent_jwks_url, Keyword.fetch!(binding, :jwks_url))
     E.configure(:my_app, :agent_ca_roots, Keyword.fetch!(binding, :trust_roots))
@@ -124,7 +168,7 @@ defmodule RequestSeal.GuideWebBotAuthTest do
         ''',
         binding,
         "docs/guides/web-bot-auth.md",
-        5
+        6
       )
 
     binding =
@@ -148,7 +192,7 @@ defmodule RequestSeal.GuideWebBotAuthTest do
         ''',
         binding,
         "docs/guides/web-bot-auth.md",
-        6
+        7
       )
 
     binding =
@@ -182,7 +226,7 @@ defmodule RequestSeal.GuideWebBotAuthTest do
         ''',
         binding,
         "docs/guides/web-bot-auth.md",
-        7
+        8
       )
 
     principal = Keyword.fetch!(binding, :discovered_envelope).signatures["agent"].principal
@@ -195,7 +239,7 @@ defmodule RequestSeal.GuideWebBotAuthTest do
                Keyword.fetch!(binding, :agent_policy)
              )
 
-    E.assert_fences("docs/guides/web-bot-auth.md", 7)
+    E.assert_fences("docs/guides/web-bot-auth.md", 8)
     assert is_list(binding)
   end
 end

@@ -8,8 +8,11 @@ defmodule RequestSeal.WebBotAuth do
   `verify/3` validates every `web-bot-auth` signature independently. Legacy
   string `Signature-Agent` fields reject. Caller trust resolves the (URL, key)
   pair before agent attribution. Nested signature coverage includes the inner
-  input and every inner component. One replay claim follows validation of the
-  entire envelope. Unresolved associations return `:agent_unresolved` with a
+  input and every inner component. With required replay, verification accepts
+  exactly one selected signature and claims over its covered values only, never
+  its label (RFC 9421 Section 7.2.5); a message with more than one selected
+  signature rejects with `:unexpected_signature` at `:policy`. Verify nested
+  envelopes with `replay: :not_required`. Unresolved associations return `:agent_unresolved` with a
   bounded detail; they never imply invalid cryptography or populate a URL
   principal. Policy explicitly permits held keys when desired. No network or
   store is started.
@@ -728,7 +731,7 @@ defmodule RequestSeal.WebBotAuth do
 
     * `{:ok, message}` - the message with the appended fields.
     * `{:error, %RequestSeal.Error{}}` - established reasons: `:invalid_options`
-      (option, spec, key, lifetime, signer form, or, from 0.5.0, an invalid `:agent`
+      (option, spec, key, lifetime, signer form, or an invalid `:agent`
       location), `:invalid_message`, `:invalid_signature_agent` (an invalid
       existing `Signature-Agent` field), `:limit`, `:nested_coverage_incomplete` (`components` name
       a signature that is absent or not covered completely), existing-dictionary

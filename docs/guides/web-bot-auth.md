@@ -75,6 +75,45 @@ verification = envelope.signatures["agent"]
 
 `agents: fn _ -> :error end` intentionally trusts no agent URL. `unresolved: {:held_keys, ...}` explicitly permits only the pinned public key. It does not certify the advertised URL. The result is an envelope; select a verified label from `envelope.signatures`.
 
+To accept each agent request only once, give the policy a replay map. The commitment receives one facts map: the nonce as `identifier`, `keyid`, `agent` (with `identifier` for an authenticated agent URL; held keys have none), `algorithm`, `created`, `expires`, and `profile`. Commit to the nonce, key ID, and agent identifier, never the label:
+
+```elixir
+{:ok, replay_pid} = RequestSeal.Replay.ETS.start_link(max_entries: 10_000)
+
+agent_replay = %{
+  identifier: :nonce,
+  namespace: "agents",
+  commitment: fn facts ->
+    key = {facts.identifier, facts.keyid, facts.agent[:identifier]}
+    {:ok, :crypto.hash(:sha256, :erlang.term_to_binary(key))}
+  end,
+  store: RequestSeal.Replay.ETS.store(replay_pid),
+  timeout: 5_000
+}
+
+{:ok, once_policy} =
+  RequestSeal.WebBotAuth.Policy.new(%{
+    algorithms: ["ed25519"],
+    agents: fn _ -> :error end,
+    cache: nil,
+    unresolved:
+      {:held_keys,
+       fn
+         %{keyid: ^thumbprint} -> {:ok, %{algorithm: "ed25519", key: key}}
+         _ -> :error
+       end},
+    freshness: %{clock: fn -> System.system_time(:second) end, max_age: 60, skew: 5},
+    content: :not_required,
+    replay: agent_replay
+  })
+
+{:ok, _first} = RequestSeal.WebBotAuth.verify(agent_request, once_policy)
+RequestSeal.WebBotAuth.verify(agent_request, once_policy)
+# => {:error, %RequestSeal.Error{reason: :replayed, layer: :replay}}
+```
+
+Required replay accepts exactly one selected Web Bot Auth signature per message; more than one rejects with `:unexpected_signature` at `:policy` before any claim.
+
 ## 2. Authenticate an agent URL
 
 Configure `:my_app, :agent_jwks_url` with an HTTPS publisher that serves the public key above, `:agent_ca_roots` with `:os` or trusted DER CA certificates, and `:agent_permitted_addresses` with `[]` for public hosts or explicit IP tuples for a trusted private deployment. Configure your source independently of the received request:
