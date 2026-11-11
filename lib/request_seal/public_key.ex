@@ -22,7 +22,11 @@ defmodule RequestSeal.PublicKey do
   RSA moduli are odd, 2048–8192 bits; public exponents are odd, 3–2^32-1 and
   smaller than the modulus. EC points must have the exact uncompressed width and
   pass OTP point validation. Ed25519 keys are 32 bytes with canonical encoded y
-  and reject all eight small-order points with `:invalid_key` in every format.
+  and must decode to a curve point under
+  [RFC 8032 Section 5.1.3](https://www.rfc-editor.org/rfc/rfc8032.html#section-5.1.3):
+  x must have a square root modulo 2^255-19, and x = 0 cannot have its sign bit
+  set. Non-points and all eight small-order points reject with `:invalid_key`
+  in every format, including supplied-struct validation.
   The check ignores the encoded x sign, following the
   libsodium small-order blocklist (`ge25519_has_small_order` in
   [ed25519_ref10.c at tag 1.0.18](https://github.com/jedisct1/libsodium/blob/1.0.18/src/libsodium/crypto_core/ed25519/ref10/ed25519_ref10.c)).
@@ -42,6 +46,10 @@ defmodule RequestSeal.PublicKey do
   @pss {1, 2, 840, 113_549, 1, 1, 10}
   @ec {1, 2, 840, 10045, 2, 1}
   @ed {1, 3, 101, 112}
+  @ed25519_p Bitwise.bsl(1, 255) - 19
+  # d = -121665/121666 mod p; sqrt(-1) = 2^((p-1)/4) mod p (RFC 8032).
+  @ed25519_d 37_095_705_934_669_439_343_138_083_508_754_565_189_542_113_879_843_219_016_388_785_533_085_940_283_555
+  @ed25519_sqrt_m1 19_681_161_376_707_505_956_807_079_304_988_542_015_446_066_515_923_890_162_744_021_073_123_829_784_752
   # Canonical y values from the published libsodium blocklist linked above.
   # Its sign-bit mask covers both encodings of the order-4 and order-8 points.
   @ed25519_small_order_y [
@@ -55,7 +63,8 @@ defmodule RequestSeal.PublicKey do
   @doc """
   Import bounded, explicit public key material, preserving JWK restrictions.
 
-  Every format applies the validation rules in the module documentation.
+  Every format applies the validation rules in the module documentation,
+  including RFC 8032 point decoding and small-order rejection for Ed25519.
 
   ## Parameters
 
@@ -83,7 +92,7 @@ defmodule RequestSeal.PublicKey do
       `algorithm`, `use`, and `operations` hold JWK metadata, otherwise `nil`.
     * `{:error, %RequestSeal.Crypto.Error{}}` - reasons this function can return:
       `:unsupported_format` (`format` is not one of the four) and `:invalid_key`
-      (any malformed, oversized, noncanonical, private, small-order, or otherwise
+      (any malformed, oversized, noncanonical, private, non-point, small-order, or otherwise
       invalid input). Meanings: `RequestSeal.Crypto.Error`.
 
   ## Examples
@@ -111,6 +120,9 @@ defmodule RequestSeal.PublicKey do
 
   @doc """
   Export a validated public key without dropping algorithm or operation restrictions.
+
+  Ed25519 supplied structs must pass RFC 8032 point decoding as well as the
+  canonical and small-order checks before any format is exported.
 
   ## Parameters
 
@@ -163,6 +175,8 @@ defmodule RequestSeal.PublicKey do
   Only the required members are hashed (`e`, `kty`, `n` for RSA, including
   PSS-only keys; `crv`, `kty`, `x` for Ed25519; `crv`, `kty`, `x`, `y` for EC);
   `alg`, `use`, and `key_ops` metadata is not thumbprint material.
+  Ed25519 supplied structs undergo RFC 8032 point decoding, canonical encoding,
+  and small-order validation before hashing.
 
   ## Parameters
 
@@ -441,14 +455,33 @@ defmodule RequestSeal.PublicKey do
     y = Bitwise.band(encoded, Bitwise.bsl(1, 255) - 1)
 
     ensure(
-      y < Bitwise.bsl(1, 255) - 19 and y not in @ed25519_small_order_y,
+      y < @ed25519_p and y not in @ed25519_small_order_y,
       :invalid_key
     )
 
+    ed25519_point!(y, Bitwise.bsr(encoded, 255))
     material
   end
 
   defp material!(_), do: ensure(false, :invalid_key)
+
+  # RFC 8032 Section 5.1.3: x = u v^3 (u v^7)^((p-5)/8).
+  # Public inputs only; one modular exponentiation recovers the square root.
+  defp ed25519_point!(y, sign) do
+    p = @ed25519_p
+    y2 = rem(y * y, p)
+    u = Integer.mod(y2 - 1, p)
+    v = rem(@ed25519_d * y2 + 1, p)
+    v3 = rem(v * v * v, p)
+    v7 = rem(v3 * v3 * v, p)
+    power = :crypto.mod_pow(rem(u * v7, p), div(p - 5, 8), p) |> :binary.decode_unsigned()
+    x = rem(u * v3 * power, p)
+    vx2 = rem(v * x * x, p)
+    ensure(vx2 == u or vx2 == Integer.mod(-u, p), :invalid_key)
+    x = if vx2 == u, do: x, else: rem(x * @ed25519_sqrt_m1, p)
+    ensure(x != 0 or sign == 0, :invalid_key)
+    if rem(x, 2) == sign, do: x, else: p - x
+  end
 
   defp encode(key, :raw), do: key.material
 

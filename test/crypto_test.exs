@@ -64,6 +64,64 @@ defmodule RequestSeal.CryptoTest do
     end
   end
 
+  test "independent Euler criterion confirms the non-point rejection coordinates" do
+    # Defensive-engineering inputs, independently evaluated with Python's modular
+    # inversion and Euler criterion; not external protocol conformance vectors.
+    script = """
+    p = 2**255 - 19
+    d = (-121665 * pow(121666, -1, p)) % p
+    for y in [2, 7, 8]:
+        x2 = ((y*y - 1) * pow(d*y*y + 1, -1, p)) % p
+        assert pow(x2, (p-1)//2, p) == p-1
+    print('non-points confirmed')
+    """
+
+    assert {"non-points confirmed\n", 0} = System.cmd("python3", ["-c", script])
+  end
+
+  for y <- [2, 7, 8], sign <- [0, 1], format <- [:raw, :jwk, :der, :pem] do
+    test "Ed25519 non-point y=#{y} sign=#{sign} rejects in #{format} and supplied structs" do
+      encoded = unquote(y) + Bitwise.bsl(unquote(sign), 255)
+      bytes = <<encoded::little-unsigned-256>>
+
+      assert_error(
+        PublicKey.import(ed25519_input(bytes, unquote(format)), unquote(format)),
+        :invalid_key
+      )
+
+      key = %PublicKey{material: {:ed25519, bytes}}
+      assert_error(PublicKey.export(key, unquote(format)), :invalid_key)
+      assert_error(PublicKey.thumbprint(key), :invalid_key)
+      assert_error(Crypto.verify("ed25519", "message", <<0::512>>, key), :invalid_key)
+    end
+  end
+
+  test "every RFC 8032 Section 7.1 public key decodes in every import format" do
+    # https://www.rfc-editor.org/rfc/rfc8032.html#section-7.1
+    keys =
+      Enum.map(@ed, & &1["PUBLIC KEY:"]) ++
+        [
+          "278117fc144c72340f67d0f2316e8386ceffbf2b2428c9c51fef7c597f1d426e",
+          "ec172b93ad5e563bf4932c70e1245034c35467ef2efd4d64ebf819683467e2bf"
+        ]
+
+    for key <- keys, format <- [:raw, :jwk, :der, :pem] do
+      bytes = hex(key)
+
+      assert {:ok, %PublicKey{material: {:ed25519, ^bytes}}} =
+               PublicKey.import(ed25519_input(bytes, format), format)
+    end
+
+    for y <- [1, Bitwise.bsl(1, 255) - 20] do
+      encoded = y + Bitwise.bsl(1, 255)
+
+      assert_error(
+        PublicKey.import({:ed25519, <<encoded::little-unsigned-256>>}, :raw),
+        :invalid_key
+      )
+    end
+  end
+
   @tag :review_fix
   test "Ed25519 identity-key forgery rejects at import and supplied-struct validation" do
     identity = <<1>> <> :binary.copy(<<0>>, 31)
