@@ -41,7 +41,7 @@ Do not log `verification.signature.parameters`, `verification.signature.keyid`, 
 
 ## Observe with telemetry
 
-From 0.5.0, RequestSeal emits a versioned `:telemetry` contract (`RequestSeal.Telemetry` documents every event name and key): a stop event for `RequestSeal.verify/3` and Web Bot Auth verification with `outcome`, `reason`, `layer`, and `detail`, plus a claim event for every replay commitment and a stop event for the shared custody signing path. Metadata carries only closed reason and layer atoms — never labels, key IDs, URLs, or bytes — so a handler can record it unredacted:
+RequestSeal emits a versioned `:telemetry` contract (`RequestSeal.Telemetry` documents every event name and key): a stop event for `RequestSeal.verify/3` and Web Bot Auth verification with `outcome`, `reason`, `layer`, and `detail`, plus a claim event for every replay commitment and a stop event for the shared custody signing path. Metadata carries only closed reason and layer atoms — never labels, key IDs, URLs, or bytes — so a handler can record it unredacted:
 
 ```elixir
 :telemetry.detach("request-seal-ops")

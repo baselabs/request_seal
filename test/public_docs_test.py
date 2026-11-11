@@ -578,20 +578,32 @@ class CorpusReleasePinTest(unittest.TestCase):
         self.assertEqual([], gate.corpus_release_errors({"mix.exs": mix, "corpus/index.json": '{"elixir_release":"v0.5.0"}'}))
 
 
-class UnreleasedMarkerTest(unittest.TestCase):
-    CHANGELOG = "# Changelog\n\n## 0.5.0 - Unreleased\n\n- x\n\n## 0.4.1 - 2026-10-10\n"
+class HistoryMarkerTest(unittest.TestCase):
+    def test_actual_documents_carry_no_release_history(self):
+        self.assertEqual([], docs.history_marker_errors(ROOT))
 
-    def test_actual_markers_name_the_pending_release(self):
-        self.assertEqual([], docs.unreleased_marker_errors(ROOT))
-
-    def test_marker_must_name_the_pending_unreleased_version(self):
+    def test_release_history_markers_reject(self):
         check = docs.marker_errors
-        self.assertEqual([], check({"a.md": "From 0.5.0 (unreleased): x"}, self.CHANGELOG, "0.4.1"))
-        self.assertTrue(check({"a.md": "from 0.6.0 (unreleased): x"}, self.CHANGELOG, "0.4.1"))
-        released = self.CHANGELOG.replace("0.5.0 - Unreleased", "0.5.0 - 2026-11-01")
-        self.assertTrue(check({"a.md": "From 0.5.0 (unreleased): x"}, released, "0.5.0"))
-        self.assertTrue(check({"a.md": "From 0.5.0 (unreleased): x"}, self.CHANGELOG, "0.5.0"))
-        self.assertEqual([], check({"a.md": "From 0.5.0: x"}, released, "0.5.0"))
+        for text in [
+            "From 0.5.0, a nonce is required.",
+            "(from 0.5.0; 0.4.1 returns `:invalid_options`)",
+            "in 0.4.1 it returns `:invalid_options`",
+            "since v1.2.0 the cache",
+            "From 1.1.0 (unreleased): x",
+        ]:
+            with self.subTest(text=text):
+                self.assertTrue(check({"a.md": text}))
+
+    def test_current_behavior_and_dependency_floors_pass(self):
+        check = docs.marker_errors
+        for text in [
+            "A nonce is required on every signed attempt.",
+            "Requires `ash >= 3.37.2`.",
+            "Elixir 1.18 or newer; OTP 27 or newer.",
+            "accepts 1 to 300,000 ms",
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual([], check({"a.md": text}))
 
 
 if __name__ == "__main__":

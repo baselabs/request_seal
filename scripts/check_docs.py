@@ -365,37 +365,33 @@ def fence_errors(root, relative, source):
     return errors
 
 
-UNRELEASED_MARKER = re.compile(r"\b[Ff]rom (\d+\.\d+\.\d+) \(unreleased\)")
-PENDING_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) - Unreleased$", re.MULTILINE)
+# Public documents and library docs state current behavior only; release history
+# belongs in the CHANGELOG. A version-history marker ("From 0.5.0", "in 0.4.1 it
+# returns", "(unreleased)") is an error wherever it appears outside the CHANGELOG.
+HISTORY_MARKER = re.compile(
+    r"(?i)\b(?:from|since|until|as of)\s+v?\d+\.\d+\.\d+\b"
+    r"|\b(?:in\s+)?v?\d+\.\d+\.\d+\s+(?:it\s+)?(?:returns|rejects|accepts|emits)\b"
+    r"|\(unreleased\)"
+)
 
 
-def marker_errors(sources, changelog, version):
-    """Unreleased-behavior markers must name the CHANGELOG's pending, unpublished version.
-
-    At release, removing every " (unreleased)" makes the markers read "From X.Y.Z"; this
-    check fails until that is done once mix.exs names the version or its section is dated.
-    """
-    pending = PENDING_RELEASE.search(changelog)
+def marker_errors(sources):
     errors = []
     for relative, source in sorted(sources.items()):
-        for match in UNRELEASED_MARKER.finditer(source):
-            marked = match.group(1)
-            if pending is None or marked != pending.group(1):
-                errors.append(f"{relative}: '{match.group(0)}' does not name the CHANGELOG's pending release")
-            elif marked == version:
-                errors.append(f"{relative}: '{match.group(0)}' marks the current package version as unreleased")
+        for match in HISTORY_MARKER.finditer(source):
+            errors.append(f"{relative}: release-history marker '{match.group(0)}'; state current behavior, history goes in the CHANGELOG")
     return errors
 
 
-def unreleased_marker_errors(root=ROOT):
+def history_marker_errors(root=ROOT):
     configuration = public_configuration(root)
-    paths = sorted(configuration["documents"]) + sorted(
+    paths = sorted(configuration["documents"] - {"CHANGELOG.md"}) + sorted(
         p.relative_to(root).as_posix() for p in (root / "lib").rglob("*.ex")
     )
     sources = {path: (root / path).read_text() for path in paths if (root / path).is_file()}
-    if not any("lib/" in path for path in sources):
-        raise ValueError("unreleased-marker scan did not find its library positive control")
-    return marker_errors(sources, (root / "CHANGELOG.md").read_text(), configuration["version"])
+    if not any(path.startswith("lib/") for path in sources) or "README.md" not in sources:
+        raise ValueError("history-marker scan did not find its README and library positive controls")
+    return marker_errors(sources)
 
 
 def check(root=ROOT):
@@ -410,7 +406,7 @@ def check(root=ROOT):
             source = path.read_bytes().decode("utf-8")
             errors.extend(content_errors(root, relative, source, paths, configuration["version"]))
             errors.extend(fence_errors(root, relative, source))
-    errors.extend(unreleased_marker_errors(root))
+    errors.extend(history_marker_errors(root))
     for relative in sorted(configuration["files"] - approved):
         path = root / relative
         if path.is_file() and not path.is_symlink():

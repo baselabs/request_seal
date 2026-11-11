@@ -26,13 +26,10 @@ Other named application profiles belong in extension packages.
    Changing `index.json` changes its digest: update the pin in
    `test/support/conformance_pin.ex` in the same commit. Collect changelog
    entries under `## Unreleased`; when cutting the release, rename that heading to
-   `## <version> - YYYY-MM-DD`, as in `## 0.4.1 - 2026-10-10`. A document that marks
-   unreleased behavior needs a versioned pending heading, `## <version> - Unreleased`,
-   until the release is dated. Documents
-   mark behavior that ships in the next release with `From <version> (unreleased)`;
-   when publishing, delete every ` (unreleased)` after that version in `docs/`,
-   the guides, and `lib/`. The document check fails while a marker names the
-   `mix.exs` version or a version other than the pending changelog section.
+   `## <version> - YYYY-MM-DD`, as in `## 0.4.1 - 2026-10-10`. Guides, design
+   pages, the README and `lib/` docs describe current behavior only; what changed
+   and since when is written in the CHANGELOG alone. The document check rejects a
+   release-history marker such as `From <version>` anywhere else.
    Confirm the public document allowlist and supported profiles.
 2. Use Elixir 1.20.4 / OTP 29.1.1, the exact development pins. Run focused checks
    while editing, then run the declared gate once on the final source:

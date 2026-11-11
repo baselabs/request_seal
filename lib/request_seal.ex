@@ -34,7 +34,7 @@ defmodule RequestSeal do
   and Postgrex replay adapters start only through explicit caller operations.
   Exact bytes come from `RequestSeal.Message` and `RequestSeal.SignatureBase`.
 
-  See the public architecture, threat model, and technical decisions in the generated guides.
+  See the architecture and threat model guides.
   """
   alias RequestSeal.{Authentication, Error, Message, Policy, Verification}
 
@@ -300,8 +300,7 @@ defmodule RequestSeal do
         component; `host` rejects even as a request-derived response component
         with a `;req` parameter), `:invalid_request` (covered `Content-Length` conflicts with
         the retained bytes). Explicit spec only: `:algorithm_mismatch`. Both
-        forms (from 0.5.0; 0.4.1 returns `:invalid_options` for a generated
-        spec): `:signer_algorithm_mismatch` for a KeyHandle algorithm mismatch,
+        forms: `:signer_algorithm_mismatch` for a KeyHandle algorithm mismatch,
         before custody is invoked, with message
         `"signer algorithm does not match signature specification"`.
       * `:fields` - `:label_in_use`, `:label_mismatch`, `:duplicate_label`,

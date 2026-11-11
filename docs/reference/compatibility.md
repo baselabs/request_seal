@@ -2,7 +2,7 @@
 
 # Compatibility and deprecation
 
-RequestSeal follows [Semantic Versioning](https://semver.org/) from 1.0.0. This page
+RequestSeal follows [Semantic Versioning](https://semver.org/) for every 1.x release. This page
 says what a 1.x release keeps stable, what may change in a minor release, and how a
 public API is deprecated. Security support for released versions is in
 [SECURITY.md](../../SECURITY.md).

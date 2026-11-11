@@ -397,9 +397,7 @@ defmodule RequestSeal.Digest do
     * `{:ok, %RequestSeal.StructuredFields.Value{type: :dictionary}}`.
     * `{:error, %RequestSeal.Digest.Error{}}` - `:invalid_options` (another
       section), `:invalid_field` (another field name), `:invalid_preference`,
-      or `:invalid_message` (an invalid message; from 0.5.0 a
-      `RequestSeal.Digest.Error`, previously a
-      `RequestSeal.StructuredFields.Error`).
+      or `:invalid_message` (an invalid message).
       Meanings: `RequestSeal.Digest.Error`.
     * `{:error, %RequestSeal.StructuredFields.Error{}}` -
       `:unavailable_section`, `:missing_field`, `:limit`, `:syntax`,

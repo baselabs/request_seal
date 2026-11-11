@@ -489,7 +489,7 @@ Here one trusted key uses one namespace. Define your own commitment for your tru
 
 ## What's included
 
-From 0.5.0, `RequestSeal.Telemetry` defines the versioned `:telemetry` contract — verification outcomes, replay claims, and custody signing results as low-cardinality reason/layer events with durations; see the [errors guide](docs/guides/errors.md) for the event list and safe logging.
+`RequestSeal.Telemetry` defines a versioned `:telemetry` contract: verification outcomes, replay claims and custody signing results as low-cardinality reason and layer events with durations. See the [errors guide](docs/guides/errors.md) for the events and safe logging.
 
 | Capability | Module | Standard |
 | --- | --- | --- |

@@ -2,7 +2,7 @@ defmodule RequestSeal.Profile do
   @moduledoc """
   Shared HTTP signature pipeline for profiles owned by extension packages.
 
-  From 1.0.0 this extension surface follows the same 1.x compatibility promise
+  This extension surface follows the same 1.x compatibility promise
   as the rest of the public API; see the Compatibility and deprecation guide.
   RequestSeal itself ships only the standards-derived RFC 9421 and Web Bot Auth
   profiles; any other named profile lives in its own extension package, never in
@@ -89,7 +89,7 @@ defmodule RequestSeal.Profile do
 
   Parses `Signature-Input` and `Signature` header fields with the same rules as
   `RequestSeal.verify/3` and checks that their labels pair exactly. It
-  validates the message and `max` first (from 0.5.0) but not the selected Inner List; pass
+  validates the message and `max` first but not the selected Inner List; pass
   the returned values to `preflight/4` and `verify_label/6`.
 
   ## Parameters
@@ -157,8 +157,8 @@ defmodule RequestSeal.Profile do
     * `extra` - `:allow` or `:reject` (exact coverage), as the policy's
       `:extra_components`.
     * `freshness_policy` - `:not_evaluated` or a freshness map with `:clock`,
-      `:max_age`, `:skew`, and `:require_expires`, as in `RequestSeal.Policy`.
-      From 0.5.0, it is validated like `RequestSeal.Policy.new/1`'s freshness.
+      `:max_age`, `:skew`, and `:require_expires`, as in `RequestSeal.Policy`,
+      and validated like `RequestSeal.Policy.new/1`'s freshness.
 
   ## Returns
 

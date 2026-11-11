@@ -36,8 +36,8 @@ if Code.ensure_loaded?(Plug.Conn) do
       * `:label` (required) - the signature label to verify.
       * `:on_reject` (required) - `:continue`, or `{:halt, status}` with a final
         status in 200..599.
-      * `:assign` - a non-Boolean atom or nil (default nil; Booleans reject
-        from 0.5.0). When set, a
+      * `:assign` - a non-Boolean atom or nil (default nil; Booleans reject).
+        When set, a
         successful verification is also assigned under that key.
       * `:name` - a stable repeat-identity atom (or 1..256-byte binary),
         default nil. When set, a later Verify on the same connection reuses
@@ -120,7 +120,7 @@ if Code.ensure_loaded?(Plug.Conn) do
     @doc """
     Verifies the captured request once and records the result in private state.
 
-    From 0.5.0, a connection is verified at most once. A later Verify with the same
+    A connection is verified at most once. A later Verify with the same
     `:policy` and `:label` values as the first is idempotent: it reuses the
     first result (assigning it under its own `:assign` on success) and applies
     `:on_reject` again on a rejection. A later Verify with any other policy or

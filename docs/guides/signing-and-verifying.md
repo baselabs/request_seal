@@ -38,7 +38,7 @@ Reuse the handle in a long-lived owner in your application; see [key custody](ke
 ```
 
 The builder preserves header order, repeats, case, nondefault ports, percent escapes,
-and query bytes. It lowercases scheme and host and omits HTTP port 80 and HTTPS port 443, matching Req and Finch. `nil` and `""` both retain empty content. Its optional `digest:`
+and query bytes. It keeps the URL's scheme and authority spelling, including host case and an explicit default port, so `@target-uri` signs the URL as written; `@authority` and `@scheme` normalize during signature-base derivation. Req and Finch keep host case but omit the scheme's default port, matching the Host header Mint sends. `nil` and `""` both retain empty content. Its optional `digest:`
 adds Content-Digest over those exact bytes. Transport declarations remain unknown
 and trailers unavailable; it does not establish a connection. Invalid values
 return `RequestSeal.Message.Error` through the same validation as `Message.new/1`.
@@ -109,7 +109,7 @@ instead. Responses can cover related-request components.
 
 Spec signing accepts a custody handle or an arity-two signer `(algorithm, base)`.
 A handle whose algorithm differs from the spec's `algorithm` returns
-`:signer_algorithm_mismatch` at `:input` (from 0.5.0; 0.4.1 returns `:invalid_options`). Both forms use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
+`:signer_algorithm_mismatch` at `:input`. Both forms use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
 accepts 1–300,000 ms. Optional `nonce:` supplies caller-owned 32-byte entropy
 instead of generating it; callers must provide fresh entropy for each signing
 attempt. It is ignored when the spec sets `nonce: nil`; omitting `nonce` keeps the
@@ -223,6 +223,6 @@ parameters.
 | `:invalid_options` | Fix the signing specification or options. |
 | `:signer_failed`, `:signing_failed` | The signer function or the key handle failed; `:signing_failed` carries a bounded custody error in `source`, for example `:key_not_found`. |
 
-See [the public contract](../design/architecture.md) for the separate representation, construction, cryptography, profile, trust, integrity, and replay layers. Named application profiles use `RequestSeal.Profile` in extension packages; from 1.0.0 that extension surface follows the [compatibility policy](../reference/compatibility.md) like the rest of the public API. Extensions must enforce their source-specific rules and trusted attribution; a profile stamp alone is no proof.
+See [the public contract](../design/architecture.md) for the separate representation, construction, cryptography, profile, trust, integrity, and replay layers. Named application profiles use `RequestSeal.Profile` in extension packages; that extension surface follows the [compatibility policy](../reference/compatibility.md) like the rest of the public API. Extensions must enforce their source-specific rules and trusted attribution; a profile stamp alone is no proof.
 
 Module docs: `RequestSeal`, `RequestSeal.Message`, `RequestSeal.SignatureBase`, `RequestSeal.Policy`, `RequestSeal.Verification`, `RequestSeal.Digest`, `RequestSeal.Profile`, `RequestSeal.Error`. `RequestSeal.Error` lists every reason by layer, and the [errors guide](errors.md) shows how to diagnose them. [Testing](testing.md) distinguishes published vectors, local round trips, independent verifiers, and deployed-peer acceptance. Proposed contracts in design pages do not establish implemented capability.

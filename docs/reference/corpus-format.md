@@ -26,7 +26,7 @@ Source files themselves retain their original numeric and binary encodings.
 
 Format `request-seal-conformance-corpus-index/1` requires:
 
-- `elixir_release`: `v` followed by the package version in `mix.exs` (currently `v0.4.1`). The declared gate fails when they differ, and the release workflow publishes the corpus only for a tag equal to both. Corpus releases exist for `v0.3.0` through `v0.4.0`.
+- `elixir_release`: `v` followed by the package version in `mix.exs`. The declared gate fails when they differ, and the release workflow publishes the corpus only for a tag equal to both.
 - `files`: every regular file below sources and cases, sorted by relative path,
   each with `path` and lowercase hexadecimal `sha256`.
 - `cases`: unique `id`, `manifest`, `surface` and `class` entries. A batch also
@@ -196,19 +196,18 @@ than bare integers. The source origin for public HTTP examples is `local-http`. 
 HTTP signing (HMAC, Ed25519, RSA v1.5) and JWS signing (HS256, EdDSA, RS256)
 compare exact output bytes; ECDSA and RSA-PSS use verification only. Positive
 key imports include the RFC 7638 public thumbprint. Per-item overrides and separate
-non-applicable counts supersede implicit adapter outcomes. Publication begins at
-`v0.3.0`, the release containing these contracts and the corpus.
+non-applicable counts supersede implicit adapter outcomes.
 
 ## Publication and vendoring
 
-From `v0.3.0` onward, the `v*` release workflow requires the index release tag
+The `v*` release workflow requires the index release tag
 and package version to match the pushed tag, runs the Elixir corpus test against
 its pinned index digest, and verifies the inventory, creates a deterministic
 `corpus.tar.gz` with fixed timestamp and numeric ownership, and publishes that
 asset plus `corpus.sha256` on the tag's GitHub release. The archive root contains exactly `index.json`, `sources/`, and `cases/`;
 both consumers refuse other paths in the corpus root. Existing assets are downloaded
 and compared byte for byte; a differing digest fails publication without replacement.
-Missing assets are uploaded to existing releases. A tag whose package version differs from `elixir_release` fails this workflow and publishes nothing. The v0.4.1 tag failed it because `elixir_release` still named v0.4.0, so v0.4.1 has no corpus release. At that tag the corpus was identical to v0.4.0's, that field included; the field names v0.4.1 only from the change that added the gate check. The TypeScript package `@request-seal/core` vendors `conformance/` from one
+Missing assets are uploaded to existing releases. A tag whose package version differs from `elixir_release` fails this workflow and publishes nothing. Corpus assets are attached to every GitHub release of v0.3.0 and later except v0.4.1. The TypeScript package `@request-seal/core` vendors `conformance/` from one
 release tag. Its source pin records tag, commit and index SHA-256; updating the
 pin and vendored bytes is a reviewed commit. Corpus data stays outside published
 runtime packages.
