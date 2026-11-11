@@ -60,8 +60,7 @@ defmodule RequestSeal.MixProject do
       dialyzer: [
         # Optional integration adapters compile in dev; their apps belong in
         # the PLT so their calls resolve instead of reporting unknowns.
-        plt_add_apps: [:req, :finch, :plug, :postgrex, :telemetry],
-        list_unused_filters: true
+        plt_add_apps: [:req, :finch, :mint, :plug, :postgrex, :telemetry]
       ],
       aliases: ["hex.publish": [&release_runtime_check!/1, "hex.publish"]],
       package: [

@@ -3,7 +3,7 @@ defmodule RequestSeal.Discovery.Transport do
   @compile {:no_warn_undefined, :ssl}
   @moduledoc false
   alias RequestSeal.Discovery.{Address, Source, Support}
-  import Support, only: [ensure: 2]
+  import Support, only: [fail: 1, ensure: 2]
 
   def connect(uri, source, deadline) do
     ensure(
@@ -24,7 +24,7 @@ defmodule RequestSeal.Discovery.Transport do
       try do
         if source.cacerts == :os, do: :public_key.cacerts_get(), else: source.cacerts
       rescue
-        _ -> ensure(false, :tls_failed)
+        _ -> fail(:tls_failed)
       end
 
     opts = [
@@ -66,7 +66,7 @@ defmodule RequestSeal.Discovery.Transport do
     addresses
   end
 
-  defp attempt([], _, _, _, _, reason), do: ensure(false, reason)
+  defp attempt([], _, _, _, _, reason), do: fail(reason)
 
   defp attempt([ip | rest], port, opts, source, deadline, reason) do
     family = if tuple_size(ip) == 8, do: :inet6, else: :inet
@@ -89,7 +89,7 @@ defmodule RequestSeal.Discovery.Transport do
         end
 
       {:error, :timeout} ->
-        ensure(false, :deadline_exceeded)
+        fail(:deadline_exceeded)
 
       {:error, failure} ->
         error =

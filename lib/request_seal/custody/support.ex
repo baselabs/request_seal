@@ -2,7 +2,10 @@ defmodule RequestSeal.Custody.Support do
   @moduledoc false
   alias RequestSeal.Custody.Error
   def ensure(true, _), do: :ok
-  def ensure(_, reason), do: throw({:custody_error, reason})
+  def ensure(_, reason), do: fail(reason)
+
+  @spec fail(term()) :: no_return()
+  def fail(reason), do: throw({:custody_error, reason})
 
   def safe(fun, fallback \\ :invalid_key) do
     fun.()
@@ -15,8 +18,25 @@ defmodule RequestSeal.Custody.Support do
 
   def unwrap({:ok, value}), do: value
   def unwrap(:ok), do: :ok
-  def unwrap({:error, %{reason: reason}}), do: ensure(false, reason)
-  def unwrap({:error, reason}) when is_atom(reason), do: ensure(false, reason)
+  def unwrap({:error, %{reason: reason}}), do: fail(reason)
+  def unwrap({:error, reason}) when is_atom(reason), do: fail(reason)
+
+  # OTP 27/28 decode PrivateKeyInfo; OTP 29 aliases it to OneAsymmetricKey.
+  # Normalize both supported decoder contracts without admitting v2 containers.
+  @spec pkcs8_components(tuple()) :: {term(), term(), term()}
+  def pkcs8_components(info) do
+    case info do
+      {:PrivateKeyInfo, :v1, {:PrivateKeyInfo_privateKeyAlgorithm, oid, params}, private, _} ->
+        {oid, params, private}
+
+      {:OneAsymmetricKey, :v1, {:PrivateKeyAlgorithmIdentifier, oid, params}, private, _,
+       :asn1_NOVALUE} ->
+        {oid, params, private}
+
+      _ ->
+        fail(:unsupported_format)
+    end
+  end
 
   def options(opts, allowed) do
     ensure(is_list(opts) and Keyword.keyword?(opts), :invalid_options)

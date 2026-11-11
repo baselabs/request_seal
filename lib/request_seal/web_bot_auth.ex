@@ -33,7 +33,7 @@ defmodule RequestSeal.WebBotAuth do
 
   alias RequestSeal.StructuredFields, as: SF
   alias RequestSeal.StructuredFields.Value
-  alias RequestSeal.Discovery.{Cache, KeySet, Resolution, Source, Support}
+  alias RequestSeal.Discovery.{Cache, KeySet, Source, Support}
   alias RequestSeal.WebBotAuth.{Policy, Verification}
   @revision "draft-ietf-webbotauth-httpsig-protocol-00"
   @profile %{name: :web_bot_auth, revision: @revision}
@@ -474,7 +474,7 @@ defmodule RequestSeal.WebBotAuth do
       end
 
     ensure(
-      match?(%Resolution{}, resolution) and resolution.source_type == source.type and
+      resolution.source_type == source.type and
         resolution.location == source.location and
         resolution.origin == Source.origin(URI.parse(source.location)),
       :agent_unresolved,

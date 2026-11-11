@@ -578,8 +578,7 @@ defmodule RequestSeal.Authentication do
   defp occurrence(name, value) do
     case FieldOccurrence.new(%{name: name, value: value, section: :headers, provenance: :caller}) do
       {:ok, field} -> field
-      {:error, %{reason: :limit}} -> fail(:limit, :input)
-      _ -> fail(:invalid_signature_field, :fields)
+      {:error, _} -> fail(:invalid_signature_field, :fields)
     end
   end
 

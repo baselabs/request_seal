@@ -21,7 +21,7 @@ defmodule RequestSeal.Discovery.Cache do
   @spec child_spec(keyword()) :: Supervisor.child_spec()
   alias RequestSeal.{Discovery, Crypto, SignatureFields}
   alias RequestSeal.Discovery.{Source, Error, Support, KeySet}
-  import Support, only: [ensure: 2]
+  import Support, only: [fail: 1, ensure: 2]
 
   @doc """
   Start the explicitly caller-owned cache, linked to the caller.
@@ -312,7 +312,7 @@ defmodule RequestSeal.Discovery.Cache do
   defp call(cache, request, timeout) do
     GenServer.call(cache, request, timeout)
   catch
-    :exit, _ -> throw({:discovery_error, :source_unavailable})
+    :exit, _ -> fail(:source_unavailable)
   end
 
   @impl true
@@ -440,7 +440,7 @@ defmodule RequestSeal.Discovery.Cache do
       nil ->
         if map_size(state.pending) >= state.max_in_flight do
           Process.demonitor(ref, [:flush])
-          ensure(false, :cache_overloaded)
+          fail(:cache_overloaded)
         end
 
         owner = self()

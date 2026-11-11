@@ -2,7 +2,10 @@ defmodule RequestSeal.Discovery.Support do
   @moduledoc false
   alias RequestSeal.Discovery.Error
   def ensure(true, _), do: :ok
-  def ensure(_, reason), do: throw({:discovery_error, reason})
+  def ensure(_, reason), do: fail(reason)
+
+  @spec fail(term()) :: no_return()
+  def fail(reason), do: throw({:discovery_error, reason})
 
   def safe(fun, fallback \\ :invalid_response) do
     fun.()
@@ -16,7 +19,7 @@ defmodule RequestSeal.Discovery.Support do
 
   def unwrap({:ok, value}), do: value
   def unwrap(:ok), do: :ok
-  def unwrap(_), do: ensure(false, :invalid_response)
+  def unwrap(_), do: fail(:invalid_response)
 
   def options(opts, allowed) do
     ensure(is_list(opts) and Keyword.keyword?(opts), :invalid_options)
@@ -37,9 +40,9 @@ defmodule RequestSeal.Discovery.Support do
       try do
         clock.()
       rescue
-        _ -> ensure(false, :invalid_options)
+        _ -> fail(:invalid_options)
       catch
-        _, _ -> ensure(false, :invalid_options)
+        _, _ -> fail(:invalid_options)
       end
 
     ensure(is_integer(value) and value in 0..253_402_300_799, :invalid_options)

@@ -279,9 +279,6 @@ defmodule RequestSeal.AcceptSignature do
             # reason stays :negotiation_unfulfillable.
             {:error, %RequestSeal.Error{reason: signing_reason}} ->
               fail(:negotiation_unfulfillable, :negotiation, signing_reason)
-
-            _ ->
-              fail(:negotiation_unfulfillable)
           end
         end)
 

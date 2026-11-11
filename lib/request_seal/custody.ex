@@ -29,7 +29,7 @@ defmodule RequestSeal.Custody do
   """
   alias RequestSeal.{KeyHandle, KeyIdentity, PublicKey}
   alias RequestSeal.Custody.{Context, Error, Support}
-  import Support, only: [ensure: 2]
+  import Support, only: [fail: 1, ensure: 2]
 
   @type unwrap_algorithm :: {:jwe, binary()}
   @type algorithm :: RequestSeal.Crypto.algorithm() | unwrap_algorithm()
@@ -416,7 +416,7 @@ defmodule RequestSeal.Custody do
     end
   end
 
-  defp handle!(_), do: ensure(false, :invalid_handle)
+  defp handle!(_), do: fail(:invalid_handle)
   defp data!(bytes, max), do: ensure(is_binary(bytes) and byte_size(bytes) <= max, :invalid_data)
 
   defp invoke(handle, :verify, [bytes, signature], context) do

@@ -4,7 +4,7 @@ defmodule RequestSeal.Discovery.HTTP1 do
   @moduledoc false
   alias RequestSeal.{Body, FieldOccurrence, Message, TransportFacts}
   alias RequestSeal.Discovery.{Source, Support}
-  import Support, only: [ensure: 2, unwrap: 1]
+  import Support, only: [fail: 1, ensure: 2, unwrap: 1]
   @header_cap 16_384
 
   def request(socket, uri, source, deadline, etag \\ nil) do
@@ -43,7 +43,7 @@ defmodule RequestSeal.Discovery.HTTP1 do
            "\r\n"
          ]) do
       :ok -> :ok
-      _ -> ensure(false, :connect_failed)
+      _ -> fail(:connect_failed)
     end
 
     state = %{
@@ -116,7 +116,7 @@ defmodule RequestSeal.Discovery.HTTP1 do
     code =
       case Regex.run(~r/\AHTTP\/1\.[01] ([0-9]{3})(?: [\x20-\x7e]*)?\z/, status) do
         [_, digits] -> String.to_integer(digits)
-        _ -> ensure(false, :invalid_response)
+        _ -> fail(:invalid_response)
       end
 
     fields = Enum.map(lines, &field/1)
@@ -157,11 +157,11 @@ defmodule RequestSeal.Discovery.HTTP1 do
                provenance: :http1
              }) do
           {:ok, f} -> f
-          _ -> ensure(false, :invalid_response)
+          _ -> fail(:invalid_response)
         end
 
       _ ->
-        ensure(false, :invalid_response)
+        fail(:invalid_response)
     end
   end
 
@@ -286,10 +286,10 @@ defmodule RequestSeal.Discovery.HTTP1 do
         :closed
 
       {:error, :timeout} ->
-        ensure(false, :deadline_exceeded)
+        fail(:deadline_exceeded)
 
       _ ->
-        ensure(false, :invalid_response)
+        fail(:invalid_response)
     end
   end
 
@@ -301,7 +301,7 @@ defmodule RequestSeal.Discovery.HTTP1 do
         nil -> bytes
         "identity" -> bytes
         coding when coding in ["gzip", "x-gzip"] -> inflate(bytes, cap, deadline)
-        _ -> ensure(false, :invalid_response)
+        _ -> fail(:invalid_response)
       end
 
     ensure(byte_size(decoded) <= cap, :limit)
@@ -333,5 +333,5 @@ defmodule RequestSeal.Discovery.HTTP1 do
       else: inflate_output(z, :zlib.safeInflate(z, []), acc, size, cap, deadline)
   end
 
-  defp inflate_output(_, _, _, _, _, _), do: ensure(false, :invalid_response)
+  defp inflate_output(_, _, _, _, _, _), do: fail(:invalid_response)
 end

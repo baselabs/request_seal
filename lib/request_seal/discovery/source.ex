@@ -26,7 +26,7 @@ defmodule RequestSeal.Discovery.Source do
   construction. Starting SSL remains the caller's responsibility.
   """
   alias RequestSeal.Discovery.{Address, Support, Error}
-  import Support, only: [ensure: 2]
+  import Support, only: [fail: 1, ensure: 2]
   @derive {Inspect, only: [:type]}
   defstruct [
     :type,
@@ -215,12 +215,12 @@ defmodule RequestSeal.Discovery.Source do
   def validate!(%__MODULE__{} = source) do
     case new(Map.from_struct(source)) do
       {:ok, ^source} -> source
-      {:error, %Error{reason: reason}} -> ensure(false, reason)
-      _ -> ensure(false, :invalid_source)
+      {:error, %Error{reason: reason}} -> fail(reason)
+      _ -> fail(:invalid_source)
     end
   end
 
-  def validate!(_), do: ensure(false, :invalid_source)
+  def validate!(_), do: fail(:invalid_source)
   @doc false
   def thumbprint?(value) do
     is_binary(value) and byte_size(value) == 43 and

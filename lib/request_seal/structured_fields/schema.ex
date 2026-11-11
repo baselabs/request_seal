@@ -139,12 +139,17 @@ defmodule RequestSeal.StructuredFields.Schema do
   end
 
   def validate(_), do: {:error, %Error{reason: :invalid_schema}}
-  defp type_list?(list, allowed, empty), do: type_list?(list, allowed, empty, MapSet.new(), 0)
+
+  defp type_list?(list, allowed, empty),
+    do: type_list?(list, allowed, empty, :sets.new(version: 2), 0)
+
+  @spec type_list?(term(), [bare_type()], boolean(), :sets.set(term()), non_neg_integer()) ::
+          boolean()
   defp type_list?([], _, empty, _, count), do: empty or count > 0
 
   defp type_list?([type | rest], allowed, empty, seen, count) when count < 8 do
-    type in allowed and not MapSet.member?(seen, type) and
-      type_list?(rest, allowed, empty, MapSet.put(seen, type), count + 1)
+    type in allowed and not :sets.is_element(type, seen) and
+      type_list?(rest, allowed, empty, :sets.add_element(type, seen), count + 1)
   end
 
   defp type_list?(_, _, _, _, _), do: false

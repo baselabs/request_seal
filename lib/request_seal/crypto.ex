@@ -36,7 +36,7 @@ defmodule RequestSeal.Crypto do
   """
   alias RequestSeal.PublicKey
   alias RequestSeal.Crypto.{Algorithm, Error, Support}
-  import Support, only: [ensure: 2, bounded_binary?: 3]
+  import Support, only: [fail: 1, ensure: 2, bounded_binary?: 3]
   @type algorithm :: binary() | {:jws, binary()}
   @doc """
   The six registered, case-sensitive HTTP signature algorithm identifiers.
@@ -210,7 +210,7 @@ defmodule RequestSeal.Crypto do
             PublicKey.bind!(key, resolved)
 
           _ ->
-            ensure(false, :invalid_key)
+            fail(:invalid_key)
         end
 
       ensure(is_binary(signature), :invalid_signature)
@@ -226,7 +226,7 @@ defmodule RequestSeal.Crypto do
     value
   end
 
-  defp max_bytes(_), do: ensure(false, :invalid_options)
+  defp max_bytes(_), do: fail(:invalid_options)
 
   defp sign_bytes({:rsa, digest, padding, salt}, bytes, {:rsa, key}) do
     validate_rsa_private!(key)
@@ -256,7 +256,7 @@ defmodule RequestSeal.Crypto do
     :crypto.mac(:hmac, :sha256, secret, bytes)
   end
 
-  defp sign_bytes(_, _, _), do: ensure(false, :key_mismatch)
+  defp sign_bytes(_, _, _), do: fail(:key_mismatch)
 
   defp verify_bytes({:rsa, digest, padding, salt}, bytes, signature, {type, n, e})
        when type in [:rsa, :rsa_pss] do

@@ -41,7 +41,7 @@ defmodule RequestSeal.Custody.SSHAgent do
   alias RequestSeal.Crypto.Algorithm
   alias RequestSeal.Custody.{Context, Support}
   alias RequestSeal.Custody.SSHAgent.Wire
-  import Support, only: [ensure: 2, unwrap: 1]
+  import Support, only: [fail: 1, ensure: 2, unwrap: 1]
   @max_bytes_ceiling Crypto.max_bytes_ceiling()
 
   @doc """
@@ -205,7 +205,7 @@ defmodule RequestSeal.Custody.SSHAgent do
            timeout
          ) do
       {:ok, socket} -> {:ok, socket}
-      {:error, reason} -> ensure(false, socket_error(reason))
+      {:error, reason} -> fail(socket_error(reason))
     end
   end
 
@@ -215,7 +215,7 @@ defmodule RequestSeal.Custody.SSHAgent do
 
     case :gen_tcp.recv(socket, 0, remaining!(context)) do
       {:ok, response} -> response
-      {:error, reason} -> ensure(false, reply_error(reason))
+      {:error, reason} -> fail(reply_error(reason))
     end
   end
 
@@ -225,7 +225,7 @@ defmodule RequestSeal.Custody.SSHAgent do
   defp reply_error(reason), do: socket_error(reason)
 
   defp socket_result(:ok), do: :ok
-  defp socket_result({:error, reason}), do: ensure(false, socket_error(reason))
+  defp socket_result({:error, reason}), do: fail(socket_error(reason))
 
   defp socket_error(reason)
        when reason in [:enoent, :econnrefused, :closed, :econnreset, :enotconn],

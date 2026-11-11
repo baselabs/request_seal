@@ -78,7 +78,7 @@ defmodule RequestSeal.Discovery do
     Cache
   }
 
-  import Support, only: [ensure: 2]
+  import Support, only: [fail: 1, ensure: 2]
 
   @doc """
   Fetch a configured source once under a cancellable absolute deadline, with no cache.
@@ -435,7 +435,7 @@ defmodule RequestSeal.Discovery do
                nested_location, min(expires, nested_expires), nested_bytes}
 
             true ->
-              ensure(false, :invalid_key_set)
+              fail(:invalid_key_set)
           end
 
         _ ->
@@ -531,7 +531,7 @@ defmodule RequestSeal.Discovery do
         resource(target, source, deadline, redirects + 1, nil)
 
       {code, _, _, _} ->
-        throw({:discovery_error, %Error{reason: :unexpected_status, retryable: code in 500..599}})
+        fail(%Error{reason: :unexpected_status, retryable: code in 500..599})
     end
   end
 
@@ -554,7 +554,7 @@ defmodule RequestSeal.Discovery do
     ensure(json_whitespace?(rest), :invalid_response)
     value
   rescue
-    _ -> ensure(false, :invalid_response)
+    _ -> fail(:invalid_response)
   end
 
   # RFC 8259 Section 2 permits only SP, HTAB, LF, and CR outside a value.
@@ -634,7 +634,7 @@ defmodule RequestSeal.Discovery do
               :skipped
 
             _ ->
-              ensure(false, :invalid_key_set)
+              fail(:invalid_key_set)
           end
 
         if public == :skipped do
@@ -690,7 +690,7 @@ defmodule RequestSeal.Discovery do
     end)
   end
 
-  defp keys(_, _, _, _, _), do: ensure(false, :invalid_key_set)
+  defp keys(_, _, _, _, _), do: fail(:invalid_key_set)
 
   # A key whose alg names an algorithm this verifier does not use — an
   # encryption key, or a signing name outside both registries — cannot satisfy

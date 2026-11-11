@@ -298,7 +298,7 @@ defmodule RequestSeal.StructuredFields do
       limits: limits,
       nodes: 0,
       unique_keys: unique_keys,
-      seen_keys: MapSet.new(),
+      seen_keys: :sets.new(version: 2),
       duplicate_key: false,
       unique_parameters: unique_parameters,
       duplicate_parameter: false
@@ -383,15 +383,15 @@ defmodule RequestSeal.StructuredFields do
     # take precedence even for repeated labels.
     %{
       state
-      | duplicate_key: state.duplicate_key or MapSet.member?(state.seen_keys, key),
-        seen_keys: MapSet.put(state.seen_keys, key)
+      | duplicate_key: state.duplicate_key or :sets.is_element(key, state.seen_keys),
+        seen_keys: :sets.add_element(key, state.seen_keys)
     }
   end
 
   defp unique_key(key, state) do
     if key in state.unique_keys do
-      ensure(not MapSet.member?(state.seen_keys, key), :duplicate_key)
-      %{state | seen_keys: MapSet.put(state.seen_keys, key)}
+      ensure(not :sets.is_element(key, state.seen_keys), :duplicate_key)
+      %{state | seen_keys: :sets.add_element(key, state.seen_keys)}
     else
       state
     end
@@ -645,10 +645,19 @@ defmodule RequestSeal.StructuredFields do
 
   defp write_top(%{type: type, value: values, parameters: []}, schema, state)
        when type in [:list, :dictionary] do
-    write_members(values, type, schema, state, 0, MapSet.new())
+    write_members(values, type, schema, state, 0, :sets.new(version: 2))
   end
 
   defp write_top(_, _, _), do: fail(:invalid_value)
+
+  @spec write_members(
+          term(),
+          :list | :dictionary,
+          Schema.t(),
+          map(),
+          non_neg_integer(),
+          :sets.set(binary())
+        ) :: map()
   defp write_members([], _, _, state, _, _), do: state
 
   defp write_members([entry | rest], type, schema, state, count, keys) do
@@ -660,18 +669,18 @@ defmodule RequestSeal.StructuredFields do
         ensure(is_tuple(entry) and tuple_size(entry) == 2, :invalid_value)
         {key, value} = entry
         valid_key(key, state)
-        ensure(not MapSet.member?(keys, key), :invalid_value)
+        ensure(not :sets.is_element(key, keys), :invalid_value)
         state = emit(state, key)
 
         state =
           if valid_shape?(value) and value.type == :item and value.value == {:boolean, true} do
             check_type(:boolean, schema, :item)
-            write_params(value.parameters, schema, consume_node(state), 0, MapSet.new())
+            write_params(value.parameters, schema, consume_node(state), 0, :sets.new(version: 2))
           else
             write_member(value, schema, emit(state, "="))
           end
 
-        {state, MapSet.put(keys, key)}
+        {state, :sets.add_element(key, keys)}
       else
         {write_member(entry, schema, state), keys}
       end
@@ -692,7 +701,7 @@ defmodule RequestSeal.StructuredFields do
       :inner_list ->
         ensure(schema.inner_lists, :schema_type)
         state = write_inner(value.value, schema, emit(state, "("), 0)
-        write_params(value.parameters, schema, emit(state, ")"), 0, MapSet.new())
+        write_params(value.parameters, schema, emit(state, ")"), 0, :sets.new(version: 2))
 
       _ ->
         fail(:invalid_value)
@@ -713,15 +722,16 @@ defmodule RequestSeal.StructuredFields do
 
   defp write_item(value, schema, state) do
     state = write_bare(value.value, schema, :item, state)
-    write_params(value.parameters, schema, state, 0, MapSet.new())
+    write_params(value.parameters, schema, state, 0, :sets.new(version: 2))
   end
 
+  @spec write_params(term(), Schema.t(), map(), non_neg_integer(), :sets.set(binary())) :: map()
   defp write_params([], _, state, _, _), do: state
 
   defp write_params([{key, value} | rest], schema, state, count, keys) do
     ensure(count < state.limits.max_parameters, :limit)
     valid_key(key, state)
-    ensure(not MapSet.member?(keys, key), :invalid_value)
+    ensure(not :sets.is_element(key, keys), :invalid_value)
     state = consume_node(state) |> emit([";", key])
 
     state =
@@ -732,7 +742,7 @@ defmodule RequestSeal.StructuredFields do
         write_bare(value, schema, :parameter, emit(state, "="))
       end
 
-    write_params(rest, schema, state, count + 1, MapSet.put(keys, key))
+    write_params(rest, schema, state, count + 1, :sets.add_element(key, keys))
   end
 
   defp write_params(_, _, _, _, _), do: fail(:invalid_value)

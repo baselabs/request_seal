@@ -3,7 +3,10 @@ defmodule RequestSeal.Crypto.Support do
   alias RequestSeal.Crypto.Error
 
   def ensure(true, _reason), do: :ok
-  def ensure(_, reason), do: throw({:crypto_error, reason})
+  def ensure(_, reason), do: fail(reason)
+
+  @spec fail(term()) :: no_return()
+  def fail(reason), do: throw({:crypto_error, reason})
 
   # Only OTP's own argument/runtime error classes map to the bounded reason.
   # Logic-defect classes (match/case/function-clause/key) and exits propagate to

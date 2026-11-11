@@ -1,5 +1,6 @@
 defmodule RequestSeal.Crypto.Algorithm do
   @moduledoc false
+  import RequestSeal.Crypto.Support, only: [fail: 1]
   @http ~w(rsa-pss-sha512 rsa-v1_5-sha256 hmac-sha256 ecdsa-p256-sha256 ecdsa-p384-sha384 ed25519)
   @jws %{
     "RS256" => {:rsa, :sha256, :pkcs1, 0},
@@ -19,7 +20,7 @@ defmodule RequestSeal.Crypto.Algorithm do
   def resolve(name) when is_map_key(@mapping, name),
     do: resolve({:jws, Map.fetch!(@mapping, name)})
 
-  def resolve(_), do: throw({:crypto_error, :unsupported_algorithm})
+  def resolve(_), do: fail(:unsupported_algorithm)
 
   # The JOSE name for either allowlist spelling or an asserted source value.
   # Total over every valid identifier: the HTTP names, the {:jws, name} tuples,
@@ -27,7 +28,7 @@ defmodule RequestSeal.Crypto.Algorithm do
   def jose_id({:jws, name}) when is_map_key(@jws, name), do: name
   def jose_id(name) when is_map_key(@mapping, name), do: Map.fetch!(@mapping, name)
   def jose_id(name) when is_map_key(@jws, name), do: name
-  def jose_id(_), do: throw({:crypto_error, :unsupported_algorithm})
+  def jose_id(_), do: fail(:unsupported_algorithm)
 
   # The resolve/1 argument for any valid identifier spelling, including bare
   # JOSE names (internal: source-asserted algorithms normalize to them).
@@ -35,7 +36,7 @@ defmodule RequestSeal.Crypto.Algorithm do
   def reference({:jws, _} = tuple), do: tuple
   def reference(name) when is_map_key(@mapping, name), do: {:jws, Map.fetch!(@mapping, name)}
   def reference(name) when is_map_key(@jws, name), do: {:jws, name}
-  def reference(_), do: throw({:crypto_error, :unsupported_algorithm})
+  def reference(_), do: fail(:unsupported_algorithm)
 
   def curve("P-256"),
     do: {:secp256r1, 32, 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551}
@@ -45,5 +46,5 @@ defmodule RequestSeal.Crypto.Algorithm do
       {:secp384r1, 48,
        0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC7634D81F4372DDF581A0DB248B0A77AECEC196ACCC52973}
 
-  def curve(_), do: throw({:crypto_error, :invalid_key})
+  def curve(_), do: fail(:invalid_key)
 end

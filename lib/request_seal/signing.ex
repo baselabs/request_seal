@@ -427,9 +427,6 @@ defmodule RequestSeal.Signing do
 
       {:ok, _} ->
         {:error, Custody.Error.new(:invalid_signing_output)}
-
-      _ ->
-        {:error, Custody.Error.new(:custodian_failure)}
     end
   end
 

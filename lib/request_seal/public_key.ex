@@ -33,7 +33,7 @@ defmodule RequestSeal.PublicKey do
   Supplied structs are revalidated at each use.
   """
   alias RequestSeal.Crypto.{Algorithm, Support}
-  import Support, only: [ensure: 2, bounded_binary?: 3]
+  import Support, only: [fail: 1, ensure: 2, bounded_binary?: 3]
   defstruct [:material, :algorithm, :use, :operations]
 
   @type t :: %__MODULE__{
@@ -247,7 +247,7 @@ defmodule RequestSeal.PublicKey do
     key
   end
 
-  def validate!(_), do: ensure(false, :invalid_key)
+  def validate!(_), do: fail(:invalid_key)
 
   @doc false
   def bind!(key, {jose, {type, _, curve, _}}) do
@@ -293,7 +293,7 @@ defmodule RequestSeal.PublicKey do
           {:ed25519, b64(x)}
 
         _ ->
-          ensure(false, :invalid_key)
+          fail(:invalid_key)
       end
 
     alg = value["alg"]
@@ -323,7 +323,7 @@ defmodule RequestSeal.PublicKey do
         decode({:rsa, n, e}, :raw)
 
       _ ->
-        ensure(false, :invalid_key)
+        fail(:invalid_key)
     end
   end
 
@@ -361,7 +361,7 @@ defmodule RequestSeal.PublicKey do
             case params do
               {:namedCurve, {1, 2, 840, 10045, 3, 1, 7}} -> "P-256"
               {:namedCurve, {1, 3, 132, 0, 34}} -> "P-384"
-              _ -> ensure(false, :invalid_key)
+              _ -> fail(:invalid_key)
             end
 
           {:ec, crv, bytes}
@@ -371,13 +371,13 @@ defmodule RequestSeal.PublicKey do
           {:ed25519, bytes}
 
         _ ->
-          ensure(false, :invalid_key)
+          fail(:invalid_key)
       end
 
     decode(material, :raw)
   end
 
-  defp decode(_, _), do: ensure(false, :unsupported_format)
+  defp decode(_, _), do: fail(:unsupported_format)
 
   defp canonical_der(type, bytes) do
     decoded = :public_key.der_decode(type, bytes)
@@ -463,7 +463,7 @@ defmodule RequestSeal.PublicKey do
     material
   end
 
-  defp material!(_), do: ensure(false, :invalid_key)
+  defp material!(_), do: fail(:invalid_key)
 
   # RFC 8032 Section 5.1.3: x = u v^3 (u v^7)^((p-5)/8).
   # Public inputs only; one modular exponentiation recovers the square root.
@@ -510,7 +510,7 @@ defmodule RequestSeal.PublicKey do
           %{"kty" => "OKP", "crv" => "Ed25519", "x" => Base.url_encode64(x, padding: false)}
 
         _ ->
-          ensure(false, :unsupported_format)
+          fail(:unsupported_format)
       end
 
     Enum.reduce(

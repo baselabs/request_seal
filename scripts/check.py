@@ -14,6 +14,39 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 
+DIALYZER_SUPPRESSION_CHECK = r'''
+unless File.lstat(".dialyzer_ignore.exs") == {:error, :enoent} do
+  Mix.raise("Dialyzer suppression is forbidden: .dialyzer_ignore.exs")
+end
+
+if Keyword.has_key?(Mix.Project.config()[:dialyzer] || [], :ignore_warnings) do
+  Mix.raise("Dialyzer suppression is forbidden: ignore_warnings in mix.exs")
+end
+
+for path <- ["mix.exs" | Path.wildcard("lib/**/*.{ex,exs}", match_dot: true)] do
+  path
+  |> File.read!()
+  |> Code.string_to_quoted!(file: path)
+  |> Macro.prewalk(fn
+    {:ignore_warnings, _} when path == "mix.exs" ->
+      Mix.raise("Dialyzer suppression is forbidden: ignore_warnings in mix.exs")
+
+    {:@, _, [{:dialyzer, _, _}]} ->
+      Mix.raise("Dialyzer suppression is forbidden: @dialyzer in #{path}")
+
+    node ->
+      node
+  end)
+end
+'''
+
+
+def check_dialyzer():
+    """Analyze every warning with no source or file suppression path."""
+    run(["mix", "run", "--no-start", "-e", DIALYZER_SUPPRESSION_CHECK])
+    run(["mix", "dialyzer"])
+
+
 def run(argv, cwd=ROOT, timeout=900, extra_env=None):
     print("RUN " + " ".join(argv), flush=True)
     env = os.environ.copy()
@@ -75,7 +108,11 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
     # gate the notebook on a shared install cache it never declared.
     environment = dict(os.environ)
     environment["MIX_INSTALL_DIR"] = str(script.parent / "mix_install")
-    process = subprocess.Popen(["elixir", str(script)], cwd=script.parent, env=environment,
+    # Select the project's runtime before leaving its version-manager scope.
+    # Notebook code still runs outside the project, with the usual empty argv.
+    bootstrap = ("[script] = System.argv(); System.argv([]); "
+                 "File.cd!(Path.dirname(script)); Code.require_file(script)")
+    process = subprocess.Popen(["elixir", "-e", bootstrap, "--", str(script)], cwd=ROOT, env=environment,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     deadline = time.monotonic() + timeout
     output = bytearray()
@@ -297,7 +334,7 @@ if __name__ == "__main__":
             check_corpus_release()
             run(["mix", "format", "--check-formatted"])
             run(["mix", "compile", "--warnings-as-errors"])
-            run(["mix", "dialyzer"])
+            check_dialyzer()
             run(["mix", "test", "--warnings-as-errors"])
             run(["mix", "run", "scripts/check_corpus_mutations.exs"], extra_env={"MIX_ENV": "test"})
             run([sys.executable, "scripts/check_optional_clients.py"])

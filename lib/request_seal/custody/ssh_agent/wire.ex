@@ -3,7 +3,7 @@ defmodule RequestSeal.Custody.SSHAgent.Wire do
   alias RequestSeal.Crypto
   alias RequestSeal.Crypto.Algorithm
   alias RequestSeal.PublicKey
-  import RequestSeal.Custody.Support, only: [ensure: 2]
+  import RequestSeal.Custody.Support, only: [fail: 1, ensure: 2]
 
   def string(bytes), do: <<byte_size(bytes)::32, bytes::binary>>
 
@@ -84,7 +84,7 @@ defmodule RequestSeal.Custody.SSHAgent.Wire do
 
   defp signature_bytes("ES256", "ecdsa-sha2-nistp256", raw, _), do: ecdsa(raw, 32)
   defp signature_bytes("ES384", "ecdsa-sha2-nistp384", raw, _), do: ecdsa(raw, 48)
-  defp signature_bytes(_, _, _, _), do: ensure(false, :custodian_protocol)
+  defp signature_bytes(_, _, _, _), do: fail(:custodian_protocol)
 
   defp ecdsa(raw, width) do
     {r, rest} = read_string(raw, width + 1)
@@ -99,7 +99,7 @@ defmodule RequestSeal.Custody.SSHAgent.Wire do
       case bytes do
         <<0, first, rest::binary>> when first >= 128 -> <<first, rest::binary>>
         <<first, _::binary>> when first in 1..127 -> bytes
-        _ -> ensure(false, :custodian_protocol)
+        _ -> fail(:custodian_protocol)
       end
 
     ensure(byte_size(magnitude) <= width, :custodian_protocol)
@@ -117,7 +117,7 @@ defmodule RequestSeal.Custody.SSHAgent.Wire do
     {bytes, tail}
   end
 
-  defp read_string(_, _), do: ensure(false, :custodian_protocol)
+  defp read_string(_, _), do: fail(:custodian_protocol)
 
   defp safe(fun) do
     fun.()

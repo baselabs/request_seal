@@ -62,7 +62,7 @@ defmodule RequestSeal.Custody.Local do
   alias RequestSeal.{Crypto, KeyHandle, KeyIdentity, PublicKey}
   alias RequestSeal.Crypto.Algorithm
   alias RequestSeal.Custody.Support
-  import Support, only: [ensure: 2, unwrap: 1]
+  import Support, only: [fail: 1, ensure: 2, unwrap: 1]
   @rsa {1, 2, 840, 113_549, 1, 1, 1}
   @pss {1, 2, 840, 113_549, 1, 1, 10}
   @ec {1, 2, 840, 10045, 2, 1}
@@ -445,10 +445,10 @@ defmodule RequestSeal.Custody.Local do
           else: await_holder(pid, monitor, token, phase, deadline)
 
       {:DOWN, ^monitor, :process, ^pid, _} ->
-        ensure(false, :custodian_failure)
+        fail(:custodian_failure)
     after
       max(0, deadline - System.monotonic_time(:millisecond)) ->
-        ensure(false, :deadline_exceeded)
+        fail(:deadline_exceeded)
     end
   end
 
@@ -561,7 +561,7 @@ defmodule RequestSeal.Custody.Local do
   end
 
   defp derive({:hmac, _}, _), do: nil
-  defp derive(_, _), do: ensure(false, :invalid_key)
+  defp derive(_, _), do: fail(:invalid_key)
 
   defp decode(value, :pem, jose) do
     ensure(is_binary(value) and byte_size(value) in 1..16_384, :invalid_key)
@@ -580,7 +580,7 @@ defmodule RequestSeal.Custody.Local do
         :RSAPrivateKey -> {{:rsa, canonical(:RSAPrivateKey, der)}, :rsa, nil}
         :ECPrivateKey -> ec_private(canonical(:ECPrivateKey, der))
         :PrivateKeyInfo -> pkcs8(der)
-        _ -> ensure(false, :invalid_key)
+        _ -> fail(:invalid_key)
       end
 
     {material, restriction, expected, capabilities(jose)}
@@ -661,7 +661,7 @@ defmodule RequestSeal.Custody.Local do
           {{:hmac, b64(k)}, nil}
 
         _ ->
-          ensure(false, :invalid_key)
+          fail(:invalid_key)
       end
 
     expected =
@@ -679,7 +679,7 @@ defmodule RequestSeal.Custody.Local do
     {material, nil, expected, capabilities}
   end
 
-  defp decode(_, _, _), do: ensure(false, :unsupported_format)
+  defp decode(_, _, _), do: fail(:unsupported_format)
 
   defp capabilities(jose) when jose in ["RSA-OAEP", "RSA-OAEP-256"], do: [:unwrap]
   defp capabilities(_), do: [:sign, :verify]
@@ -696,24 +696,13 @@ defmodule RequestSeal.Custody.Local do
     info =
       case :"PKCS-FRAME".decode(:PrivateKeyInfo, der) do
         {:ok, info} -> info
-        _ -> ensure(false, :unsupported_format)
+        _ -> fail(:unsupported_format)
       end
 
     {:ok, encoded} = :"PKCS-FRAME".encode(:PrivateKeyInfo, info)
     ensure(encoded == der, :invalid_key)
 
-    {oid, params, private} =
-      case info do
-        {:PrivateKeyInfo, :v1, {:PrivateKeyInfo_privateKeyAlgorithm, oid, params}, private, _} ->
-          {oid, params, private}
-
-        {:OneAsymmetricKey, :v1, {:PrivateKeyAlgorithmIdentifier, oid, params}, private, _,
-         :asn1_NOVALUE} ->
-          {oid, params, private}
-
-        _ ->
-          ensure(false, :unsupported_format)
-      end
+    {oid, params, private} = Support.pkcs8_components(info)
 
     params =
       case params do
@@ -743,7 +732,7 @@ defmodule RequestSeal.Custody.Local do
         {{:ed25519, seed}, nil, nil}
 
       _ ->
-        ensure(false, :unsupported_format)
+        fail(:unsupported_format)
     end
   end
 
@@ -752,7 +741,7 @@ defmodule RequestSeal.Custody.Local do
       case oid do
         {1, 2, 840, 10045, 3, 1, 7} -> "P-256"
         {1, 3, 132, 0, 34} -> "P-384"
-        _ -> ensure(false, :invalid_key)
+        _ -> fail(:invalid_key)
       end
 
     expected = if point == :asn1_NOVALUE, do: nil, else: {:ec, crv, point}
