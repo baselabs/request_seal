@@ -463,6 +463,31 @@ defmodule RequestSeal.DiscoveryLimitsTest do
     end
   end
 
+  test "Age is corrected by the response delay (RFC 9111 Section 4.2.3)" do
+    now = System.system_time(:second)
+    {:ok, clock} = Agent.start_link(fn -> now end)
+
+    # The peer advances the clock while it serves the request, so every read
+    # before the request sees `now` and every read after the response sees now + 30.
+    p =
+      peer(fn socket, _ ->
+        Agent.update(clock, fn _ -> now + 30 end)
+
+        Peer.reply(socket, Peer.directory(), [
+          media(),
+          {"Date", http_date(now)},
+          {"Cache-Control", "max-age=300"},
+          {"Age", "100"}
+        ])
+      end)
+
+    assert {:ok, set} = Discovery.fetch(source(p), clock: fn -> Agent.get(clock, & &1) end)
+    # corrected age = 100 + 30 delay = 130 (above the apparent age of 30);
+    # freshness left = 300 - 130 = 170 from the response time now + 30.
+    assert set.fetched_at == now + 30
+    assert set.expires_at == now + 30 + 170
+  end
+
   @tag fix2: true
   test "fallback freshness is configurable and all freshness remains capped" do
     now = System.system_time(:second)

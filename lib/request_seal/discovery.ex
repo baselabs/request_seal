@@ -44,7 +44,8 @@ defmodule RequestSeal.Discovery do
 
   Web Bot Auth protocol-00 Appendix C.4 states: "A verifier should not fetch the
   directory for every request." Freshness follows `Cache-Control: max-age` before
-  `Expires`, accounting for `Date` and `Age` under RFC 9111. Without either
+  `Expires`, accounting for `Date`, `Age` and the response delay under RFC 9111
+  Section 4.2.3. Without either
   freshness field, the default is 300 seconds, caller-configurable via `min_ttl`.
   Invalid or past `Expires` is immediately stale. `max_ttl`, key/signature expiry,
   and no-cache/no-store still bound freshness.
@@ -344,6 +345,9 @@ defmodule RequestSeal.Discovery do
 
   defp fetch_source(source, clock, deadline, etag, stored_lifetime) do
     uri = Source.url!(source.location)
+    # RFC 9111 Section 4.2.3: the request time bounds the response delay that
+    # corrects a received Age.
+    requested_at = Support.clock(clock)
 
     case resource(uri, source, deadline, 0, etag) do
       {:not_modified, fields} ->
@@ -359,13 +363,13 @@ defmodule RequestSeal.Discovery do
 
         fresh =
           if freshness_directives?(fields),
-            do: expiry(fields, source, now),
+            do: expiry(fields, source, requested_at, now),
             else: now + (stored_lifetime || 0)
 
         {:ok, {:not_modified, %{etag: etag, fetched_at: now, expires_at: fresh}}}
 
       {fields, message, location, decoded} ->
-        fetched_set(fields, message, location, decoded, source, clock, deadline)
+        fetched_set(fields, message, location, decoded, source, clock, deadline, requested_at)
     end
   end
 
@@ -389,9 +393,9 @@ defmodule RequestSeal.Discovery do
     |> Enum.map(&HTTP1.trim_ows/1)
   end
 
-  defp fetched_set(fields, message, location, decoded, source, clock, deadline) do
+  defp fetched_set(fields, message, location, decoded, source, clock, deadline, requested_at) do
     now = Support.clock(clock)
-    expires = expiry(fields, source, now)
+    expires = expiry(fields, source, requested_at, now)
 
     {document, key_message, key_fields, location, expires, key_bytes} =
       case source.type do
@@ -419,12 +423,16 @@ defmodule RequestSeal.Discovery do
               )
 
               nested_source = %{source | type: :jwks_uri}
+              nested_requested_at = Support.clock(clock)
 
               {nested_fields, nested_message, nested_location, nested_bytes} =
                 resource(nested, nested_source, deadline, 0, nil)
 
+              nested_expires =
+                expiry(nested_fields, source, nested_requested_at, Support.clock(clock))
+
               {body_document(nested_bytes, nested_source), nested_message, nested_fields,
-               nested_location, min(expires, expiry(nested_fields, source, now)), nested_bytes}
+               nested_location, min(expires, nested_expires), nested_bytes}
 
             true ->
               ensure(false, :invalid_key_set)
@@ -831,7 +839,7 @@ defmodule RequestSeal.Discovery do
     %{message | fields: fields ++ selected_fields}
   end
 
-  defp expiry(fields, source, now) do
+  defp expiry(fields, source, requested_at, now) do
     controls = cache_controls(fields)
 
     # RFC 9111 Sections 5.2.2.4 and 5.2.2.5: no-cache and no-store also arrive
@@ -868,7 +876,9 @@ defmodule RequestSeal.Discovery do
 
     age = HTTP1.value(fields, "age") || "0"
     ensure(byte_size(age) in 1..10 and Regex.match?(~r/\A[0-9]+\z/, age), :invalid_response)
-    age = max(String.to_integer(age), max(now - date, 0))
+    # RFC 9111 Section 4.2.3: corrected_age_value = age_value + response_delay;
+    # the current age is the larger of it and the apparent age.
+    age = max(String.to_integer(age) + max(now - requested_at, 0), max(now - date, 0))
     ttl = max(min(ttl, source.max_ttl) - age, 0)
     now + if(no_cache, do: 0, else: ttl)
   end
