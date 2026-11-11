@@ -20,7 +20,7 @@ defmodule RequestSeal.PlugTransportTest do
     %{handle: T.handle()}
   end
 
-  test "Capture, builder and Finch agree on mixed-case hosts and default ports" do
+  test "Capture, builder and Finch derive equivalent normalized origin components" do
     tls = T.tls()
 
     for {scheme, default, server_opts} <- [
@@ -36,9 +36,18 @@ defmodule RequestSeal.PlugTransportTest do
         url = "#{scheme}://#{host}/path"
         {:ok, built} = RequestSeal.Message.request("GET", url, [], nil)
         {:ok, finch} = RequestSeal.Finch.request_message(Finch.build(:get, url))
-        assert captured.message.authority == built.authority
+        assert built.authority == host
+        normalized_host = String.downcase(host)
+
+        normalized_authority =
+          if host == "ExAmPlE.COM:#{default}", do: "example.com", else: normalized_host
+
+        wire_authority =
+          if host == "ExAmPlE.COM:#{default}", do: "ExAmPlE.COM", else: host
+
+        assert captured.message.authority == normalized_authority
         assert captured.message.scheme == built.scheme
-        assert {finch.authority, finch.scheme} == {built.authority, built.scheme}
+        assert {finch.authority, finch.scheme} == {wire_authority, built.scheme}
 
         for message <- [captured.message, finch] do
           assert RequestSeal.SignatureBase.build(message, ~s[("@authority" "@scheme")]) ==
@@ -1831,8 +1840,8 @@ defmodule RequestSeal.PlugTransportTest do
         assert verified.signature.crypto == :valid
         {:ok, expected} = RequestSeal.Message.request("GET", url, [], nil)
 
-        assert {captured.message.scheme, captured.message.authority} ==
-                 {expected.scheme, expected.authority}
+        assert RequestSeal.SignatureBase.build(captured.message, ~s[("@scheme" "@authority")]) ==
+                 RequestSeal.SignatureBase.build(expected, ~s[("@scheme" "@authority")])
       end
     end
   end

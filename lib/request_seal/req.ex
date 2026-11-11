@@ -30,6 +30,11 @@ if Code.ensure_loaded?(Req) do
     hooks that can mutate transport bytes after signing reject. No pool, server,
     or background fetch starts.
 
+    Each signed attempt preserves host case and omits the scheme's default port
+    through `RequestSeal.Finch`, matching Mint's Host or `:authority` bytes for
+    `@target-uri`. `@authority` normalizes during signature-base derivation;
+    redirect origin comparisons normalize host case separately.
+
     When required, verification is the first response step, before retry, HTTP errors,
     redirect, digest auth, decompression, or decoding. Each intermediate response
     must satisfy the selected policy: unsigned 3xx/5xx responses fail closed
@@ -112,6 +117,9 @@ if Code.ensure_loaded?(Req) do
     with `verify: :none` it runs just before Req's `:decompress_body` step and
     makes no verification claim. Nothing is sent and no process starts. Run the
     request with `Req.request/1` against a caller-started Finch pool.
+
+    The signed origin follows `RequestSeal.Finch.request_message/2`: host case
+    is preserved and default ports are omitted to match Mint's wire authority.
 
     ## Parameters
 

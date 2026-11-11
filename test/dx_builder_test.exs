@@ -23,16 +23,16 @@ defmodule RequestSeal.DXBuilderTest do
              RequestSeal.sign(message, spec, signer, clock: fn -> 253_402_300_800 end)
   end
 
-  test "request builder normalizes origins while preserving target and field bytes" do
+  test "request builder preserves origin target and field bytes" do
     headers = [{"X-Repeat", " first "}, {"x-repeat", <<255>>}, {"X-Repeat", "third"}]
 
     for method <- ["GET", "post", "M-SEARCH", "OPTIONS"],
         {url, scheme, authority, target} <- [
-          {"https://Example.COM/a%2Fb?x=1&x=2", "https", "example.com", "/a%2Fb?x=1&x=2"},
-          {"http://example.com:080?", "http", "example.com", "/?"},
+          {"https://Example.COM/a%2Fb?x=1&x=2", "https", "Example.COM", "/a%2Fb?x=1&x=2"},
+          {"http://example.com:080?", "http", "example.com:080", "/?"},
           {"https://[2001:db8::1]:8443/", "https", "[2001:db8::1]:8443", "/"},
           {"http://example.com:0", "http", "example.com:0", "/"},
-          {"HTTPS://Example.COM:443?x=%2f", "https", "example.com", "/?x=%2f"}
+          {"HTTPS://Example.COM:443?x=%2f", "HTTPS", "Example.COM:443", "/?x=%2f"}
         ],
         bytes <- [nil, "", <<0, 255, 1>>],
         algorithms <- [nil, ["sha-256"], ["sha-512", "sha-256"]] do
@@ -143,10 +143,17 @@ defmodule RequestSeal.DXBuilderTest do
     signer = fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
     key = fn alg, base, signature -> Crypto.verify(alg, base, signature, {:hmac, secret}) end
 
-    for components <- [
-          ~s[("@method" "@authority" "@path")],
-          ~s[("@method" "@scheme" "@authority" "@path")],
-          ~s[("@method" "@target-uri")]
+    for {components, accepted_urls} <- [
+          {~s[("@method" "@authority" "@path")],
+           [
+             "https://example.com/",
+             "https://example.com:443/",
+             "http://example.com/",
+             "http://example.com:80/"
+           ]},
+          {~s[("@method" "@scheme" "@authority" "@path")],
+           ["https://example.com/", "https://example.com:443/"]},
+          {~s[("@method" "@target-uri")], ["https://example.com/"]}
         ] do
       {:ok, original} = Message.request("GET", "https://example.com/", [], nil)
       signing = %{label: "sig", algorithm: "hmac-sha256", components: components, expires_in: 60}
@@ -173,8 +180,7 @@ defmodule RequestSeal.DXBuilderTest do
         {:ok, message} = Message.request("GET", url, [], nil)
         candidate = %{message | fields: signed.fields}
 
-        if message.authority == "example.com" and
-             (components == ~s[("@method" "@authority" "@path")] or message.scheme == "https") do
+        if url in accepted_urls do
           assert {:ok, verified} = RequestSeal.verify(candidate, policy, label: "sig")
           assert verified.signature.crypto == :valid
         else

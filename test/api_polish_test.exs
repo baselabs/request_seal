@@ -139,20 +139,23 @@ defmodule RequestSeal.APIPolishTest do
   end
 
   @tag :a5
-  test "builder normalizes origin like Finch and rejects fragments and invalid UTF-8" do
+  test "builder preserves URL origin while Finch follows the wire authority" do
     assert {:error, %Message.Error{reason: :invalid_message}} =
              Message.request("GET", "https://example.com#frag", [], nil)
 
     assert {:ok, message} = Message.request("GET", "HTTPS://Example.COM:443/x", [], nil)
 
     assert {message.scheme, message.authority, message.raw_target} ==
-             {"https", "example.com", "/x"}
+             {"HTTPS", "Example.COM:443", "/x"}
 
     {:ok, finch} =
       RequestSeal.Finch.request_message(Finch.build(:get, "HTTPS://Example.COM:443/x"))
 
-    assert {message.scheme, message.authority, message.raw_target} ==
-             {finch.scheme, finch.authority, finch.raw_target}
+    assert {finch.scheme, finch.authority, finch.raw_target} ==
+             {"https", "Example.COM", "/x"}
+
+    assert RequestSeal.SignatureBase.build(message, ~s[("@scheme" "@authority")]) ==
+             RequestSeal.SignatureBase.build(finch, ~s[("@scheme" "@authority")])
 
     assert {:error, %Message.Error{reason: :invalid_message}} =
              Message.request("GET", <<"https://example.com/", 255>>, [], nil)

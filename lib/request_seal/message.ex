@@ -15,7 +15,9 @@ defmodule RequestSeal.Message do
 
   A request's `:scheme` and `:authority` are caller-declared authoritative origin
   facts, never inferred from Host or Forwarded. A missing origin is preserved as
-  `nil`; a later component rule decides whether it is required.
+  `nil`; a later component rule decides whether it is required. `request/5`
+  preserves their URL spelling, including host case and explicit default ports,
+  for `@target-uri`. Only component derivation normalizes `@authority` and `@scheme`.
 
   Use `request/5` and `response/4` to build common messages from a URL, headers,
   and body bytes, and `new/1` for full control over every attribute. `validate/1`
@@ -168,11 +170,14 @@ defmodule RequestSeal.Message do
   @doc """
   Build an origin-form request from an absolute HTTP(S) URL, ordered headers, and exact body bytes.
 
-  The scheme and authority are ASCII-lowercased; a port numerically equal to the
-  scheme default (HTTPS 443, HTTP 80) is omitted, matching Finch and Req. Path and
-  query bytes, including percent escapes, are preserved. An absent path becomes
-  `/`; an empty query retains its `?`. Transport declarations stay unknown and
-  trailers `:unavailable`. The result passes through `new/1`.
+  Scheme, authority, path, and query bytes, including host case, explicit default
+  ports, and percent escapes, are preserved. `@target-uri` uses those bytes;
+  `@authority` and `@scheme` normalize only during signature-base derivation
+  ([RFC 9421 Sections 2.2.2–2.2.4](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.2.2)).
+  An absent path becomes `/`; an empty query retains its `?`. Unlike this URL
+  builder, the Finch and Req adapters omit default ports to match Mint's wire
+  authority. Transport declarations stay unknown and trailers `:unavailable`.
+  The result passes through `new/1`.
 
   ## Parameters
 
@@ -217,11 +222,11 @@ defmodule RequestSeal.Message do
       iex> Enum.map(message.fields, &{&1.name, &1.value})
       [{"X", "one"}, {"X", "two"}]
 
-  Default ports are dropped and a digest header can be added:
+  Origin spelling is preserved and a digest header can be added:
 
       iex> {:ok, message} = RequestSeal.Message.request("POST", "HTTPS://Telemetry.Example:443/ingest", [{"Content-Type", "application/json"}], ~s({"hello": "world"}), digest: ["sha-256"])
       iex> {message.scheme, message.authority, message.raw_target}
-      {"https", "telemetry.example", "/ingest"}
+      {"HTTPS", "Telemetry.Example:443", "/ingest"}
       iex> Enum.map(message.fields, &{&1.name, &1.value})
       [{"Content-Type", "application/json"}, {"content-digest", "sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:"}]
       iex> RequestSeal.Message.request("GET", "https://example.org/page#top", [], nil)
@@ -310,23 +315,10 @@ defmodule RequestSeal.Message do
   end
 
   defp request_parts(url) when is_binary(url) and byte_size(url) <= 17_480 do
-    # Preserve path/query octets; normalize only the transport origin.
+    # RFC 9421 Section 2.2.2 uses the target URI's spelling, including authority.
     if String.valid?(url) and not String.contains?(url, "#") do
       case Regex.run(~r/\A((?i:https?)):\/\/([^\/?]+)((?:[\/?].*)?)\z/, url) do
         [_, scheme, authority, tail] ->
-          scheme = String.downcase(scheme)
-          authority = String.downcase(authority, :ascii)
-          default_port = if scheme == "https", do: 443, else: 80
-
-          authority =
-            case Regex.run(~r/\A(\[[^\]]+\]|[^:]+):([0-9]+)\z/, authority) do
-              [_, host, port] ->
-                if String.to_integer(port) == default_port, do: host, else: authority
-
-              _ ->
-                authority
-            end
-
           target = if tail == "" or String.starts_with?(tail, "?"), do: "/" <> tail, else: tail
           {:ok, scheme, authority, target}
 

@@ -4,6 +4,8 @@ if Code.ensure_loaded?(Finch) do
     Optional finalized Finch translation and signing. No pool is started or owned.
 
     Requests preserve same-name header order and Finch's actual request target.
+    Their authority preserves host case and omits only the scheme's default
+    port, matching Mint's Host or `:authority` bytes for `@target-uri`.
     No stream is silently read: a streaming body stays unavailable unless the
     caller explicitly retains it under a byte bound and a 16,384-chunk work
     ceiling (including empty chunks). Empty chunks are discarded; reaching the
@@ -46,9 +48,10 @@ if Code.ensure_loaded?(Finch) do
     Translates a built Finch request into a lossless `RequestSeal.Message` without signing it.
 
     The message uses the request's method and scheme, Finch's request path as an
-    origin-form target, and an authority that lowercases the host and omits the
-    default port (80 for HTTP, 443 for HTTPS). Headers keep their order and
-    spelling. A caller-supplied Host header rejects with `:invalid_options`
+    origin-form target, and an authority that preserves host case and omits the
+    default port (80 for HTTP, 443 for HTTPS), matching Mint's Host or `:authority`
+    bytes. `@target-uri` uses that spelling; `@authority` normalizes at derivation.
+    Headers keep their order and spelling. A caller-supplied Host header rejects with `:invalid_options`
     before reading the body. Trailers are `:unavailable`. The request is not sent.
 
     ## Parameters
@@ -483,12 +486,14 @@ if Code.ensure_loaded?(Finch) do
     def prepare(_, _), do: Signing.fail(:invalid_request)
 
     defp authority(request) do
-      normalized_host = String.downcase(request.host, :ascii)
-
+      # Mint 1.11.0: lib/mint/http1.ex:1346-1353 (default_host_header/1),
+      # lib/mint/http2.ex:1227-1235, and lib/mint/core/util.ex:20-28 preserve
+      # host case, bracket IPv6, and append only non-default ports. Match those
+      # wire bytes here; RFC 9421 normalizes only the derived @authority.
       host =
-        if String.contains?(normalized_host, ":"),
-          do: "[#{normalized_host}]",
-          else: normalized_host
+        if String.contains?(request.host, ":"),
+          do: "[#{request.host}]",
+          else: request.host
 
       if (request.scheme == :http and request.port == 80) or
            (request.scheme == :https and request.port == 443),
