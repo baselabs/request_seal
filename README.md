@@ -25,10 +25,10 @@ Use it to:
 Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 
 ```elixir
-{:request_seal, "~> 0.5.2"}
+{:request_seal, "~> 1.0"}
 ```
 
-Install RequestSeal 0.5.2 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds. RequestSeal needs Elixir 1.18 or newer (below 2.0) on Erlang/OTP 27 or newer; the optional ash_onetime and ash_hooks integrations need Elixir 1.20.
+Install RequestSeal 1.0.0 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds. RequestSeal needs Elixir 1.18 or newer (below 2.0) on Erlang/OTP 27 or newer; the optional ash_onetime and ash_hooks integrations need Elixir 1.20.
 
 Add optional dependencies for the integrations you use. The table is a reference; the complete webhook dependency list follows.
 
@@ -48,7 +48,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 
 ```elixir
 [
-  {:request_seal, "~> 0.5.2"},
+  {:request_seal, "~> 1.0"},
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.23.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},
@@ -526,7 +526,7 @@ A valid signature proves which key signed which covered bytes; a trusted associa
 
 ## Conformance corpus
 
-RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. GitHub releases attach it as `corpus.tar.gz` with `corpus.sha256`; the latest corpus release is v0.4.0. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
+RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. GitHub releases attach it as `corpus.tar.gz` with `corpus.sha256`; the latest corpus release is v1.0.0. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
 
 ## Documentation
 

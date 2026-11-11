@@ -48,7 +48,7 @@ defmodule RequestSeal.MixProject do
 
     [
       app: :request_seal,
-      version: "0.5.2",
+      version: "1.0.0",
       # Libraries declare a consumer range; development and notebook tools stay pinned.
       # OTP 27 supplies :json; CI tests the floor, a middle and the latest toolchain.
       elixir: "~> 1.18",
@@ -75,7 +75,7 @@ defmodule RequestSeal.MixProject do
       ],
       docs: [
         main: "readme",
-        source_ref: "v0.5.2",
+        source_ref: "v1.0.0",
         # Historical entries retain references to removed APIs.
         skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
         extras:

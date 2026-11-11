@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 - 2026-11-11
+
+### Upgrading from 0.5
+
+- Change your requirement to `{:request_seal, "~> 1.0"}`; `~> 0.5` never matches 1.0.0. With the optional integrations, allow `{:ash_onetime, "~> 1.9 and >= 1.9.2"}`; ash_hooks 2.x and 3.x are both accepted.
+- `RequestSeal.verify_quorum/3` and `RequestSeal.Quorum` are removed. Verify each signature label with `RequestSeal.verify/3`, and decide in your application which verified signers you require. Remove handlers for the `[:request_seal, :verify_quorum, :stop]` telemetry event and the `:quorum` error layer.
+- `RequestSeal.WebBotAuth.verify/3` with a required replay policy rejects a message carrying more than one selected signature (`:unexpected_signature` at `:policy`); verify nested envelopes with `replay: :not_required`. Replay facts no longer include `label`; drop it from any commitment that read it.
+- `RequestSeal.Finch` rejects a caller-supplied `Host` header; remove it and let Mint derive Host from the URL.
+- Signatures covering `@target-uri` for a URL written with uppercase host letters or an explicit default port now sign the URL as written, so peers that keep those bytes verify them.
+- With `RequestSeal.Plug.Capture`, `origin: :connection` takes the authority from the request's Host line; declare your origin in production, as the Phoenix and Plug guide explains.
 
 ### Removed
 
@@ -8,6 +17,7 @@
 
 ### Changed
 
+- Sixteen public functions gained explicit `@spec`s, and two API-index links point at the right module pages.
 - The optional ash_hooks integration accepts ash_hooks 3.0 (`~> 2.0 or ~> 3.0`).
 - The optional ash_onetime requirement rises from `~> 1.5` to `~> 1.9 and >= 1.9.2`, the oldest release with everything `RequestSeal.Replay.AshOnetime` relies on: AshSql at 0.8.6 or later (0.8.4 and 0.8.5 were retired for a security issue), AshPostgres at 2.15.2 or later, and the cleanup fixes that keep nonce retention running (a failed partition prune no longer rolls back nonce deletes; overlapping cleanups no longer deadlock or stall). The development lock moves to ash_onetime 1.9.2 and ash_hooks 3.0.0.
 - A [compatibility and deprecation policy](docs/reference/compatibility.md) states what 1.x keeps stable, what a minor release may add (new options, algorithms, revisions, error reasons, result fields, telemetry keys), how security fixes may tighten acceptance, and how APIs are deprecated. `RequestSeal.Profile` is covered by it and no longer calls itself unstable. `RequestSeal.KeyHandle`'s `ref`, `RequestSeal.Digest`'s hash contexts and `RequestSeal.KeyIdentity`'s fields are documented as implementation state outside the contract. The telemetry contract now covers measurement units and the meaning of each value.
@@ -17,10 +27,17 @@
 
 ### Fixed
 
+- `@target-uri` carries the target URI as sent. `RequestSeal.Message.request/5` keeps the URL's scheme and authority spelling, and `RequestSeal.Finch` and `RequestSeal.Req` keep the host's case and omit only the scheme's default port, matching the Host or `:authority` Mint sends; `@authority` and `@scheme` still normalize when derived (RFC 9421 Sections 2.2.2 and 2.2.3). For a URL with uppercase host letters or an explicit default port, signatures covering `@target-uri` previously disagreed with other RFC 9421 implementations. `RequestSeal.AshHooks.Http` signs the authority its bounded transport sends.
+- Discovery freshness corrects a received `Age` by the response delay (RFC 9111 Section 4.2.3); a slow fetch no longer extends key-set freshness.
 - `RequestSeal.AshHooks.verify_signature/4` rebuilds the message from the provider context's ordered `:header_list` when present (ash_hooks 3.0 with the host's `conn.req_headers`), so a covered header sent on several lines verifies exactly, including with `;bs`. It previously used the context's headers map, which had already lost repeated lines and their order, so such signatures failed. A present but malformed `:header_list` fails closed; contexts without it (ash_hooks 2.x) still verify from the map.
 
 ### Security
 
+- `RequestSeal.Finch` and `RequestSeal.Req` bound the work of retaining a request body from an enumerable or function, and Req's response collection: at most 16,384 chunks (empty chunks are discarded but counted) and a 5-second default retention deadline, both checked before the producer is asked for more; reaching either returns `:limit`. Previously only bytes were counted, so an endless or empty-chunk producer ran unbounded.
+- Ed25519 public keys must decode to a curve point (RFC 8032 Section 5.1.3); other 32-byte encodings now reject at import and when a supplied struct is validated. Such keys could never verify a signature.
+- `RequestSeal.Finch` rejects a caller-supplied `Host` header (`:invalid_options`, case-insensitively, before signing), as `RequestSeal.Req` already did, so the signed `@authority` always matches the Host Mint sends (RFC 9112 Section 3.2).
+- Discovery trims only SP and HTAB around HTTP field values (RFC 9110 Section 5.6.3); other Unicode whitespace no longer turns a malformed `Content-Length`, `Transfer-Encoding`, `Content-Encoding` or media type into a valid one.
+- CIMD discovery sources reject a root-only `/` client identifier (draft-ietf-oauth-client-id-metadata-document-03 Section 3).
 - Documentation: `origin: :connection` in `RequestSeal.Plug.Capture` takes the authority from the request's Host line, which the sender chooses, so a request signed for another site verifies wherever the application answers for any host. The option docs, README quick starts, Plug, ash_hooks and testing guides, Livebook and threat model now say so and show a declared origin for production (RFC 9421 Section 7.4.3, RFC 9110 Section 7.4).
 - `RequestSeal.WebBotAuth.verify/3` with required replay accepts exactly one selected signature and claims over covered values only. It previously made one claim over the whole set of selected signatures, and each signature's facts included its label, which RFC 9421 Section 7.2.5 leaves uncovered. A captured request could therefore be accepted again by relabeling its signature (when the commitment used every fact), by removing one of several signatures, or by combining separately captured signatures. A message with more than one selected signature under required replay now returns `:unexpected_signature` at `:policy` after verification and before any claim; verify nested envelopes with `replay: :not_required`. Replay facts no longer include `label`.
 - Test and notebook tooling now lock `bandit` 1.14.1 (EEF-CVE-2026-116078) and the notebook tooling overrides Livebook's `phoenix_html` pin with 4.4.0 (EEF-CVE-2026-117645). Neither is a runtime dependency of the published package.

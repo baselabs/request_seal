@@ -138,11 +138,11 @@ Other named application profiles belong in extension packages.
    consumer_dir=$(mktemp -d)
    trap 'rm -rf "$consumer_dir"' EXIT
    MIX_INSTALL_DIR="$consumer_dir" elixir -e '
-   Mix.install([{:request_seal, "~> 0.5.2"}])
-   "0.5.2" = Application.spec(:request_seal, :vsn) |> to_string()
+   Mix.install([{:request_seal, "~> 1.0"}])
+   "1.0.0" = Application.spec(:request_seal, :vsn) |> to_string()
    {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
    "GET" = message.method
-   IO.puts("PASS: RequestSeal 0.5.2 clean-consumer install and request construction")
+   IO.puts("PASS: RequestSeal 1.0.0 clean-consumer install and request construction")
    '
    ```
 
