@@ -362,6 +362,49 @@ defmodule RequestSeal.ClientAdaptersTest do
     end
   end
 
+  test "Finch rejects caller Host spelling and duplicates before retention or signing", %{
+    handle: h
+  } do
+    calls = :atomics.new(1, [])
+
+    producer =
+      Stream.map(["body"], fn chunk ->
+        :atomics.add(calls, 1, 1)
+        chunk
+      end)
+
+    signer = fn _a, bytes ->
+      :atomics.add(calls, 1, 1)
+
+      RequestSeal.Custody.sign(h, bytes)
+      |> case do
+        {:ok, signature} -> {:ok, signature}
+        error -> error
+      end
+    end
+
+    for headers <- [
+          [{"host", "example.com"}],
+          [{"Host", "elsewhere.example"}],
+          [{"hOsT", "example.com"}],
+          [{"HOST", "example.com"}, {"host", "elsewhere.example"}]
+        ] do
+      r = Finch.build(:post, "https://example.com/", headers, {:stream, producer})
+
+      assert {:error, %Error{reason: :invalid_options}} =
+               RequestSeal.Finch.request_message(r, body: {:retain, 100})
+
+      assert {:error, %Error{reason: :invalid_options}} =
+               RequestSeal.Finch.sign(r, Peer.spec("()"), signer, body: {:retain, 100})
+
+      assert :atomics.get(calls, 1) == 0
+    end
+
+    r = Finch.build(:post, "https://example.com/", [], "body")
+    assert {:ok, signed} = RequestSeal.Finch.sign(r, Peer.spec("()"), h)
+    assert Enum.any?(signed.headers, fn {name, _} -> name == "Signature" end)
+  end
+
   test "Finch actual request and stream preserve association and digest state", %{handle: h} do
     {origin, task} = Peer.start([%{}, %{trailers: true}], h)
 
@@ -423,8 +466,7 @@ defmodule RequestSeal.ClientAdaptersTest do
 
     r =
       Finch.build(:get, "http://example.com/confidential-path?param=Value", [
-        {"authorization", "Bearer confidential-canary"},
-        {"host", "example.com"}
+        {"authorization", "Bearer confidential-canary"}
       ])
 
     for component <- [~s[("host")], ~s[("@method";req)], ~s[("content-digest";tr)]] do
@@ -490,7 +532,9 @@ defmodule RequestSeal.ClientAdaptersTest do
         Finch.build(
           :post,
           "https://example.com" <> b["message"]["raw_target"],
-          Enum.map(b["message"]["fields"], fn [k, v] -> {k, v} end),
+          b["message"]["fields"]
+          |> Enum.reject(fn [name, _] -> String.downcase(name) == "host" end)
+          |> Enum.map(fn [k, v] -> {k, v} end),
           Peer.body()
         )
 

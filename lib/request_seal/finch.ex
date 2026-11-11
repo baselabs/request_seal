@@ -9,7 +9,11 @@ if Code.ensure_loaded?(Finch) do
     ceiling (including empty chunks). Empty chunks are discarded; reaching the
     ceiling returns `:limit` before pulling again, so EOF must arrive sooner. Signing refuses unavailable
     body coverage, `host`, request `req`/`tr` components, conflicting digests, or
-    unfaithful required fields. Cover `@authority` instead of `host`.
+    unfaithful required fields. Caller-supplied Host headers reject with
+    `:invalid_options`, case-insensitively and before body retention or signing;
+    Mint must derive Host from the same URL authority used by the signature
+    ([RFC 9112 Section 3.2](https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2)).
+    Cover `@authority` instead of `host`.
 
     Response helpers keep trailers separate from headers and associate the exact
     supplied request. Streaming callers withhold their own effects until the
@@ -44,7 +48,8 @@ if Code.ensure_loaded?(Finch) do
     The message uses the request's method and scheme, Finch's request path as an
     origin-form target, and an authority that lowercases the host and omits the
     default port (80 for HTTP, 443 for HTTPS). Headers keep their order and
-    spelling. Trailers are `:unavailable`. The request is not sent.
+    spelling. A caller-supplied Host header rejects with `:invalid_options`
+    before reading the body. Trailers are `:unavailable`. The request is not sent.
 
     ## Parameters
 
@@ -73,7 +78,8 @@ if Code.ensure_loaded?(Finch) do
 
       * `{:ok, %RequestSeal.Message{kind: :request}}` - the translated message.
       * `{:error, %RequestSeal.Adapter.Error{stage: :sign}}` - reasons:
-        `:invalid_options` (unknown, duplicate, or malformed option),
+        `:invalid_options` (unknown, duplicate, or malformed option, or any
+        caller-supplied Host header),
         `:invalid_request` (not a Finch request; unsupported scheme, host, or
         port; non-list headers; unsupported body shape; or a value
         `RequestSeal.Message.new/1` rejects, kept as `source`),
@@ -125,7 +131,8 @@ if Code.ensure_loaded?(Finch) do
     metadata, and returned with its headers replaced by the signed field list:
     the original headers in order, then any generated `content-digest` and
     `content-length`, then `Signature-Input` and `Signature`. Iodata bodies become
-    a binary; a retained stream is replaced by its bytes. Nothing is sent.
+    a binary; a retained stream is replaced by its bytes. Caller-supplied Host
+    headers reject case-insensitively before retention or signing. Nothing is sent.
 
     ## Parameters
 
@@ -178,7 +185,8 @@ if Code.ensure_loaded?(Finch) do
 
       * `{:ok, %Finch.Request{}}` - the signed request.
       * `{:error, %RequestSeal.Adapter.Error{stage: :sign}}` - reasons:
-        `:invalid_options` (option, spec, signer, or clock value; for a handle
+        `:invalid_options` (option, spec, signer, clock value, or caller-supplied
+        Host header; for a handle
         bound to another algorithm, `source` is a `:signer_algorithm_mismatch`
         core error), `:invalid_request` (request translation as in
         `request_message/2`, or a covered `content-length` that disagrees with
@@ -440,6 +448,16 @@ if Code.ensure_loaded?(Finch) do
         request.scheme in [:http, :https] and is_binary(request.host) and is_integer(request.port) and
           request.port in 1..65535,
         :invalid_request
+      )
+
+      Signing.ensure(is_list(request.headers), :invalid_request)
+
+      Signing.ensure(
+        not Enum.any?(request.headers, fn
+          {name, _} when is_binary(name) -> String.downcase(name, :ascii) == "host"
+          _ -> false
+        end),
+        :invalid_options
       )
 
       {body, snapshot} = Signing.body(request.body, option)
