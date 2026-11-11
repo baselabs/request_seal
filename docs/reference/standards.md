@@ -38,8 +38,9 @@ vectors, independent construction, and deployed-peer evidence.
 
 Generic HTTP and JOSE identifiers are separate exact wire tokens. Structured
 Field parameter names cannot contain uppercase letters. The HTTP algorithm
-`ed25519` and JOSE `EdDSA` require explicit selection in their own registries;
-no spelling alias or automatic cross-profile fallback exists. Sources include
+`ed25519` and JOSE `EdDSA` require explicit selection in their own registries.
+Policy allowlists and signature parameters never alias the two registries; only a
+JWKS key's asserted `alg` accepts either spelling and normalizes once at import. Sources include
 [RFC 9421 Sections 2.3, 2.5, 3.3.6, and 3.3.7](https://www.rfc-editor.org/rfc/rfc9421.html),
 [RFC 8941 Section 3.1.2](https://www.rfc-editor.org/rfc/rfc8941.html), and
 [RFC 8037 Section 3.1](https://www.rfc-editor.org/rfc/rfc8037.html#section-3.1).

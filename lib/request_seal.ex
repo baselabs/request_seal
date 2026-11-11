@@ -10,15 +10,14 @@ defmodule RequestSeal do
   replay `:not_required` or a `RequestSeal.Replay.Receipt`, and authorization
   `:not_evaluated`. Required replay invokes the caller commitment only after
   validation, then makes one atomic claim through the caller-owned store.
-  RequestSeal verifies each signature label independently and returns its result;
-  deciding how many signers or which signers an application requires, and mapping
-  a verified signer to application identity or authority, is the application's job.
+  Each verification covers the one signature label you name; a message with
+  several signatures is verified once per label your application accepts.
 
   `RequestSeal.Custody` supplies algorithm-bound `RequestSeal.KeyHandle` capabilities,
   local OTP private-key import, symmetric-secret verification, and an optional
   non-exporting OpenSSH agent signer. Its monitored workers enforce deadlines and
-  caller cancellation; public-key resolution and internal key equivalence exclude
-  private material. Custody verification establishes mathematical validity only.
+  caller cancellation; public-key resolution and handle identity exclude private
+  material. Custody verification establishes mathematical validity only.
 
   `sign/4` appends one signature, either from a caller-built Signature-Input
   (`t:signature_spec/0`) or from a `t:signing_spec/0` that generates metadata.

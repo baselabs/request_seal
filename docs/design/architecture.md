@@ -3,7 +3,7 @@
 # RequestSeal architecture
 
 
-RequestSeal is one framework-independent Elixir library for signing and verifying HTTP messages and generic compact JOSE, with Web Bot Auth protocol-00 and an explicit named-profile extension surface. The TypeScript counterpart is the separate npm package `@request-seal/core`. The lossless message value model (the Message/occurrence/body/transport portion of
+RequestSeal is one framework-independent Elixir library for signing and verifying HTTP messages and generic compact JOSE, with Web Bot Auth protocol-00 and an explicit named-profile extension surface. The lossless message value model (the Message/occurrence/body/transport portion of
 the lossless-HTTP decision) is implemented by `RequestSeal.Message`, `FieldOccurrence`,
 `Body`, and `TransportFacts`; their module documentation is the API reference.
 Structured Fields parsing, serialization, and explicit type schemas are implemented
@@ -21,7 +21,6 @@ Web Bot Auth protocol-00 signing and verification are implemented by
 `RequestSeal.WebBotAuth`, composing explicit trust, discovery, nested coverage,
 and, under required replay, one claim over a single selected signature's covered
 values.
-Body sinks/spools and reverse-proxy adapters remain **proposed public shapes**.
 
 ## Architectural contract
 
@@ -36,7 +35,7 @@ The library owns five pieces of knowledge:
 It does not own an application server, general-purpose HTTP client or connection pool, global key store, replay database, identity provider, authorization engine, or payment execution. The optional discovery adapter implements bounded HTTP/1.1 GET over caller-started OTP TLS under explicit source policy; its cache is caller-started. Importing the package starts no process and performs no network or storage operation. Optional adapters translate those boundaries without moving their policy into the core.
 
 ```text
-Req / Finch / Plug / Phoenix / Ash / reverse proxy
+Req / Finch / Plug / Phoenix / Ash / ash_hooks
                          │ lossless adapter contract
                          ▼
               Profiles and policy evaluation
@@ -131,17 +130,10 @@ pipeline. It generates explicit metadata with a caller clock and optional
 caller-owned nonce entropy, and accepts an opaque custody handle or function
 with bounded execution. The explicit-input form preserves caller-supplied metadata.
 
-Spec-list signing and `SignedMessage` remain **proposed extensions**. Current signing
-accepts one specification and a caller function or opaque handle; verification resolves public keys
+Signing accepts one specification and a caller function or opaque handle; verification resolves public keys
 or caller-owned verification functions through `Policy.key_resolver`.
 
-```elixir
-# PROPOSED EXTENSION — current sign/4 accepts one specification.
-@spec RequestSeal.sign(RequestSeal.Message.t(), [signature_spec()], RequestSeal.Policy.signer(), keyword()) ::
-        {:ok, RequestSeal.SignedMessage.t()} | {:error, RequestSeal.Error.t()}
-```
-
-`FieldOccurrence` preserves one field name and raw value; ordered occurrence lists retain repeats, source section (`:headers` or `:trailers`), and adapter provenance. It never collapses duplicates into a map. `Body` distinguishes bytes already retained, a one-pass stream, consumed content, and an unavailable body. A stream handle can remain unread after transport completes; known trailers do not imply body consumption. `RequestSeal.Digest` implements bounded caller-fed incremental hashing without promising replayability. Single-label verification accepts `:digest_state` at caller-established EOF and never reads a stream handle. The Req adapter bounds retained response chunks and withholds delivery until verification succeeds; Finch exposes caller-fed digest verification. Plug capture retains bounded request bytes before downstream parsing and replays them through Plug readers. Generic body sinks/spools and returned body-disposition facts remain proposed: a caller-selected retained-body sink or spool would preserve bytes before downstream parsing. Required content checks fail before replay consumption when the needed body or digest state is unavailable. `transport` records only enumerated HTTP-version and TLS declarations with `evidence: :declared`. Authoritative scheme and authority belong to the Message, selected by caller policy; forwarded headers never supply them implicitly.
+`FieldOccurrence` preserves one field name and raw value; ordered occurrence lists retain repeats, source section (`:headers` or `:trailers`), and adapter provenance. It never collapses duplicates into a map. `Body` distinguishes bytes already retained, a one-pass stream, consumed content, and an unavailable body. A stream handle can remain unread after transport completes; known trailers do not imply body consumption. `RequestSeal.Digest` implements bounded caller-fed incremental hashing without promising replayability. Single-label verification accepts `:digest_state` at caller-established EOF and never reads a stream handle. The Req adapter bounds retained response chunks and withholds delivery until verification succeeds; Finch exposes caller-fed digest verification. Plug capture retains bounded request bytes before downstream parsing and replays them through Plug readers. Required content checks fail before replay consumption when the needed body or digest state is unavailable. `transport` records only enumerated HTTP-version and TLS declarations with `evidence: :declared`. Authoritative scheme and authority belong to the Message, selected by caller policy; forwarded headers never supply them implicitly.
 
 Parsed `RequestSeal.StructuredFields.Value` parameters preserve order and exact typed values; verification exposes decoded parameters in its result. Implemented RFC 9421 signature-base components include all nine derived components plus field components and the `sf`, `key`, `bs`, `tr`, `req`, and `@query-param`'s required `name` parameters. Requests, responses, related-request context, and trailers are implemented. `RequestSeal.AcceptSignature` implements signature requests and fulfillment. The implemented HTTP algorithm registry covers `rsa-pss-sha512`, `rsa-v1_5-sha256`, `hmac-sha256`, `ecdsa-p256-sha256`, `ecdsa-p384-sha384`, and `ed25519`. RFC 9421's JWS-algorithm extension follows a separate explicit registry mapping. Algorithm identifiers remain exact wire tokens; HTTP, JOSE, and case variants never share implicit normalization.
 
@@ -158,8 +150,7 @@ comparison inside the custodian, such as OTP's
 No runtime default substitutes for the selected algorithm contract.
 
 The implemented generic authentication digest policy permits `sha-256` and `sha-512`.
-Weak, unknown, or unselected algorithms cannot satisfy integrity policy. A profile
-may eventually select both fields; the implemented policy selects either
+Weak, unknown, or unselected algorithms cannot satisfy integrity policy. The policy selects either
 `Content-Digest` or `Repr-Digest`, its algorithms, and its header or trailer section
 explicitly, and requires complete signature coverage. Those fields never substitute
 for one another. Hash the exact
@@ -180,19 +171,19 @@ Named profiles are immutable source-bound definitions:
 There is no permissive fallback from one profile to another. Source revision
 selection is explicit in configuration and result data. Web Bot Auth accepts
 only the selected draft's field representation and predicates. Source-bound
-acceptance is an accepted architectural decision. The unstable
-`RequestSeal.Profile` extension surface is defined as: package-namespaced
+acceptance is an accepted architectural decision. The `RequestSeal.Profile`
+extension surface, covered by the 1.x compatibility policy, consists of package-namespaced
 names, bounded metadata, explicit verification predicates, and consumer
 allowlists. A profile stamp records selection, not proof that an extension's
 rules ran.
 
-## Multiple signatures
+## Several signatures on one message
 
-RequestSeal verifies each signature label independently and returns its result; deciding how many signers or which signers an application requires, and mapping a verified signer to application identity or authority, is the application's job.
+Each verification covers one label; see [several signatures on one message](../guides/signing-and-verifying.md#several-signatures-on-one-message).
 
 ## Keys, discovery, and replay
 
-Private key material never enters a general message or result structure. A `KeyHandle` is an opaque caller value understood only by the selected signing, verification, or key-unwrapping custodian. The generic signer callback returns signature bytes, never a secret. Custody exposes public metadata through separate operations. Asymmetric verification resolves public key material; symmetric HMAC verification resolves an arity-three verification function that can invoke an opaque custody handle, keeping the secret inside its custodian. HMAC proves shared-secret possession, not a unique signer or public verifiability. Generic policy resolution supplies an authoritative algorithm and public key or verification function, with optional trusted key-equivalence identity. `Discovery.Resolution` separately exposes source type, location, origin, fetched-at time, expiry, revision, and possession-proof status. The generic resolver bridge returns only algorithm and key; Web Bot Auth applies explicit caller trust before recording an agent association and provenance.
+Private key material never enters a general message or result structure. A `KeyHandle` is an opaque caller value understood only by the selected signing, verification, or key-unwrapping custodian. The generic signer callback returns signature bytes, never a secret. Custody exposes public metadata through separate operations. Asymmetric verification resolves public key material; symmetric HMAC verification resolves an arity-three verification function that can invoke an opaque custody handle, keeping the secret inside its custodian. HMAC proves shared-secret possession, not a unique signer or public verifiability. Generic policy resolution supplies exactly an authoritative algorithm and a public key or verification function. `Discovery.Resolution` separately exposes source type, location, origin, fetched-at time, expiry, revision, and possession-proof status. The generic resolver bridge returns only algorithm and key; Web Bot Auth applies explicit caller trust before recording an agent association and provenance.
 
 `RequestSeal.Custody` implements a cancellation- and deadline-aware contract for opaque, algorithm-bound `KeyHandle` values. `Custody.Local` holds OTP signing and RSA-OAEP recipient descriptors in sensitive per-handle processes, imports unencrypted private PEM/PKCS #8 DER/JWK, and verifies HMAC within custody. Unwrap-only handles bind exactly one RSA-OAEP algorithm; JWE resolvers can return them so private RSA decryption stays in the sensitive holder; the CEK passes through the sensitive custody runner and middle process to the sensitive JWE worker for content authentication. JWE's outer middle process and the decrypt caller receive only the authenticated result. Direct unwrap callers receive unwrapped bytes and own their protection. OAEP rejection retains random-CEK fallback and the same complete error as GCM authentication failure. `Custody.SSHAgent` optionally signs through an explicit caller-owned OpenSSH agent socket, selects exact public components, and verifies every returned signature before release. Operations run in monitored workers; deadline expiry or caller death terminates the worker and closes its connections. Local handles reference only the holder PID and token. The holder monitors its creator and exits on creator death or explicit `Local.release/1`; stopped holders return `:key_not_found`. Private state is excluded from handle serialization, function environments, process inspection, and system introspection. Symmetric equivalence is a caller-supplied nonsecret value or remains unknown. These operations establish mathematical validity only. A KMS or HSM custodian would implement the same `RequestSeal.Custody` behavior; none ships with RequestSeal. `Custody.Local.Owner` supervises Ed25519 seed sources. Discovery is an explicit caller-configured adapter with HTTPS requirements, redirect policy, address/range restrictions, response and decompression limits, key-count limits, bounded caches, and rotation/removal semantics. A source that serves an `ETag` makes cache revalidation conditional (`If-None-Match`, RFC 9110 Section 13.1.2; RFC 9111 Section 4.3); a 304 keeps the stored key set under the 304's own freshness directives, JWKS keys may assert `alg` in either the RFC 7517 JOSE or HTTP registry spelling (normalized once at import), and DNS answers split the nonretryable authoritative `:domain_not_found` from the retryable `:resolution_failed`. `Discovery.Source` is caller-configured; a signature key ID never selects a URL. `Discovery.fetch/2` performs a bounded fetch only on explicit invocation, with SSL started by the caller. The generic resolver accepts a snapshot or caller-started cache/source pair. Cache refresh, removal, and invalidation are explicit, with no background timers or stale-key fallback. IDs default to RFC thumbprints; JWKS/CIMD may select directory-assigned IDs while retaining thumbprints for revocation and removal. Directory sources require thumbprint IDs. Freshness honors HTTP cache directives and key/proof expiry; CIMD failures are not negatively cached.
 
@@ -262,7 +253,6 @@ caller authorization remains outside RequestSeal.
 - **Plug/Phoenix:** captures ordered headers and bounded request bytes before parsers; replays retained bytes through Plug readers; trusted external origin is explicit; verification facts go into private connection state; response signing runs after registered callbacks. Unavailable exact target or trailer evidence rejects required coverage. Pending response cookies reject `set-cookie` coverage, and later server transformations must be disabled when covering response bytes. See `RequestSeal.Plug` for supported components and delivery limits.
 - **Ash:** maps successful verification through explicit caller actor/tenant bindings into bounded context and an authorization-enabled scope. Authorization stays in Ash policies and actions.
 - **ash_hooks (Elixir 1.20):** `RequestSeal.AshHooks.verify_signature/4` verifies provider webhooks under an explicit policy and label from the provider context's ordered `:header_list` (ash_hooks 3.0, every line in arrival order), failing closed on a malformed list, and otherwise from the `:headers` map, which has already lost order and duplicates; `RequestSeal.AshHooks.Http` signs final bytes through ash_hooks' transport. Prefer Plug capture when verified facts or rejection before handling matter.
-- **Reverse proxy (planned):** reconstructs external message facts only from an explicit trusted-proxy policy; raw ingress and reconstructed facts remain separately visible for diagnostics.
 
 Each adapter must refuse when its framework cannot supply a required component faithfully. It cannot synthesize a plausible value and call the signature valid.
 

@@ -1,6 +1,7 @@
 defmodule RequestSeal.KeyIdentity do
   @moduledoc """
-  Internal trusted key equivalence, redacted from default inspection.
+  The identity of a custody handle's key, for comparing handles with
+  `same?/2`; redacted from default inspection.
 
   Public identities use validated `RequestSeal.PublicKey` components, with
   `:rsa_pss` normalized to `:rsa`. Symmetric identities are opaque, nonsecret

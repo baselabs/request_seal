@@ -55,6 +55,5 @@ The headless gate verifies code; it does not certify interactive browser accessi
 Follow the [README installation steps](../../README.md#installation). Module
 documentation is the API reference; its examples run as doctests in the declared gate.
 
-Read [the architecture](../design/architecture.md) for implemented contracts and
-separately labeled proposed extensions. See [testing and evidence](testing.md)
+Read [the architecture](../design/architecture.md) for its contracts. See [testing and evidence](testing.md)
 for the current checks and the proof required for conformance claims.

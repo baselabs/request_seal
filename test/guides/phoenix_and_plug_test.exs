@@ -63,6 +63,10 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
         defmodule WebhookApp.WebhookPipeline do
           use Plug.Builder
 
+          # Verify signatures only on webhook paths; every other request passes through.
+          def call(%Plug.Conn{path_info: ["webhooks" | _]} = conn, opts), do: super(conn, opts)
+          def call(conn, _opts), do: conn
+
           plug(RequestSeal.Plug.Capture,
             origin: :connection,
             max_body_bytes: 1_048_576,

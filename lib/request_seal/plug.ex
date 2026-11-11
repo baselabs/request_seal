@@ -56,7 +56,7 @@ if Code.ensure_loaded?(Plug.Conn) do
     [RFC 9421 Section 2.2.5](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.2.5).
     Plug's `request_path` and `query_string` cannot distinguish `/foo?` from `/foo`
     or recover the original HTTP/1 target form. OBSERVED with Plug 1.20.3,
-    Bandit 1.12.5, and Phoenix 1.8.15 through actual socket tests:
+    Bandit 1.14.1, and Phoenix 1.8.15 through actual socket tests:
 
     * Bandit HTTP/1.0 and HTTP/1.1 (TCP or TLS): the consumed request line is not
       retained in the Plug adapter payload.

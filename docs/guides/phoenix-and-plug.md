@@ -50,6 +50,10 @@ Capture and parse the body, then use the verifier directly. Its policy MFA retur
 defmodule WebhookApp.WebhookPipeline do
   use Plug.Builder
 
+  # Verify signatures only on webhook paths; every other request passes through.
+  def call(%Plug.Conn{path_info: ["webhooks" | _]} = conn, opts), do: super(conn, opts)
+  def call(conn, _opts), do: conn
+
   plug(RequestSeal.Plug.Capture,
     origin: :connection,
     max_body_bytes: 1_048_576,
@@ -72,7 +76,7 @@ defmodule WebhookApp.WebhookPipeline do
 end
 ```
 
-Use `WebhookApp.WebhookPipeline` before the existing endpoint parsers (or move these capture/parser plugs into the endpoint itself). Capture must run before any body read, parser, origin rewrite, or remote-IP rewrite. Use the RequestSeal reader and return its bytes unchanged; verification authenticates retained bytes, not arbitrary parser output. A partially drained reader or replaced adapter rejects. A pass-through parser may leave raw content unread for an application reader.
+The two `call/2` clauses run the pipeline only on `/webhooks` paths, so pages, assets and health checks never need a signature. Use `WebhookApp.WebhookPipeline` before the existing endpoint parsers (or move these capture/parser plugs into the endpoint itself). Capture must run before any body read, parser, origin rewrite, or remote-IP rewrite. Use the RequestSeal reader and return its bytes unchanged; verification authenticates retained bytes, not arbitrary parser output. A partially drained reader or replaced adapter rejects. A pass-through parser may leave raw content unread for an application reader.
 
 ## 3. Read the result in your controller
 

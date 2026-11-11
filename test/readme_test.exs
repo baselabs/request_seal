@@ -267,6 +267,10 @@ defmodule RequestSeal.ReadmeTest do
         defmodule MyAppWeb.SignedWebhookPipeline do
           use Plug.Builder
 
+          # Verify signatures only on webhook paths; every other request passes through.
+          def call(%Plug.Conn{path_info: ["webhooks" | _]} = conn, opts), do: super(conn, opts)
+          def call(conn, _opts), do: conn
+
           def signature_policy, do: Application.fetch_env!(:my_app, :http_signature_policy)
 
           plug(RequestSeal.Plug.Capture,

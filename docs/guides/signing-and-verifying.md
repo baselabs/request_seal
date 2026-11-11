@@ -128,9 +128,9 @@ verification.authorization
 The label selects exactly one signature. Policy still requires all six acceptance
 choices; construction and signing do not select verification or authorization rules.
 
-## Multiple signatures
+## Several signatures on one message
 
-RequestSeal verifies each signature label independently and returns its result; deciding how many signers or which signers an application requires, and mapping a verified signer to application identity or authority, is the application's job.
+A message can carry several signatures under different labels. `RequestSeal.verify/3` verifies the one label you name and returns its result; call it once for each label your application accepts. Mapping a verified signer to an application identity or permission is your application's decision.
 
 ## Build messages by hand
 
@@ -225,4 +225,4 @@ parameters.
 
 See [the public contract](../design/architecture.md) for the separate representation, construction, cryptography, profile, trust, integrity, and replay layers. Named application profiles use `RequestSeal.Profile` in extension packages; that extension surface follows the [compatibility policy](../reference/compatibility.md) like the rest of the public API. Extensions must enforce their source-specific rules and trusted attribution; a profile stamp alone is no proof.
 
-Module docs: `RequestSeal`, `RequestSeal.Message`, `RequestSeal.SignatureBase`, `RequestSeal.Policy`, `RequestSeal.Verification`, `RequestSeal.Digest`, `RequestSeal.Profile`, `RequestSeal.Error`. `RequestSeal.Error` lists every reason by layer, and the [errors guide](errors.md) shows how to diagnose them. [Testing](testing.md) distinguishes published vectors, local round trips, independent verifiers, and deployed-peer acceptance. Proposed contracts in design pages do not establish implemented capability.
+Module docs: `RequestSeal`, `RequestSeal.Message`, `RequestSeal.SignatureBase`, `RequestSeal.Policy`, `RequestSeal.Verification`, `RequestSeal.Digest`, `RequestSeal.Profile`, `RequestSeal.Error`. `RequestSeal.Error` lists every reason by layer, and the [errors guide](errors.md) shows how to diagnose them. [Testing](testing.md) distinguishes published vectors, local round trips, independent verifiers, and deployed-peer acceptance.

@@ -61,7 +61,7 @@ defmodule RequestSeal.Discovery do
   [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html),
   [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html),
   [RFC 9110 Section 8.4.1.3](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.4.1.3),
-  [RFC 9111 Section 4.2.1](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.2.1),
+  [RFC 9111 Sections 4.2.1 and 4.2.3](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.2.1),
   [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html).
   """
   alias RequestSeal.{PublicKey, Policy, SignatureFields, StructuredFields}

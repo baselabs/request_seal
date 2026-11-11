@@ -5,7 +5,7 @@
 
 RequestSeal processes attacker-controlled wire data at an authentication boundary. Its primary security goal is to report exactly what was cryptographically established, by which trusted association, under which profile, without granting caller authorization or payment authority.
 
-The TypeScript counterpart is the separate npm package `@request-seal/core`. Both implementations share the independently sourced conformance corpus and its digest and cardinality checks.
+RequestSeal and its [TypeScript counterpart](architecture.md#typescript-counterpart-and-conformance) share the independently sourced conformance corpus and its digest and cardinality checks.
 
 ## Assets and trust boundaries
 

@@ -31,12 +31,11 @@
 | Error layer | The check that rejected a message, such as `:fields`, `:policy`, `:crypto`, `:content`, `:freshness`, or `:replay`. |
 | Correlation | A random token in an error that lets logs and reports refer to one failure without recording its inputs. |
 | Replay claim | An atomic claim using a caller-supplied commitment bound to a verified nonce, challenge, or transaction identifier and caller-defined security scope; expiry controls retention. |
-| Key-equivalence identity | Trusted algorithm-appropriate identity used to deduplicate aliases of one key; public components for asymmetric keys, an opaque custodian-supplied value for symmetric keys that RequestSeal never derives. |
+| Handle identity | The identity of a custody handle's key (`RequestSeal.Custody.identity/1`), compared with `RequestSeal.KeyIdentity.same?/2`: public components for asymmetric keys, an opaque custodian-supplied value for symmetric keys that RequestSeal never derives. |
 | Envelope | Source-selected authenticated unit: HTTP signatures and required nested signatures, or explicitly selected generic JOSE nesting. |
 | Transport evidence | Caller-declared HTTP version and TLS facts (`evidence: :declared`); a declaration cannot prove a connection's security prerequisites. |
 | Recipient integrity | Successful authenticated decryption under an approved recipient key; independently required origin and request association remain separate. |
 | Content digest | Hash of the HTTP message content; distinct from a selected representation's digest. |
 | Counterpart | A specific independent implementation or deployed peer used for interoperability evidence. |
 | Conformance corpus | Source-attributed positive and negative wire cases with deterministic expected results. |
-| Compatibility profile | Design term with no API yet: explicit handling of a named counterpart's documented deviation; never core fallback. |
 | Evidence resolution | Design term with no API: obtaining definitive bytes or rules where source text or examples conflict. |

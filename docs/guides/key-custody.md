@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # Keep signing keys behind a handle
 
@@ -85,8 +85,9 @@ receive only the authenticated result. A direct `Custody.unwrap/3` caller receiv
 unwrapped bytes and owns their protection. On the BEAM, binaries are immutable:
 a CEK that crossed those processes cannot be zeroed and stays in their heaps
 until garbage collection. The mitigation is process-level, not memory-level —
-every CEK-bearing process marks itself sensitive, and the JWE guide's trace test
-proves inspection and tracing cannot observe the CEK from outside.
+every CEK-bearing process marks itself sensitive, so process inspection and
+tracing from outside cannot observe the CEK (exercised by the repository's JWE
+tests).
 
 OAEP unwrap and GCM authentication failures return the identical complete
 `%RequestSeal.JOSE.Error{reason: :decryption_failed, layer: :crypto,

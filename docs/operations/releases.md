@@ -110,9 +110,9 @@ Other named application profiles belong in extension packages.
    This scans all fetched history, including deleted file contents. The term-file
    self-match is the scanner's positive control. An empty result establishes only
    that the configured terms were not found; inspect package/source disclosure too.
-6. Publish to Hex. From the pinned Elixir 1.20 checkout, export `HEX_API_KEY` into
-   the publishing process only, from your secret store; never keep it in a project
-   file, refer to it by name, and never print its value. Verify the security
+6. Publish to Hex. From the pinned Elixir 1.20 checkout, export `HEX_API_KEY` from
+   your secret store into the publishing shell only; never write it to a file or
+   print it. Verify the security
    reporting channel and package ownership, then run:
 
    ```sh

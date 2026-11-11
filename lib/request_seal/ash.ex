@@ -17,7 +17,7 @@ defmodule RequestSeal.Ash do
 
   The returned `RequestSeal.Ash.Scope` always requests `authorize?: true`.
   Actor mapping grants no authority: Ash policies decide whether an action runs.
-  Per [Ash's scope contract](https://hexdocs.pm/ash/3.34.5/Ash.Scope.html), explicit
+  Per [Ash's scope contract](https://hexdocs.pm/ash/3.37.2/Ash.Scope.html), explicit
   actor, tenant, and authorization options take precedence over scope values;
   passing `authorize?: false` explicitly is the caller's own authorization bypass.
   Explicit context is deep merged by Ash, so callers also own any overrides.
@@ -32,20 +32,20 @@ defmodule RequestSeal.Ash do
   the action's permission checks. Check the original record's tenant against the
   action tenant before mutation, for example with an `Ash.Policy.SimpleCheck`;
   a query filter alone does not enforce that check on a loaded record. See
-  [Ash policies](https://hexdocs.pm/ash/3.34.5/policies.html) and
-  [tenant expressions](https://hexdocs.pm/ash/3.34.5/Ash.Expr.html#tenant/0).
+  [Ash policies](https://hexdocs.pm/ash/3.37.2/policies.html) and
+  [tenant expressions](https://hexdocs.pm/ash/3.37.2/Ash.Expr.html#tenant/0).
 
   The caller owns the actor value. RequestSeal's default scope inspection,
   projected context, and binding errors exclude it; actor options intentionally
   carry it into Ash. Ash's own Forbidden `inspect` and enabled policy-breakdown
   messages and logs can show the actor. Map principals to a minimal non-secret
   actor or give the actor a custom `Inspect` implementation. Configure
-  [Ash policy breakdowns](https://hexdocs.pm/ash/3.34.5/policies.html#policy-breakdowns)
+  [Ash policy breakdowns](https://hexdocs.pm/ash/3.37.2/policies.html#policy-breakdowns)
   with that disclosure in mind.
 
   The core mapping and `RequestSeal.Ash.Scope.to_opts/1` require no Ash dependency.
   The optional protocol implementation follows the public
-  [Ash scope protocol](https://hexdocs.pm/ash/3.34.5/Ash.Scope.ToOpts.html).
+  [Ash scope protocol](https://hexdocs.pm/ash/3.37.2/Ash.Scope.ToOpts.html).
   """
 
   alias RequestSeal.{Error, SignatureFields, Verification}

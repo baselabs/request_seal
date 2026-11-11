@@ -23,8 +23,8 @@ defmodule RequestSeal.Crypto do
 
   `sign/4` takes operation-local signing material and `verify/5` a
   `RequestSeal.PublicKey`; their documentation lists the descriptors. HMAC secrets must be
-  32–16,384 bytes for both `"hmac-sha256"` and `{:jws, "HS256"}`; there is no
-  key-equivalence derivation. HMAC compares
+  32–16,384 bytes for both `"hmac-sha256"` and `{:jws, "HS256"}`; no identity is
+  derived from a secret. HMAC compares
   with OTP `:crypto.hash_equals/2`. HMAC proves shared-secret possession only.
 
   The per-call `max_bytes:` bound of `sign/4` and `verify/5` does not change

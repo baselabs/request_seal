@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture, threat model, · Review when: an advertised capability, test runner, or evidence source changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture, threat model · Review when: an advertised capability, test runner, or evidence source changes -->
 
 # Testing and evidence
 
@@ -32,10 +32,7 @@ Database and deployed-source checks are opt-in. Deployed-source checks fetch a l
 public key directory over HTTPS: run them with `mix test --include live_source`, and set
 `REQUESTSEAL_DISCOVERY_CACERTS` to a PEM bundle to replace the operating system's trust
 roots. Public
-documentation and notebooks are enumerated explicitly in mix.exs. The document
-checker rejects unapproved documents, missing metadata, private targets, machine
-paths, and known internal-process prose. This is a bounded disclosure check;
-maintainers still review the actual content before approving an inclusion.
+documentation and notebooks are enumerated explicitly in mix.exs.
 
 ## Input properties and measurements
 
