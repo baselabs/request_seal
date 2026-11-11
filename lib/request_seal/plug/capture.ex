@@ -95,6 +95,7 @@ if Code.ensure_loaded?(Plug.Conn) do
         {:invalid_options, :capture}
     """
     @impl Plug
+    @spec init(keyword()) :: keyword()
     def init(opts) do
       case Signing.protect(:plug, :attach, 0, fn ->
              Signing.options(opts, [:origin, :max_body_bytes, :read_timeout])
@@ -159,6 +160,7 @@ if Code.ensure_loaded?(Plug.Conn) do
     `RequestSeal.Plug.capture/1` shows a successful capture.
     """
     @impl Plug
+    @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
     def call(conn, opts) do
       case prepare(conn, opts) do
         {:ok, ingress, origin} ->

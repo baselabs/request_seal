@@ -187,6 +187,8 @@ if Code.ensure_loaded?(Postgrex) do
         :already_claimed = RequestSeal.Replay.claim(store, claim, timeout: 2_000)
     """
     @impl RequestSeal.Replay
+    @spec claim({Postgrex.conn(), binary()}, Claim.t(), Context.t()) ::
+            :claimed | :already_claimed | {:error, :failure | :timeout | :unavailable}
     def claim({conn, table}, %Claim{} = claim, context) do
       if table?(table) and Claim.valid?(claim) do
         sql =
@@ -256,6 +258,8 @@ if Code.ensure_loaded?(Postgrex) do
           RequestSeal.Replay.Postgres.sweep({conn, "replay_claims"}, trusted_now, context)
     """
     @impl RequestSeal.Replay
+    @spec sweep({Postgrex.conn(), binary()}, integer(), Context.t()) ::
+            {:ok, non_neg_integer()} | {:error, :failure | :timeout | :unavailable}
     def sweep({conn, table}, now, context) when is_integer(now) and now in 0..253_402_300_799 do
       if table?(table) do
         case query(conn, "DELETE FROM \"#{table}\" WHERE retain_until <= $1", [now], context) do

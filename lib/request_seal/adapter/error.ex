@@ -92,5 +92,6 @@ defmodule RequestSeal.Adapter.Error do
       true
   """
   @impl true
+  @spec message(t()) :: binary()
   def message(error), do: "#{error.reason} (#{error.correlation})"
 end

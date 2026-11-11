@@ -65,6 +65,7 @@ if Code.ensure_loaded?(Plug.Conn) do
         {:invalid_options, :verify}
     """
     @impl Plug
+    @spec init(keyword()) :: keyword()
     def init(opts) do
       case Signing.protect(:plug, :attach, 0, fn ->
              Signing.options(opts, [:policy, :label, :on_reject, :assign, :name])
@@ -220,6 +221,7 @@ if Code.ensure_loaded?(Plug.Conn) do
         :ok
     """
     @impl Plug
+    @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
     def call(conn, opts) do
       state = State.get(conn)
 

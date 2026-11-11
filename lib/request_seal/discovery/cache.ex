@@ -18,6 +18,7 @@ defmodule RequestSeal.Discovery.Cache do
   cache termination also cancels all fetches.
   """
   use GenServer
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
   alias RequestSeal.{Discovery, Crypto, SignatureFields}
   alias RequestSeal.Discovery.{Source, Error, Support, KeySet}
   import Support, only: [ensure: 2]

@@ -73,6 +73,7 @@ if Code.ensure_loaded?(Plug.Conn) do
         {:invalid_options, :sign}
     """
     @impl Plug
+    @spec init(keyword()) :: keyword()
     def init(opts) do
       case Signing.protect(:plug, :attach, 0, fn ->
              Signing.options(opts, [:sign, :signer, :signing_timeout, :clock, :on_failure])
@@ -187,6 +188,7 @@ if Code.ensure_loaded?(Plug.Conn) do
         :ok
     """
     @impl Plug
+    @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
     def call(conn, opts) do
       conn = %{conn | adapter: Delivery.wrap(conn.adapter)}
       callbacks = Map.get(conn.private, :before_send)

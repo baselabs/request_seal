@@ -46,6 +46,7 @@ defmodule RequestSeal.StructuredFields.Schema do
       iex> RequestSeal.StructuredFields.Schema.types(:draft)
       []
   """
+  @spec types(term()) :: [bare_type()]
   def types(:rfc8941), do: @base
   def types(:rfc9651), do: @base ++ [:date, :display_string]
   def types(_), do: []

@@ -12,6 +12,7 @@ defmodule RequestSeal.Replay.ETS do
   One namespace should use one freshness bound because duplicates never extend retention.
   """
   use GenServer
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
   @behaviour RequestSeal.Replay
   alias RequestSeal.Custody.Context
   alias RequestSeal.Replay.{Claim, Store}
@@ -49,6 +50,7 @@ defmodule RequestSeal.Replay.ETS do
       iex> RequestSeal.Replay.ETS.start_link(max_entries: 0)
       {:error, :invalid_options}
   """
+  @spec start_link(keyword()) :: GenServer.on_start() | {:error, :invalid_options}
   def start_link([{:max_entries, max}]) when is_integer(max) and max in 1..10_000_000,
     do: GenServer.start_link(__MODULE__, max)
 
@@ -130,6 +132,8 @@ defmodule RequestSeal.Replay.ETS do
       :ok
   """
   @impl RequestSeal.Replay
+  @spec claim(pid(), Claim.t(), Context.t()) ::
+          :claimed | :already_claimed | {:error, :failure | :timeout | :unavailable | :full}
   def claim(pid, %Claim{} = claim, %Context{} = context),
     do: call(pid, {:claim, claim, context}, context)
 
@@ -167,6 +171,8 @@ defmodule RequestSeal.Replay.ETS do
       iex> GenServer.stop(pid)
       :ok
   """
+  @spec sweep(pid(), integer()) ::
+          {:ok, non_neg_integer()} | {:error, :failure | :timeout | :unavailable}
   def sweep(pid, now),
     do:
       sweep(pid, now, %Context{
@@ -212,6 +218,8 @@ defmodule RequestSeal.Replay.ETS do
       :ok
   """
   @impl RequestSeal.Replay
+  @spec sweep(pid(), integer(), Context.t()) ::
+          {:ok, non_neg_integer()} | {:error, :failure | :timeout | :unavailable}
   def sweep(pid, now, %Context{} = context) when is_integer(now) and now in 0..253_402_300_799,
     do: call(pid, {:sweep, now, context}, context)
 
