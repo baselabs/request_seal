@@ -16,14 +16,13 @@ defmodule RequestSeal.Telemetry do
   | Event | Emitted by | Metadata |
   | --- | --- | --- |
   | `[:request_seal, :verify, :stop]` | `RequestSeal.verify/3` | `:outcome` (`:ok` or `:error`), `:reason` (atom or nil), `:layer` (atom or nil), `:detail` (atom or nil) |
-  | `[:request_seal, :verify_quorum, :stop]` | `RequestSeal.verify_quorum/3` | as above |
   | `[:request_seal, :web_bot_auth, :verify, :stop]` | `RequestSeal.WebBotAuth.verify/3` | as above |
   | `[:request_seal, :replay, :claim]` | the required-replay commit shared by every profile | `:outcome` (`:claimed`, `:already_claimed`, or `:error`), `:reason` (atom or nil) |
   | `[:request_seal, :custody, :sign, :stop]` | the shared custody signing path of both `RequestSeal.sign/4` forms | `:outcome` (`:ok` or `:error`), `:reason` (a bounded `RequestSeal.Custody.Error` reason atom or nil) |
 
   A rejected verification reports its bounded `reason` and `layer` exactly as
-  returned to the caller; `:limit` and the retryable `:deadline` make resource
-  exhaustion observable. An `:internal` reason marks an unexpected internal
+  returned to the caller; `:limit` makes resource exhaustion observable. An
+  `:internal` reason marks an unexpected internal
   fault — not named by the input — with the exception class in `detail`.
 
   The event list, names, measurement keys and units, metadata keys, and the
@@ -45,7 +44,6 @@ defmodule RequestSeal.Telemetry do
 
   @events [
     [:request_seal, :verify, :stop],
-    [:request_seal, :verify_quorum, :stop],
     [:request_seal, :web_bot_auth, :verify, :stop],
     [:request_seal, :replay, :claim],
     [:request_seal, :custody, :sign, :stop]

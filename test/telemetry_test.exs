@@ -16,10 +16,9 @@ defmodule RequestSeal.TelemetryTest do
     on_exit(fn -> :telemetry.detach("telemetry-contract-test") end)
   end
 
-  test "the v1 event list is exactly the documented five events" do
+  test "the v1 event list is exactly the documented four events" do
     assert @events == [
              [:request_seal, :verify, :stop],
-             [:request_seal, :verify_quorum, :stop],
              [:request_seal, :web_bot_auth, :verify, :stop],
              [:request_seal, :replay, :claim],
              [:request_seal, :custody, :sign, :stop]
@@ -52,36 +51,6 @@ defmodule RequestSeal.TelemetryTest do
       refute inspect(metadata) =~ canary
       refute inspect(@events) =~ canary
     end
-  end
-
-  test "verify_quorum/3 emits its stop event, including deadline exhaustion" do
-    m = signed(["sig-b21"])
-    q = quorum([slot(:valid, label: "sig-b21")], mode: :any)
-    assert {:ok, _} = RequestSeal.verify_quorum(m, q, [])
-
-    assert_received {:telemetry, [:request_seal, :verify_quorum, :stop], _, metadata}
-    assert %{outcome: :ok} = metadata
-
-    assert {:error, _} =
-             RequestSeal.verify_quorum(
-               m,
-               quorum(
-                 [
-                   slot(:valid,
-                     label: "sig-b21",
-                     principal: "shared",
-                     role: :valid,
-                     required: false
-                   )
-                 ],
-                 mode: :any,
-                 unit: {:role, shared_principal: false}
-               ),
-               deadline: System.monotonic_time(:millisecond) - 1
-             )
-
-    assert_received {:telemetry, [:request_seal, :verify_quorum, :stop], _, deadline_metadata}
-    assert %{outcome: :error, reason: :deadline, layer: :quorum} = deadline_metadata
   end
 
   test "web bot auth verification emits its stop event" do

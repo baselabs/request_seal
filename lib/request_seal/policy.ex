@@ -5,7 +5,7 @@ defmodule RequestSeal.Policy do
   `new/1` takes six required choices (algorithms, required components, key
   resolver, freshness, content, replay) plus optional bounds, validates them
   without invoking any callback, and returns an opaque policy for
-  `RequestSeal.verify/3`, `RequestSeal.Quorum` slots, and `RequestSeal.Profile`.
+  `RequestSeal.verify/3` and `RequestSeal.Profile`.
   Verification revalidates directly built structs.
 
   RFC 9421 Section 2.2.3 lowercases the authority host and omits default ports

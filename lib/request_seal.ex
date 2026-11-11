@@ -10,7 +10,9 @@ defmodule RequestSeal do
   replay `:not_required` or a `RequestSeal.Replay.Receipt`, and authorization
   `:not_evaluated`. Required replay invokes the caller commitment only after
   validation, then makes one atomic claim through the caller-owned store.
-  Composite verification uses `verify_quorum/3` with explicit `RequestSeal.Quorum`.
+  RequestSeal verifies each signature label independently and returns its result;
+  deciding how many signers or which signers an application requires, and mapping
+  a verified signer to application identity or authority, is the application's job.
 
   `RequestSeal.Custody` supplies algorithm-bound `RequestSeal.KeyHandle` capabilities,
   local OTP private-key import, symmetric-secret verification, and an optional
@@ -99,7 +101,7 @@ defmodule RequestSeal do
 
   The key resolver result may carry an optional `:identity`. Here it is only
   checked (a public key's derived identity must agree with it, otherwise
-  `:key_resolver_failed`); it affects counting only in `verify_quorum/3`.
+  `:key_resolver_failed`).
 
   ## Parameters
 
@@ -202,137 +204,6 @@ defmodule RequestSeal do
 
     RequestSeal.Telemetry.emit(
       [:request_seal, :verify, :stop],
-      System.monotonic_time() - start,
-      RequestSeal.Telemetry.meta(result)
-    )
-
-    result
-  end
-
-  @doc """
-  Verify a composite set of signatures against explicit signer slots.
-
-  Each signature label is verified independently against the policy of every
-  slot whose `:label` and `:tag` selectors match it; coverage never pools. The
-  verified candidates are then assigned to slots and counted by the quorum's
-  unit. Assignment, identity classes, bindings, negotiation, and the search
-  budget are specified in `RequestSeal.Quorum`. A label that fails every
-  eligible slot is recorded in `nonqualifying`; it rejects the call only under
-  `invalid: :reject`. When a message both fails the quorum and carries an
-  `Accept-Signature` challenge, the quorum rejection is returned first and
-  negotiation is not evaluated.
-
-  ## Parameters
-
-    * `message` - a `RequestSeal.Message`; it is validated before parsing.
-    * `quorum` - a `RequestSeal.Quorum` from `RequestSeal.Quorum.new/1`.
-      Directly built structs are revalidated and reject with `:invalid_quorum`.
-    * `opts` - keyword list with at most the options below. `[]` is valid.
-
-  ## Options
-
-    * `:accept_signature` - list of signature requests from
-      `RequestSeal.AcceptSignature.parse/2`, at most 16, each applicable to the
-      message kind. Every request must be met by a verified, selector-eligible
-      label after key-unit filtering, with the same covered component identity
-      set and every requested parameter. Default `[]` (no negotiation).
-    * `:deadline` - optional integer, an absolute deadline in
-      `System.monotonic_time(:millisecond)` units bounding the wall-clock time
-      of the slot-assignment search. The deterministic node budget stays the
-      default bound when this option is absent; with it, expiry keeps the
-      best-so-far acceptance semantics (success only when the mode, required
-      slots, and bindings hold) and otherwise returns the retryable
-      `:deadline` reason at `:quorum`. Independent label verification and the
-      polynomial matching paths are not covered by this bound; `RequestSeal.verify/3`
-      has no such option because it runs no unbounded search.
-
-  ## Returns
-
-    * `{:ok, %RequestSeal.Quorum.Verification{}}` - the assigned slots, unit
-      count, per-label results and nonqualifying facts.
-    * `{:error, %RequestSeal.Error{}}` - reasons this function can return, by layer:
-      * `:input` - `:invalid_options`, `:invalid_quorum`, `:invalid_policy`
-        (a slot policy requires replay; see `RequestSeal.Quorum`),
-        `:invalid_message`, `:limit` (dictionary bounds or an exhausted
-        assignment search).
-      * `:fields` - `:missing_signature_input`, `:missing_signature`,
-        `:invalid_signature_input`, `:invalid_signature_field`,
-        `:duplicate_label`, `:duplicate_parameter`, `:label_mismatch`.
-      * `:negotiation` - `:invalid_accept_signature`, `:inapplicable_component`,
-        `:negotiation_unfulfilled`.
-      * `:quorum` - `:unexpected_signature`, `:nonqualifying_signature`
-        (`detail` is the label's last failure reason), `:ambiguous_key_identity`,
-        `:quorum_not_met`, `:binding_unsatisfied`, `:deadline` (retryable; the
-        caller's `:deadline` bound expired during assignment search).
-
-      Failures of individual labels against individual slots are not returned
-      directly; they appear in `nonqualifying`. Meanings: `RequestSeal.Error`.
-
-  ## Examples
-
-      iex> {public_a, seed_a} = :crypto.generate_key(:eddsa, :ed25519)
-      iex> {public_b, seed_b} = :crypto.generate_key(:eddsa, :ed25519)
-      iex> {:ok, handle_a} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed_a})
-      iex> {:ok, handle_b} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed_b})
-      iex> {:ok, key_a} = RequestSeal.PublicKey.import({:ed25519, public_a}, :raw)
-      iex> {:ok, key_b} = RequestSeal.PublicKey.import({:ed25519, public_b}, :raw)
-      iex> keys = %{"builder" => key_a, "reviewer" => key_b}
-      iex> clock = fn -> 1_700_000_000 end
-      iex> {:ok, message} =
-      ...>   RequestSeal.Message.request("POST", "https://builds.example/releases", [], "artifact")
-      iex> spec = fn label, keyid ->
-      ...>   %{
-      ...>     label: label,
-      ...>     algorithm: "ed25519",
-      ...>     components: ~s[("@method" "@path")],
-      ...>     expires_in: 60,
-      ...>     keyid: keyid
-      ...>   }
-      ...> end
-      iex> {:ok, once} = RequestSeal.sign(message, spec.("build", "builder"), handle_a, clock: clock)
-      iex> {:ok, twice} = RequestSeal.sign(once, spec.("review", "reviewer"), handle_b, clock: clock)
-      iex> {:ok, policy} =
-      ...>   RequestSeal.Policy.new(%{
-      ...>     algorithms: ["ed25519"],
-      ...>     components: ~s[("@method" "@path")],
-      ...>     key_resolver: fn %{keyid: keyid} ->
-      ...>       if key = keys[keyid], do: {:ok, %{algorithm: "ed25519", key: key}}, else: :error
-      ...>     end,
-      ...>     freshness: %{clock: clock, max_age: 300, skew: 0, require_expires: true},
-      ...>     content: :not_required,
-      ...>     replay: :not_required
-      ...>   })
-      iex> {:ok, quorum} =
-      ...>   RequestSeal.Quorum.new(%{
-      ...>     mode: {:threshold, 2},
-      ...>     unit: :key,
-      ...>     slots: [
-      ...>       %{id: :build, policy: policy, required: true, label: "build"},
-      ...>       %{id: :review, policy: policy, required: false, label: "review"}
-      ...>     ],
-      ...>     unexpected: :reject,
-      ...>     invalid: :reject
-      ...>   })
-      iex> {:ok, result} = RequestSeal.verify_quorum(twice, quorum, [])
-      iex> {result.satisfied, result.count, result.authorization}
-      {[:build, :review], 2, :not_evaluated}
-      iex> {:error, error} = RequestSeal.verify_quorum(once, quorum, [])
-      iex> {error.reason, error.layer}
-      {:quorum_not_met, :quorum}
-      iex> RequestSeal.Custody.Local.release(handle_a)
-      :ok
-      iex> RequestSeal.Custody.Local.release(handle_b)
-      :ok
-  """
-  @spec verify_quorum(Message.t(), RequestSeal.Quorum.t(), keyword()) ::
-          {:ok, RequestSeal.Quorum.Verification.t()} | {:error, Error.t()}
-  def verify_quorum(message, quorum, opts) do
-    start = System.monotonic_time()
-
-    result = RequestSeal.Quorum.Evaluation.verify(message, quorum, opts)
-
-    RequestSeal.Telemetry.emit(
-      [:request_seal, :verify_quorum, :stop],
       System.monotonic_time() - start,
       RequestSeal.Telemetry.meta(result)
     )

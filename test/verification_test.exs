@@ -118,13 +118,11 @@ defmodule RequestSeal.VerificationTest do
   end
 
   for {first, last} <- [{"a", "fresh"}, {"fresh", "a"}],
-      name <- ["signature-input", "signature", "component"],
-      entry <- [:single, :quorum] do
+      name <- ["signature-input", "signature", "component"] do
     @first first
     @last last
     @name name
-    @entry entry
-    test "N3 duplicate parameters #{entry} #{name} #{first} then #{last}" do
+    test "N3 duplicate parameters single #{name} #{first} then #{last}" do
       alias RequestSeal.MultiSignatureSupport, as: S
 
       input =
@@ -156,11 +154,7 @@ defmodule RequestSeal.VerificationTest do
             v
         end)
 
-      result =
-        case @entry do
-          :single -> RequestSeal.verify(wire, S.policy(), label: "s")
-          :quorum -> S.verify_quorum(wire, S.quorum([S.slot(:s, label: "s")]))
-        end
+      result = RequestSeal.verify(wire, S.policy(), label: "s")
 
       S.error(result, :duplicate_parameter, :fields)
     end

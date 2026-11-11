@@ -11,16 +11,9 @@ defmodule RequestSeal.AcceptSignature do
   their exact parameters; request targets cannot cover `@status` or related
   requests. Response targets require `req` for request-derived components.
 
-  Passing requests as `accept_signature:` to `RequestSeal.verify_quorum/3`
-  requires each exact label in the verified, selector-eligible pool after key-unit
-  filtering, with the same covered component identity set and every requested
-  parameter. The label need not be assigned to a counted slot; it appears in
-  `qualifying` and `signatures` only when assigned. Extra metadata and separate
-  signatures are allowed.
-  A challenge match is established; replay storage and authorization are not.
   Limits: 16 requests, 65,536 wire bytes, and the signature-base component bounds.
   """
-  alias RequestSeal.{Crypto, Error, Message, Policy, Quorum, SignatureFields}
+  alias RequestSeal.{Crypto, Error, Message, Policy, SignatureFields}
   alias RequestSeal.StructuredFields, as: SF
   alias RequestSeal.StructuredFields.Value
   @parameters ~w(keyid alg created expires nonce tag)
@@ -83,7 +76,7 @@ defmodule RequestSeal.AcceptSignature do
       fields = if is_binary(wire), do: [wire], else: wire
 
       ensure(
-        Quorum.bounded_list?(fields, 0, 1024) and Enum.all?(fields, &is_binary/1),
+        bounded_list?(fields, 0, 1024) and Enum.all?(fields, &is_binary/1),
         :invalid_accept_signature
       )
 
@@ -237,7 +230,7 @@ defmodule RequestSeal.AcceptSignature do
   def fulfill(message, requests, chooser, signer, opts) do
     protect(fn ->
       ensure(
-        Quorum.bounded_list?(opts, 0, 1) and Keyword.keyword?(opts) and
+        bounded_list?(opts, 0, 1) and Keyword.keyword?(opts) and
           Enum.all?(Keyword.keys(opts), &(&1 == :field_schemas)) and
           Policy.schemas?(Keyword.get(opts, :field_schemas, %{})) and is_function(chooser, 1) and
           is_function(signer, 2),
@@ -296,16 +289,13 @@ defmodule RequestSeal.AcceptSignature do
     end)
   end
 
-  @doc false
-  def validate_requests(requests, target),
-    do:
-      protect(fn ->
-        validate!(requests, target)
-        :ok
-      end)
+  defp bounded_list?(xs, min, max), do: list_count(xs, 0, min, max)
+  defp list_count([], n, min, _), do: n >= min
+  defp list_count([_ | tail], n, min, max) when n < max, do: list_count(tail, n + 1, min, max)
+  defp list_count(_, _, _, _), do: false
 
   defp validate!(requests, target) do
-    ensure(Quorum.bounded_list?(requests, 0, 16), :invalid_accept_signature)
+    ensure(bounded_list?(requests, 0, 16), :invalid_accept_signature)
 
     Enum.each(requests, fn request ->
       ensure(request?(request), :invalid_accept_signature)

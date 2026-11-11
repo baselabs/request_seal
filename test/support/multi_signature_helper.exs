@@ -9,7 +9,6 @@ defmodule RequestSeal.MultiSignatureSupport do
     Message,
     Policy,
     PublicKey,
-    Quorum,
     TransportFacts
   }
 
@@ -161,51 +160,11 @@ defmodule RequestSeal.MultiSignatureSupport do
     p
   end
 
-  def slot(id, opts \\ []),
-    do:
-      Map.merge(
-        %{
-          id: id,
-          policy: policy(),
-          required: true,
-          label: nil,
-          tag: nil,
-          principal: nil,
-          role: nil
-        },
-        Map.new(opts)
-      )
-
-  def verify_quorum(message, quorum, opts \\ []),
-    do: assert_unique_labels(RequestSeal.verify_quorum(message, quorum, opts))
-
-  defp assert_unique_labels({:ok, result} = outcome) do
-    labels = Enum.map(result.qualifying, & &1.label)
-    assert length(labels) == length(Enum.uniq(labels))
-    assert map_size(result.signatures) == length(labels)
-    outcome
-  end
-
-  defp assert_unique_labels(outcome), do: outcome
-
-  def quorum(slots, opts \\ []) do
-    {:ok, q} =
-      Quorum.new(
-        Map.merge(
-          %{mode: :all, unit: :key, slots: slots, unexpected: :ignore, invalid: :ignore},
-          Map.new(opts)
-        )
-      )
-
-    q
-  end
-
-  def error(result, reason, layer \\ :quorum) do
+  def error(result, reason, layer) do
     assert {:error, %RequestSeal.Error{reason: ^reason, layer: ^layer, detail: detail} = e} =
              result
 
-    # :deadline is the one retryable reason; everything else stays false.
-    assert e.retryable == (reason == :deadline)
+    refute e.retryable
     assert detail == nil or is_atom(detail)
     refute inspect(e) =~ "test-key"
     refute inspect(e) =~ "published-secret"

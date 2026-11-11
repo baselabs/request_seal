@@ -144,9 +144,7 @@ defmodule RequestSeal.AcceptSignatureTest do
 
     m = add(unsigned(), "Cache-Control", "max-age=60")
     assert {:ok, signed} = AcceptSignature.fulfill(m, requests, &choose/1, signer("rsa_pss"), [])
-    q = quorum([slot(:requested, label: "sig1")])
-    assert {:ok, r} = verify_quorum(signed, q, accept_signature: requests)
-    assert r.negotiation == :fulfilled
+    assert {:ok, _} = RequestSeal.verify(signed, policy(), label: "sig1")
 
     for choice <- [
           fn _ -> :error end,
@@ -219,129 +217,11 @@ defmodule RequestSeal.AcceptSignatureTest do
              AcceptSignature.fulfill(signed, requests, chooser, signer("ed25519"), [])
   end
 
-  test "nonce challenges bind exact label, covered identities and requested parameters" do
-    wire = corpus()["accept_signature"] <> ~s[;nonce="fresh-challenge";expires]
-    assert {:ok, [request]} = AcceptSignature.parse(wire, target: :request)
-    m = add(unsigned(), "Cache-Control", "max-age=60")
-    assert {:ok, signed} = AcceptSignature.fulfill(m, [request], &choose/1, signer("rsa_pss"), [])
-    q = quorum([slot(:requested)], mode: :any)
-
-    assert {:ok, %{negotiation: :fulfilled}} =
-             verify_quorum(signed, q, accept_signature: [request])
-
-    extra = local_sign(signed, "extra", ~s[("@method")])
-
-    assert {:ok, %{negotiation: :fulfilled}} =
-             verify_quorum(extra, q, accept_signature: [request])
-
-    renamed = rewrite(signed, fn _, v -> String.replace(v, "sig1", "renamed") end)
-
-    error(
-      verify_quorum(renamed, q, accept_signature: [request]),
-      :negotiation_unfulfilled,
-      :negotiation
-    )
-
-    for changed <- [
-          %{request | parameters: Map.put(request.parameters, "tag", "different")},
-          %{request | parameters: Map.put(request.parameters, "nonce", "other-challenge")},
-          %{request | parameters: Map.put(request.parameters, "keyid", "different")}
-        ] do
-      assert {:ok, changed_message} =
-               AcceptSignature.fulfill(m, [changed], &choose/1, signer("rsa_pss"), [])
-
-      # Use the public verification key directly to isolate negotiation from resolver lookup.
-      q =
-        quorum(
-          [
-            slot(:requested,
-              policy:
-                policy(
-                  key_resolver: fn _ ->
-                    {:ok, %{algorithm: "rsa-pss-sha512", key: public("rsa_pss")}}
-                  end
-                )
-            )
-          ],
-          mode: :any
-        )
-
-      error(
-        verify_quorum(changed_message, q, accept_signature: [request]),
-        :negotiation_unfulfilled,
-        :negotiation
-      )
-    end
-
-    components = %{request.components | value: tl(request.components.value)}
-
-    assert {:ok, dropped} =
-             AcceptSignature.fulfill(
-               m,
-               [%{request | components: components}],
-               &choose/1,
-               signer("rsa_pss"),
-               []
-             )
-
-    error(
-      verify_quorum(dropped, q, accept_signature: [request]),
-      :negotiation_unfulfilled,
-      :negotiation
-    )
-
-    no_times =
-      local_sign(
-        m,
-        "sig1",
-        ~s[("@method" "@target-uri" "@authority" "content-digest" "cache-control");keyid="test-key-rsa-pss";tag="app-123";nonce="fresh-challenge"],
-        "rsa_pss",
-        "rsa-pss-sha512"
-      )
-
-    error(
-      verify_quorum(no_times, q, accept_signature: [request]),
-      :negotiation_unfulfilled,
-      :negotiation
-    )
-  end
-
-  test "negotiation compares component parameters as identities and permits order changes" do
+  test "request component serialization preserves parameters and order changes" do
     assert {:ok, [request]} =
              AcceptSignature.parse(~s[s=("content-digest";sf "@method");keyid="test-key-ed25519"],
                target: :request
              )
-
-    q = quorum([slot(:ed)])
-    plain = local_sign(unsigned(), "s", ~s[("content-digest" "@method");keyid="test-key-ed25519"])
-
-    error(
-      verify_quorum(plain, q, accept_signature: [request]),
-      :negotiation_unfulfilled,
-      :negotiation
-    )
-
-    exact =
-      local_sign(
-        unsigned(),
-        "s",
-        ~s[("@method" "content-digest";sf);keyid="test-key-ed25519";created=1618884473]
-      )
-
-    assert {:ok, _} = verify_quorum(exact, q, accept_signature: [request])
-
-    extra =
-      local_sign(
-        unsigned(),
-        "s",
-        ~s[("@method" "content-digest";sf "@path");keyid="test-key-ed25519"]
-      )
-
-    error(
-      verify_quorum(extra, q, accept_signature: [request]),
-      :negotiation_unfulfilled,
-      :negotiation
-    )
 
     {:ok, reversed} =
       StructuredFields.serialize(

@@ -76,6 +76,8 @@ defmodule RequestSeal.MixProject do
       docs: [
         main: "readme",
         source_ref: "v0.5.2",
+        # Historical entries retain references to removed APIs.
+        skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
         extras:
           Enum.map(@public_documents, fn
             "livebooks/overview.md" -> {"livebooks/overview.md", filename: "livebooks"}
@@ -109,7 +111,7 @@ defmodule RequestSeal.MixProject do
             RequestSeal.SignatureBase,
             RequestSeal.SignatureBase.Error,
             RequestSeal.Telemetry,
-            ~r/^RequestSeal\.(StructuredFields|Digest|Crypto|Quorum|AcceptSignature)(\.|$)/
+            ~r/^RequestSeal\.(StructuredFields|Digest|Crypto|AcceptSignature)(\.|$)/
           ],
           "Keys and custody": [
             RequestSeal.PublicKey,

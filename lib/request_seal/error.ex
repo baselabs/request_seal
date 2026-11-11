@@ -1,13 +1,10 @@
 defmodule RequestSeal.Error do
   @moduledoc """
-  Bounded failures from `RequestSeal.verify/3`, `RequestSeal.sign/4`, `RequestSeal.Policy.new/1`, `RequestSeal.Quorum.new/1`, `RequestSeal.Ash.scope/2`, `RequestSeal.Profile`, Web Bot Auth, quorum verification, and signature negotiation.
+  Bounded failures from `RequestSeal.verify/3`, `RequestSeal.sign/4`, `RequestSeal.Policy.new/1`, `RequestSeal.Ash.scope/2`, `RequestSeal.Profile`, Web Bot Auth, and signature negotiation.
 
-  Every error has `retryable: false` — except `:deadline`, the one retryable
-  reason (the same call may succeed with a later deadline or under less load) —
-  a library-generated random 16-character
+  Every error has `retryable: false`, a library-generated random 16-character
   lowercase hex `correlation`, and `detail: nil` except the Web Bot Auth reasons listed below and `:signature_base_failed`,
-  whose detail is one of these bounded signature-base reason atoms (or
-  `:nonqualifying_signature`, whose detail is the rejected signature reason):
+  whose detail is one of these bounded signature-base reason atoms:
 
   * `:limit` — signature-base or Structured Fields resource ceiling.
   * `:wrong_message_kind`, `:missing_request_context`, `:unavailable_origin`,
@@ -33,8 +30,7 @@ defmodule RequestSeal.Error do
     `:signer_algorithm_mismatch` means a KeyHandle's algorithm differs from the
     specification's algorithm, in either signing form (from 0.5.0 for a
     generated spec), before custody is invoked.
-  * `:input` additionally includes `:invalid_quorum` (malformed composite policy)
-    and `:invalid_profile` (invalid extension profile namespace, keys, values or size,
+  * `:input` additionally includes `:invalid_profile` (invalid extension profile namespace, keys, values or size,
     or a generic verification `:profile` or `:principal` option).
   * `:fields`: `:duplicate_parameter` (repeated parameter names on signature or request members/components), `:duplicate_label` (repeated labels within or across occurrences), `:missing_signature_input`, `:missing_signature` (absent field),
     `:invalid_signature_input` (invalid dictionary, components or parameter types),
@@ -78,19 +74,11 @@ defmodule RequestSeal.Error do
     Content-Digest disagrees with the retained bytes or the requested
     algorithms), `:body_unavailable` (required body or representation
     unavailable).
-  * `:quorum`: `:quorum_not_met` (required slots or distinct-unit count unmet),
-    `:unexpected_signature` (unmatched label with rejection selected),
-    `:nonqualifying_signature` (matched label failed every eligible slot;
-    `detail` is its last bounded reason), `:ambiguous_key_identity` (trusted
-    key equivalence unknown), `:binding_unsatisfied` (nested or parameter binding),
-    `:deadline` (the caller's `:deadline` wall-clock bound on `verify_quorum/3`
-    expired during assignment search; retryable).
   * `:internal`: `:internal` (an unexpected internal fault, not named by the
     input; `detail` is the exception class — the raised exception's module, or
     `:exit` or `:throw`). Report the correlation token.
   * `:negotiation`: `:invalid_accept_signature` (malformed request or unsupported
     parameter), `:inapplicable_component` (wrong target context),
-    `:negotiation_unfulfilled` (eligible verified label, component set, or parameter differs),
     `:negotiation_unfulfillable` (unavailable component, incompatible chooser,
     unfulfillable parameter, callback fault, or signing failure).
   * `:freshness`: `:invalid_clock` (fault or noninteger/out-of-range clock),
@@ -124,7 +112,6 @@ defmodule RequestSeal.Error do
             | :freshness
             | :binding
             | :replay
-            | :quorum
             | :negotiation
             | :internal,
           retryable: boolean(),
@@ -140,7 +127,7 @@ defmodule RequestSeal.Error do
       layer: layer,
       detail: detail,
       source: source,
-      retryable: retryable or reason == :deadline,
+      retryable: retryable,
       message: message(reason),
       correlation: Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     }
