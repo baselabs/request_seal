@@ -479,7 +479,7 @@ defmodule RequestSeal.Discovery do
       end
 
     case response do
-      # RFC 9111 Section 15.4.5: 304 is valid only as the answer to the
+      # RFC 9110 Section 15.4.5: 304 is valid only as the answer to the
       # conditional this client sent; unsolicited 304 falls through to the
       # unexpected-status rejection below.
       {304, fields, _, _} when etag != nil ->
@@ -834,7 +834,7 @@ defmodule RequestSeal.Discovery do
   defp expiry(fields, source, now) do
     controls = cache_controls(fields)
 
-    # RFC 9111 Sections 5.2.2.3 and 5.2.2.4: no-store and no-cache also arrive
+    # RFC 9111 Sections 5.2.2.4 and 5.2.2.5: no-cache and no-store also arrive
     # qualified, as in `no-cache="content-type"` (and the RFC 7234 `#field-name`
     # form, whose quoted member can itself contain commas). Match the directive
     # name before any "=", so every spelling still forces revalidation.

@@ -193,9 +193,10 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       * `:request_seal` (required) - keyword list of these keys; others reject:
         * `:spec` (required) - a `t:RequestSeal.signing_spec/0`. `:digest`
           defaults to `["sha-256"]` and must not be nil. The components must
-          include `"@method"`, `"@authority"`, `"@path"`, `"content-digest"`,
-          `"content-type"`, and `"webhook-id"` without component parameters,
-          plus `"@query"` when the URL has a query.
+          include the connector's minimum coverage: `"@method"`,
+          `"@authority"`, `"@path"`, `"content-digest"`, `"content-type"`,
+          and `"webhook-id"` without component parameters, plus `"@query"`
+          when the URL has a query. A spec may cover more.
         * `:signer` (required) - a `RequestSeal.KeyHandle`; function signers
           reject.
         * `:clock` - arity-zero function returning Unix seconds.

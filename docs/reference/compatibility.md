@@ -30,7 +30,8 @@ Within 1.x, a release never removes or incompatibly changes:
   a separate, explicit selection; the default never changes silently.
 
 `RequestSeal.Profile`, the extension surface for profiles owned by other packages, is
-covered by the same promise.
+covered by the same promise. RequestSeal ships only standards-derived profiles; any
+other named profile lives in its own extension package.
 
 ## What a minor release may add
 

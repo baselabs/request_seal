@@ -4,6 +4,9 @@ defmodule RequestSeal.Profile do
 
   From 1.0.0 this extension surface follows the same 1.x compatibility promise
   as the rest of the public API; see the Compatibility and deprecation guide.
+  RequestSeal itself ships only the standards-derived RFC 9421 and Web Bot Auth
+  profiles; any other named profile lives in its own extension package, never in
+  RequestSeal.
 
   An extension selects its source-specific rules, then uses `dictionaries/2` to
   parse paired signature fields, `preflight/4` to check coverage and freshness

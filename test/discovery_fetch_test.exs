@@ -171,7 +171,7 @@ defmodule RequestSeal.DiscoveryFetchTest do
     refute inspect(error) =~ "invalid"
   end
 
-  # RFC 9111 Section 15.4.5: 304 only follows a conditional request this
+  # RFC 9110 Section 15.4.5: 304 only follows a conditional request this
   # client made; unsolicited 304 rejects like any other unexpected status.
   test "an unsolicited 304 response rejects" do
     p =

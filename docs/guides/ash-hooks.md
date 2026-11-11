@@ -131,8 +131,9 @@ owned by the HTTP receiver. `http_opts` can also be an ash_hooks MFA resolver; t
 receives no endpoint or tenant identity, so choose custody in that configuration.
 The adapter delegates to `AshHooks.Http.Bounded` with the remaining total deadline
 and retains its SSRF defaults. Existing signature fields, transport-owned headers,
-case collisions, duplicate signed fields, insufficient coverage, and digest conflicts
-reject before sending. Signing failures return
+case collisions, duplicate signed fields, coverage below the connector's minimum
+(`@method`, `@authority`, `@path`, `content-digest`, `content-type`, `webhook-id`,
+and `@query` when the URL has one), and digest conflicts reject before sending. Signing failures return
 `{:error, {:terminal, :request_seal_signing_failed}}`; transport errors and exceptions
 retain the bounded transport's classification. The terminal tag identifies an
 adapter signing failure to callers. ash_hooks retries it like every returned
