@@ -1,4 +1,31 @@
 if Code.ensure_loaded?(AshHooks.Provider) do
+  defmodule RequestSeal.AshHooksTargetFidelityTest do
+    use ExUnit.Case, async: false
+    alias RequestSeal.{HooksTestSupport, SignatureBase}
+
+    test "bounded transport authority is used for target URI coverage" do
+      {handle, key} = HooksTestSupport.key()
+      on_exit(fn -> RequestSeal.Custody.Local.release(handle) end)
+      components = String.replace_suffix(HooksTestSupport.components(), ")", ~s[ "@target-uri")])
+      policy = HooksTestSupport.policy(key, components)
+      url = HooksTestSupport.start_receiver(policy, self())
+      %{port: port} = URI.parse(url)
+      spec = %{HooksTestSupport.spec() | components: components}
+      opts = [request_seal: [spec: spec, signer: handle], validate_destination: false]
+      headers = %{"content-type" => "application/json", "webhook-id" => "event-1"}
+
+      target = "http://LOCALHOST:#{port}/events"
+
+      assert {:ok, %{status: 204}} =
+               RequestSeal.AshHooks.Http.request(:post, target, headers, "{}", opts)
+
+      assert_receive {:hooks_received, {:ok, _}, :ok, "{}", fields}, 5_000
+      assert {:ok, message} = RequestSeal.Message.request("POST", url, fields, "{}")
+      assert {:ok, base} = SignatureBase.build(message, ~s[("@target-uri" "@authority")])
+      assert base =~ ~s["@target-uri": #{url}\n"@authority": localhost:#{port}]
+    end
+  end
+
   defmodule RequestSeal.AshHooksTest do
     use ExUnit.Case, async: false
     @moduletag :postgres

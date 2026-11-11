@@ -146,6 +146,8 @@ if Code.ensure_loaded?(AshHooks.Provider) do
     `http_opts: [request_seal: [spec: signing_spec, signer: custody_handle]]`;
     `request/5` lists every option. Each delivery attempt signs once with fresh
     metadata and hands the signed request to ash_hooks' bounded transport.
+    The signed authority matches that transport's lowercase host and omission
+    of the scheme's default port, including when covering `@target-uri`.
     ash_hooks continues to own SSRF resolve-and-pin, durable attempts, retries,
     secret references, rotation, and response classification.
     ash_hooks still requires its Standard Webhooks secret reference and emits
@@ -172,7 +174,9 @@ if Code.ensure_loaded?(AshHooks.Provider) do
     ash_hooks calls this as its `AshHooks.Http` adapter. Header names are
     lowercased, the request is signed with `RequestSeal.sign/4`, and the signed
     headers go to `AshHooks.Http.Bounded` with the remaining total
-    timeout and otherwise unchanged transport options.
+    timeout and otherwise unchanged transport options. The message authority
+    follows that transport's Host bytes: lowercase host, default port omitted,
+    and non-default port serialized as a decimal integer.
 
     ## Parameters
 
@@ -359,7 +363,8 @@ if Code.ensure_loaded?(AshHooks.Provider) do
         |> Keyword.put(:signing_timeout, min(signing[:signing_timeout] || 5_000, remaining))
 
       with {:ok, message} <- Message.request(method, url, fields, body),
-           {:ok, signed} <- RequestSeal.sign(message, spec, signing[:signer], sign_opts) do
+           {:ok, signed} <-
+             RequestSeal.sign(bounded_origin(message, url), spec, signing[:signer], sign_opts) do
         {:ok, signed}
       else
         _ -> {:error, {:terminal, :request_seal_signing_failed}}
@@ -368,6 +373,20 @@ if Code.ensure_loaded?(AshHooks.Provider) do
       _ -> {:error, {:terminal, :request_seal_signing_failed}}
     catch
       _, _ -> {:error, {:terminal, :request_seal_signing_failed}}
+    end
+
+    defp bounded_origin(message, url) do
+      # ash_hooks' Http.Target.resolve/2 lowercases the host; host_header/3
+      # omits default ports. Match Http.Bounded's wire authority rather than
+      # relying on normalization in the lossless Message.request/5 builder.
+      uri = URI.parse(url)
+      host = String.downcase(uri.host, :ascii)
+      host = if String.contains?(host, ":"), do: "[#{host}]", else: host
+
+      authority =
+        if uri.port == URI.default_port(uri.scheme), do: host, else: "#{host}:#{uri.port}"
+
+      %{message | authority: authority}
     end
   end
 end
