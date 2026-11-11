@@ -2,8 +2,11 @@
 
 # RequestSeal
 
-RequestSeal signs and verifies HTTP requests and responses in Elixir with RFC 9421 HTTP Message Signatures, including Web Bot Auth for AI agents and crawlers.
-Integrations support Req, Finch, and Ash; Phoenix uses the Plug integration; its JOSE (JSON Object Signing and Encryption) modules support JWS signing and JWE encryption.
+RequestSeal signs and verifies HTTP requests and responses in Elixir with RFC 9421 HTTP Message Signatures, for teams that receive webhooks, call signed APIs, or identify AI agents and crawlers with Web Bot Auth.
+
+**What a successful verification tells you:** the covered parts of the message you received, rebuilt byte for byte from that message, were signed by a key your policy trusts, inside your freshness window; the body matches its digest when your policy requires one; and, when you require replay protection, this is the first time the request was accepted. Every rule comes from the policy you write, never from the request.
+
+It integrates with Plug and Phoenix, Req, Finch, and Ash, and includes compact JWS and JWE (JSON Object Signing and Encryption).
 
 Use it to:
 
@@ -39,7 +42,7 @@ Add optional dependencies for the integrations you use. The table is a reference
 | `:phoenix` | `~> 1.8.15` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.23.0 and < 0.25.0` | Finch transport and caller-started pools |
-| `:ash` | `>= 3.37.2 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
+| `:ash` | `~> 3.37 and >= 3.37.2` | Ash scope protocol and authorization-enabled actions |
 | `:ash_onetime` | `~> 1.9 and >= 1.9.2` | Recommended durable replay; Elixir 1.20+ |
 | `:ash_hooks` | `~> 2.0 or ~> 3.0` | Webhook signing and verification; Elixir 1.20+ |
 | `:postgrex` | `~> 0.22.4` | PostgreSQL replay storage using your existing connection |
@@ -286,13 +289,17 @@ Expected output (cleanup inside an existing VM may also log application-stop not
 
 ## In Phoenix
 
-Phoenix uses the same Plug integration. This is a fragment for an existing Phoenix application, not a standalone script: in a new project, generate the application with `mix phx.new` first, and run the code in the same session that built `webhook_policy` in the webhook example. The code below uses that `webhook_policy` to configure the policy at startup. In your app, construct it with your trusted sender's public key. The request-time function form reads the current policy on each request. Add the shown plugs and route to your existing endpoint and router; Capture must precede the endpoint's `Plug.Parsers`. Replace `origin: :connection` with your declared origin, as described above.
+Phoenix uses the same Plug integration. This is a fragment for an existing Phoenix application, not a standalone script: in a new project, generate the application with `mix phx.new` first, and run the code in the same session that built `webhook_policy` in the webhook example. The code below uses that `webhook_policy` to configure the policy at startup. In your app, construct it with your trusted sender's public key. The request-time function form reads the current policy on each request. Add the shown plugs and route to your existing endpoint and router; Capture must precede the endpoint's `Plug.Parsers`. The pipeline's `call/2` clauses limit verification to `/webhooks` paths, so the rest of the application needs no signature. Replace `origin: :connection` with your declared origin, as described above.
 
 ```elixir
 Application.put_env(:my_app, :http_signature_policy, webhook_policy)
 
 defmodule MyAppWeb.SignedWebhookPipeline do
   use Plug.Builder
+
+  # Verify signatures only on webhook paths; every other request passes through.
+  def call(%Plug.Conn{path_info: ["webhooks" | _]} = conn, opts), do: super(conn, opts)
+  def call(conn, _opts), do: conn
 
   def signature_policy, do: Application.fetch_env!(:my_app, :http_signature_policy)
 
@@ -526,7 +533,7 @@ A valid signature proves which key signed which covered bytes; a trusted associa
 
 ## Conformance corpus
 
-RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. GitHub releases attach it as `corpus.tar.gz` with `corpus.sha256`; the latest corpus release is v1.0.0. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
+RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. Each GitHub release attaches it as `corpus.tar.gz` with `corpus.sha256`. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
 
 ## Documentation
 

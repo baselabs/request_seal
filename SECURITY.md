@@ -34,6 +34,10 @@ response-time commitment is declared. Moving from 0.x to 1.0 requires changing y
 dependency requirement (`~> 0.5` never matches 1.0.0); the changelog's 1.0.0 entry lists
 what changed.
 
-Release acceptance requires supported-release policy, dependency/advisory checks, patched
-artifacts, provenance, coordinated disclosure guidance, and a tested revocation/upgrade
-procedure. The [release runbook](docs/operations/releases.md) owns those steps.
+## Published advisories
+
+| Advisory | Affected | Fixed | Summary |
+| --- | --- | --- | --- |
+| [GHSA-vj55-78vg-59wf](https://github.com/baselabs/request_seal/security/advisories/GHSA-vj55-78vg-59wf) | 0.1.0 to 0.5.2 | 1.0.0 | Web Bot Auth required replay could accept a captured request again after relabeling, removing or recombining its signatures. Generic `RequestSeal.verify/3` is not affected. 0.1.0 to 0.5.2 are retired on Hex with reason `security`. |
+
+The changelog's [1.0.0 entry](CHANGELOG.md) says who is affected and what to change when upgrading.
