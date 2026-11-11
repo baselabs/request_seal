@@ -35,8 +35,8 @@
   {"lib/request_seal/custody/ssh_agent/wire.ex", :call, 120},
   {"lib/request_seal/custody/support.ex", :call, 18},
   {"lib/request_seal/custody/support.ex", :call, 19},
-  {"lib/request_seal/discovery.ex", :call, 430},
-  {"lib/request_seal/discovery.ex", :call, 549},
+  {"lib/request_seal/discovery.ex", :call, 438},
+  {"lib/request_seal/discovery.ex", :call, 557},
   {"lib/request_seal/discovery/cache.ex", :call, 444},
   {"lib/request_seal/discovery/http1.ex", :call, 46},
   {"lib/request_seal/discovery/http1.ex", :call, 119},
@@ -79,6 +79,6 @@
   {"lib/finch/response.ex", :unknown_type, 16},
   {"lib/finch/response.ex", :unknown_type, 18},
   {"lib/finch/response.ex", :unknown_type, 19},
-  {"lib/request_seal/discovery.ex", :call, 629},
-  {"lib/request_seal/discovery.ex", :call, 685}
+  {"lib/request_seal/discovery.ex", :call, 637},
+  {"lib/request_seal/discovery.ex", :call, 693}
 ]
