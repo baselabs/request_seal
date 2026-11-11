@@ -113,8 +113,7 @@ defmodule RequestSeal.RetentionTest do
       store: ctx.store,
       commitment: fn facts ->
         :atomics.add(ctx.calls, 2, 1)
-        nonce = if kind == :generic, do: facts.identifier, else: hd(facts.signatures).identifier
-        {:ok, nonce}
+        {:ok, facts.identifier}
       end,
       timeout: 5000
     }

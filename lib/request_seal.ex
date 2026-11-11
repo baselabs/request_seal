@@ -99,10 +99,6 @@ defmodule RequestSeal do
   across field occurrences. Every Signature label must have a matching
   Signature-Input label, and every Signature-Input label a matching Signature.
 
-  The key resolver result may carry an optional `:identity`. Here it is only
-  checked (a public key's derived identity must agree with it, otherwise
-  `:key_resolver_failed`).
-
   ## Parameters
 
     * `message` - a `RequestSeal.Message`; it is validated before parsing.

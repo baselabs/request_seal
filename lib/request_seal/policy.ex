@@ -44,7 +44,6 @@ defmodule RequestSeal.Policy do
           key_resolver: (map() ->
                            {:ok,
                             %{
-                              optional(:identity) => RequestSeal.KeyIdentity.t(),
                               algorithm: RequestSeal.Crypto.algorithm(),
                               key: RequestSeal.PublicKey.t() | verify_fun()
                             }}
@@ -78,10 +77,8 @@ defmodule RequestSeal.Policy do
         `:error`. `key` is a `RequestSeal.PublicKey` or an arity-three
         verification function `(algorithm, base, signature)` returning `:ok`
         or `{:error, term}`. HMAC (`"hmac-sha256"`, `{:jws, "HS256"}`) secret
-        custody must stay inside such a function. Optional `:identity`
-        carries a trusted `RequestSeal.KeyIdentity`. Public keys derive their
-        canonical public identity and must agree with a supplied identity.
-        Verification functions without one have unknown key equivalence.
+        custody must stay inside such a function. Any other key in the
+        result, or any other return, rejects with `:key_resolver_failed`.
       * `:freshness` - `:not_evaluated` or a map containing exactly `:clock`
         (arity zero, integer Unix seconds), `:max_age` (1 to
         253,402,300,799, or nil), `:skew` (0 to 86,400), and

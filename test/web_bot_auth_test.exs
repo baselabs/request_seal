@@ -693,9 +693,11 @@ defmodule RequestSeal.WebBotAuthTest do
     assert {:ok, result} = WebBotAuth.verify(request("directory"), p)
     assert_received {:facts, facts}
     assert facts.profile == %{name: :web_bot_auth, revision: @revision}
-    assert [signature] = facts.signatures
-    refute Map.has_key?(signature, :label)
-    assert signature.identifier == input_nonce()
+    # One flat facts map, the generic verification shape with `agent` for `tag`.
+    assert Map.keys(facts) |> Enum.sort() ==
+             [:agent, :algorithm, :created, :expires, :identifier, :keyid, :profile]
+
+    assert facts.identifier == input_nonce()
     assert result.replay.retain_until == @now + 3600
     assert_error(WebBotAuth.verify(request("directory"), p), :replayed, :replay)
 
@@ -1416,7 +1418,7 @@ defmodule RequestSeal.WebBotAuthTest do
 
     assert result.replay.retain_until == @now + 131
     assert_received {:commitment, facts}
-    assert length(facts.signatures) == 1
+    assert facts.identifier == input_nonce()
     refute_received {:commitment, _}
 
     assert_error(

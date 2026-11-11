@@ -57,7 +57,7 @@ defmodule RequestSeal.VerificationTest do
     {:ok, {entries, signatures}} = Authentication.dictionaries(m, p.max_signatures)
     inputs = Map.new(entries)
 
-    {{:ok, first, _}, cache} =
+    {{:ok, first}, cache} =
       Authentication.verify_label(
         m,
         p,
@@ -81,7 +81,7 @@ defmodule RequestSeal.VerificationTest do
         cache
       )
 
-    assert {:ok, %{label: "sig-b26"}, _} = result
+    assert {:ok, %{label: "sig-b26"}} = result
     {:ok, first_base} = SignatureBase.build(m, inputs["sig-b21"], field_schemas: p.field_schemas)
     {:ok, second_base} = SignatureBase.build(m, inputs["sig-b26"], field_schemas: p.field_schemas)
     refute first_base == second_base
@@ -662,11 +662,16 @@ defmodule RequestSeal.VerificationTest do
       :key
     )
 
+    assert {:ok, _} = RequestSeal.verify(m, policy(v), label: v["label"])
+    key = public(v["key"])
+
     for resolver <- [
           fn _ -> raise "KEY_CANARY" end,
           fn _ -> throw(:key_canary) end,
           fn _ -> nil end,
-          fn _ -> {:ok, %{algorithm: "ed25519", key: "private"}} end
+          fn _ -> {:ok, %{algorithm: "ed25519", key: "private"}} end,
+          # The result is exactly algorithm and key; nothing else is accepted.
+          fn _ -> {:ok, %{algorithm: v["algorithm"], key: key, identity: :anything}} end
         ] do
       error(
         RequestSeal.verify(m, policy(v, key_resolver: resolver), label: v["label"]),

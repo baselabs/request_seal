@@ -126,12 +126,7 @@ defmodule RequestSeal.MultiSignatureSupport do
   end
 
   def handle_resolver(h, algorithm \\ "hmac-sha256") do
-    {:ok, id} = Custody.identity(h)
-
-    fn _ ->
-      {:ok,
-       %{algorithm: algorithm, key: fn _a, b, s -> Custody.verify(h, b, s) end, identity: id}}
-    end
+    fn _ -> {:ok, %{algorithm: algorithm, key: fn _a, b, s -> Custody.verify(h, b, s) end}} end
   end
 
   def resolver(%{keyid: keyid}) do

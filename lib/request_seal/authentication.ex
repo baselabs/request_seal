@@ -8,7 +8,6 @@ defmodule RequestSeal.Authentication do
     Error,
     FieldOccurrence,
     KeyHandle,
-    KeyIdentity,
     Message,
     Policy,
     PublicKey,
@@ -50,10 +49,7 @@ defmodule RequestSeal.Authentication do
       {result, _cache} =
         verify_label(message, policy, label, inputs[label], signatures[label], opts, %{})
 
-      case result do
-        {:ok, verification, _identity} -> {:ok, verification}
-        error -> error
-      end
+      result
     end)
   end
 
@@ -75,14 +71,14 @@ defmodule RequestSeal.Authentication do
           :policy
         )
 
-        {algorithm, key, identity} = resolve(policy, label, params)
+        {algorithm, key} = resolve(policy, label, params)
         match_algorithm(params, algorithm, :policy)
         ensure(algorithm in policy.algorithms, :algorithm_not_permitted, :policy)
-        {:ok, {algorithm, key, identity, params, freshness}}
+        {:ok, {algorithm, key, params, freshness}}
       end)
 
     case prepared do
-      {:ok, {algorithm, key, identity, params, freshness}} ->
+      {:ok, {algorithm, key, params, freshness}} ->
         schemas = policy.field_schemas
         cache_key = {label, schemas}
 
@@ -130,7 +126,7 @@ defmodule RequestSeal.Authentication do
                    content: content,
                    freshness: freshness,
                    replay: replay
-                 }, identity}
+                 }}
               end)
 
             error ->
@@ -404,7 +400,7 @@ defmodule RequestSeal.Authentication do
       :error ->
         fail(:unknown_key, :key)
 
-      {:ok, %{algorithm: algorithm, key: key} = result} when map_size(result) in [2, 3] ->
+      {:ok, %{algorithm: algorithm, key: key} = result} when map_size(result) == 2 ->
         ensure(SignatureFields.algorithm?(algorithm), :key_resolver_failed, :key)
         ensure(match?(%PublicKey{}, key) or is_function(key, 3), :key_resolver_failed, :key)
         # Symmetric verification must keep the secret behind the caller function.
@@ -414,41 +410,12 @@ defmodule RequestSeal.Authentication do
           :key
         )
 
-        ensure(
-          Enum.all?(Map.keys(result), &(&1 in [:algorithm, :key, :identity])),
-          :key_resolver_failed,
-          :key
-        )
-
-        ensure(
-          not Map.has_key?(result, :identity) or match?(%KeyIdentity{}, result.identity),
-          :key_resolver_failed,
-          :key
-        )
-
-        identity = identity(key, Map.get(result, :identity))
-        {algorithm, key, identity}
+        {algorithm, key}
 
       _ ->
         fail(:key_resolver_failed, :key)
     end
   end
-
-  defp identity(%PublicKey{} = key, supplied) do
-    derived = %KeyIdentity{kind: :public, value: key.material}
-    ensure(supplied == nil or KeyIdentity.same?(derived, supplied), :key_resolver_failed, :key)
-    derived
-  end
-
-  defp identity(_, nil), do: %KeyIdentity{kind: :unknown}
-  defp identity(_, %KeyIdentity{kind: :unknown, value: nil} = id), do: id
-
-  defp identity(_, %KeyIdentity{} = id) do
-    ensure(KeyIdentity.same?(id, id), :key_resolver_failed, :key)
-    id
-  end
-
-  defp identity(_, _), do: fail(:key_resolver_failed, :key)
 
   defp build(message, input, schemas) do
     case SignatureBase.build_validated(message, input, field_schemas: schemas) do

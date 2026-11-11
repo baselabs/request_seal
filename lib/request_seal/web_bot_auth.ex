@@ -654,41 +654,37 @@ defmodule RequestSeal.WebBotAuth do
     # and the set of signatures stay out, so relabeling, stripping or
     # recombining captured signatures cannot produce a fresh claim.
     ensure(length(results) == 1, :unexpected_signature, :policy)
+    [{_label, v}] = results
+    p = v.signature.parameters
 
-    facts =
-      Enum.map(results, fn {_label, v} ->
-        p = v.signature.parameters
+    ensure(
+      is_binary(p["nonce"]) and byte_size(p["nonce"]) > 0,
+      :missing_replay_identifier,
+      :replay
+    )
 
-        ensure(
-          is_binary(p["nonce"]) and byte_size(p["nonce"]) > 0,
-          :missing_replay_identifier,
-          :replay
-        )
+    # The same facts shape as generic verification, with the agent in place of
+    # the tag, so one commitment function serves both.
+    facts = %{
+      identifier: p["nonce"],
+      algorithm: v.signature.algorithm,
+      keyid: p["keyid"],
+      agent: Map.take(v.principal, [:kind, :identifier, :type, :origin, :thumbprint]),
+      created: p["created"],
+      expires: p["expires"],
+      profile: @profile
+    }
 
-        %{
-          identifier: p["nonce"],
-          algorithm: v.signature.algorithm,
-          keyid: p["keyid"],
-          agent: Map.take(v.principal, [:kind, :identifier, :type, :origin, :thumbprint]),
-          created: p["created"],
-          expires: p["expires"]
-        }
-      end)
+    f = v.freshness
 
     retain =
-      results
-      |> Enum.map(fn {_, v} ->
-        f = v.freshness
-
-        min(
-          f.expires + f.skew,
-          if(f.max_age, do: f.created + f.max_age + f.skew + 1, else: f.expires + f.skew)
-        )
-      end)
-      |> Enum.min()
+      min(
+        f.expires + f.skew,
+        if(f.max_age, do: f.created + f.max_age + f.skew + 1, else: f.expires + f.skew)
+      )
 
     ensure(retain <= 253_402_300_799, :retention_exceeded, :replay)
-    unwrap(Replay.commit(policy, %{profile: @profile, signatures: facts}, retain))
+    unwrap(Replay.commit(policy, facts, retain))
   end
 
   @doc """

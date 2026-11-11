@@ -304,10 +304,7 @@ defmodule RequestSeal.Profile do
                 %{}
               )
 
-            case result do
-              {:ok, verification, _identity} -> {:ok, verification}
-              error -> error
-            end
+            result
           end
       end
     end)
