@@ -265,6 +265,19 @@ class PublicDocsTest(unittest.TestCase):
             errors = docs.content_errors(root, "README.md", self.source + "\n[alias](alias.md)\n", {"README.md", "alias.md"})
             self.assertTrue(any("symlink" in e for e in errors))
 
+    def test_published_document_cannot_link_a_repository_only_document(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "README.md").write_text(self.source)
+            (root / "runbook.md").write_text("# Runbook\n")
+            linked = self.source + "\n[runbook](runbook.md)\n"
+            tracked = {"README.md", "runbook.md"}
+            errors = docs.content_errors(root, "README.md", linked, tracked, published={"README.md"})
+            self.assertTrue(any("repository-only document" in e for e in errors))
+            self.assertEqual([], [e for e in docs.content_errors(root, "README.md", linked, tracked,
+                                                                 published={"README.md", "runbook.md"})
+                                  if "repository-only" in e])
+
     def test_exdoc_inventory_uses_relative_actual_files(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory).resolve()

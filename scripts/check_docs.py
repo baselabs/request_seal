@@ -196,7 +196,7 @@ def inventory_errors(root, approved, paths):
     return errors
 
 
-def content_errors(root, relative, source, paths, version=None):
+def content_errors(root, relative, source, paths, version=None, published=None):
     root = root.resolve()
     errors = []
     path = root / relative
@@ -239,6 +239,11 @@ def content_errors(root, relative, source, paths, version=None):
             errors.append(f"{relative}: link escapes public repository")
         elif lexical.relative_to(root.resolve()).as_posix() not in paths:
             errors.append(f"{relative}: link targets unpublished content")
+        elif (published is not None and relative in published
+              and lexical.suffix in (".md", ".livemd")
+              and lexical.relative_to(root.resolve()).as_posix() not in published):
+            # HexDocs carries only the published documents; such a link breaks there.
+            errors.append(f"{relative}: published document links a repository-only document")
         elif has_symlink(root, lexical.relative_to(root.resolve())):
             errors.append(f"{relative}: local link must not traverse a symlink")
         elif not destination.exists():
@@ -404,7 +409,7 @@ def check(root=ROOT):
         path = root / relative
         if path.is_file() and not path.is_symlink():
             source = path.read_bytes().decode("utf-8")
-            errors.extend(content_errors(root, relative, source, paths, configuration["version"]))
+            errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"]))
             errors.extend(fence_errors(root, relative, source))
     errors.extend(history_marker_errors(root))
     for relative in sorted(configuration["files"] - approved):

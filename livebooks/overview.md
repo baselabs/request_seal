@@ -21,6 +21,6 @@ Each notebook installs the latest RequestSeal 1.x from Hex, generates its own ke
 
 ## How the gate runs them
 
-The checker parses each notebook with Livebook's own importer and Elixir exporter, refuses unsupported cells and branched sections instead of skipping them, and runs each export in a fresh Elixir process limited to 300 seconds and 1 MiB of output. It replaces the Hex install of RequestSeal with the local checkout, so the gate tests the code in the repository; the [release runbook](../docs/operations/releases.md) separately installs the published package in a clean project. The cells shown are the exact code executed.
+The checker parses each notebook with Livebook's own importer and Elixir exporter, refuses unsupported cells and branched sections instead of skipping them, and runs each export in a fresh Elixir process limited to 300 seconds and 1 MiB of output. It replaces the Hex install of RequestSeal with the local checkout, so the gate tests the code in the repository; each release separately installs the published package in a clean project. The cells shown are the exact code executed.
 
 These runs prove the library's behavior on locally generated keys and published vectors. They are not interactive UI checks and do not prove acceptance by a deployed peer; see [testing and evidence](../docs/guides/testing.md) for those evidence classes.
