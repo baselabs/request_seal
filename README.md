@@ -252,6 +252,13 @@ does not create a config file, so add `config/config.exs` containing
 Start that receiver first; the expected status below assumes it returns 200.
 The example sends an actual HTTP request to your configured URL.
 
+This snippet signs with a fresh key and covers only method, scheme, authority and
+path, so it is not a sender for the webhook receiver above: that receiver trusts
+one configured public key and requires a signed `content-digest` on a JSON POST,
+and it answers this request with 401. To sign for a receiver like that, use the
+receiver's trusted key pair, its covered components and digest, and a POST with
+the expected body, as the webhook script does.
+
 ```elixir
 {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
 {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
@@ -279,7 +286,7 @@ Expected output (cleanup inside an existing VM may also log application-stop not
 
 ## In Phoenix
 
-Phoenix uses the same Plug integration. The code below uses `webhook_policy` from the webhook example to configure the policy at startup. In your app, construct it with your trusted sender's public key. The request-time function form reads the current policy on each request. Add the shown plugs and route to your existing endpoint and router; Capture must precede the endpoint's `Plug.Parsers`. Replace `origin: :connection` with your declared origin, as described above.
+Phoenix uses the same Plug integration. This is a fragment for an existing Phoenix application, not a standalone script: in a new project, generate the application with `mix phx.new` first, and run the code in the same session that built `webhook_policy` in the webhook example. The code below uses that `webhook_policy` to configure the policy at startup. In your app, construct it with your trusted sender's public key. The request-time function form reads the current policy on each request. Add the shown plugs and route to your existing endpoint and router; Capture must precede the endpoint's `Plug.Parsers`. Replace `origin: :connection` with your declared origin, as described above.
 
 ```elixir
 Application.put_env(:my_app, :http_signature_policy, webhook_policy)
