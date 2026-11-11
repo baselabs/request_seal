@@ -27,7 +27,6 @@ defmodule RequestSeal.Conformance.Surfaces do
     "signature_base.build" => :signature_base,
     "sign" => :sign,
     "verify" => :verify,
-    "quorum.verify" => :quorum,
     "accept_signature.parse" => :accept_signature,
     "digest.content" => :digest,
     "crypto.verify" => :crypto_verify,
@@ -503,34 +502,6 @@ defmodule RequestSeal.Conformance.Surfaces do
 
       {String.to_existing_atom(k), value}
     end)
-  end
-
-  def quorum(root, c) do
-    i = c["inputs"]
-    m = case_message(root, i)
-    q = i["quorum"]
-
-    with {:ok, p} <- policy(root, c["policy"]),
-         {:ok, quorum} <-
-           RequestSeal.Quorum.new(%{
-             mode: String.to_atom(q["mode"]),
-             unit: :principal,
-             slots: [
-               %{
-                 id: :signer,
-                 label: i["label"],
-                 policy: p,
-                 required: true,
-                 principal: "published",
-                 role: nil
-               }
-             ],
-             unexpected: :reject,
-             invalid: :reject,
-             bindings: []
-           }),
-         {:ok, _} <- RequestSeal.verify_quorum(m, quorum, []),
-         do: {:ok, %{"valid" => true}}
   end
 
   def accept_signature(_, c) do
