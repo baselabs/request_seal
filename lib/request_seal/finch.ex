@@ -5,7 +5,9 @@ if Code.ensure_loaded?(Finch) do
 
     Requests preserve same-name header order and Finch's actual request target.
     No stream is silently read: a streaming body stays unavailable unless the
-    caller explicitly retains it under a byte bound. Signing refuses unavailable
+    caller explicitly retains it under a byte bound and a 16,384-chunk work
+    ceiling (including empty chunks). Empty chunks are discarded; reaching the
+    ceiling returns `:limit` before pulling again, so EOF must arrive sooner. Signing refuses unavailable
     body coverage, `host`, request `req`/`tr` components, conflicting digests, or
     unfaithful required fields. Cover `@authority` instead of `host`.
 
@@ -58,7 +60,13 @@ if Code.ensure_loaded?(Finch) do
           body is not read and the message body is `:unavailable`.
         * `{:retain, max}` - `max` is a nonnegative integer byte bound. A stream
           is enumerated once and its bytes are retained; iodata is retained. A
-          body longer than `max` rejects. A stream given as a bare function is
+          body longer than `max` rejects. Streams also reject at 16,384 chunks,
+          including empty chunks, which are discarded; EOF must arrive before
+          that work ceiling. No further chunk is pulled after exhaustion.
+          Retention runs in a monitored worker with a 5,000 ms deadline; blocked
+          producers are cancelled with `:limit`. Producers must propagate
+          cancellation to external work they start.
+          A stream given as a bare function is
           not enumerated and rejects.
 
     ## Returns

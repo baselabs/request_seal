@@ -1055,6 +1055,122 @@ defmodule RequestSeal.ClientAdaptersTest do
     Peer.finish(task)
   end
 
+  test "retained enumerable bodies bound empty, tiny, and endless producers", %{handle: h} do
+    limit = RequestSeal.Signing.max_body_chunks()
+
+    for {chunk, count} <- [{"", 100_000}, {"x", 100_000}, {"", :infinity}, {"x", :infinity}] do
+      calls = :atomics.new(1, [])
+      cleaned = :atomics.new(1, [])
+
+      producer =
+        Stream.resource(
+          fn -> 0 end,
+          fn n ->
+            # A pull past the bound would block forever. It must never run.
+            if n >= limit, do: receive(do: (:never -> :ok))
+            :atomics.add(calls, 1, 1)
+            if n == count, do: {:halt, n}, else: {[chunk], n + 1}
+          end,
+          fn _ -> :atomics.add(cleaned, 1, 1) end
+        )
+        |> Stream.map(& &1)
+
+      r = Finch.build(:post, "https://example.com/", [], {:stream, producer})
+      max = if chunk == "", do: 0, else: 100_000
+
+      assert {:error, %Error{reason: :limit}} =
+               RequestSeal.Finch.sign(r, Peer.spec("()"), h, body: {:retain, max})
+
+      assert :atomics.get(calls, 1) == limit
+      assert :atomics.get(cleaned, 1) == 1
+    end
+
+    r = Finch.build(:post, "https://example.com/", [], {:stream, ["", [], "a", [""], "b", ""]})
+    assert {:ok, signed} = RequestSeal.Finch.sign(r, Peer.spec("()"), h, body: {:retain, 2})
+    assert signed.body == "ab"
+  end
+
+  test "Req function retention stops before pulling beyond its work bound", %{handle: h} do
+    limit = RequestSeal.Signing.max_body_chunks()
+
+    for chunk <- ["", "x"] do
+      calls = :atomics.new(1, [])
+
+      producer = fn r ->
+        if :atomics.get(calls, 1) >= limit, do: receive(do: (:never -> :ok))
+        :atomics.add(calls, 1, 1)
+        {:data, chunk, r}
+      end
+
+      assert {:ok, req} =
+               request("https://example.com", h, [body: producer],
+                 request_body: {:retain, 100_000}
+               )
+
+      assert {:error, %Error{reason: :limit}} = Req.request(req)
+      assert :atomics.get(calls, 1) == limit
+    end
+  end
+
+  test "blocked retention producers are cancelled at the work deadline", %{handle: h} do
+    owner = self()
+
+    blocked = fn ->
+      send(owner, {:blocked_body, self()})
+      receive do: (:never -> :ok)
+    end
+
+    stream = Stream.repeatedly(blocked) |> Stream.map(& &1)
+    r = Finch.build(:post, "https://example.com/", [], {:stream, stream})
+
+    assert {:error, %Error{reason: :limit}} =
+             RequestSeal.Finch.sign(r, Peer.spec("()"), h, body: {:retain, 0})
+
+    assert_received {:blocked_body, pid}
+    refute Process.alive?(pid)
+
+    producer = fn _r -> blocked.() end
+
+    assert {:ok, req} =
+             request("https://example.com", h, [body: producer], request_body: {:retain, 0})
+
+    assert {:error, %Error{reason: :limit}} = Req.request(req)
+    assert_received {:blocked_body, pid}
+    refute Process.alive?(pid)
+  end
+
+  test "Req response collector drops empties and stops on its chunk bound", %{handle: h} do
+    limit = RequestSeal.Signing.max_body_chunks()
+
+    for chunk <- ["", "x"] do
+      assert {:ok, req} =
+               request("https://example.com", h, [],
+                 verify: %{
+                   policy: Peer.policy(Peer.response_components(), h),
+                   label: "res",
+                   max_stream_bytes: 100_000
+                 }
+               )
+
+      req = RequestSeal.Req.sign_attempt(req)
+      collector = req.into
+      response = Req.Response.new()
+
+      {req, response} =
+        Enum.reduce(1..(limit - 1), {req, response}, fn _, acc ->
+          assert {:cont, acc} = collector.({:data, chunk}, acc)
+          acc
+        end)
+
+      state = req.private.request_seal
+      assert state.chunk_count == limit - 1
+      assert length(state.chunks) == if(chunk == "", do: 0, else: limit - 1)
+      assert {:halt, {req, _}} = collector.({:data, chunk}, {req, response})
+      assert %Error{reason: :limit} = req.private.request_seal.delivery_error
+      assert req.private.request_seal.chunks == []
+    end
+  end
+
   test "retention halts a body producer at the first oversized chunk", %{handle: h} do
     owner = self()
 

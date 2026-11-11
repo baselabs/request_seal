@@ -11,6 +11,8 @@ defmodule RequestSeal.Adapter.Signing do
   def spec!(spec, opts \\ []), do: RequestSeal.Signing.spec!(spec, opts)
   defdelegate sign_options!(opts), to: RequestSeal.Signing
   defdelegate body_option!(option), to: RequestSeal.Signing
+  defdelegate retain_body(fun), to: RequestSeal.Signing
+  defdelegate max_body_chunks(), to: RequestSeal.Signing
   defdelegate body(body, option), to: RequestSeal.Signing
   defdelegate retained(bytes), to: RequestSeal.Signing
   defdelegate body_required?(input, spec), to: RequestSeal.Signing

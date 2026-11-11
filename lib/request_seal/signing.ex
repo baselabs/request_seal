@@ -144,21 +144,15 @@ defmodule RequestSeal.Signing do
   def body_option!({:retain, n}) when is_integer(n) and n >= 0, do: :ok
   def body_option!(_), do: fail(:invalid_options)
 
+  @doc false
+  def max_body_chunks, do: 16_384
+
   def body(nil, _), do: {nil, retained("")}
   def body({:stream, _enumerable} = stream, :as_is), do: {stream, %Body{state: :unavailable}}
 
   def body({:stream, enumerable}, {:retain, max}) do
     ensure(not is_function(enumerable), :body_unavailable)
-
-    {chunks, _} =
-      Enum.reduce(enumerable, {[], 0}, fn chunk, {chunks, size} ->
-        total = size + IO.iodata_length(chunk)
-        ensure(total <= max, :limit)
-        {[chunk | chunks], total}
-      end)
-
-    bytes = chunks |> Enum.reverse() |> IO.iodata_to_binary()
-    {bytes, retained(bytes)}
+    retain_body(fn -> retain_enumerable(enumerable, max) end)
   end
 
   def body(data, option) when is_binary(data) or is_list(data) do
@@ -176,6 +170,54 @@ defmodule RequestSeal.Signing do
   end
 
   def body(_, _), do: fail(:invalid_request)
+
+  defp retain_enumerable(enumerable, max) do
+    result =
+      Enum.reduce_while(enumerable, {[], 0, 0}, fn chunk, {chunks, size, count} ->
+        length = IO.iodata_length(chunk)
+        total = size + length
+        count = count + 1
+
+        # Halt here, before Enumerable can ask the producer for another chunk.
+        # Empty chunks consume work budget but never retained-list capacity.
+        if total > max or count >= max_body_chunks() do
+          {:halt, :limit}
+        else
+          {:cont, {if(length == 0, do: chunks, else: [chunk | chunks]), total, count}}
+        end
+      end)
+
+    ensure(result != :limit, :limit)
+    {chunks, _, _} = result
+
+    bytes = chunks |> Enum.reverse() |> IO.iodata_to_binary()
+    {bytes, retained(bytes)}
+  end
+
+  @doc false
+  def retain_body(fun) do
+    context = %Custody.Context{
+      owner: self(),
+      deadline: System.monotonic_time(:millisecond) + 5_000
+    }
+
+    result =
+      Custody.run(context, fn ->
+        try do
+          {:ok, fun.()}
+        catch
+          {:adapter, reason, source} -> {:error, {:adapter, reason, source}}
+        end
+      end)
+
+    case result do
+      {:ok, value} -> value
+      {:error, {:adapter, reason, source}} -> fail(reason, source)
+      {:error, %Custody.Error{reason: :deadline_exceeded}} -> fail(:limit)
+      _ -> fail(:signing_failed)
+    end
+  end
+
   def retained(bytes), do: %Body{state: :retained, bytes: bytes, max_bytes: byte_size(bytes)}
 
   def body_required?(input, s),

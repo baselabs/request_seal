@@ -12,7 +12,8 @@ if Code.ensure_loaded?(Req) do
       attempt: 0,
       appended: [],
       chunks: [],
-      bytes: 0
+      bytes: 0,
+      chunk_count: 0
     ]
   end
 
@@ -38,7 +39,11 @@ if Code.ensure_loaded?(Req) do
 
     All verified delivery, including synchronous responses, uses a collector with
     explicit `max_stream_bytes`: overflow stops transport before complete
-    buffering with `:limit`. Chunks are buffered within that bound and hashed when
+    buffering with `:limit`. Request retention and response collection also stop
+    at 16,384 chunks, counting empty chunks as producer work and discarding them
+    without buffering or hashing. Reaching that ceiling rejects before another
+    producer call; EOF must arrive before the ceiling. Chunks are buffered within
+    the byte bound and hashed when
     policy requires content integrity; automatic streams refuse caller-selected
     representation hashing. The original destination receives chunks only after
     verification. Collectables are opened only after success. Req cache handling,
@@ -141,7 +146,8 @@ if Code.ensure_loaded?(Req) do
       * `:verify` (required) - `:none`, or a map with exactly `:policy` (a valid
         `RequestSeal.Policy`), `:label` (the response signature label), and
         `:max_stream_bytes` (a nonnegative integer bound on buffered response
-        bytes; any other value, including nil, rejects with `:invalid_options`,
+        bytes; collection also rejects at 16,384 chunks, including empty chunks,
+        which are discarded. Any other value, including nil, rejects with `:invalid_options`,
         from 0.5.0; 0.4.1 rejects nil with `:unsupported_delivery`). With a map, the request
         must keep `http_errors: :return` (the default), must not set
         `cache: true`, and must not have a response step ahead of
@@ -156,7 +162,13 @@ if Code.ensure_loaded?(Req) do
       * `:request_body` - `:as_is` (default) or `{:retain, max}` with a
         nonnegative integer `max`. Retention reads a Req function body or an
         enumerable stream once under `max` bytes and replaces it with
-        replayable bytes before transport. With `:as_is` an enumerable stream
+        replayable bytes before transport. At most 16,384 producer calls/chunks
+        are allowed, including empty chunks; EOF must arrive before the ceiling
+        or retention returns `:limit` without another pull. Empty chunks are not
+        retained. Retention runs in a monitored worker under a 5,000 ms deadline;
+        a blocked producer is cancelled and returns `:limit`. Producers must
+        propagate cancellation to any external work they start.
+        With `:as_is` an enumerable stream
         is sent unread with its bytes unavailable for coverage, and a Req
         function body rejects at signing with `:body_unavailable`.
       * `:redirect` - `:same_origin` (default) rejects any attempt whose origin
@@ -538,6 +550,7 @@ if Code.ensure_loaded?(Req) do
               appended: appended,
               chunks: [],
               bytes: 0,
+              chunk_count: 0,
               digest: nil,
               delivery_error: nil
           }
@@ -594,17 +607,22 @@ if Code.ensure_loaded?(Req) do
     end
 
     defp retain_function(%{body: fun} = request, {:retain, max}) when is_function(fun, 1) do
-      retain_function(request, fun, max, [], 0)
+      Signing.retain_body(fn -> retain_function(request, fun, max, [], 0, 0) end)
     end
 
     defp retain_function(request, _), do: request
 
-    defp retain_function(request, fun, max, chunks, bytes) do
+    defp retain_function(request, fun, max, chunks, bytes, count) do
+      Signing.ensure(count < Signing.max_body_chunks(), :limit)
+      Signing.ensure(bytes <= max, :limit)
+
       case fun.(request) do
         {:data, chunk, %Req.Request{} = request} ->
-          bytes = bytes + IO.iodata_length(chunk)
+          length = IO.iodata_length(chunk)
+          bytes = bytes + length
           Signing.ensure(bytes <= max, :limit)
-          retain_function(request, fun, max, [chunk | chunks], bytes)
+          chunks = if length == 0, do: chunks, else: [chunk | chunks]
+          retain_function(request, fun, max, chunks, bytes, count + 1)
 
         {:done, %Req.Request{} = request} ->
           %{request | body: chunks |> Enum.reverse() |> IO.iodata_to_binary()}
@@ -656,17 +674,22 @@ if Code.ensure_loaded?(Req) do
       result =
         Signing.protect(:req, :verify, state.attempt, fn ->
           bytes = state.bytes + byte_size(chunk)
+          count = state.chunk_count + 1
+          Signing.ensure(count < Signing.max_body_chunks(), :limit)
           Signing.ensure(bytes <= state.options[:verify].max_stream_bytes, :limit)
 
           digest =
-            if state.digest do
+            if state.digest != nil and chunk != "" do
               case Digest.update(state.digest, chunk) do
                 {:ok, value} -> value
                 _ -> Signing.fail(:limit)
               end
+            else
+              state.digest
             end
 
-          {:ok, %{state | bytes: bytes, chunks: [chunk | state.chunks], digest: digest}}
+          chunks = if chunk == "", do: state.chunks, else: [chunk | state.chunks]
+          {:ok, %{state | bytes: bytes, chunk_count: count, chunks: chunks, digest: digest}}
         end)
 
       case result do
