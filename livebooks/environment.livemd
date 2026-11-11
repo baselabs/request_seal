@@ -29,7 +29,7 @@ true = is_binary(module_docs)
   "ed25519"
 ] = RequestSeal.Crypto.algorithms()
 
-IO.puts("RequestSeal module loaded; pinned runtime, Ed25519, and six HTTP algorithms available")
+IO.puts("RequestSeal module loaded; supported runtime, Ed25519, and six HTTP algorithms available")
 ```
 
 The result proves installation and prerequisites only. The other notebooks exercise signing and verification; see [testing and evidence](../docs/guides/testing.md) for how these checks differ from protocol conformance. No filesystem path, secret, private key, request body, or token is printed.

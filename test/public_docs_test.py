@@ -468,7 +468,7 @@ class ToolchainTest(unittest.TestCase):
             ("config/config.exs", "String.to_integer()", "String.to_float()"),
             ("tools/notebooks/config/config.exs", 'expected_otp = "29"', 'expected_otp = "27"'),
             ("tools/notebooks/config/config.exs", "running_otp != expected_otp", "running_otp < expected_otp"),
-            ("livebooks/environment.livemd", '"29" = System.otp_release()', '"27" = System.otp_release()'),
+            ("livebooks/environment.livemd", "System.otp_release()) >= 27", "System.otp_release()) >= 26"),
             (".tool-versions", "elixir 1.20.4-otp-29", "elixir 1.20.4-otp-28"),
             (".tool-versions", "nodejs 24.21.0", "nodejs latest"),
             (".github/workflows/ci.yml", "- lane: floor", "- lane: other"),
@@ -520,7 +520,7 @@ class ToolchainTest(unittest.TestCase):
             ".github/workflows/ci.yml": ("otp: '29.1.1'", "otp: '29.1.2'"),
             "tools/notebooks/mix.exs": ('elixir: "1.20.4"', 'elixir: "1.20.5"'),
             "tools/notebooks/config/config.exs": ('import_config "../../../config/config.exs"', 'import_config "other.exs"'),
-            "livebooks/environment.livemd": ('"1.20.4" = System.version()', '"1.20.5" = System.version()'),
+            "livebooks/environment.livemd": ('Version.match?(System.version(), "~> 1.18")', 'Version.match?(System.version(), "~> 1.19")'),
         }
         for path, (old, new) in mutations.items():
             with self.subTest(path=path):
