@@ -79,6 +79,30 @@ defmodule RequestSeal.DiscoveryTest do
     assert {:error, %{reason: :invalid_source}} = Discovery.fetch(%{source | max_keys: 257}, [])
   end
 
+  test "CIMD rejects root-only paths at construction and supplied-source validation" do
+    for location <- [
+          "https://example.com",
+          "https://example.com/",
+          "https://example.com/?client=1",
+          "https://example.com?client=1"
+        ] do
+      assert {:error, %{reason: :invalid_source}} = Source.new(%{type: :cimd, location: location})
+      direct = %Source{type: :cimd, location: location}
+      assert {:error, %{reason: :invalid_source}} = Discovery.fetch(direct, [])
+    end
+
+    for path <- ["/client.json", "/clients/app/"] do
+      assert {:ok, _} = Source.new(%{type: :cimd, location: "https://example.com" <> path})
+    end
+
+    assert {:ok, directory} = Source.new(%{type: :directory, location: "https://example.com/"})
+
+    assert directory.location ==
+             "https://example.com/.well-known/http-message-signatures-directory"
+
+    assert {:ok, _} = Source.new(%{type: :jwks_uri, location: "https://example.com/"})
+  end
+
   test "directory proof sources require thumbprint key IDs" do
     attrs = %{type: :directory, location: "https://example.com", key_id: :directory}
     assert {:error, %{reason: :invalid_source}} = Source.new(attrs)

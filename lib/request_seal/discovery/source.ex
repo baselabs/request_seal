@@ -6,7 +6,9 @@ defmodule RequestSeal.Discovery.Source do
   For CIMD, pass `:location` with exactly the spelling of the document's
   `client_id`, including scheme/host case, any trailing host dot and explicit
   port. The client ID comparison is exact; origin normalization for fetching
-  and same-origin checks never changes that comparison.
+  and same-origin checks never changes that comparison. CIMD sources require
+  a path other than the root `/`, as required by
+  [CIMD-03 Section 3](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-03.html#section-3).
 
   ## Key ID modes
 
@@ -76,7 +78,7 @@ defmodule RequestSeal.Discovery.Source do
         without userinfo, fragment, backslash, malformed percent-escape or dot
         segment. A `:directory` location is either an origin (expanded to the
         well-known path) or exactly that path, without a query. A `:cimd`
-        location needs a nonempty path.
+        location needs a nonempty, non-root path; `/` rejects even with a query.
 
   ## Options
 
@@ -140,7 +142,7 @@ defmodule RequestSeal.Discovery.Source do
         s = struct(__MODULE__, attrs)
         ensure(s.type in [:directory, :jwks_uri, :cimd], :invalid_source)
         uri = url!(s.location)
-        ensure(s.type != :cimd or uri.path not in [nil, ""], :invalid_source)
+        ensure(s.type != :cimd or uri.path not in [nil, "", "/"], :invalid_source)
 
         location =
           if s.type == :directory and uri.path in [nil, "", "/"],
