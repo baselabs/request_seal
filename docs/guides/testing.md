@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture, threat model, · Review when: an advertised capability, test runner, or evidence source changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture, threat model, · Review when: an advertised capability, test runner, or evidence source changes -->
 
 # Testing and evidence
 
@@ -149,7 +149,7 @@ and signature conformance remain separate acceptance.
 The [RFC Ed25519 notebook](../../livebooks/rfc-ed25519.livemd) checks OTP and then
 RequestSeal's signature-base construction and policy verification against independently
 published RFC 9421 bytes, and rejects altered bytes. The other
-[notebooks](../../livebooks/README.md) are local round trips with generated keys. The
+[notebooks](../../livebooks/overview.md) are local round trips with generated keys. The
 runner validates each published Hex install cell before substituting the real checkout;
 the release runbook checks registry installation separately. No notebook establishes
 acceptance by a deployed peer.

@@ -26,10 +26,11 @@ defmodule RequestSeal.Telemetry do
   exhaustion observable. An `:internal` reason marks an unexpected internal
   fault — not named by the input — with the exception class in `detail`.
 
-  The event list, names, measurement keys, and metadata keys are a versioned
-  public contract: additive events and keys may arrive in minor releases;
-  renames and removals require a major version. This module carries no
-  functions; attach handlers with `:telemetry.attach/4`.
+  The event list, names, measurement keys and units, metadata keys, and the
+  meaning of each value are a versioned public contract: additive events and
+  keys may arrive in minor releases; renames, removals, and changed units or
+  meanings require a major version. `events/0` lists the events; attach
+  handlers with `:telemetry.attach/4`.
 
   ## Examples
 

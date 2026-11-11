@@ -139,9 +139,15 @@ def release_errors(relative, source, version=None):
         requirement = re.match(r'[\"\']([^\"\']+)[\"\']\s*(?:,|$)', install[1].strip())
         if not requirement:
             errors.append(f"{relative}: RequestSeal requires a versioned Hex install")
-        elif version is not None and requirement[1] != f"~> {version}":
-            errors.append(f"{relative}: RequestSeal install requirement must be ~> {version}")
+        elif version is not None and requirement[1] != install_requirement(version):
+            errors.append(f"{relative}: RequestSeal install requirement must be {install_requirement(version)}")
     return errors
+
+
+def install_requirement(version):
+    """0.x pins the exact patch line; from 1.0 the documented minor admits every later 1.x."""
+    major, minor, _patch = version.split(".")
+    return f"~> {version}" if major == "0" else f"~> {major}.{minor}"
 
 
 def safe_document_path(path):

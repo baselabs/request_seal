@@ -43,7 +43,7 @@ IO.puts("Policy configured")
 
 ## Build the receiver
 
-`RequestSeal.Plug.Capture` keeps the exact body bytes before `Plug.Parsers` consumes them, and `Plug.Parsers` reads through Capture's body reader. `RequestSeal.Plug.Verify` then rejects anything that fails the policy before the route runs. Elixir's built-in `JSON` module decodes the body.
+`RequestSeal.Plug.Capture` keeps the exact body bytes before `Plug.Parsers` consumes them, and `Plug.Parsers` reads through Capture's body reader. `RequestSeal.Plug.Verify` then rejects anything that fails the policy before the route runs. Elixir's built-in `JSON` module decodes the body. `origin: :connection` takes the authority from the request's Host line (or HTTP/2 `:authority`), which the sender chooses, so a request signed for another site verifies wherever your server answers for any host. That is fine for this local example. In production, declare your own origin, for example `origin: {:declared, "https", "api.example.com"}`, or reject requests for authorities you don't serve before Capture runs.
 
 ```elixir
 defmodule ShipmentWebhook do

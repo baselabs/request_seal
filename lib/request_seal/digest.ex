@@ -42,6 +42,10 @@ defmodule RequestSeal.Digest do
   Fields rules (last value, first position), except supported checksum algorithms
   in `check/3` and `check_stream/3`, which reject any repeat with `:conflicting_digest`.
   Inspection hides hash contexts.
+
+  A `RequestSeal.Digest` state's `hashes` field holds runtime hash contexts:
+  implementation state outside the 1.x compatibility promise. Use `update/2` and
+  `finish/1`, never the field.
   """
   alias RequestSeal.{Body, Message, StructuredFields}
   alias RequestSeal.StructuredFields.{Schema, Value}

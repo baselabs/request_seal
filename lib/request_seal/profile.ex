@@ -2,7 +2,8 @@ defmodule RequestSeal.Profile do
   @moduledoc """
   Shared HTTP signature pipeline for profiles owned by extension packages.
 
-  This extension surface is unstable; pin RequestSeal exactly.
+  From 1.0.0 this extension surface follows the same 1.x compatibility promise
+  as the rest of the public API; see the Compatibility and deprecation guide.
 
   An extension selects its source-specific rules, then uses `dictionaries/2` to
   parse paired signature fields, `preflight/4` to check coverage and freshness

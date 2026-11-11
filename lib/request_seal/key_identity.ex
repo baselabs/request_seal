@@ -8,6 +8,8 @@ defmodule RequestSeal.KeyIdentity do
   a secret. A caller must supply the same identity for aliases within its trusted
   scope. Unknown equivalence never establishes equality, including with itself.
   Do not place these internal values in general results, logs, or telemetry.
+  The struct's fields are outside the 1.x compatibility promise; compare
+  identities only with `same?/2`.
   """
   @derive {Inspect, only: [:kind]}
   defstruct [:kind, :value]

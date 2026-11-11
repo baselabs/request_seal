@@ -2,7 +2,8 @@ defmodule RequestSeal.Custody.SSHAgent do
   @moduledoc """
   Non-exporting signing through a caller-selected OpenSSH agent Unix socket.
 
-  Protocol: [draft-miller-ssh-agent-14](https://www.ietf.org/archive/id/draft-miller-ssh-agent-14.html),
+  Protocol: [RFC 9987](https://www.rfc-editor.org/rfc/rfc9987.html) (formerly
+  draft-miller-ssh-agent; identity listing and signing, Sections 5.5 and 5.6),
   [RFC 8709](https://www.rfc-editor.org/rfc/rfc8709.html),
   [RFC 8332](https://www.rfc-editor.org/rfc/rfc8332.html), and
   [RFC 5656](https://www.rfc-editor.org/rfc/rfc5656.html).

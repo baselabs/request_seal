@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: design · Updated: 2026-10-16 · Governed by: public architecture · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
+<!-- Status: current · Kind: design · Updated: 2026-11-11 · Governed by: public architecture · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
 
 # RequestSeal threat model
 
@@ -37,8 +37,9 @@ The caller controls accepted profiles, trusted origins/proxies, trust anchors, d
 | Stale/removed key acceptance | Source-bound cache expiry, fetched-at metadata, refresh semantics, explicit removed-key behavior, no stale resurrection. | Actual rotation/removal against the named discovery adapter. |
 | Key exfiltration | Opaque handle; signing and key-unwrapping custody boundaries; public-only serialization; redaction; no secret fields in inspection. | Real local and remote signer error pathways plus log/telemetry scan. |
 | Forwarded-header spoofing | Explicit trusted-proxy policy and authoritative external origin; retain ingress and reconstructed facts. | Actual proxy route with trusted and untrusted hops. |
+| Cross-origin relay | `@authority` coverage binds a signature to its origin, so the verifier's origin must come from its own configuration: a declared origin, or a connection origin only where the application answers for its own authorities alone (RFC 9421 Section 7.4.3). `origin: :connection` takes the authority from the sender's Host line. | A request signed for another authority sent to a server answering for any host. |
 | Retry/redirect reuse | Req re-signs each final attempt and requires cross-origin policy; selected nonce/time parameters regenerate. Finch signs each explicit caller invocation; callers own its retry/redirect loop. Responses bind to the supplied request. | Actual redirect/retry flows, including cross-origin denial. |
-| Parser/resource exhaustion | Bounded bytes, members, depth, signature/component/key counts, numeric magnitudes, deadlines, and streaming work. | Just-inside/outside bounds, fuzz corpus, timeout/cancel paths, measured resource receipts. |
+| Parser/resource exhaustion | Bounded bytes, members, depth, signature/component/key counts, numeric magnitudes, deadlines, retained-body chunk counts and producer work, and aggregate quorum verification attempts. Dirty native work can overrun a deadline, and trusted callbacks must propagate cancellation to their own work. | Just-inside/outside bounds, fuzz corpus, timeout/cancel paths, measured resource receipts. |
 | Error oracle/data leak | Stable bounded public reasons and redacted default inspection. The versioned telemetry contract (from 0.5.0) carries only low-cardinality outcome/reason/layer atoms; opt-in diagnostic redactors remain proposed. | Real negative paths with sensitive canaries absent from output, event metadata, and event names. |
 | Cross-profile replay | Commitment facts carry the selected profile stamp; the caller's namespace and commitment separate profiles. No fallback. | Same nonce under generic, Web Bot Auth, and package-namespaced extension profiles; tag substitution rejection. |
 | Corpus compromise | Immutable provenance, independent expected values, digest manifest, source review, and the Elixir consumer prohibited from regenerating expectations. | Tampered-case red proof in Elixir and manifest verification. |
@@ -50,8 +51,10 @@ Web Bot Auth discovery can turn a signed field into a network capability.
 The selected draft permits multiple discovery types. Selection is configuration,
 not content negotiation by an attacker. Directory signatures and requests use
 their own profile rules; support for `req` in one does not imply support in the
-other. Nested signatures must independently satisfy required coverage before
-one whole-envelope replay claim.
+other. Nested signatures must independently satisfy required coverage. Required replay
+accepts exactly one selected signature and claims over its covered values only:
+labels are uncovered (RFC 9421 Section 7.2.5), and a claim over a set of
+signatures would let a relabeled, stripped, or recombined capture claim afresh.
 
 ## Generic JOSE threats
 

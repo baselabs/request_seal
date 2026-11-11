@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
 
 # Release and maintenance runbook
 
@@ -19,15 +19,16 @@ source-selected Web Bot Auth protocol-00 signing and identity attribution.
 Other named application profiles belong in extension packages.
 
 1. Set the package version and the docs `source_ref` (`v<version>`) in `mix.exs`, update every install
-   string (currently `{:request_seal, "~> 0.5.2"}`; the document check rejects any
-   other), and set `elixir_release` in `corpus/index.json` to `v<version>`. The
+   string to the form the document check requires (`~> X.Y.Z` before 1.0, then
+   `~> MAJOR.MINOR`, for example `~> 1.0` for 1.0.0), and set `elixir_release` in `corpus/index.json` to `v<version>`. The
    declared gate fails until `elixir_release` equals `v` plus the `mix.exs`
    version, and the corpus release workflow refuses a tag that differs from it.
    Changing `index.json` changes its digest: update the pin in
-   `test/support/conformance_pin.ex` in the same commit. Record the release in
-   `CHANGELOG.md` under a `## <version> - Unreleased` heading (currently
-   `## 0.5.0 - Unreleased`) and replace `Unreleased` with the release date in
-   `YYYY-MM-DD` form when publishing, as in `## 0.4.1 - 2026-10-10`. Documents
+   `test/support/conformance_pin.ex` in the same commit. Collect changelog
+   entries under `## Unreleased`; when cutting the release, rename that heading to
+   `## <version> - YYYY-MM-DD`, as in `## 0.4.1 - 2026-10-10`. A document that marks
+   unreleased behavior needs a versioned pending heading, `## <version> - Unreleased`,
+   until the release is dated. Documents
    mark behavior that ships in the next release with `From <version> (unreleased)`;
    when publishing, delete every ` (unreleased)` after that version in `docs/`,
    the guides, and `lib/`. The document check fails while a marker names the
@@ -112,15 +113,13 @@ Other named application profiles belong in extension packages.
    This scans all fetched history, including deleted file contents. The term-file
    self-match is the scanner's positive control. An empty result establishes only
    that the configured terms were not found; inspect package/source disclosure too.
-6. Publish to Hex. From the pinned Elixir 1.20 checkout, load `HEX_API_KEY` from
-   the project's gitignored `.env`; refer to the key by name and never print its
-   value. Verify the security reporting channel and package ownership, then run:
+6. Publish to Hex. From the pinned Elixir 1.20 checkout, export `HEX_API_KEY` into
+   the publishing process only, from your secret store; never keep it in a project
+   file, refer to it by name, and never print its value. Verify the security
+   reporting channel and package ownership, then run:
 
    ```sh
-   set -a
-   . ./.env
-   set +a
-   : "${HEX_API_KEY:?Set HEX_API_KEY in the project .env}"
+   : "${HEX_API_KEY:?Export HEX_API_KEY from your secret store for this command}"
    : "${VERSION:?Set VERSION to the version being published}"
    mix hex.publish --yes
    mix hex.info request_seal "$VERSION"

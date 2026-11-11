@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the signing, verification, Plug, or replay API changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the signing, verification, Plug, or replay API changes -->
 
 # Test your integration
 
@@ -80,7 +80,7 @@ For every other rejection your application must handle, the [errors guide](error
 
 ## Drive a Plug receiver without a server
 
-`Plug.Test` connections run through `RequestSeal.Plug.Capture` and `RequestSeal.Plug.Verify` in the test process. Put the signed headers on the connection with the same body:
+`Plug.Test` connections run through `RequestSeal.Plug.Capture` and `RequestSeal.Plug.Verify` in the test process. Put the signed headers on the connection with the same body. The test uses `origin: :connection` for brevity; production code declares its origin, as the [Plug guide](phoenix-and-plug.md#origin-and-transport-options) explains:
 
 ```elixir
 deliver = fn request, body ->

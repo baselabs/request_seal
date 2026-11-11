@@ -1,9 +1,9 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # RequestSeal
 
 RequestSeal signs and verifies HTTP requests and responses in Elixir with RFC 9421 HTTP Message Signatures, including Web Bot Auth for AI agents and crawlers.
-Integrations support Req, Finch, and Ash; Phoenix uses the Plug integration; JOSE supports JWS signing and JWE encryption.
+Integrations support Req, Finch, and Ash; Phoenix uses the Plug integration; its JOSE (JSON Object Signing and Encryption) modules support JWS signing and JWE encryption.
 
 Use it to:
 
@@ -28,7 +28,7 @@ Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 {:request_seal, "~> 0.5.2"}
 ```
 
-Install RequestSeal 0.5.2 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds.
+Install RequestSeal 0.5.2 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds. RequestSeal needs Elixir 1.18 or newer (below 2.0) on Erlang/OTP 27 or newer; the optional ash_onetime and ash_hooks integrations need Elixir 1.20.
 
 Add optional dependencies for the integrations you use. The table is a reference; the complete webhook dependency list follows.
 
@@ -59,7 +59,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 
 ## Concepts in one minute
 
-- **Key handle:** an opaque reference to a key held by a custodian, such as a local holder process or an SSH agent. Private key bytes stay with the custodian.
+- **Key handle:** an opaque reference to a key held by a custodian, such as a local holder process or an SSH agent. Private key bytes stay with the custodian. A local holder lives until you call `RequestSeal.Custody.Local.release/1` or its creator exits; the examples below leave cleanup to process exit.
 - **Message:** the request or response, including its exact body and ordered headers.
 - **Signing spec:** the label, algorithm, coverage, and lifetime of a signature.
 - **Covered components:** the `("@method" ...)` list is RFC 9421's syntax for which parts of the request are signed.
@@ -109,7 +109,9 @@ the scheme. See [coverage choices](docs/guides/signing-and-verifying.md).
 
 Save this entire script as `webhook.exs` in a fresh `mix new` project with the dependencies above, run `mix deps.get`, then `mix run webhook.exs`. It starts a receiver on an available local port, sends a signed request, and checks unsigned rejection.
 
-In a real deployment, the receiver gets the sender's public key out of band or from a trusted JWKS URL or key directory; see [key discovery](docs/guides/key-discovery.md).
+In a real deployment, the receiver gets the sender's public key out of band or from a trusted JWKS (JSON Web Key Set) URL or key directory; see [key discovery](docs/guides/key-discovery.md).
+
+`origin: :connection` takes the authority from the request's Host line (or HTTP/2 `:authority`), which the sender chooses, so a request signed for another site verifies wherever your server answers for any host. That is fine for this local example. In production, declare your own origin, for example `origin: {:declared, "https", "api.example.com"}`, or reject requests for authorities you don't serve before Capture runs.
 
 ```elixir
 defmodule WebhookReceiver do
@@ -277,7 +279,7 @@ Expected output (cleanup inside an existing VM may also log application-stop not
 
 ## In Phoenix
 
-Phoenix uses the same Plug integration. The code below uses `webhook_policy` from the webhook example to configure the policy at startup. In your app, construct it with your trusted sender's public key. The request-time function form reads the current policy on each request. Add the shown plugs and route to your existing endpoint and router; Capture must precede the endpoint's `Plug.Parsers`.
+Phoenix uses the same Plug integration. The code below uses `webhook_policy` from the webhook example to configure the policy at startup. In your app, construct it with your trusted sender's public key. The request-time function form reads the current policy on each request. Add the shown plugs and route to your existing endpoint and router; Capture must precede the endpoint's `Plug.Parsers`. Replace `origin: :connection` with your declared origin, as described above.
 
 ```elixir
 Application.put_env(:my_app, :http_signature_policy, webhook_policy)
@@ -491,7 +493,7 @@ From 0.5.0, `RequestSeal.Telemetry` defines the versioned `:telemetry` contract 
 | Compact JWS/JWE and one JWS inside one JWE | `RequestSeal.JOSE` | [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [7516](https://www.rfc-editor.org/rfc/rfc7516.html), [7518](https://www.rfc-editor.org/rfc/rfc7518.html) |
 | Public keys and SHA-256 JWK thumbprints | `RequestSeal.PublicKey` | [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), [8037](https://www.rfc-editor.org/rfc/rfc8037.html) |
 | Web Bot Auth signing and verification | `RequestSeal.WebBotAuth` | [Web Bot Auth protocol-00 draft](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html) |
-| Bounded HTTPS key discovery: JWKS, key directories, CIMD | `RequestSeal.Discovery` | [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), Web Bot Auth protocol-00, [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html) |
+| Bounded HTTPS key discovery: JWKS, key directories, CIMD (OAuth Client ID Metadata Documents) | `RequestSeal.Discovery` | [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), Web Bot Auth protocol-00, [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html) |
 
 HTTP signature algorithms (`RequestSeal.Crypto.algorithms/0`): `ed25519`, `ecdsa-p256-sha256`, `ecdsa-p384-sha384`, `rsa-pss-sha512`, `rsa-v1_5-sha256`, and `hmac-sha256`. HTTP signatures can also use the JWS algorithms `RS256`, `PS256`, `PS384`, `PS512`, `HS256`, `ES256`, `ES384`, and `EdDSA` by explicit `{:jws, name}` selection.
 
@@ -509,7 +511,7 @@ HTTP signature algorithms (`RequestSeal.Crypto.algorithms/0`): `ed25519`, `ecdsa
 
 ## Compatibility
 
-Elixir 1.18 or newer on OTP 27 or newer. CI tests 1.18.4/27, 1.19.5/28, and 1.20.4/29. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Development instructions work on macOS and Linux; Windows developers use WSL2.
+Elixir 1.18 or newer, below 2.0 (`elixir: "~> 1.18"`), on OTP 27 or newer. CI tests three pairs: 1.18.4/27, 1.19.5/28, and 1.20.4/29. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Development instructions work on macOS and Linux; Windows developers use WSL2. What 1.x keeps stable, what a minor release may add, and how APIs are deprecated is in [compatibility and deprecation](docs/reference/compatibility.md); supported versions for security fixes are in [SECURITY.md](SECURITY.md).
 
 ## Security model
 
@@ -536,14 +538,14 @@ RequestSeal's tests run an independently sourced [conformance corpus](docs/refer
 - [Rotate signing keys](docs/guides/key-rotation.md)
 - [Diagnose and handle errors](docs/guides/errors.md)
 - [Test your integration](docs/guides/testing-your-integration.md)
-- [Livebooks](livebooks/README.md): executable notebooks for the core flow, a published RFC vector, Plug, Web Bot Auth, and JOSE
+- [Livebooks](livebooks/overview.md): executable notebooks for the core flow, a published RFC vector, Plug, Web Bot Auth, and JOSE
 
 API reference: [HexDocs](https://hexdocs.pm/request_seal). Release notes: [CHANGELOG](CHANGELOG.md).
 
 ### Contributing
 
 - [Develop RequestSeal](docs/guides/getting-started.md) and [testing](docs/guides/testing.md)
-- [Architecture](docs/design/architecture.md), [threat model](docs/design/threat-model.md), [glossary](docs/reference/glossary.md), and [standards](docs/reference/standards.md)
+- [Architecture](docs/design/architecture.md), [threat model](docs/design/threat-model.md), [glossary](docs/reference/glossary.md), [standards](docs/reference/standards.md), and [compatibility](docs/reference/compatibility.md)
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor checks.
 

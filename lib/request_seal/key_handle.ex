@@ -3,7 +3,9 @@ defmodule RequestSeal.KeyHandle do
   Caller-owned, algorithm-bound signing, verification, or key-unwrapping capability.
 
   Construct handles through a custodian such as `RequestSeal.Custody.Local` or
-  `RequestSeal.Custody.SSHAgent`. Only that custodian interprets `ref`. Local
+  `RequestSeal.Custody.SSHAgent`. Only that custodian interprets `ref`, which is
+  implementation state outside the 1.x compatibility promise: use the
+  `RequestSeal.Custody` functions, never the field. Local
   references contain only a holder PID and token, never key material. The holder
   is sensitive and lives until `RequestSeal.Custody.Local.release/1` or creator exit,
   including after handle transfer. Dropping a handle does not stop its holder.

@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # Verify webhook signatures in Phoenix and Plug
 
@@ -138,7 +138,7 @@ Cover the final bytes: disable server compression after signing. File and chunke
 
 ## Origin and transport options
 
-`origin: :connection` ignores forwarded fields. Behind a proxy, choose an explicit `{:declared, "https", "api.example.com"}` or `{:forwarded, %{trusted_peers: [{ip_tuple, prefix}], field: :forwarded}}` (or `field: :x_forwarded` for `X-Forwarded-Proto` and `X-Forwarded-Host`) based on your actual deployment. Forwarded mode checks the actual peer and uses the last element; it preserves ingress facts separately. Do not derive trust from a sender-controlled forwarded header.
+`origin: :connection` takes the scheme from the socket and the authority from the request's Host line or HTTP/2 `:authority`, which the sender chooses, and ignores forwarded fields. A request signed for another site's authority then verifies wherever the application answers for any host, which Bandit, Cowboy and Phoenix do by default. In production, declare the origin with `{:declared, "https", "api.example.com"}`, or reject requests for authorities you don't serve before Capture ([RFC 9110 Section 7.4](https://www.rfc-editor.org/rfc/rfc9110.html#section-7.4); [RFC 9421 Section 7.4.3](https://www.rfc-editor.org/rfc/rfc9421.html#section-7.4.3)). Behind a proxy, choose an explicit `{:declared, "https", "api.example.com"}` or `{:forwarded, %{trusted_peers: [{ip_tuple, prefix}], field: :forwarded}}` (or `field: :x_forwarded` for `X-Forwarded-Proto` and `X-Forwarded-Host`) based on your actual deployment. Forwarded mode checks the actual peer and uses the last element; it preserves ingress facts separately. Do not derive trust from a sender-controlled forwarded header.
 
 All three origin modes lowercase scheme and host and omit default ports per
 [RFC 9421 Section 2.2.3](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.2.3).

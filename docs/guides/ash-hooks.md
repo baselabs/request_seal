@@ -60,7 +60,7 @@ Use this pipeline upstream of the consumer's ash_hooks ingress. Capture preserve
 ordered header occurrences and bounded exact body bytes. Verify retains the full
 result and rejects before handling. `AshHooks.BodyReader` receives the unchanged
 bytes replayed by Capture. Plug does not establish the exact raw target; this
-example covers `@path`, not `@request-target`, `@target-uri`, or `@query`.
+example covers `@path`, not `@request-target`, `@target-uri`, or `@query`. `origin: :connection` takes the authority from the request's Host line, which the sender chooses; in production declare your origin (`{:declared, "https", "api.example.com"}`) as the [Plug guide](phoenix-and-plug.md#origin-and-transport-options) explains.
 
 ```elixir
 defmodule SignedWebhookIngress do

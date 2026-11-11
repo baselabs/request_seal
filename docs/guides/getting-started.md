@@ -1,7 +1,9 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
 
 # Develop RequestSeal
 
+
+This guide is for contributors. To use RequestSeal in your application, start with the [README](../../README.md#installation).
 
 **What you will build:** A local development environment for RequestSeal, with the full verification gate and generated documentation. You will run the same commands on macOS and Linux (or WSL2), then explore the tested APIs and notebooks before making changes.
 
@@ -12,14 +14,18 @@ Python 3.12 (the version CI runs), Git, Hex, Node 24.21.0, the OpenSSL command-l
 `ssh-add`, and `ssh-keygen`). Node is required for the
 reciprocal JOSE tests against the independent Node WebCrypto peer; OpenSSL runs
 reciprocal signature checks. `.tool-versions` records the exact Elixir/OTP and
-Node versions. Use a version manager such as asdf
+Node versions; Python is not pinned there, and CI uses 3.12. Use a version manager such as asdf
 or mise, then confirm `elixir --version` from this checkout. macOS and Linux use the
 same commands; Windows developers use a clone inside WSL2's filesystem.
 For the supported consumer range, see the [README](../../README.md).
 
 ## Run the actual checks
 
+Clone the repository and work from its root:
+
 ```sh
+git clone https://github.com/baselabs/request_seal.git
+cd request_seal
 mix deps.get
 python3 scripts/check.py
 ```
@@ -41,7 +47,7 @@ python3 scripts/check.py --notebooks-only
 ```
 
 Open `doc/index.html` for the generated documentation. Open the files linked in
-[the notebook guide](../../livebooks/README.md) in Livebook for interactive reading.
+[the notebook guide](../../livebooks/overview.md) in Livebook for interactive reading.
 The headless gate verifies code; it does not certify interactive browser accessibility.
 
 ## Use RequestSeal in an application

@@ -57,7 +57,12 @@ if Code.ensure_loaded?(Plug.Conn) do
       * `:origin` - how the request origin (scheme and authority) is selected.
         Every selected origin lowercases scheme and host and omits the default
         port (80 for HTTP, 443 for HTTPS).
-        * `:connection` - the connection's scheme, host, and port.
+        * `:connection` - the connection's scheme, with the host and port the
+          request names in its Host line (or HTTP/2 `:authority`). The sender
+          chooses those, so a signature for another site's authority verifies
+          wherever the application answers for any host. Use it only when the
+          application serves its own authorities alone; otherwise declare the
+          origin (RFC 9421 Section 7.4.3, RFC 9110 Section 7.4).
         * `{:declared, scheme, authority}` - a caller-trusted scheme and
           authority, validated and normalized at init.
         * `{:forwarded, %{trusted_peers: cidrs, field: field}}` - `cidrs` is a

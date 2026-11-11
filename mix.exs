@@ -27,10 +27,11 @@ defmodule RequestSeal.MixProject do
     "docs/guides/testing-your-integration.md",
     "docs/guides/testing.md",
     "docs/operations/releases.md",
+    "docs/reference/compatibility.md",
     "docs/reference/corpus-format.md",
     "docs/reference/glossary.md",
     "docs/reference/standards.md",
-    "livebooks/README.md",
+    "livebooks/overview.md",
     "livebooks/environment.livemd",
     "livebooks/rfc-ed25519.livemd",
     "livebooks/sign-and-verify.livemd",
@@ -49,7 +50,7 @@ defmodule RequestSeal.MixProject do
       app: :request_seal,
       version: "0.5.2",
       # Libraries declare a consumer range; development and notebook tools stay pinned.
-      # OTP 27 supplies :json; all three CI lanes are recorded in ADR 0008.
+      # OTP 27 supplies :json; CI tests the floor, a middle and the latest toolchain.
       elixir: "~> 1.18",
       name: "RequestSeal",
       source_url: "https://github.com/baselabs/request_seal",
@@ -77,14 +78,14 @@ defmodule RequestSeal.MixProject do
         source_ref: "v0.5.2",
         extras:
           Enum.map(@public_documents, fn
-            "livebooks/README.md" -> {"livebooks/README.md", filename: "livebooks"}
+            "livebooks/overview.md" -> {"livebooks/overview.md", filename: "livebooks"}
             path -> path
           end),
         groups_for_extras: [
           "Start here": ["README.md"],
           Guides: ~r/docs\/guides\/(?!getting-started\.md|testing\.md)/,
           Reference: ~r/docs\/reference\//,
-          "Design and decisions": [~r/docs\/design\//, ~r/docs\/adr\//],
+          "Design and decisions": ~r/docs\/design\//,
           Livebooks: ~r/livebooks\//,
           Contributing: [
             "CONTRIBUTING.md",
@@ -107,6 +108,7 @@ defmodule RequestSeal.MixProject do
             RequestSeal.Error,
             RequestSeal.SignatureBase,
             RequestSeal.SignatureBase.Error,
+            RequestSeal.Telemetry,
             ~r/^RequestSeal\.(StructuredFields|Digest|Crypto|Quorum|AcceptSignature)(\.|$)/
           ],
           "Keys and custody": [

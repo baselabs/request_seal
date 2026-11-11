@@ -69,6 +69,13 @@ class PublicDocsTest(unittest.TestCase):
                 with self.subTest(version=version, requirement=requirement):
                     source = install.replace("~> " + version, requirement)
                     self.assertTrue(any("install requirement" in e for e in docs.release_errors("README.md", source, version)))
+        for version, documented in (("1.0.0", "~> 1.0"), ("1.2.3", "~> 1.2"), ("2.0.1", "~> 2.0")):
+            install = '{:request_seal, "' + documented + '"}'
+            self.assertEqual([], docs.release_errors("README.md", install, version))
+            for requirement in ("~> " + version, "~> 1", "== " + version, ">= " + version):
+                with self.subTest(version=version, requirement=requirement):
+                    source = install.replace(documented, requirement)
+                    self.assertTrue(any("install requirement" in e for e in docs.release_errors("README.md", source, version)))
         for source in ('{:request_seal, path: "../request_seal"}', '{:request_seal, github: "baselabs/request_seal"}'):
             self.assertTrue(docs.release_errors("livebooks/environment.livemd", source, "0.1.0"))
 

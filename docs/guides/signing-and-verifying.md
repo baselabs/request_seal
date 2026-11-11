@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # Sign and verify HTTP messages
 
@@ -243,6 +243,6 @@ parameters.
 | `:signer_failed`, `:signing_failed` | The signer function or the key handle failed; `:signing_failed` carries a bounded custody error in `source`, for example `:key_not_found`. |
 | `:quorum_not_met` | The required slots or distinct counting units are not satisfied. |
 
-See [the public contract](../design/architecture.md) for the separate representation, construction, cryptography, profile, trust, integrity, and replay layers. Named application profiles use `RequestSeal.Profile` in extension packages; this extension surface is unstable, so pin RequestSeal exactly. Extensions must enforce their source-specific rules and trusted attribution; a profile stamp alone is no proof.
+See [the public contract](../design/architecture.md) for the separate representation, construction, cryptography, profile, trust, integrity, and replay layers. Named application profiles use `RequestSeal.Profile` in extension packages; from 1.0.0 that extension surface follows the [compatibility policy](../reference/compatibility.md) like the rest of the public API. Extensions must enforce their source-specific rules and trusted attribution; a profile stamp alone is no proof.
 
 Module docs: `RequestSeal`, `RequestSeal.Message`, `RequestSeal.SignatureBase`, `RequestSeal.Policy`, `RequestSeal.Verification`, `RequestSeal.Quorum`, `RequestSeal.Quorum.Verification`, `RequestSeal.Digest`, `RequestSeal.Profile`, `RequestSeal.Error`. `RequestSeal.Error` lists every reason by layer, and the [errors guide](errors.md) shows how to diagnose them. [Testing](testing.md) distinguishes published vectors, local round trips, independent verifiers, and deployed-peer acceptance. Proposed contracts in design pages do not establish implemented capability.

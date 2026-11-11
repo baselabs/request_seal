@@ -1,8 +1,12 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # Map verified requests to Ash actors and tenants
 
 **What you will build:** An Ash resource with tenant isolation and a reader policy, plus a scope that maps a verified Web Bot Auth key to the actor and tenant for a read. Install Ash (`~> 3.37 and >= 3.37.2`) and RequestSeal; all keys and request values are defined below. This example uses the public [Ash scope contract](https://hexdocs.pm/ash/3.34.5/Ash.Scope.html) and [Ash policies](https://hexdocs.pm/ash/3.34.5/policies.html).
+
+## Before you start
+
+In a Mix project with RequestSeal installed, add `{:ash, "~> 3.37 and >= 3.37.2"}` and a SAT solver, which Ash policies need, such as `{:simple_sat, "~> 0.1"}`, then run `mix deps.get`. `simple_sat` keeps this example portable; see the [Ash policy authorizer](https://hexdocs.pm/ash/Ash.Policy.Authorizer.html) for solver choices in production. Ash 3.37 also needs an explicit string-length setting: add `config :ash, default_string_length_count: :codepoints` to `config/config.exs`, after `import Config` ([Ash configuration](https://hexdocs.pm/ash/backwards-compatibility-config.html#default_string_length_count)). Put the resource and domain modules in step 1 in files under `lib/`, and run the rest in `iex -S mix`.
 
 ## Verify the caller
 

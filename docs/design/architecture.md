@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: design · Updated: 2026-10-16 · Governed by: accepted architectural decisions · Review when: a supported standard, profile, public contract, or trust boundary changes -->
+<!-- Status: current · Kind: design · Updated: 2026-11-11 · Governed by: accepted architectural decisions · Review when: a supported standard, profile, public contract, or trust boundary changes -->
 
 # RequestSeal architecture
 
@@ -301,7 +301,7 @@ caller authorization remains outside RequestSeal.
 - **Finch:** translates a finalized Finch request/response without starting a pool. Caller supervision and transport remain outside RequestSeal.
 - **Plug/Phoenix:** captures ordered headers and bounded request bytes before parsers; replays retained bytes through Plug readers; trusted external origin is explicit; verification facts go into private connection state; response signing runs after registered callbacks. Unavailable exact target or trailer evidence rejects required coverage. Pending response cookies reject `set-cookie` coverage, and later server transformations must be disabled when covering response bytes. See `RequestSeal.Plug` for supported components and delivery limits.
 - **Ash:** maps successful verification through explicit caller actor/tenant bindings into bounded context and an authorization-enabled scope. Authorization stays in Ash policies and actions.
-- **ash_hooks (Elixir 1.20):** `RequestSeal.AshHooks.verify_signature/4` verifies provider webhooks under an explicit policy and label from a headers map that has already lost order and duplicates; `RequestSeal.AshHooks.Http` signs final bytes through ash_hooks' transport. Prefer Plug capture when ordered evidence matters.
+- **ash_hooks (Elixir 1.20):** `RequestSeal.AshHooks.verify_signature/4` verifies provider webhooks under an explicit policy and label from the provider context's ordered `:header_list` (ash_hooks 3.0, every line in arrival order), failing closed on a malformed list, and otherwise from the `:headers` map, which has already lost order and duplicates; `RequestSeal.AshHooks.Http` signs final bytes through ash_hooks' transport. Prefer Plug capture when verified facts or rejection before handling matter.
 - **Reverse proxy (planned):** reconstructs external message facts only from an explicit trusted-proxy policy; raw ingress and reconstructed facts remain separately visible for diagnostics.
 
 Each adapter must refuse when its framework cannot supply a required component faithfully. It cannot synthesize a plausible value and call the signature valid.

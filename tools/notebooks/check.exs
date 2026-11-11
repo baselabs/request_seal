@@ -141,7 +141,7 @@ directory = System.get_env("REQUESTSEAL_NOTEBOOK_DIR") || Path.join(root, "liveb
 files = Path.wildcard(Path.join(directory, "*.livemd")) |> Enum.sort()
 
 expected =
-  Regex.scan(~r/\]\(([^)]+\.livemd)\)/, File.read!(Path.join(root, "livebooks/README.md")))
+  Regex.scan(~r/\]\(([^)]+\.livemd)\)/, File.read!(Path.join(root, "livebooks/overview.md")))
   |> Enum.map(fn [_, path] -> Path.basename(path) end)
   |> Enum.sort()
 

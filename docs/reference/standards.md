@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
 
 # Standards and counterpart contracts
 
@@ -12,13 +12,15 @@ relevant source when changing its surface. No linked example alone proves peer a
 | [HTTP signature registry](https://www.iana.org/assignments/http-message-signature) | Exact registered algorithm names and parameters. |
 | [RFC 8941](https://www.rfc-editor.org/rfc/rfc8941.html), [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651.html) | Structured Fields; apply the field's selected schema and referenced types. |
 | [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) | Content and representation digests and preference fields. |
-| [Web Bot Auth WG draft](https://datatracker.ietf.org/doc/html/draft-ietf-webbotauth-httpsig-protocol-00) | Current draft profile and discovery, subject to change. |
+| [Web Bot Auth WG draft, protocol-00](https://datatracker.ietf.org/doc/html/draft-ietf-webbotauth-httpsig-protocol-00) | The supported, explicitly stamped draft revision for the profile and discovery. A newer revision (protocol-01) exists; it is not yet selectable, and protocol-00 stays selectable when it is. |
 | [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html) | Generic compact JWS and JWE, and one-level JWS-in-JWE nesting (`RequestSeal.JOSE`). |
 | [RFC 7518](https://www.rfc-editor.org/rfc/rfc7518.html) | JWS and JWE algorithms, RSA-OAEP and AES-GCM key wrapping. |
 | [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html) | JWK, thumbprints, OKP keys and JOSE `EdDSA`. |
 | [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html) | Ed25519 signatures. |
 | [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html), [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986.html) | HTTP semantics, message syntax, target forms, and URI authority grammar for messages and discovery fetches. |
-| [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html) | OAuth client ID metadata documents as a discovery source. |
+| [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html) | OAuth client ID metadata documents as a discovery source, with the root-path rule of [CIMD-03](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-03) Section 3. |
+| [RFC 9111](https://www.rfc-editor.org/rfc/rfc9111.html) | HTTP caching: bounded key-cache freshness, `Age`, `Cache-Control`, `Expires`, and conditional revalidation for discovery fetches (a key cache, not a shared HTTP cache). |
+| [RFC 9987](https://www.rfc-editor.org/rfc/rfc9987.html), [RFC 8709](https://www.rfc-editor.org/rfc/rfc8709.html), [RFC 8332](https://www.rfc-editor.org/rfc/rfc8332.html), [RFC 5656](https://www.rfc-editor.org/rfc/rfc5656.html) | SSH agent identity listing and signing for `RequestSeal.Custody.SSHAgent`. |
 | [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785.html) | JSON canonicalization for corpus verification objects. |
 | [RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html) | JWT best current practices; RequestSeal applies explicit algorithm allowlists and has no JWT claims policy. |
 | [Livebook importer](https://github.com/livebook-dev/livebook/blob/v0.19.10/lib/livebook/live_markdown/import.ex), [exporter](https://github.com/livebook-dev/livebook/blob/v0.19.10/lib/livebook/notebook/export/elixir.ex) | Actual notebook parse/export API and branch behavior. |
