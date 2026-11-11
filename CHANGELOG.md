@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Removed
+
+- `RequestSeal.verify_quorum/3`, `RequestSeal.Quorum` and `RequestSeal.Quorum.Verification` are removed, together with the `[:request_seal, :verify_quorum, :stop]` telemetry event, the `:invalid_quorum` reason and the `:quorum` error layer. Callers verify each label with `RequestSeal.verify/3` and decide in their application which verified signers they require.
+
 ### Changed
 
 - The optional ash_hooks integration accepts ash_hooks 3.0 (`~> 2.0 or ~> 3.0`).

@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
 
 # Domain glossary
 
@@ -28,8 +28,6 @@
 | Profile stamp | The descriptive profile name in a result; consumers allowlist the profiles they trust. |
 | Replay namespace | The caller's trust and tenant scope under which replay claims are unique. |
 | Retention end | The first second at which a replay claim may be swept; `RequestSeal.Policy` defines how it is derived. |
-| Quorum slot | One expected signer position in a quorum, with its own label selector and complete policy. |
-| Counting unit | What a quorum threshold counts: distinct keys, caller-bound principals, or roles. Labels never count. |
 | Error layer | The check that rejected a message, such as `:fields`, `:policy`, `:crypto`, `:content`, `:freshness`, or `:replay`. |
 | Correlation | A random token in an error that lets logs and reports refer to one failure without recording its inputs. |
 | Replay claim | An atomic claim using a caller-supplied commitment bound to a verified nonce, challenge, or transaction identifier and caller-defined security scope; expiry controls retention. |

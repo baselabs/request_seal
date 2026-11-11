@@ -109,29 +109,6 @@ defmodule RequestSeal.GuideSigningAndVerifyingTest do
         6
       )
 
-    binding =
-      E.eval(
-        ~S'''
-        {:ok, quorum} =
-          RequestSeal.Quorum.new(%{
-            mode: :all,
-            unit: :key,
-            unexpected: :reject,
-            invalid: :reject,
-            slots: [%{id: :sender, label: "sig", required: true, policy: policy}]
-          })
-
-        {:ok, result} = RequestSeal.verify_quorum(signed, quorum, [])
-        result.count
-        # => 1
-        result.satisfied
-        # => [:sender]
-        ''',
-        binding,
-        "docs/guides/signing-and-verifying.md",
-        7
-      )
-
     built_message = Keyword.fetch!(binding, :message)
 
     binding =
@@ -150,7 +127,7 @@ defmodule RequestSeal.GuideSigningAndVerifyingTest do
         ''',
         binding,
         "docs/guides/signing-and-verifying.md",
-        8
+        7
       )
 
     binding =
@@ -174,7 +151,7 @@ defmodule RequestSeal.GuideSigningAndVerifyingTest do
         ''',
         binding,
         "docs/guides/signing-and-verifying.md",
-        9
+        8
       )
 
     assert Keyword.fetch!(binding, :message) == built_message
@@ -197,15 +174,13 @@ defmodule RequestSeal.GuideSigningAndVerifyingTest do
         ''',
         binding,
         "docs/guides/signing-and-verifying.md",
-        10
+        9
       )
 
     assert Keyword.fetch!(binding, :verification).signature.crypto == :valid
     assert Keyword.fetch!(binding, :verification).authorization == :not_evaluated
-    assert Keyword.fetch!(binding, :result).satisfied == [:sender]
-    assert Keyword.fetch!(binding, :result).count == 1
     assert :ok = RequestSeal.Message.validate(Keyword.fetch!(binding, :low_level_signed))
     E.assert_rejected_signature(binding)
-    E.assert_fences("docs/guides/signing-and-verifying.md", 10)
+    E.assert_fences("docs/guides/signing-and-verifying.md", 9)
   end
 end

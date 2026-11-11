@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
 
 # Inspect RequestSeal
 
@@ -18,7 +18,7 @@ true = :eddsa in Keyword.fetch!(:crypto.supports(), :public_keys)
 true = :ed25519 in Keyword.fetch!(:crypto.supports(), :curves)
 {:docs_v1, _, :elixir, _, %{"en" => module_docs}, _, _} = Code.fetch_docs(RequestSeal)
 true = is_binary(module_docs)
-[sign: 3, sign: 4, verify: 3, verify_quorum: 3] = RequestSeal.__info__(:functions)
+[sign: 3, sign: 4, verify: 3] = RequestSeal.__info__(:functions)
 
 [
   "rsa-pss-sha512",

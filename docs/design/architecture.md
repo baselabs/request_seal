@@ -12,8 +12,8 @@ RFC 9421 signature-base construction is implemented by `RequestSeal.SignatureBas
 its module documentation defines component rules, input forms, limits, and errors.
 Generic single-label RFC 9421 signing and verification are implemented by
 `RequestSeal` with explicit `RequestSeal.Policy`; their module documentation defines
-the current API. Composite verification and signature negotiation are implemented by
-`RequestSeal.Quorum`, `RequestSeal.verify_quorum/3`, and `RequestSeal.AcceptSignature`.
+the current API. Signature negotiation is implemented by
+`RequestSeal.AcceptSignature`.
 Caller-owned custody, bounded discovery, nonce replay, optional Req/Finch and
 Plug/Phoenix adapters, Ash scope mapping, generic compact JWS/JWE, and one-level
 JWS-in-JWE nesting are implemented.
@@ -130,15 +130,6 @@ pipeline. It generates explicit metadata with a caller clock and optional
 caller-owned nonce entropy, and accepts an opaque custody handle or function
 with bounded execution. The explicit-input form preserves caller-supplied metadata.
 
-Composite verification returns `RequestSeal.Quorum.Verification`, including plural
-`signatures`, the qualifying label/slot set, counting facts, bindings, and negotiation:
-
-```elixir
-# Implemented composite verification API.
-@spec RequestSeal.verify_quorum(RequestSeal.Message.t(), RequestSeal.Quorum.t(), keyword()) ::
-        {:ok, RequestSeal.Quorum.Verification.t()} | {:error, RequestSeal.Error.t()}
-```
-
 Spec-list signing and `SignedMessage` remain **proposed extensions**. Current signing
 accepts one specification and a caller function or opaque handle; verification resolves public keys
 or caller-owned verification functions through `Policy.key_resolver`.
@@ -151,7 +142,7 @@ or caller-owned verification functions through `Policy.key_resolver`.
 
 `FieldOccurrence` preserves one field name and raw value; ordered occurrence lists retain repeats, source section (`:headers` or `:trailers`), and adapter provenance. It never collapses duplicates into a map. `Body` distinguishes bytes already retained, a one-pass stream, consumed content, and an unavailable body. A stream handle can remain unread after transport completes; known trailers do not imply body consumption. `RequestSeal.Digest` implements bounded caller-fed incremental hashing without promising replayability. Single-label verification accepts `:digest_state` at caller-established EOF and never reads a stream handle. The Req adapter bounds retained response chunks and withholds delivery until verification succeeds; Finch exposes caller-fed digest verification. Plug capture retains bounded request bytes before downstream parsing and replays them through Plug readers. Generic body sinks/spools and returned body-disposition facts remain proposed: a caller-selected retained-body sink or spool would preserve bytes before downstream parsing. Required content checks fail before replay consumption when the needed body or digest state is unavailable. `transport` records only enumerated HTTP-version and TLS declarations with `evidence: :declared`. Authoritative scheme and authority belong to the Message, selected by caller policy; forwarded headers never supply them implicitly.
 
-Parsed `RequestSeal.StructuredFields.Value` parameters preserve order and exact typed values; verification exposes decoded parameters in its result. Implemented RFC 9421 signature-base components include all nine derived components plus field components and the `sf`, `key`, `bs`, `tr`, `req`, and `@query-param`'s required `name` parameters. Requests, responses, related-request context, and trailers are implemented. `RequestSeal.AcceptSignature` implements signature requests, fulfillment, and challenge matching; `RequestSeal.Quorum` declares explicit signer slots and composite counting/binding policies. Caller counting bindings establish no authenticated attribution; required replay remains a separate contract. The implemented HTTP algorithm registry covers `rsa-pss-sha512`, `rsa-v1_5-sha256`, `hmac-sha256`, `ecdsa-p256-sha256`, `ecdsa-p384-sha384`, and `ed25519`. RFC 9421's JWS-algorithm extension follows a separate explicit registry mapping. Algorithm identifiers remain exact wire tokens; HTTP, JOSE, and case variants never share implicit normalization.
+Parsed `RequestSeal.StructuredFields.Value` parameters preserve order and exact typed values; verification exposes decoded parameters in its result. Implemented RFC 9421 signature-base components include all nine derived components plus field components and the `sf`, `key`, `bs`, `tr`, `req`, and `@query-param`'s required `name` parameters. Requests, responses, related-request context, and trailers are implemented. `RequestSeal.AcceptSignature` implements signature requests and fulfillment. The implemented HTTP algorithm registry covers `rsa-pss-sha512`, `rsa-v1_5-sha256`, `hmac-sha256`, `ecdsa-p256-sha256`, `ecdsa-p384-sha384`, and `ed25519`. RFC 9421's JWS-algorithm extension follows a separate explicit registry mapping. Algorithm identifiers remain exact wire tokens; HTTP, JOSE, and case variants never share implicit normalization.
 
 ## Algorithm and digest fidelity
 
@@ -194,34 +185,9 @@ names, bounded metadata, explicit verification predicates, and consumer
 allowlists. A profile stamp records selection, not proof that an extension's
 rules ran.
 
-## Multiple-signature policy
+## Multiple signatures
 
-The caller selects `all`, `any`, or an explicit threshold over trusted eligible signers.
-Every mode fills every required slot and at least one qualifying signature; `all`
-requires at least one required slot. Each assigned label and merged identity class
-occupies at most one slot. Observations of the same label merge known identities
-and any unknown observation; unknown observations share one pool. Assignment
-maximizes the configured counting units, then filled slots, in canonical order.
-Unbound key, principal, and shared-principal role units use polynomial matching;
-other assignments use exact search bounded to 131,072 nodes. On exhaustion, a
-best-so-far assignment succeeds only if its mode, required slots, and bindings hold;
-otherwise verification returns `:limit` at `:input`. From 0.5.0, `verify_quorum/3`
-additionally accepts a caller `:deadline` (absolute monotonic milliseconds) that
-bounds the search's wall-clock time: expiry keeps the same best-so-far acceptance
-and otherwise returns the retryable `:deadline` reason at `:quorum`; without the
-option the deterministic node budget is the only bound. Output lists retain configured
-slot order. Unexpected and invalid labels follow explicit rejection/ignore policy.
-Optional additions can reduce capacity when new evidence bridges identity classes.
-Each assigned result retains its single-label verification facts; caller counting
-bindings establish no attribution.
-
-A threshold declares its counting unit: distinct trusted principals, distinct cryptographic keys, or required roles. Labels never count. Key identity is algorithm appropriate and trusted, never an attacker-provided `keyid` alias. Asymmetric keys use canonical public components. HMAC accepts an opaque nonsecret key-equivalence identity supplied by the custodian; RequestSeal never derives it. Within the declared trust scope, aliases and imports of the same secret must resolve to one identity. Per-handle IDs alone are insufficient. If equivalence or distinctness cannot be established across custodians, a key-distinct threshold rejects; the caller may instead explicitly select an adequately trusted principal/role policy. Secret bytes and key-equivalence identifiers never appear in general results or diagnostics. Principal thresholds deduplicate all keys and rotations mapped to the same trusted principal. Key thresholds explicitly permit separate authorized keys of one principal to count, while aliases of one key still count once. Role thresholds use caller-owned role bindings and state whether one principal may satisfy multiple roles; `shared_principal: false` requires distinct principals for distinct required roles. Slots without explicit trusted caller principal/role bindings cannot satisfy those counting policies; single-label results remain unattributed. Unknown counting units or ambiguous bindings reject policy construction.
-
-A nested binding requires the outer signature to cover both the inner label's `"signature-input";key="<inner-label>"` and `"signature";key="<inner-label>"` dictionary members. Repeated labels and parameter names reject in signature verification and Accept-Signature parsing; generic Structured Fields parsing retains its RFC last-value behavior. Optional unknown key identities do not count in key-unit quorums; required slots whose only candidates have unknown identity reject with `:ambiguous_key_identity`.
-
-Each qualifying signature independently covers every component required for its signer/role and its explicit linked-signature bindings. There is no implicit component-union acceptance: two insufficient signatures cannot complete each other's coverage. Explicit composite policies enumerate every role-to-component obligation and cross-signature binding and return those facts individually. The accepted result does not manufacture a single principal from unrelated signers. Quorum verification requires `replay: :not_required` in every slot and rejects required replay before callbacks run. It accepts only retained-body Content-Digest policies; representation digests and caller-fed digest state are rejected. Single-label and Web Bot Auth replay use the caller commitment contract below.
-
-Acceptance includes duplicated labels, aliased key IDs, HMAC aliases/imports of the same secret, distinct HMAC identities and unknown cross-custodian equivalence, rotated keys of one principal, multiple roles, partial-coverage unions, mixed trust, and optional-signature addition/removal/reordering under `any` and threshold policies. Quorum tests assert the assigned signer set, counting units, bindings, negotiation, and rejection of required replay as well as the final decision.
+RequestSeal verifies each signature label independently and returns its result; deciding how many signers or which signers an application requires, and mapping a verified signer to application identity or authority, is the application's job.
 
 ## Keys, discovery, and replay
 
@@ -271,15 +237,6 @@ policy layer succeeds and contains one explicitly selected label:
 | `principal` | Generic `:unattributed`, or a Web Bot Auth agent association from a trusted source or held-key thumbprint. |
 | `authorization` | Always `:not_evaluated` in RequestSeal. |
 
-`RequestSeal.Quorum.Verification` implements a plural label-keyed `signatures` map,
-the assigned `qualifying` label/slot list, configured counting unit, required slot IDs,
-all satisfied slot IDs (including optional slots), deduplicated count,
-nonqualifying reasons, bindings, and negotiation. Each qualifying signature retains
-its own single-label verification facts. Caller principal/role counting bindings do
-not establish attribution; quorum replay stays `:not_required`. Negotiation checks
-the verified eligible pool, so fulfilled challenges need not appear in assigned
-`signatures`. Inspection exposes slot IDs and counts, but omits signature labels
-and metadata.
 `RequestSeal.WebBotAuth.Verification` maps independently validated labels to
 these per-signature facts, records nested coverage evidence, and claims replay
 once after every selected signature succeeds. A directory agent identifier is
@@ -287,7 +244,7 @@ the resolved well-known URL; origin remains a separate principal field. Other
 named application profiles compose the implemented extension surface in separate
 packages; the generic and Web Bot Auth APIs use nonce. A policy rejection returns an error without a partial verification
 value. From 0.5.0, the versioned `RequestSeal.Telemetry` contract emits
-`:telemetry` stop events for both verification entry points and Web Bot Auth
+`:telemetry` stop events for single-label and Web Bot Auth
 verification, plus replay-claim and custody-signing events, carrying only
 low-cardinality outcome/reason/layer metadata and durations; the `:telemetry`
 package is the single required dependency. `RequestSeal.Ash.scope/2` maps successful verification through explicit

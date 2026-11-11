@@ -11,7 +11,7 @@ The TypeScript implementation is published on npm as `@request-seal/core` from
 
 Release acceptance must establish the advertised scope through the actual public entry points,
 package artifact, documentation, and required counterpart checks. The current checkout
-implements generic RFC 9421 signing, single-label and quorum verification, caller-owned
+implements generic RFC 9421 signing, single-label verification, caller-owned
 custody, discovery, nonce replay with ETS, ash_onetime, and PostgreSQL stores, optional
 Req/Finch and Plug/Phoenix adapters, Ash scope mapping, ash_hooks delivery signing and
 ingress verification, generic compact JWS/JWE, one-level JWS-in-JWE nesting, and

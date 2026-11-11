@@ -30,8 +30,7 @@ defmodule RequestSeal.GuideErrorsTest do
         :telemetry.detach("request-seal-ops")
 
         :telemetry.attach_many("request-seal-ops", [
-          [:request_seal, :verify, :stop],
-          [:request_seal, :verify_quorum, :stop]
+          [:request_seal, :verify, :stop]
         ], fn _event, _measurements, metadata, _config ->
           send(self(), {:verified, metadata.outcome})
         end, nil)

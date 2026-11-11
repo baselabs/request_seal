@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the core signing, verification, digest, replay, or quorum API changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the core signing, verification, digest, or replay API changes -->
 
 # Sign and verify HTTP messages
 
@@ -220,71 +220,14 @@ IO.puts("First delivery accepted; the repeat rejected as replayed")
 
 ETS loses its claims when the owner stops. For several nodes or restarts, use durable storage; see [replay protection](../docs/guides/replay-protection.md).
 
-## Require two signers
+## Multiple signatures
 
-A quorum assigns labels to slots and counts distinct keys. Here a release request must carry signatures from both the build system and a reviewer.
-
-```elixir
-{_, reviewer_seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, reviewer} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, reviewer_seed})
-{:ok, reviewer_key} = RequestSeal.Custody.public_key(reviewer)
-
-release_components = ~s[("@method" "@scheme" "@authority" "@path")]
-
-{:ok, release} =
-  RequestSeal.Message.request("POST", "https://ci.example.com/releases/4821", [], nil)
-
-slot_policy = fn keyid, slot_key ->
-  {:ok, slot} =
-    RequestSeal.Policy.new(%{
-      policy_fields
-      | components: release_components,
-        content: :not_required,
-        key_resolver: fn
-          %{keyid: ^keyid} -> {:ok, %{algorithm: "ed25519", key: slot_key}}
-          _ -> :error
-        end
-    })
-
-  slot
-end
-
-{:ok, quorum} =
-  RequestSeal.Quorum.new(%{
-    mode: :all,
-    unit: :key,
-    unexpected: :reject,
-    invalid: :reject,
-    slots: [
-      %{id: :build, label: "build", required: true, policy: slot_policy.("ci-sender", key)},
-      %{id: :review, label: "review", required: true, policy: slot_policy.("reviewer", reviewer_key)}
-    ]
-  })
-
-release_spec = fn label, keyid ->
-  %{label: label, algorithm: "ed25519", components: release_components, expires_in: 60, keyid: keyid}
-end
-
-{:ok, build_signed} = RequestSeal.sign(release, release_spec.("build", "ci-sender"), handle)
-{:ok, both_signed} = RequestSeal.sign(build_signed, release_spec.("review", "reviewer"), reviewer)
-
-{:ok, result} = RequestSeal.verify_quorum(both_signed, quorum, [])
-2 = result.count
-[:build, :review] = Enum.sort(result.satisfied)
-
-{:error, %{reason: :quorum_not_met, layer: :quorum}} =
-  RequestSeal.verify_quorum(build_signed, quorum, [])
-
-IO.puts("Both signers present: accepted; reviewer missing: rejected")
-```
-
-Each slot's signature must satisfy that slot's complete policy on its own; coverage is never pooled across signatures.
+RequestSeal verifies each signature label independently and returns its result; deciding how many signers or which signers an application requires, and mapping a verified signer to application identity or authority, is the application's job.
 
 ## Release the keys
 
 ```elixir
 :ok = RequestSeal.Custody.Local.release(handle)
-:ok = RequestSeal.Custody.Local.release(reviewer)
 
 {:error, %{reason: :key_not_found}} = RequestSeal.Custody.sign(handle, "after release")
 IO.puts("Handles released; signing with a released handle fails")

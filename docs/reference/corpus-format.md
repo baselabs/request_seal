@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-10-14 · Governed by: public architecture · Review when: corpus schema, surfaces, or publication changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-11-11 · Governed by: public architecture · Review when: corpus schema, surfaces, or publication changes -->
 
 # Conformance corpus format
 
@@ -75,7 +75,7 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `message.validate` | Lossless message, ordered field occurrences, retained or unavailable body | `valid` |
 | `signature_base.build` | Message, Signature-Input Inner List, explicit field schemas | `base` bytes |
 | `sign` | Message, explicit or generated-metadata spec, clock/nonce options, source key | Exact appended field pairs for HMAC, Ed25519, RSA v1.5; `valid` after verification for ECDSA and RSA-PSS |
-| `verify`, `quorum.verify` | Message, selected label or quorum and explicit policy | Canonical verification facts or verified quorum validity |
+| `verify` | Message, selected label and explicit policy | Canonical verification facts |
 | `accept_signature.parse` | Raw field bytes, explicit target kind | Canonical `bytes` |
 | `digest.content` | Exact body bytes, selected algorithms and field kind | Canonical digest `bytes` |
 | `crypto.verify` | Algorithm, public source key, data and signature bytes | `valid` |

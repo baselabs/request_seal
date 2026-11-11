@@ -493,7 +493,7 @@ From 0.5.0, `RequestSeal.Telemetry` defines the versioned `:telemetry` contract 
 
 | Capability | Module | Standard |
 | --- | --- | --- |
-| HTTP request/response signatures and quorum | `RequestSeal`, `RequestSeal.Quorum` | [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) |
+| HTTP request/response signatures | `RequestSeal` | [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) |
 | Signature negotiation with `Accept-Signature` | `RequestSeal.AcceptSignature` | [RFC 9421 Section 5](https://www.rfc-editor.org/rfc/rfc9421.html#section-5) |
 | Structured HTTP fields | `RequestSeal.StructuredFields` | [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651.html), with explicit RFC 8941 schemas where required |
 | Content and representation digests | `RequestSeal.Digest` | [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) |
@@ -532,7 +532,7 @@ RequestSeal's tests run an independently sourced [conformance corpus](docs/refer
 
 ### Guides
 
-- [Sign and verify without a framework](docs/guides/signing-and-verifying.md), including verification results and quorum
+- [Sign and verify without a framework](docs/guides/signing-and-verifying.md), including verification results
 - [Req and Finch](docs/guides/req-and-finch.md)
 - [Phoenix and Plug](docs/guides/phoenix-and-plug.md)
 - [Web Bot Auth](docs/guides/web-bot-auth.md)

@@ -14,8 +14,7 @@ Within 1.x, a release never removes or incompatibly changes:
 - **Functions:** every documented public function, its arities, and its required and
   optional option names, defaults and accepted values.
 - **Results and errors:** documented structs and their documented fields, nested result
-  shapes (`RequestSeal.Verification`, the JOSE results, `RequestSeal.WebBotAuth.Verification`,
-  `RequestSeal.Quorum.Verification`), and the meaning of each documented error reason
+  shapes (`RequestSeal.Verification`, the JOSE results, `RequestSeal.WebBotAuth.Verification`), and the meaning of each documented error reason
   and layer. `authorization: :not_evaluated` stays in every verification result:
   a valid signature is never an authorization decision.
 - **Wire behavior:** the bytes RequestSeal signs and emits for a given input, algorithm

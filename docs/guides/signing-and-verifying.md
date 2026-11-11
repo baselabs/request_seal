@@ -2,7 +2,7 @@
 
 # Sign and verify HTTP messages
 
-**What you will build:** A signed request, an explicit verification policy, and a quorum that requires your sender's signature. Prerequisite: RequestSeal installed; no framework or network is needed. These examples use locally generated keys and [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) with [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) body integrity.
+**What you will build:** A signed request and an explicit verification policy. Prerequisite: RequestSeal installed; no framework or network is needed. These examples use locally generated keys and [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) with [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) body integrity.
 
 ## 1. Generate an example key
 
@@ -128,26 +128,9 @@ verification.authorization
 The label selects exactly one signature. Policy still requires all six acceptance
 choices; construction and signing do not select verification or authorization rules.
 
-## 5. Require a signer with a quorum
+## Multiple signatures
 
-```elixir
-{:ok, quorum} =
-  RequestSeal.Quorum.new(%{
-    mode: :all,
-    unit: :key,
-    unexpected: :reject,
-    invalid: :reject,
-    slots: [%{id: :sender, label: "sig", required: true, policy: policy}]
-  })
-
-{:ok, result} = RequestSeal.verify_quorum(signed, quorum, [])
-result.count
-# => 1
-result.satisfied
-# => [:sender]
-```
-
-Choose `:all`, `:any`, or `{:threshold, n}` and count distinct keys, caller-bound principals, or roles. Each assigned signature independently meets its complete policy; coverage is never pooled. Counting bindings establish no identity attribution. Required replay and representation digests reject in quorum policies; required content digests need retained bytes.
+RequestSeal verifies each signature label independently and returns its result; deciding how many signers or which signers an application requires, and mapping a verified signer to application identity or authority, is the application's job.
 
 ## Build messages by hand
 
@@ -219,8 +202,6 @@ parameters.
 
 `RequestSeal.Verification` reports the selected label, profile, covered identifiers, authoritative algorithm, signature parameters, digest checks, freshness checks, and replay receipt. Generic results have `principal: :unattributed` and `authorization: :not_evaluated`. A cryptographically valid shared-secret signature also supplies no identity attribution. Do not log parameters or key IDs; default inspection hides them.
 
-`RequestSeal.Quorum.Verification.signatures` maps assigned labels to those results. `qualifying` records assigned slots and caller counting bindings; `count` counts distinct configured units. `nonqualifying` lists the bounded label, slot, reason, and layer of each ignored label or failed slot attempt; read it to diagnose `:quorum_not_met`. `required` lists required slots and `satisfied` includes assigned optional slots. Negotiation checks the verified eligible pool: a valid `Accept-Signature` challenge can be fulfilled without being assigned or appearing in the result map. Nested bindings require both inner signature dictionary members; equal-parameter bindings require the same non-nil value. See `RequestSeal.AcceptSignature` and `RequestSeal.Quorum` for negotiation and assignment limits. From 0.5.0, `verify_quorum/3` accepts a `:deadline` — an absolute `System.monotonic_time(:millisecond)` value bounding the assignment search's wall-clock time; on expiry a policy-satisfying best-so-far assignment still succeeds, otherwise the retryable `:deadline` reason returns, which also surfaces on the `[:request_seal, :verify_quorum, :stop]` telemetry event.
-
 ## Errors and next steps
 
 | Reason | Meaning and action |
@@ -241,8 +222,7 @@ parameters.
 | `:label_in_use` | Signing would reuse an existing label; choose another. |
 | `:invalid_options` | Fix the signing specification or options. |
 | `:signer_failed`, `:signing_failed` | The signer function or the key handle failed; `:signing_failed` carries a bounded custody error in `source`, for example `:key_not_found`. |
-| `:quorum_not_met` | The required slots or distinct counting units are not satisfied. |
 
 See [the public contract](../design/architecture.md) for the separate representation, construction, cryptography, profile, trust, integrity, and replay layers. Named application profiles use `RequestSeal.Profile` in extension packages; from 1.0.0 that extension surface follows the [compatibility policy](../reference/compatibility.md) like the rest of the public API. Extensions must enforce their source-specific rules and trusted attribution; a profile stamp alone is no proof.
 
-Module docs: `RequestSeal`, `RequestSeal.Message`, `RequestSeal.SignatureBase`, `RequestSeal.Policy`, `RequestSeal.Verification`, `RequestSeal.Quorum`, `RequestSeal.Quorum.Verification`, `RequestSeal.Digest`, `RequestSeal.Profile`, `RequestSeal.Error`. `RequestSeal.Error` lists every reason by layer, and the [errors guide](errors.md) shows how to diagnose them. [Testing](testing.md) distinguishes published vectors, local round trips, independent verifiers, and deployed-peer acceptance. Proposed contracts in design pages do not establish implemented capability.
+Module docs: `RequestSeal`, `RequestSeal.Message`, `RequestSeal.SignatureBase`, `RequestSeal.Policy`, `RequestSeal.Verification`, `RequestSeal.Digest`, `RequestSeal.Profile`, `RequestSeal.Error`. `RequestSeal.Error` lists every reason by layer, and the [errors guide](errors.md) shows how to diagnose them. [Testing](testing.md) distinguishes published vectors, local round trips, independent verifiers, and deployed-peer acceptance. Proposed contracts in design pages do not establish implemented capability.
