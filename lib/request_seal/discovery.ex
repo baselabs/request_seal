@@ -16,6 +16,9 @@ defmodule RequestSeal.Discovery do
   checks its connected peer. Responses require HTTP 200 and the selected media
   type; framing rejects ambiguous Content-Length/Transfer-Encoding. Trailer
   signatures cannot establish a proof. Gzip is expanded under a separate bound.
+  Field-value boundaries trim only SP and HTAB as required by RFC 9110
+  Section 5.6.3; Unicode whitespace is preserved and cannot turn malformed
+  framing, codings, media types, or cache directives into accepted tokens.
   Content-coding tokens are case-insensitive; `x-gzip` is accepted as gzip per
   RFC 9110 Section 8.4.1.3. Unknown or stacked codings reject.
 
@@ -83,7 +86,11 @@ defmodule RequestSeal.Discovery do
   `application/http-message-signatures-directory+json` for `:directory`,
   `application/jwk-set+json` or `application/json` for `:jwks_uri`, and
   `application/json` for `:cimd` (and for a CIMD document's same-origin `jwks_uri`,
-  `application/jwk-set+json` or `application/json`).
+  `application/jwk-set+json` or `application/json`). Only SP and HTAB are trimmed
+  around field values and the media type before its parameters. Unicode
+  whitespace around Content-Length, Transfer-Encoding, or Content-Encoding
+  rejects with `:invalid_response`; around a media type it rejects with
+  `:unexpected_media_type`.
 
   ## Parameters
 
@@ -370,7 +377,7 @@ defmodule RequestSeal.Discovery do
     HTTP1.value(fields, "expires") != nil or
       Enum.any?(controls, fn control ->
         [name | _] = :binary.split(control, "=")
-        String.trim(name) in ["no-store", "no-cache", "max-age"]
+        HTTP1.trim_ows(name) in ["no-store", "no-cache", "max-age"]
       end)
   end
 
@@ -379,7 +386,7 @@ defmodule RequestSeal.Discovery do
     |> Enum.join(",")
     |> String.downcase()
     |> String.split(",")
-    |> Enum.map(&String.trim/1)
+    |> Enum.map(&HTTP1.trim_ows/1)
   end
 
   defp fetched_set(fields, message, location, decoded, source, clock, deadline) do
@@ -481,7 +488,9 @@ defmodule RequestSeal.Discovery do
       {200, fields, message, decoded} ->
         media = HTTP1.value(fields, "content-type")
         ensure(is_binary(media), :unexpected_media_type)
-        media = media |> String.split(";", parts: 2) |> hd() |> String.trim() |> String.downcase()
+
+        media =
+          media |> String.split(";", parts: 2) |> hd() |> HTTP1.trim_ows() |> String.downcase()
 
         allowed =
           case source.type do
@@ -832,7 +841,7 @@ defmodule RequestSeal.Discovery do
     no_cache =
       Enum.any?(controls, fn control ->
         [name | _] = :binary.split(control, "=")
-        String.trim(name) in ["no-store", "no-cache"]
+        HTTP1.trim_ows(name) in ["no-store", "no-cache"]
       end)
 
     ages =

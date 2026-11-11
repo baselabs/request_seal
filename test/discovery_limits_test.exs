@@ -86,6 +86,97 @@ defmodule RequestSeal.DiscoveryLimitsTest do
     reason(source(p, %{max_decoded_bytes: byte_size(large) - 1}), :limit)
   end
 
+  test "discovery field boundaries preserve Unicode whitespace and trim only HTTP OWS" do
+    alias RequestSeal.Discovery.HTTP1
+    alias RequestSeal.FieldOccurrence
+    body = Peer.directory()
+    media_type = "application/http-message-signatures-directory+json"
+
+    for space <- ["\u00a0", "\u2003", "\u202f", "\u3000"],
+        {name, token} <- [
+          {"content-length", "12"},
+          {"transfer-encoding", "chunked"},
+          {"content-encoding", "identity"},
+          {"content-type", media_type}
+        ],
+        value <- [space <> token, token <> space, space <> token <> space] do
+      {:ok, field} =
+        FieldOccurrence.new(%{name: name, value: " \t" <> value <> "\t ", section: :headers})
+
+      assert HTTP1.value([field], name) == value
+      assert HTTP1.values([field], name) == [value]
+
+      {headers, encoded} =
+        case name do
+          "content-length" ->
+            {[{"Content-Length", value}], body}
+
+          "transfer-encoding" ->
+            {[{"Transfer-Encoding", value}],
+             [Integer.to_string(byte_size(body), 16), "\r\n", body, "\r\n0\r\n\r\n"]}
+
+          "content-encoding" ->
+            {[
+               {"Content-Encoding", value},
+               {"Content-Length", Integer.to_string(byte_size(body))}
+             ], body}
+
+          "content-type" ->
+            {[
+               {"Content-Type", value <> ";charset=utf-8"},
+               {"Content-Length", Integer.to_string(byte_size(body))}
+             ], body}
+        end
+
+      headers =
+        if name == "content-type", do: headers, else: [{"Content-Type", media_type} | headers]
+
+      p =
+        peer(fn socket, _ ->
+          :ssl.send(socket, [
+            "HTTP/1.1 200 OK\r\n",
+            Enum.map(headers, fn {k, v} -> [k, ": ", v, "\r\n"] end),
+            "Connection: close\r\n\r\n",
+            encoded
+          ])
+        end)
+
+      reason(
+        source(p),
+        if(name == "content-type", do: :unexpected_media_type, else: :invalid_response)
+      )
+    end
+
+    p =
+      peer(fn socket, _ ->
+        :ssl.send(socket, [
+          "HTTP/1.1 200 OK\r\nContent-Type: \t",
+          media_type,
+          " \t;charset=utf-8\r\nContent-Encoding: \tidentity\t \r\nContent-Length: \t",
+          Integer.to_string(byte_size(body)),
+          "\t \r\nConnection: close\r\n\r\n",
+          body
+        ])
+      end)
+
+    assert {:ok, _} = Discovery.fetch(source(p), [])
+
+    p =
+      peer(fn socket, _ ->
+        :ssl.send(socket, [
+          "HTTP/1.1 200 OK\r\nContent-Type: ",
+          media_type,
+          "\r\nTransfer-Encoding: \tchunked\t \r\nConnection: close\r\n\r\n",
+          Integer.to_string(byte_size(body), 16),
+          "\r\n",
+          body,
+          "\r\n0\r\n\r\n"
+        ])
+      end)
+
+    assert {:ok, _} = Discovery.fetch(source(p), [])
+  end
+
   test "gzip trailing members and malformed streams cannot hide decoded bytes" do
     compressed = :zlib.gzip(Peer.directory())
 

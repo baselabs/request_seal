@@ -126,13 +126,26 @@ defmodule RequestSeal.Discovery.HTTP1 do
   end
 
   def value(fields, name) do
-    values = for f <- fields, String.downcase(f.name) == name, do: String.trim(f.value)
+    values = for f <- fields, String.downcase(f.name) == name, do: trim_ows(f.value)
     ensure(length(values) <= 1, :invalid_response)
     List.first(values)
   end
 
   def values(fields, name),
-    do: for(f <- fields, String.downcase(f.name) == name, do: String.trim(f.value))
+    do: for(f <- fields, String.downcase(f.name) == name, do: trim_ows(f.value))
+
+  # RFC 9110 Section 5.6.3: OWS is SP / HTAB, never Unicode whitespace.
+  @doc false
+  def trim_ows(<<byte, rest::binary>>) when byte in [32, 9], do: trim_ows(rest)
+  def trim_ows(value), do: trim_ows_end(value, byte_size(value))
+
+  defp trim_ows_end(value, size) when size > 0 do
+    if :binary.at(value, size - 1) in [32, 9],
+      do: trim_ows_end(value, size - 1),
+      else: binary_part(value, 0, size)
+  end
+
+  defp trim_ows_end(_, 0), do: ""
 
   defp field(line, section \\ :headers) do
     case :binary.split(line, ":") do
@@ -281,7 +294,7 @@ defmodule RequestSeal.Discovery.HTTP1 do
   end
 
   defp decode(bytes, encoding, cap, deadline) do
-    encoding = if is_binary(encoding), do: encoding |> String.trim() |> String.downcase()
+    encoding = if is_binary(encoding), do: encoding |> trim_ows() |> String.downcase()
 
     decoded =
       case encoding do
