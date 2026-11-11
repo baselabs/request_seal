@@ -4,7 +4,7 @@
 
 RequestSeal signs and verifies HTTP requests and responses in Elixir with RFC 9421 HTTP Message Signatures, for teams that receive webhooks, call signed APIs, or identify AI agents and crawlers with Web Bot Auth.
 
-**What a successful verification tells you:** the covered parts of the message you received, rebuilt byte for byte from that message, were signed by a key your policy trusts, inside your freshness window; the body matches its digest when your policy requires one; and, when you require replay protection, this is the first time the request was accepted. Every rule comes from the policy you write, never from the request.
+**What a successful verification tells you:** the covered parts of the message you received, rebuilt byte for byte from that message, were signed by a key your policy trusts, inside your freshness window when your policy sets one; the body matches its digest when your policy requires one; and, when you require replay protection, this is the first time the request was accepted. Every rule comes from the policy you write, never from the request.
 
 It integrates with Plug and Phoenix, Req, Finch, and Ash, and includes compact JWS and JWE (JSON Object Signing and Encryption).
 

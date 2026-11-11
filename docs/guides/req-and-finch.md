@@ -124,7 +124,7 @@ Pass the exact signed request when verifying its response; request association i
 - Choose `request_body: {:retain, max}` in Req or `body: {:retain, max}` in Finch to retain a request stream under a byte bound; the resulting bytes can be sent again on retry.
 - `RequestSeal.Req.attach/2` defaults to `redirect: :same_origin` (origin is scheme, host, and port). Explicit `redirect: {:allow, [origin]}` permits other origins and strips authorization, cookies, proxy authorization, and your `credential_headers`.
 - `RequestSeal.Finch` rejects a caller-supplied `Host` header with `:invalid_options`, as Req does; Mint derives Host from the URL, so the signed `@authority` matches what is sent.
-- Retaining a request body, and Req's response collection, stop with `:limit` at 16,384 chunks (empty chunks count) or after 5,000 ms, whichever comes first.
+- Retaining a request body stops with `:limit` at 16,384 chunks (empty chunks count) or after 5,000 ms, whichever comes first; Req's response collection stops with `:limit` at 16,384 chunks or at `:max_stream_bytes`.
 - A signed `@target-uri` keeps the URL's host case and omits only the scheme's default port, matching the Host or `:authority` Mint sends.
 - `signing_timeout` bounds handle and function signers. Direct Req verification refuses `into: :self`, caller response steps before verification, caches, raising HTTP errors, and other delivery paths that could expose unverified content.
 

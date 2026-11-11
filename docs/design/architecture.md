@@ -197,8 +197,8 @@ Replay protection is an optional but profile-required port where applicable. The
   {:ok, non_neg_integer()} | {:error, atom()}
 ```
 
-Stores implement atomic `claim/3` and explicit `sweep/3`; the atomic
-single-claim envelope they form is the canonical replay contract.
+Stores implement atomic `claim/3` and explicit `sweep/3`; the atomic single
+claim they implement is the canonical replay contract.
 The selected profile validates its required replay identifier. Only after validation
 does the caller commitment function receive the authenticated facts; missing or
 ambiguous required inputs fail closed. Retention metadata does not alter its result.
@@ -208,7 +208,7 @@ ETS is caller-supervised and local; Postgres uses a caller connection and explic
 Claims never evict, and explicit sweeps delete only at the exclusive retention end.
 Expiration is exclusive; max-age is inclusive. Thus retention ends at the minimum
 of `expires + skew` and `created + max_age + skew + 1`, over present bounds.
-Validate the complete envelope and body before one atomic claim. Missing or failed required storage rejects authentication.
+Validate the selected signature, its coverage and the body before one atomic claim. Missing or failed required storage rejects authentication.
 Direct and framework construction paths preserve that same identity. Actual backend
 concurrency evidence establishes the advertised store guarantee.
 
