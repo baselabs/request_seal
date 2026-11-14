@@ -14,18 +14,21 @@ defmodule RequestSeal.JOSEJWETest do
     json = b64(protected)
     assert json == ~s({"alg":"A256KW","kid":"k1","enc":"A128GCM"})
 
+    decrypt_handle = local({:jwe, "A256KW"}, key)
+
     policy = %{
       algorithms: ["A256KW"],
       encryption: ["A128GCM"],
       max_plaintext: 1_048_576,
       timeout: 5000,
+      resolve_timeout: 1000,
+      unwrap_timeout: 1000,
+      protected: %{expected: %{}, permitted: ~w(kid typ cty)},
       key_resolver: fn _ ->
         {:ok,
          %{
            algorithm: "A256KW",
-           unwrap: fn ek, h ->
-             KeyManagement.unwrap("A256KW", ek, RequestSeal.JOSEVectors.params("A256KW", h), key)
-           end
+           key: decrypt_handle
          }}
       end
     }
@@ -146,6 +149,8 @@ defmodule RequestSeal.JOSEJWETest do
     assert {:error, %{reason: :decryption_failed}} =
              JWE.decrypt(replace(a["compact"], 1, "YQ"), ap)
 
+    oaep_handle = local({:jwe, "RSA-OAEP-256"}, rsa(a["key"]))
+
     assert {:error, %{reason: :decryption_failed}} =
              JWE.decrypt(
                header(a["compact"], ~s({"alg":"RSA-OAEP-256","enc":"A256GCM"})),
@@ -156,14 +161,7 @@ defmodule RequestSeal.JOSEJWETest do
                      {:ok,
                       %{
                         algorithm: "RSA-OAEP-256",
-                        unwrap: fn ek, h ->
-                          KeyManagement.unwrap(
-                            "RSA-OAEP-256",
-                            ek,
-                            RequestSeal.JOSEVectors.params("RSA-OAEP-256", h),
-                            rsa(a["key"])
-                          )
-                        end
+                        key: oaep_handle
                       }}
                    end
                }
@@ -316,27 +314,11 @@ defmodule RequestSeal.JOSESafetyTest do
     assert {:error, %{reason: :duplicate_member}} =
              JWE.decrypt(header(c, ~s({"alg":"dir","enc":"A128GCM","enc":"A128GCM"})), p)
 
-    for size <- [0, 15, 17, 31, 33] do
-      key = :crypto.strong_rand_bytes(size)
-
-      resolver = fn _ ->
-        {:ok,
-         %{
-           algorithm: "dir",
-           unwrap: fn ek, h ->
-             KeyManagement.unwrap(
-               "dir",
-               ek,
-               RequestSeal.JOSEVectors.params("dir", h),
-               {:cek, key}
-             )
-           end
-         }}
-      end
-
-      assert {:error, %{reason: :decryption_failed}} =
-               JWE.decrypt(c, %{p | key_resolver: resolver})
-    end
+    # 2.0 resolver entries carry handles; key recovery refusal stays uniform.
+    bound = local({:jwe, "dir"}, {:cek, b64(v["input"]["key"]["k"])})
+    refused = %{bound | ref: fn -> raise "unavailable recipient" end}
+    resolver = fn _ -> {:ok, %{algorithm: "dir", key: refused}} end
+    assert {:error, %{reason: :decryption_failed}} = JWE.decrypt(c, %{p | key_resolver: resolver})
 
     assert {:error, %{reason: :algorithm_not_permitted, layer: :input}} =
              KeyManagement.wrap(
@@ -377,10 +359,16 @@ defmodule RequestSeal.JOSESafetyTest do
           p.key_resolver.(request)
         end
 
-        assert {:error, %{reason: :deadline_exceeded, retryable: true}} =
-                 JWE.decrypt(v["output"]["compact"], %{p | timeout: 1, key_resolver: slow})
+        assert {:error, %{reason: :key_resolver_failed, retryable: false}} =
+                 JWE.decrypt(v["output"]["compact"], %{
+                   p
+                   | resolve_timeout: 30,
+                     key_resolver: slow
+                 })
 
-        resolver = fn _ -> {:ok, %{algorithm: "dir", unwrap: fn _, _ -> raise canary end}} end
+        {:ok, %{key: good}} = p.key_resolver.(%{})
+        failed = %{good | ref: fn -> raise canary end}
+        resolver = fn _ -> {:ok, %{algorithm: "dir", key: failed}} end
 
         assert {:error, %{reason: :decryption_failed, retryable: false}} =
                  JWE.decrypt(v["output"]["compact"], %{p | key_resolver: resolver})

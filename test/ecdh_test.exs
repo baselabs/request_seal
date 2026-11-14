@@ -84,6 +84,7 @@ defmodule RequestSeal.ECDHTest do
              JWS.verify(token, %{
                algorithms: ["EdDSA"],
                timeout: 5000,
+               protected: %{expected: %{}, permitted: ~w(kid typ cty x5c), embedded_key: :refuse},
                key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: key}} end
              })
   end
@@ -299,6 +300,9 @@ defmodule RequestSeal.ECDHTest do
         encryption: ["A128GCM"],
         max_plaintext: 1024,
         timeout: 5000,
+        resolve_timeout: 1000,
+        unwrap_timeout: 1000,
+        protected: %{expected: %{}, permitted: ~w(kid typ cty)},
         key_resolver: fn _ ->
           send(observer, :resolved)
           :error
@@ -320,6 +324,9 @@ defmodule RequestSeal.ECDHTest do
       encryption: ["A128GCM"],
       max_plaintext: 1024,
       timeout: 5000,
+      resolve_timeout: 1000,
+      unwrap_timeout: 1000,
+      protected: %{expected: %{}, permitted: ~w(kid typ cty)},
       key_resolver: fn _ ->
         send(observer, :resolved)
         :error
@@ -424,6 +431,9 @@ defmodule RequestSeal.ECDHTest do
         encryption: ["A128GCM"],
         max_plaintext: 1024,
         timeout: 5000,
+        resolve_timeout: 1000,
+        unwrap_timeout: 1000,
+        protected: %{expected: %{}, permitted: ~w(kid typ cty)},
         key_resolver: fn _ -> flunk("must not resolve") end
       }
 
@@ -468,6 +478,9 @@ defmodule RequestSeal.ECDHTest do
       encryption: [cipher],
       max_plaintext: 1024,
       timeout: 5000,
+      resolve_timeout: 1000,
+      unwrap_timeout: 1000,
+      protected: %{expected: %{}, permitted: ~w(kid typ cty)},
       key_resolver: fn _ -> {:ok, %{algorithm: alg, key: handle}} end
     }
 

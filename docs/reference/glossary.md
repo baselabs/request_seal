@@ -15,7 +15,7 @@
 | Key handle | An opaque, algorithm-bound reference to a key held by a custodian; private key bytes never leave the custodian. |
 | Signing spec | The label, algorithm, covered components, lifetime, and optional parameters of a signature to create (`t:RequestSeal.signing_spec/0`). |
 | Policy | The verifier's explicit acceptance choices: algorithms, required components, key resolver, freshness, body integrity, and replay (`RequestSeal.Policy`). |
-| Key resolver | The policy's caller function returning the authoritative algorithm and public key or verification function for a key ID; it establishes no identity. |
+| Key resolver | The policy's caller function selecting an authoritative algorithm and a public key, custody handle, or supported verification function. An explicitly required embedded JWS key is approved with `:embedded`. Selection establishes no identity. |
 | Agent trust function | The Web Bot Auth policy's `agents` function mapping a `Signature-Agent` location and type to a trusted source or key set before attribution. |
 | Verification result | The facts established by a successful verification (`RequestSeal.Verification`); `authorization` is always `:not_evaluated`. |
 | Principal | The verified attribution in a result. Generic results are `:unattributed`; Web Bot Auth reports an agent or a held key. |

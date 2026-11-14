@@ -24,6 +24,7 @@ defmodule RequestSeal.GuideJoseTest do
         jws_policy = %{
           algorithms: ["EdDSA"],
           timeout: 5_000,
+          protected: %{expected: %{}, permitted: ~w(kid typ cty x5c), embedded_key: :refuse},
           key_resolver: fn %{algorithm: "EdDSA"} ->
             {:ok, %{algorithm: "EdDSA", key: jose_key}}
           end
@@ -43,17 +44,15 @@ defmodule RequestSeal.GuideJoseTest do
     binding =
       E.eval(
         ~S'''
-        wrapping_key = {:aes, :crypto.strong_rand_bytes(32)}
-
-        wrap = fn algorithm, cek ->
-          RequestSeal.JOSE.KeyManagement.wrap(algorithm, cek, %{}, wrapping_key)
-        end
+        {:ok, wrapping_handle} = RequestSeal.Custody.Local.new(
+          {:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)}
+        )
 
         {:ok, encrypted} =
           RequestSeal.JOSE.JWE.encrypt(
             [{"alg", "A256KW"}, {"enc", "A256GCM"}],
             token,
-            wrap
+            wrapping_handle
           )
         ''',
         binding,
@@ -69,13 +68,14 @@ defmodule RequestSeal.GuideJoseTest do
           encryption: ["A256GCM"],
           max_plaintext: 1_048_576,
           timeout: 5_000,
+          resolve_timeout: 1000,
+          unwrap_timeout: 1000,
+          protected: %{expected: %{}, permitted: ~w(kid typ cty)},
           key_resolver: fn %{algorithm: "A256KW"} ->
             {:ok,
              %{
                algorithm: "A256KW",
-               unwrap: fn bytes, _header ->
-                 RequestSeal.JOSE.KeyManagement.unwrap("A256KW", bytes, %{}, wrapping_key)
-               end
+               key: wrapping_handle
              }}
           end
         }
@@ -84,6 +84,7 @@ defmodule RequestSeal.GuideJoseTest do
         {:ok, inner} = RequestSeal.JOSE.JWS.verify(decrypted.plaintext, jws_policy)
         inner.payload
         # => "signed payload"
+        :ok = RequestSeal.Custody.release(wrapping_handle)
         ''',
         binding,
         "docs/guides/jose.md",

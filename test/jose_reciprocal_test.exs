@@ -47,18 +47,22 @@ defmodule RequestSeal.JOSEReciprocalTest do
               else: rsa(v["key"])
             )
 
+      {:ok, decrypt_handle} = RequestSeal.Custody.Local.new({:jwe, alg}, desc)
+      on_exit(fn -> RequestSeal.Custody.release(decrypt_handle) end)
+
       jp = %{
         algorithms: [alg],
         encryption: [enc],
         max_plaintext: 1_048_576,
         timeout: 5000,
+        resolve_timeout: 1000,
+        unwrap_timeout: 1000,
+        protected: %{expected: %{}, permitted: ~w(kid typ cty)},
         key_resolver: fn _ ->
           {:ok,
            %{
              algorithm: alg,
-             unwrap: fn ek, h ->
-               KeyManagement.unwrap(alg, ek, RequestSeal.JOSEVectors.params(alg, h), desc)
-             end
+             key: decrypt_handle
            }}
         end
       }

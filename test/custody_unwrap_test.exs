@@ -11,7 +11,7 @@ defmodule RequestSeal.CustodyUnwrapTest do
     {:ok, private: :public_key.generate_key({:rsa, 2048, 65537})}
   end
 
-  test "GCMKW and dir decrypt with either closed-param callbacks or matching custody handles" do
+  test "GCMKW and dir decrypt with matching custody handles and refuse unwrap callbacks" do
     direct = RequestSeal.JOSEVectors.fixture("5_6.direct_encryption_using_aes-gcm.json")
 
     assert {:ok, handle} =
@@ -57,7 +57,7 @@ defmodule RequestSeal.CustodyUnwrapTest do
           )
         end
 
-        assert {:ok, %{plaintext: "payload"}} =
+        assert {:error, %{reason: :key_resolver_failed, layer: :key}} =
                  JWE.decrypt(compact, %{
                    p
                    | key_resolver: fn _ -> {:ok, %{algorithm: alg, unwrap: unwrap}} end
@@ -102,12 +102,12 @@ defmodule RequestSeal.CustodyUnwrapTest do
 
       try do
         assert_receive {:cek_runner, runner}, 1000
-        {:links, [middle]} = Process.info(runner, :links)
-        {:monitored_by, [helper]} = Process.info(middle, :monitored_by)
-        {:monitored_by, helper_monitors} = Process.info(helper, :monitored_by)
-        jwe_worker = Enum.find(helper_monitors, &(&1 != middle))
+        {:links, [coordinator]} = Process.info(runner, :links)
+        {:monitored_by, monitors} = Process.info(runner, :monitored_by)
+        assert coordinator in monitors
+        assert length(monitors) == 2
         {holder, _} = original.()
-        recipients = [holder, runner, middle, helper, jwe_worker]
+        recipients = Enum.uniq([holder, runner, coordinator | monitors])
 
         sensitivity =
           Enum.map(recipients, fn pid ->
@@ -223,13 +223,17 @@ defmodule RequestSeal.CustodyUnwrapTest do
         ] do
       p = policy(handle, "RSA-OAEP-256")
 
-      assert {:ok, result} =
-               JWE.decrypt(compact, %{
-                 p
-                 | key_resolver: fn _ -> {:ok, Map.put(member, :algorithm, "RSA-OAEP-256")} end
-               })
+      result =
+        JWE.decrypt(compact, %{
+          p
+          | key_resolver: fn _ -> {:ok, Map.put(member, :algorithm, "RSA-OAEP-256")} end
+        })
 
-      assert result.plaintext == "text"
+      if Map.has_key?(member, :key) do
+        assert {:ok, %{plaintext: "text"}} = result
+      else
+        assert {:error, %{reason: :key_resolver_failed, layer: :key}} = result
+      end
 
       assert JWE.decrypt(compact, %{
                p
@@ -533,7 +537,13 @@ defmodule RequestSeal.CustodyUnwrapTest do
       caller =
         Task.async(fn ->
           if mode == :jwe_deadline,
-            do: JWE.decrypt(compact, %{policy(observed, "RSA-OAEP-256") | timeout: 300}),
+            do:
+              JWE.decrypt(compact, %{
+                policy(observed, "RSA-OAEP-256")
+                | timeout: 1200,
+                  resolve_timeout: 100,
+                  unwrap_timeout: 300
+              }),
             else: unwrap_one(observed, wrapped.encrypted_key, timeout: 300)
         end)
 
@@ -547,8 +557,13 @@ defmodule RequestSeal.CustodyUnwrapTest do
         if mode == :cancellation do
           Task.shutdown(caller, :brutal_kill)
         else
-          assert {:error, %{reason: :deadline_exceeded, retryable: true}} =
-                   Task.await(caller, 1000)
+          if mode == :jwe_deadline do
+            assert {:error, %{reason: :decryption_failed, retryable: false}} =
+                     Task.await(caller, 2000)
+          else
+            assert {:error, %{reason: :deadline_exceeded, retryable: true}} =
+                     Task.await(caller, 1000)
+          end
         end
 
         assert_receive {:DOWN, ^monitor, :process, ^runner, _}, 1000
@@ -649,6 +664,9 @@ defmodule RequestSeal.CustodyUnwrapTest do
       encryption: [enc],
       max_plaintext: 2048,
       timeout: 5000,
+      resolve_timeout: 1000,
+      unwrap_timeout: 1000,
+      protected: %{expected: %{}, permitted: ~w(kid typ cty)},
       key_resolver: fn _ -> {:ok, %{algorithm: alg, key: handle}} end
     }
   end

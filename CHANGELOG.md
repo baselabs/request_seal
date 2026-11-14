@@ -18,6 +18,28 @@
 - Security fixes cover the latest minor of the latest stable major and, for
   6 months after its first stable release, the latest minor of the previous major.
 
+- Pipeline bounded sensitive JWE admission ranges into deadline-checked resolvers,
+  reuse bounded content-authentication workers, and reap every child before batch
+  finalization. Preserve one unwrap call per handle at the batch-wide barrier.
+- Stop Local unwrap ranges between items when the operation owner dies, with
+  the documented cancellation limit for an already-running native item.
+- Add native protected-policy, batch-isolation and embedded-signature-key corpus
+  cases and the versioned protected and batch-decryption adapter surfaces.
+
+- Require explicit protected-member policies for JWS verification and JWE
+  decryption; add `:unexpected_member` and `:protected_mismatch` input reasons.
+  JOSE verification resolves public keys, verification handles, or explicitly
+  required embedded signature keys; decryption resolves unwrap handles only.
+- Split JWE admission/resolution, unwrap, and content-authentication budgets.
+  Width-failed tokens bypass resolution and unwrap, then authenticate under the
+  unconditionally prepared fallback CEK. GCMKW parameter errors precede width
+  failures. Holder timeout and all other unwrap failures share the authenticated
+  `:decryption_failed` path.
+- Add positional `JWE.decrypt_many/2` with aggregate bounds, one custody call per
+  handle, prefix-preserving sinks, bounded sensitive AEAD workers, and cancellation.
+  Add content-authentication and batch telemetry; unwrap measurements now include
+  `:items` beside `:duration`, without per-item outcomes.
+
 - Add ECDH-ES, ECDH-ES+A128KW, and ECDH-ES+A256KW with P-256, P-384,
   and X25519 recipients. `KeyManagement.agree/4` generates ephemeral keys and
   CEKs inside a sensitive worker; Concat KDF uses the complete RFC 7518 encoding,
@@ -49,7 +71,7 @@
   `:algorithm_not_permitted`, layer `:input`, before recipient or key work.
   Their local handles grant unwrap only and now work as JWE `key:` entries.
 - Change `KeyManagement.unwrap/4` to closed decoded params instead of headers.
-  JWE retains its existing policy, parse order, callback forms, and deadline.
+  Parameter shapes and operation allowlists are checked before key operations.
 - Set stable dependency ranges from each locked version through the next major,
   retaining the existing ash_onetime requirement.
 - Require Finch 0.24.0 or later. Finch 0.23 HTTP/2 pools return

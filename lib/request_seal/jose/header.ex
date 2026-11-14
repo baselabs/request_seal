@@ -2,15 +2,15 @@ defmodule RequestSeal.JOSE.Header do
   @moduledoc false
   import RequestSeal.JOSE.Support
 
-  def parse(segment) do
+  def parse(segment, embedded \\ :refuse) do
     ensure(byte_size(segment) <= 21_846, :limit)
     bytes = decode(segment)
-    json(bytes)
+    json(bytes, embedded)
   end
 
-  def json(bytes) do
+  def json(bytes, embedded \\ :refuse) do
     h = json_object(bytes)
-    reject(h)
+    reject(h, embedded)
     h
   end
 
@@ -58,14 +58,11 @@ defmodule RequestSeal.JOSE.Header do
   defp json_null(v) when is_list(v), do: Enum.map(v, &json_null/1)
   defp json_null(v), do: v
 
-  defp reject(h) do
+  defp reject(h, embedded \\ :refuse) do
     ensure(not Map.has_key?(h, "zip"), :compression_unsupported)
     ensure(not Map.has_key?(h, "crit"), :unsupported_critical_header)
-    ensure(not Enum.any?(~w(jku x5u jwk b64), &Map.has_key?(h, &1)), :unsupported_header)
+    refused = if embedded == :require, do: ~w(jku x5u b64), else: ~w(jku x5u jwk b64)
+    ensure(not Enum.any?(refused, &Map.has_key?(h, &1)), :unsupported_header)
     ensure(is_binary(h["alg"]), :invalid_header)
   end
-
-  defp proper_list?([]), do: true
-  defp proper_list?([_ | tail]), do: proper_list?(tail)
-  defp proper_list?(_), do: false
 end

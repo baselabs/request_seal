@@ -30,8 +30,10 @@ defmodule RequestSeal.JOSE.Nested do
 
     * `compact` - the outer compact JWE, as accepted by
       `RequestSeal.JOSE.JWE.decrypt/2`.
-    * `jwe_policy` - the decryption policy map for `RequestSeal.JOSE.JWE.decrypt/2`.
-    * `jws_policy` - the verification policy map for `RequestSeal.JOSE.JWS.verify/2`.
+    * `jwe_policy` - the 2.0 decryption policy, including `:protected`,
+      `:resolve_timeout`, and `:unwrap_timeout`; see the policy map for `RequestSeal.JOSE.JWE.decrypt/2`.
+    * `jws_policy` - the 2.0 verification policy, including `:protected` with
+      `:embedded_key`; see the policy map for `RequestSeal.JOSE.JWS.verify/2`.
     * `opts` - keyword list; required (there is no default).
 
   ## Options
@@ -44,8 +46,15 @@ defmodule RequestSeal.JOSE.Nested do
     * `{:ok, %{jwe: %RequestSeal.JOSE.JWE.Result{}, jws: %RequestSeal.JOSE.JWS.Result{}}}`.
     * `{:error, %RequestSeal.JOSE.Error{}}` - `:invalid_options` (missing, unknown,
       duplicate, or invalid option), `:content_type_mismatch` (outer `cty` absent
-      or not selected), `:nesting_depth`, and every reason
-      `RequestSeal.JOSE.JWE.decrypt/2` and `RequestSeal.JOSE.JWS.verify/2` return.
+      or not selected), `:nesting_depth`, and the complete inner/outer policy
+      reasons: `:invalid_policy`, `:invalid_serialization`,
+      `:unsupported_serialization`, `:limit`, `:invalid_base64`, `:invalid_header`,
+      `:duplicate_member`, `:unsupported_critical_header`,
+      `:compression_unsupported`, `:unsupported_header`, `:algorithm_not_permitted`,
+      `:invalid_iv`, `:invalid_tag`, `:unexpected_member`, `:protected_mismatch`,
+      `:unknown_key`, `:algorithm_mismatch`, `:key_resolver_failed`,
+      `:entropy_failure`, `:decryption_failed`, `:detached_payload`,
+      `:invalid_signature`, and `:deadline_exceeded` (the only retryable reason).
       Meanings: `RequestSeal.JOSE.Error`.
 
   ## Examples
@@ -54,18 +63,18 @@ defmodule RequestSeal.JOSE.Nested do
       iex> {:ok, handle} = RequestSeal.Custody.Local.new({:jws, "EdDSA"}, {:ed25519, seed})
       iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
       iex> {:ok, jws} = RequestSeal.JOSE.JWS.sign([{"alg", "EdDSA"}], ~s({"order":"A-1001","status":"shipped"}), handle)
-      iex> kek = {:aes, :crypto.strong_rand_bytes(32)}
-      iex> wrap = fn algorithm, cek -> RequestSeal.JOSE.KeyManagement.wrap(algorithm, cek, %{}, kek) end
-      iex> {:ok, jwe} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "JWT"}], jws, wrap)
-      iex> unwrap = fn bytes, _header -> RequestSeal.JOSE.KeyManagement.unwrap("A256KW", bytes, %{}, kek) end
-      iex> jwe_policy = %{algorithms: ["A256KW"], encryption: ["A256GCM"], max_plaintext: 4_096, timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "A256KW", unwrap: unwrap}} end}
-      iex> jws_policy = %{algorithms: ["EdDSA"], timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: key}} end}
+      iex> {:ok, wrapping} = RequestSeal.Custody.Local.new({:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)})
+      iex> {:ok, jwe} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "JWT"}], jws, wrapping)
+      iex> jwe_policy = %{algorithms: ["A256KW"], encryption: ["A256GCM"], max_plaintext: 4_096, timeout: 5_000, resolve_timeout: 1_000, unwrap_timeout: 1_000, protected: %{expected: %{}, permitted: ["cty"]}, key_resolver: fn _ -> {:ok, %{algorithm: "A256KW", key: wrapping}} end}
+      iex> jws_policy = %{algorithms: ["EdDSA"], timeout: 5_000, protected: %{expected: %{}, permitted: [], embedded_key: :refuse}, key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: key}} end}
       iex> {:ok, %{jws: inner}} = RequestSeal.JOSE.Nested.verify(jwe, jwe_policy, jws_policy, content_types: ["JWT"])
       iex> inner.payload
       ~s({"order":"A-1001","status":"shipped"})
       iex> {:error, error} = RequestSeal.JOSE.Nested.verify(jwe, jwe_policy, jws_policy, content_types: ["application/example+jws"])
       iex> error.reason
       :content_type_mismatch
+      iex> RequestSeal.Custody.release(wrapping)
+      :ok
       iex> RequestSeal.Custody.Local.release(handle)
       :ok
   """

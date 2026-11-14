@@ -87,6 +87,8 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `key_management.aes_kw/v1` | `alg` (A128KW/A256KW), `kek` byte tag, `operation` (wrap/unwrap), and `key_data` or `wrapped` byte tag | `wrapped` or `key_data` byte tag |
 | `key_management.ecdh_kdf/v1` | `z`, `apu`, `apv` byte tags; `algorithm_id` string; `keydatalen` tagged bits (128/256) | `output` byte tag |
 | `key_management.agree/v1` | `alg`, `enc`, `recipient` JWK pairs, `recipient_private` JWK pairs/source ref, `ephemeral_private` byte tag, optional `cek` byte tag for +KW, decoded `apu`/`apv` byte tags | `cek`, `encrypted_key` byte tags and `epk` JWK pairs |
+| `jwe.protected/v1` | `token` compact string; `policy` with `expected` ordered JSON pairs and `permitted` names | `{"accepted":true}` after protected admission; no decryption claim |
+| `jwe.decrypt_many/v1` | `items` with compact `token` strings and `expected` pairs, named custody `keys`, and indexed `resolver` outcomes | Positional `results`, each with tagged `index` and `plaintext` bytes or `rule_id` |
 | `key.import` | Public material and format | `{"valid":true,"public":{"thumbprint":"<RFC 7638 thumbprint>"}}` |
 | `jws.sign`, `jws.verify`, `jwe.decrypt`, `nested.decrypt` | Compact bytes or protected occurrence pairs, keys and pinned policy | Exact compact bytes or verified/decrypted `payload` |
 | `web_bot_auth.verify` | Message, injected directory body, trusted origins, explicit clock and policy | Per-label canonical verification facts |
@@ -160,6 +162,52 @@ libraries decrypt it. Both tools are pinned by content as well as version:
 and `scripts/jose_libraries/mix.lock` the Hex checksums, so a changed artifact
 fails to install. Tool installations live in temporary directories and never
 become package runtime dependencies.
+
+## Native JOSE policy and isolation
+
+`scripts/import_native_jose.py` derives policy cases from the existing public
+RFC and pinned peer vectors without calling RequestSeal. Positive signature,
+ciphertext and plaintext bytes remain independently sourced. Rejection headers
+change one public predicate and retain the original signature; these cases
+assert admission refusal, not a newly signed vector. Every compact-bearing
+manifest has its own exact path in the secret scanner allowlist.
+
+`jwe.protected/v1` uses the token and `policy: {"expected": {"pairs": [...]},
+"permitted": [...]}`. It exercises actual JWE admission with no selected key.
+Acceptance means steps through protected comparison succeeded; an unknown key
+or the width-failure authentication path establishes no plaintext claim.
+
+`jwe.decrypt_many/v1` supplies `items: [{"token": string, "expected": pairs}]`,
+`keys: {name: entry}` and `resolver: [{"index": {"int":"0"}, "outcome":
+{"key": name}}]`. Outcomes also include `"error"` and `"raise"`, explicit
+caller-boundary faults. A width-failed item has no resolver entry; any invocation
+for it fails the case. The resolver request identifies an index by its decoded
+protected header. Repeated headers can select an identical outcome, with the declared call count
+checked exactly. Different outcomes for identical headers are ambiguous and
+fail rather than assuming concurrent callback order. Malformed items without
+resolver entries pass directly to the library for positional admission refusal. Deadlines are generous harness
+budgets; budget overruns belong to the timing-controlled suite tests.
+
+A key entry contains `algorithm: {"kind": "jwe", "name": "A256KW"}`,
+`capabilities: ["unwrap"]`, `material` and `state: "live" | "released"`.
+Algorithm objects use exact names with `kind` equal to `http`, `jws`, `jwe` or
+`derive`, through one closed adapter table. Raw symmetric material is
+`{"format":"raw","value":{"b64":"..."}}`; private JWK material is
+`{"format":"jwk","value":{"pairs":[...]}}`. Either value may be a source
+reference. One real Local handle is created per name. Reusing a name shares a
+handle and its group; equal material under two names makes two handles. A
+released entry is created and actually released before decryption. The adapter
+never synthesizes a custody refusal and releases all handles after each case.
+Results retain input order, with tagged indices and either `plaintext` byte tags
+or the ordinary `jose/<layer>.<reason>` rule IDs.
+
+Native `jws.verify` cases state `policy.protected` explicitly with `expected`
+pairs, `permitted` and `embedded_key: "refuse" | "require"`. Their resolver
+descriptors select `embedded`, an actual `public` key or custody `handle`, or
+explicit invalid `closure`/`null` keys. They cover the published RFC 9449 section
+4.1 figure 2 proof, embedded-key shape and binding refusals, and the unchanged
+RFC 7515 Appendix A.2 signature under refusal. They exercise only the generic
+signature-key primitive, not DPoP claim validation or authorization.
 
 ## Batch manifests
 

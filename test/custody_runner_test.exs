@@ -72,7 +72,7 @@ defmodule RequestSeal.CustodyRunnerTest do
 
     caller =
       Task.async(fn ->
-        Custody.run(context(150), fn ->
+        Custody.run(context(2000), fn ->
           Process.flag(:trap_exit, true)
           {:links, [middle]} = Process.info(self(), :links)
           send(owner, {:workers, self(), middle})
@@ -200,7 +200,7 @@ defmodule RequestSeal.CustodyRunnerTest do
 
     caller =
       Task.async(fn ->
-        Custody.run(context(150), fn ->
+        Custody.run(context(2000), fn ->
           Custody.run(context(), fn ->
             {:links, [middle]} = Process.info(self(), :links)
             send(owner, {:nested, self(), middle})

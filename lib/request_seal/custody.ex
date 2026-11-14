@@ -80,6 +80,9 @@ defmodule RequestSeal.Custody do
   tagged envelopes, then times out undelivered positions. A call summary settles
   only positions still undelivered; an accepted prefix survives later failure.
   CEKs travel straight from the holder to the owner, bypassing the runner.
+  Each unwrap call emits `[:request_seal, :custody, :unwrap]` with only
+  `:duration` (native monotonic units) and `:items` (input count) measurements,
+  empty metadata, and no per-item outcome.
 
   Returns `{:ok, results}` in input order, with each result `{:ok, cek}`,
   `{:error, :decryption_failed}`, or `{:error, :deadline_exceeded}`. Input and
@@ -116,7 +119,7 @@ defmodule RequestSeal.Custody do
           ensure(:unwrap in handle.capabilities, :unsupported_operation)
           indexed = items!(handle.algorithm, items)
           sink = Sink.new(indexed, context)
-          results = Sink.collect(sink, fn -> unwrap(handle, indexed, sink, context) end)
+          results = Sink.collect(sink, fn -> unwrap_call(handle, indexed, sink, context) end)
 
           {:ok,
            Enum.map(results, fn
@@ -128,11 +131,7 @@ defmodule RequestSeal.Custody do
         :custodian_failure
       )
     after
-      RequestSeal.Telemetry.emit(
-        [:request_seal, :custody, :unwrap],
-        System.monotonic_time() - started,
-        %{}
-      )
+      unwrap_telemetry(started, items)
     end
   end
 
@@ -141,15 +140,41 @@ defmodule RequestSeal.Custody do
   @doc false
   @spec unwrap(KeyHandle.t(), [item()], Sink.t(), Context.t()) :: {:ok, :ok} | {:error, term()}
   def unwrap(handle, items, sink, context) do
-    run(context, fn ->
-      handle!(handle)
-      ensure(:unwrap in handle.capabilities, :unsupported_operation)
+    # JWE owns this runner, its cancellation watcher and both monitors. Public
+    # unwrap/3 retains Custody.run's independent caller-owned boundary.
+    Support.safe(
+      fn ->
+        ensure(Context.remaining(context) > 0, :deadline_exceeded)
+        ensure(not owner_dead?(context.owner), :custodian_failure)
+        unwrap_callback(handle, items, sink, context) |> run_result()
+      end,
+      :custodian_failure
+    )
+  end
 
-      normalize(
-        :unwrap,
-        handle.custodian.unwrap(handle.ref, handle.algorithm, items, sink, context)
-      )
-    end)
+  @doc false
+  def unwrap_telemetry(started, items) do
+    count = if RequestSeal.JOSE.Support.proper_list?(items), do: length(items), else: 0
+
+    :telemetry.execute(
+      [:request_seal, :custody, :unwrap],
+      %{duration: System.monotonic_time() - started, items: count},
+      %{}
+    )
+  end
+
+  defp unwrap_call(handle, items, sink, context) do
+    run(context, fn -> unwrap_callback(handle, items, sink, context) end)
+  end
+
+  defp unwrap_callback(handle, items, sink, context) do
+    handle!(handle)
+    ensure(:unwrap in handle.capabilities, :unsupported_operation)
+
+    normalize(
+      :unwrap,
+      handle.custodian.unwrap(handle.ref, handle.algorithm, items, sink, context)
+    )
   end
 
   defp items!(algorithm, items) do
@@ -651,12 +676,20 @@ defmodule RequestSeal.Custody do
   """
   @spec run(Context.t(), (-> :ok | {:ok, term()} | {:error, term()})) ::
           {:ok, term()} | {:error, term()}
-  def run(%Context{deadline: deadline, owner: owner} = context, callback)
+  def run(
+        %Context{deadline: deadline, owner: owner} = context,
+        callback
+      )
       when is_integer(deadline) and is_pid(owner) and is_function(callback, 0) do
     cond do
-      Context.remaining(context) <= 0 -> {:error, Error.new(:deadline_exceeded)}
-      owner_dead?(owner) -> {:error, Error.new(:custodian_failure)}
-      true -> run_worker(context, callback)
+      Context.remaining(context) <= 0 ->
+        {:error, Error.new(:deadline_exceeded)}
+
+      owner_dead?(owner) ->
+        {:error, Error.new(:custodian_failure)}
+
+      true ->
+        run_worker(context, callback)
     end
   end
 
@@ -669,6 +702,7 @@ defmodule RequestSeal.Custody do
     {worker, monitor} =
       spawn_monitor(fn ->
         Process.flag(:sensitive, true)
+
         watch_owner(caller, reply, context, callback)
       end)
 

@@ -252,7 +252,9 @@ defmodule RequestSeal.AESKWTest do
     :telemetry.attach_many(
       id,
       [[:request_seal, :custody, :wrap], [:request_seal, :custody, :unwrap]],
-      fn event, _, metadata, _ -> send(observer, {:event, event, metadata}) end,
+      fn event, measurements, metadata, _ ->
+        send(observer, {:event, event, measurements, metadata})
+      end,
       nil
     )
 
@@ -260,15 +262,18 @@ defmodule RequestSeal.AESKWTest do
 
     try do
       assert {:ok, %{encrypted_key: ek}} = Custody.wrap(handle, hex(@key))
-      assert_receive {:event, [:request_seal, :custody, :wrap], %{outcome: :ok} = meta}
+      assert_receive {:event, [:request_seal, :custody, :wrap], _, %{outcome: :ok} = meta}
       assert map_size(meta) == 1
       assert {:error, _} = Custody.wrap(%{handle | capabilities: [:unwrap]}, hex(@key))
-      assert_receive {:event, [:request_seal, :custody, :wrap], %{outcome: :failed} = meta}
+      assert_receive {:event, [:request_seal, :custody, :wrap], _, %{outcome: :failed} = meta}
       assert map_size(meta) == 1
       Custody.unwrap(handle, [{ek, %{}, 128}, {<<0>>, %{}, 128}])
-      assert_receive {:event, [:request_seal, :custody, :unwrap], unwrap_meta}
+      assert_receive {:event, [:request_seal, :custody, :unwrap], measurements, unwrap_meta}
+      assert Enum.sort(Map.keys(measurements)) == [:duration, :items]
+      assert is_integer(measurements.duration) and measurements.duration >= 0
+      assert measurements.items == 2
       assert unwrap_meta == %{}
-      refute_receive {:event, [:request_seal, :custody, :unwrap], %{outcome: _}}
+      refute_receive {:event, [:request_seal, :custody, :unwrap], _, _}
     after
       :telemetry.detach(id)
       Custody.release(handle)
@@ -308,6 +313,9 @@ defmodule RequestSeal.AESKWTest do
       encryption: [enc],
       max_plaintext: 1024,
       timeout: 5000,
+      resolve_timeout: 1000,
+      unwrap_timeout: 1000,
+      protected: %{expected: %{}, permitted: ~w(kid typ cty)},
       key_resolver: fn _ -> {:ok, %{algorithm: alg, key: handle}} end
     }
 end

@@ -23,12 +23,17 @@ defmodule RequestSeal.JOSEVectors do
   def jws_policy(j, alg) do
     key =
       if j["kty"] == "oct",
-        do: fn a, b, s -> RequestSeal.Crypto.verify(a, b, s, material(j)) end,
+        do: local({:jws, "HS256"}, material(j)),
         else: public(j)
 
     %{
       algorithms: [alg],
       timeout: 5000,
+      protected: %{
+        expected: %{},
+        permitted: ~w(kid typ cty x5c n a s x padding),
+        embedded_key: :refuse
+      },
       key_resolver: fn _ -> {:ok, %{algorithm: alg, key: key}} end
     }
   end
@@ -39,21 +44,31 @@ defmodule RequestSeal.JOSEVectors do
         do: rsa(j),
         else: {if(alg == "dir", do: :cek, else: :aes), b64(j["k"])}
 
+    handle = local({:jwe, alg}, descriptor)
+
     %{
       algorithms: [alg],
       encryption: [enc],
       max_plaintext: 1_048_576,
       timeout: 5000,
-      key_resolver: fn _ ->
-        {:ok,
-         %{
-           algorithm: alg,
-           unwrap: fn ek, h ->
-             RequestSeal.JOSE.KeyManagement.unwrap(alg, ek, params(alg, h), descriptor)
-           end
-         }}
-      end
+      resolve_timeout: 1000,
+      unwrap_timeout: 1000,
+      protected: %{expected: %{}, permitted: ~w(kid typ cty x5c)},
+      key_resolver: fn _ -> {:ok, %{algorithm: alg, key: handle}} end
     }
+  end
+
+  def local(alg, descriptor) do
+    # Caller-owned real holders are torn down when this test/corpus owner exits.
+    case Process.get({__MODULE__, alg, descriptor}) do
+      nil ->
+        {:ok, handle} = RequestSeal.Custody.Local.new(alg, descriptor)
+        Process.put({__MODULE__, alg, descriptor}, handle)
+        handle
+
+      handle ->
+        handle
+    end
   end
 
   def params(alg, header) when alg in ~w(A128GCMKW A256GCMKW),

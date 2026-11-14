@@ -47,6 +47,43 @@ defmodule RequestSeal.Custody.Sink do
   end
 
   @doc false
+  @spec tag(t()) :: reference()
+  def tag(%__MODULE__{tag: tag}), do: tag
+
+  @doc false
+  @spec summary(t(), term()) :: :ok
+  def summary(%__MODULE__{address: address, tag: tag}, result) do
+    send(address, {tag, result})
+    :ok
+  end
+
+  @doc false
+  @spec accept(t(), non_neg_integer(), term()) ::
+          :expired | :unknown | {:settled, {:ok, binary()} | :error}
+  def accept(%__MODULE__{owner: owner} = sink, index, outcome) when owner == self() do
+    # Acceptance is decided by the owner clock, never the sender's timestamp.
+    cond do
+      remaining(sink) <= 0 ->
+        :expired
+
+      not is_map_key(sink.widths, index) ->
+        :unknown
+
+      true ->
+        value =
+          case outcome do
+            {:ok, cek} when is_binary(cek) ->
+              if bit_size(cek) == sink.widths[index], do: {:ok, cek}, else: :error
+
+            _ ->
+              :error
+          end
+
+        {:settled, value}
+    end
+  end
+
+  @doc false
   @spec close(t()) :: :ok
   def close(%__MODULE__{owner: owner, address: address, tag: tag}) when owner == self() do
     :erlang.unalias(address)
@@ -91,11 +128,15 @@ defmodule RequestSeal.Custody.Sink do
 
     receive do
       {^tag, index, outcome} ->
-        if remaining(sink) > 0 do
-          positions = settle(sink, positions, index, outcome)
-          collect_results(sink, positions, helper, monitor)
-        else
-          expire(sink, positions, helper, monitor)
+        case accept(sink, index, outcome) do
+          :expired ->
+            expire(sink, positions, helper, monitor)
+
+          :unknown ->
+            collect_results(sink, positions, helper, monitor)
+
+          {:settled, value} ->
+            collect_results(sink, settle(positions, index, value), helper, monitor)
         end
 
       {^tag, _summary} ->
@@ -110,22 +151,10 @@ defmodule RequestSeal.Custody.Sink do
     end
   end
 
-  defp settle(sink, positions, index, outcome) do
+  defp settle(positions, index, value) do
     case Map.fetch(positions, index) do
-      {:ok, :unsettled} ->
-        value =
-          case outcome do
-            {:ok, cek} when is_binary(cek) ->
-              if bit_size(cek) == Map.fetch!(sink.widths, index), do: {:ok, cek}, else: :error
-
-            _ ->
-              :error
-          end
-
-        Map.put(positions, index, value)
-
-      _ ->
-        positions
+      {:ok, :unsettled} -> Map.put(positions, index, value)
+      _ -> positions
     end
   end
 

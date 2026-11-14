@@ -10,15 +10,12 @@ defmodule RequestSeal.JOSE.JWE do
   `RSA-OAEP`, `A128KW`, `A256KW`, or the ECDH-ES family; decryption also admits A128GCMKW,
   A256GCMKW, and `dir`. Content encryption is A128GCM or A256GCM. No symmetric secret can be supplied in a public key or header.
 
-  On the decryption handle path, RSA-OAEP private operations stay inside the
-  handle's sensitive local holder; the callback path can still use caller-owned
-  raw key material. Resolver and callback unwrap execute in JWE's sensitive
-  worker. On the handle path, the CEK passes directly from the sensitive local
-  holder through an owner-created sink to JWE's sensitive worker. The custody
-  runner and middle process receive only the call summary; the decrypt caller
-  receives only the authenticated result. All work shares one
-  absolute deadline. Unwrap failure uses a fresh random CEK and still attempts
-  tag authentication; both paths return `:decryption_failed`.
+  Decryption resolves only custody handles. CEKs pass directly from sensitive
+  holders through coordinator-owned sinks; custody runners receive summaries.
+  Admission and resolution end at R, unwrap at U, and content authentication at
+  D. A random CEK is prepared on every key-management path, success included.
+  Key-management failure still runs AEAD and returns `:decryption_failed`.
+  `decrypt_many/2` shares these rules and groups items into one call per handle.
 
   A released or unavailable resolved handle makes decryption fail with the same
   complete error as a forged message, by design. Check
@@ -234,46 +231,75 @@ defmodule RequestSeal.JOSE.JWE do
   @doc """
   Authenticate and decrypt a compact JWE under an explicit policy (RFC 7516).
 
-  Resolution, unwrapping, and authentication share one absolute deadline with
-  sensitive workers and caller cancellation. No plaintext leaves the worker
-  before full tag authentication. The received protected segment is used verbatim
-  as AAD.
+  Protected bytes remain verbatim AEAD associated data. A sensitive coordinator
+  and disposable sensitive workers withhold plaintext until full authentication.
+  Caller death cancels work. No key operation runs through a resolver closure.
 
   ## Parameters
 
-    * `compact` - binary compact JWE, at most 1,048,576 bytes, with exactly five
-      segments. JSON serializations (input starting with `{` or `[`) reject. The
-      protected header follows the bounds in `RequestSeal.JOSE.JWS.sign_protected/4`
-      and is at most 21,846 Base64url bytes. The IV must decode to 12 bytes and the
-      tag to 16 bytes. The encrypted key must be empty for `"dir"` and direct ECDH-ES, the CEK width
-      for GCM key wrapping (with protected `"iv"` and `"tag"` members), and 256 to
-      1,024 bytes for RSA. AES-KW requires 24 or 40 bytes for a 128- or 256-bit CEK.
-    * `policy` - a map containing exactly these atom keys:
-      * `:algorithms` - nonempty unique list selected from `"RSA-OAEP-256"`,
-        `"RSA-OAEP"`, `"A128KW"`, `"A256KW"`, `"A128GCMKW"`, `"A256GCMKW"`, `"dir"`, `"ECDH-ES"`,
-        `"ECDH-ES+A128KW"`, and `"ECDH-ES+A256KW"`.
-      * `:encryption` - nonempty unique list selected from `"A128GCM"` and
-        `"A256GCM"`.
-      * `:max_plaintext` - integer bytes, 1 to 1,048,576; bounds the ciphertext.
-      * `:timeout` - integer milliseconds, 1 to 300,000.
-      * `:key_resolver` - arity-one function receiving
-        `%{algorithm: wire_name, encryption: wire_name, header: decoded_header_map}`.
-        It returns `:error`,
-        `{:ok, %{algorithm: same_name, unwrap: arity_two_function}}`, or
-        `{:ok, %{algorithm: same_name, key: custody_handle}}`, with exactly two
-        entry keys. Unwrap receives `(encrypted_key_bytes, header)` and returns
-        `{:ok, cek_bytes}` or `{:error, term}`; a CEK whose width differs from the
-        `enc` key size counts as failure. The `key:` handle form works for
-        every implemented key-management family, binds `{:jwe, same_name}`,
-        and must grant `:unwrap`. GCMKW params are decoded before delivery to
-        custody. ECDH params include the revalidated public `epk`, decoded
-        parties, and exact KDF selection. Parse refusals are `:invalid_header`
-        before resolution; held-key mismatch/all-zero X25519 use the fallback
-        CEK and end `:decryption_failed`. Callback entries continue to receive the full header; callers
-        using `KeyManagement.unwrap/4` must translate it to that primitive's
-        closed params. The existing policy, parse order, and whole-operation
-        deadline remain in force.
+    * `compact` - at most 1,048,576 bytes, exactly five canonical unpadded
+      Base64url segments. JSON serializations reject. Protected JSON is at most
+      16,384 bytes (21,846 encoded), depth four, with at most 64 entries per
+      object/array, bounded integers, no floats and no duplicate members.
+      The content IV is 12 bytes and tag 16 bytes; ciphertext is bounded by
+      `:max_plaintext`.
+    * `policy` - exactly `:algorithms`, `:encryption`, `:max_plaintext`,
+      `:timeout`, `:resolve_timeout`, `:unwrap_timeout`, `:key_resolver`,
+      and `:protected`, with no defaults:
+      * `:algorithms` - nonempty unique selection of RSA-OAEP, RSA-OAEP-256,
+        A128KW, A256KW, A128GCMKW, A256GCMKW, dir, ECDH-ES,
+        ECDH-ES+A128KW, ECDH-ES+A256KW.
+      * `:encryption` - nonempty unique selection of A128GCM and A256GCM.
+      * `:max_plaintext` - 1–1,048,576 bytes.
+      * `:timeout`, `:resolve_timeout`, `:unwrap_timeout` - required integer
+        milliseconds 1–300,000; resolve_timeout + unwrap_timeout < timeout.
+        Thus timeout is at least 3 ms. From call start t0, R is
+        t0 + resolve_timeout, D is t0 + timeout, and U is actual resolution
+        completion + unwrap_timeout. Size the reserved remainder for content
+        authentication at `:max_plaintext`.
+      * `:protected` - exactly `%{expected: map, permitted: names}`. Expected
+        values use exact decoded JSON equality; absent and different values both
+        give `:protected_mismatch`. The map has at most 64 string keys and
+        serializes to at most 16,384 bytes. Permitted names are at most 64 unique
+        strings. Overlap, or naming any of alg/enc/iv/tag/epk/apu/apv, is
+        `:invalid_policy`. An empty expected map is valid; the consumer chooses
+        its completeness. Members must be read for the selected algorithm, in
+        expected, or permitted; others give `:unexpected_member`.
+      * `:key_resolver` - arity one, receiving `%{algorithm: alg, encryption: enc,
+        header: decoded_header}`; returns `:error` or exactly
+        `{:ok, %{algorithm: same_alg, key: custody_handle}}`. The handle binds
+        `{:jwe, alg}` and grants `:unwrap`; mismatched or unavailable handles take
+        the uniform key-management failure path. An `unwrap:` entry is refused.
 
+  Admission proceeds in order: compact/header refusals; algorithm allowlists;
+  content structure and public wrap/agreement params; member set; expectations;
+  resolution. GCMKW iv/tag are decoded and checked before width failures take
+  effect. ECDH public epk/party checks precede resolution; held-key checks stay
+  in custody. Encrypted-key width is recorded, never rejected early: RSA permits
+  256–1,024 bytes (custody checks the modulus); KW permits 24/40 bytes for
+  128/256-bit content keys; GCMKW permits the CEK width; dir/direct ECDH require
+  empty bytes. A width-failed token still receives member/expectation checks,
+  then bypasses the resolver, unwrap, and every RFC 3394 round.
+
+  A fallback CEK is drawn before key management on every path. Only a width-valid
+  accepted sink delivery sets the one success flag. Every other key-management
+  outcome uses the prepared fallback and runs AEAD, succeeding only if both the
+  success flag and tag validation hold. The content-authentication event is
+  emitted exactly once immediately after AEAD returns, with only
+  `outcome: :ok | :failed`. Width is public and its bypass reveals no key fact.
+
+  Admission unfinished at R returns `:deadline_exceeded`/`:input`; a resolver
+  unfinished at R returns `:key_resolver_failed`/`:key`. Unwrap unfinished at U
+  still authenticates with the fallback and returns `:decryption_failed`/`:crypto`.
+  Content authentication unfinished at D returns `:deadline_exceeded`/`:crypto`.
+  The caller allows a fixed 100 ms for finalization after D.
+
+  All headers read before authentication are untrusted: even a forged header
+  matching expectations can reach resolution and custody. Resolvers must have no
+  authorization, replay-consumption, or other trusted side effects. Expected
+  values are public context; the mismatch reason never identifies a member.
+  Normalize this predicate at a boundary that considers it sensitive. Successful
+  decryption establishes recipient integrity only.
 
   ## Returns
 
@@ -285,6 +311,7 @@ defmodule RequestSeal.JOSE.JWE do
       `:invalid_header`, `:duplicate_member`, `:unsupported_critical_header`,
       `:compression_unsupported`, `:unsupported_header`, `:algorithm_not_permitted`
       (`alg` or `enc` outside the policy), `:invalid_iv`, `:invalid_tag`,
+      `:unexpected_member`, `:protected_mismatch` (input layer),
       `:unknown_key` (resolver returned `:error`), `:algorithm_mismatch` (resolver
       returned another algorithm), `:key_resolver_failed` (resolver exception or
       invalid entry), `:entropy_failure`, `:decryption_failed` (wrong encrypted-key
@@ -297,7 +324,7 @@ defmodule RequestSeal.JOSE.JWE do
 
       iex> {:ok, handle} = RequestSeal.Custody.Local.new({:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)})
       iex> {:ok, token} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], "payload", handle)
-      iex> policy = %{algorithms: ["A256KW"], encryption: ["A256GCM"], max_plaintext: 1024, timeout: 5000, key_resolver: fn _ -> {:ok, %{algorithm: "A256KW", key: handle}} end}
+      iex> policy = %{algorithms: ["A256KW"], encryption: ["A256GCM"], max_plaintext: 1024, timeout: 5000, resolve_timeout: 1000, unwrap_timeout: 1000, protected: %{expected: %{}, permitted: []}, key_resolver: fn _ -> {:ok, %{algorithm: "A256KW", key: handle}} end}
       iex> {:ok, result} = RequestSeal.JOSE.JWE.decrypt(token, policy)
       iex> result.plaintext
       "payload"
@@ -306,92 +333,112 @@ defmodule RequestSeal.JOSE.JWE do
   """
   @spec decrypt(binary(), map()) :: {:ok, Result.t()} | {:error, JOSE.Error.t()}
   def decrypt(compact, policy) do
+    started = System.monotonic_time(:millisecond)
+
     safe(fn ->
       p = policy(policy, :jwe)
-      deadline = System.monotonic_time(:millisecond) + p.timeout
 
-      worker(
-        p.timeout,
-        fn -> decrypt_internal(compact, p, deadline) end,
-        :decryption_failed,
-        :crypto
-      )
+      case JOSE.JWE.Open.call(
+             [%{token: compact, expected: p.protected.expected}],
+             p,
+             started,
+             false
+           ) do
+        {:ok, [result], _groups} -> result
+        {:error, _} = error -> error
+      end
     end)
   end
 
-  defp decrypt_internal(compact, p, deadline) do
-    [protected, ek_wire, iv_wire, ct_wire, tag_wire] = compact(compact, 5)
-    h = Header.parse(protected)
-    alg = selected(h, :jwe, p.algorithms, p.encryption)
-    ek = decode(ek_wire)
-    iv = decode(iv_wire)
-    ensure(byte_size(iv) == 12, :invalid_iv)
-    tag = decode(tag_wire)
-    ensure(byte_size(tag) == 16, :invalid_tag)
-    ct = decode(ct_wire)
-    ensure(byte_size(ct) <= p.max_plaintext, :limit)
-    encrypted_key!(alg, ek, h)
-    params = unwrap_params(alg, h)
-    entry = resolve(p.key_resolver, %{algorithm: alg, encryption: h["enc"], header: h})
+  @doc """
+  Authenticate a bounded batch of compact JWEs, returning positional results.
 
-    unwrap = unwrapper(entry, alg, deadline, params)
+  Each item has exactly `:token` (compact bytes) and `:expected` (public protected
+  context). The policy has exactly `:algorithms`, `:encryption`, `:max_plaintext`,
+  `:max_tokens` (1–10,000), `:max_total_input` and `:max_total_plaintext`
+  (1–67,108,864 bytes each), `:timeout`, `:resolve_timeout`, `:unwrap_timeout`,
+  `:key_resolver`, and `:protected`, which contains only `:permitted`.
+  Algorithm, ciphertext, expectation and permitted-name bounds are `decrypt/2`'s.
+  Total input includes token bytes and serialized expectations; total plaintext
+  is the sum of ciphertext widths. All three aggregate limits precede key work.
 
-    # Generate fallback unconditionally so the success path also performs CSPRNG work.
-    fallback = random(width(h["enc"]))
-    unwrapped = safe(fn -> unwrap.(ek, h) end, :decryption_failed, :crypto)
-    ensure(System.monotonic_time(:millisecond) < deadline, :deadline_exceeded, :crypto)
+  With call start t0, admission/resolution ends at R = t0 + resolve_timeout;
+  each group's unwrap ends at U = resolution_end + unwrap_timeout; all work ends
+  at D = t0 + timeout. Budgets are required integers 1–300,000 ms and their sum
+  must be strictly below timeout. The caller waits at most D + 100 ms for
+  finalization. Admission at R is `:deadline_exceeded`/`:input`; resolution at R
+  is `:key_resolver_failed`/`:key`; unwrap at U still authenticates under a
+  prepared random CEK and is `:decryption_failed`/`:crypto`; unfinished AEAD at D
+  is `:deadline_exceeded`/`:crypto`.
 
-    {cek, valid_unwrap} =
-      case unwrapped do
-        {:ok, key} when is_binary(key) and byte_size(key) == byte_size(fallback) -> {key, true}
-        _ -> {fallback, false}
+  One sensitive coordinator owns all sinks and accepted deliveries. Concurrent
+  admission workers process contiguous ranges and pipeline accepted admissions
+  into disposable resolvers. One batch-wide admission/resolution barrier precedes
+  grouping by exact handle, with one custody
+  call per group. Accepted prefixes survive a group's failure or timeout.
+  Disposable sensitive AEAD workers are bounded to `System.schedulers_online()`.
+  Width-failed items skip resolution and unwrap and authenticate without waiting
+  for other resolvers. Caller death cancels the coordinator and workers. No
+  plaintext is sent to the caller before the final list.
+
+  Returns `{:ok, results}` (including `{:ok, []}`), each result being `decrypt/2`'s
+  success or error. Item shape errors are `:invalid_serialization`; invalid
+  expectations are `:invalid_policy`. All other item reasons are exactly
+  `decrypt/2`'s: `:unsupported_serialization`, `:limit`, `:invalid_base64`,
+  `:invalid_header`, `:duplicate_member`, `:unsupported_critical_header`,
+  `:compression_unsupported`, `:unsupported_header`, `:algorithm_not_permitted`,
+  `:invalid_iv`, `:invalid_tag`, `:unexpected_member`, `:protected_mismatch`,
+  `:unknown_key`, `:algorithm_mismatch`, `:key_resolver_failed`, `:entropy_failure`,
+  `:decryption_failed`, and `:deadline_exceeded`.
+  Outer errors (no results) are `:invalid_policy`, `:invalid_serialization` for
+  a nonproper list, `:limit` for aggregate bounds, or `:deadline_exceeded` if
+  finalization misses D + 100 ms. Only `:deadline_exceeded` is retryable.
+
+  The content-authentication event has only `outcome: :ok | :failed`, once after
+  each real AEAD returns. Batch telemetry contains only `count`, `groups`,
+  `failed`, and `deadline_exceeded` measurements. Custody unwrap carries only
+  `duration` and `items`. Resolvers read unauthenticated data and must have no
+  authorization, replay-consumption, or other trusted side effects; expectations
+  are public context and are the consumer's responsibility. Normalize expectation
+  refusals at a boundary that considers the predicate sensitive.
+  """
+  @spec decrypt_many([%{token: binary(), expected: map()}], map()) ::
+          {:ok, [{:ok, Result.t()} | {:error, JOSE.Error.t()}]} | {:error, JOSE.Error.t()}
+  def decrypt_many(items, policy) do
+    started = System.monotonic_time(:millisecond)
+
+    result =
+      safe(fn ->
+        p = policy(policy, :batch)
+        JOSE.JWE.Open.call(items, p, started, true)
+      end)
+
+    {answer, groups} =
+      case result do
+        {:ok, results, groups} -> {{:ok, results}, groups}
+        {:error, _} = error -> {error, 0}
       end
 
-    plaintext = :crypto.crypto_one_time_aead(cipher(h["enc"]), cek, iv, ct, protected, tag, false)
-    ensure(is_binary(plaintext) and valid_unwrap, :decryption_failed, :crypto)
-
-    {:ok,
-     %Result{
-       algorithm: alg,
-       encryption: h["enc"],
-       header: h,
-       protected: protected,
-       plaintext: plaintext
-     }}
-  end
-
-  defp unwrapper(%{algorithm: _, unwrap: fun} = entry, _, _, _)
-       when map_size(entry) == 2 and is_function(fun, 2) do
-    fun
-  end
-
-  defp unwrapper(%{algorithm: _, key: %KeyHandle{} = handle} = entry, alg, deadline, params)
-       when map_size(entry) == 2 do
-    fn bytes, header ->
-      ensure(handle.algorithm == {:jwe, alg}, :decryption_failed, :crypto)
-      ensure(:unwrap in handle.capabilities, :decryption_failed, :crypto)
-      remaining = deadline - System.monotonic_time(:millisecond)
-      ensure(remaining > 0, :deadline_exceeded, :crypto)
-      context = %Custody.Context{owner: self(), deadline: deadline}
-      items = [{0, bytes, params, width(header["enc"]) * 8}]
-      sink = Custody.Sink.new(items, context)
-
-      case Custody.Sink.collect(sink, fn -> Custody.unwrap(handle, items, sink, context) end) do
-        [{:ok, cek}] -> {:ok, cek}
-        [:timeout] -> fail(:deadline_exceeded, :crypto)
-        _ -> {:error, :decryption_failed}
+    results =
+      case answer do
+        {:ok, results} -> results
+        _ -> []
       end
-    end
+
+    :telemetry.execute(
+      [:request_seal, :jose, :decrypt_many],
+      %{
+        count: if(proper_list?(items), do: length(items), else: 0),
+        groups: groups,
+        failed: Enum.count(results, &match?({:error, _}, &1)),
+        deadline_exceeded:
+          Enum.count(results, &match?({:error, %{reason: :deadline_exceeded}}, &1))
+      },
+      %{}
+    )
+
+    answer
   end
-
-  defp unwrapper(_, _, _, _), do: fail(:key_resolver_failed, :key)
-
-  defp unwrap_params(alg, h) when alg in ~w(A128GCMKW A256GCMKW),
-    do: %{iv: decode(h["iv"]), tag: decode(h["tag"])}
-
-  defp unwrap_params(alg, h) when alg in @ecdh, do: Agreement.header_params!(alg, h)
-
-  defp unwrap_params(_, _), do: %{}
 
   defp encrypted_key!(alg, ek, h) when alg in ~w(A128KW A256KW ECDH-ES+A128KW ECDH-ES+A256KW),
     do: ensure(byte_size(ek) == width(h["enc"]) + 8, :decryption_failed, :crypto)

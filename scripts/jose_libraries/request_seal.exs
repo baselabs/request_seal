@@ -16,6 +16,9 @@ outputs =
         encryption: [row["enc"]],
         max_plaintext: 1024,
         timeout: 5000,
+        resolve_timeout: 1000,
+        unwrap_timeout: 1000,
+        protected: %{expected: %{}, permitted: ~w(kid typ cty)},
         key_resolver: fn _ -> {:ok, %{algorithm: alg, key: handle}} end
       }
 

@@ -117,6 +117,7 @@ defmodule RequestSeal.JOSEJWSTest do
       policy = %{
         algorithms: [alg],
         timeout: 5000,
+        protected: %{expected: %{}, permitted: ~w(kid typ cty x5c), embedded_key: :refuse},
         key_resolver: fn _ -> {:ok, %{algorithm: alg, key: key}} end
       }
 
@@ -129,7 +130,7 @@ defmodule RequestSeal.JOSEJWSTest do
     assert {:error, %{reason: :key_mismatch}} =
              RequestSeal.Crypto.verify({:jws, "RS256"}, "input", <<1>>, secret)
 
-    assert {:error, %{reason: :invalid_signature, layer: :crypto}} =
+    assert {:error, %{reason: :algorithm_mismatch, layer: :key}} =
              JWS.verify(v["compact"], policy)
   end
 
@@ -303,8 +304,10 @@ defmodule RequestSeal.JOSEJWSTest do
       assert {:error, %{reason: ^reason}} = JWS.verify(header(c, json), p)
       members = Enum.map_join(1..(n - 1), ",", &~s("a#{&1}":null))
 
+      member_policy = %{p | protected: %{p.protected | permitted: Enum.map(1..63, &"a#{&1}")}}
+
       assert {:error, %{reason: ^reason}} =
-               JWS.verify(header(c, ~s({"alg":"RS256",#{members}})), p)
+               JWS.verify(header(c, ~s({"alg":"RS256",#{members}})), member_policy)
     end
 
     for {n, reason} <- [{4, :invalid_signature}, {5, :limit}] do

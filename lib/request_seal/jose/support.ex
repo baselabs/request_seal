@@ -121,10 +121,28 @@ defmodule RequestSeal.JOSE.Support do
   end
 
   def policy(p, kind) do
+    common = [:algorithms, :timeout, :key_resolver, :protected]
+
     keys =
-      if kind == :jws,
-        do: [:algorithms, :timeout, :key_resolver],
-        else: [:algorithms, :encryption, :max_plaintext, :timeout, :key_resolver]
+      case kind do
+        :jws ->
+          common
+
+        :jwe ->
+          common ++ [:encryption, :max_plaintext, :resolve_timeout, :unwrap_timeout]
+
+        :batch ->
+          common ++
+            [
+              :encryption,
+              :max_plaintext,
+              :resolve_timeout,
+              :unwrap_timeout,
+              :max_tokens,
+              :max_total_input,
+              :max_total_plaintext
+            ]
+      end
 
     ensure(is_map(p) and Enum.sort(Map.keys(p)) == Enum.sort(keys), :invalid_policy)
 
@@ -134,10 +152,26 @@ defmodule RequestSeal.JOSE.Support do
     )
 
     list(p.algorithms, if(kind == :jws, do: @jws, else: @jwe))
+    protected_policy!(p.protected, kind)
 
-    if kind == :jwe do
+    if kind != :jws do
       list(p.encryption, @enc)
       ensure(is_integer(p.max_plaintext) and p.max_plaintext in 1..1_048_576, :invalid_policy)
+
+      ensure(
+        is_integer(p.resolve_timeout) and p.resolve_timeout in 1..300_000 and
+          is_integer(p.unwrap_timeout) and p.unwrap_timeout in 1..300_000 and
+          p.resolve_timeout + p.unwrap_timeout < p.timeout,
+        :invalid_policy
+      )
+    end
+
+    if kind == :batch do
+      ensure(is_integer(p.max_tokens) and p.max_tokens in 1..10_000, :invalid_policy)
+
+      for k <- [:max_total_input, :max_total_plaintext] do
+        ensure(is_integer(p[k]) and p[k] in 1..67_108_864, :invalid_policy)
+      end
     end
 
     p
@@ -145,10 +179,87 @@ defmodule RequestSeal.JOSE.Support do
 
   defp list(xs, allowed) do
     ensure(
-      is_list(xs) and length(xs) in 1..10 and Enum.uniq(xs) == xs and
+      proper_list?(xs) and length(xs) in 1..length(allowed) and Enum.uniq(xs) == xs and
         Enum.all?(xs, &(&1 in allowed)),
       :invalid_policy
     )
+  end
+
+  def proper_list?([]), do: true
+  def proper_list?([_ | tail]), do: proper_list?(tail)
+  def proper_list?(_), do: false
+
+  defp protected_policy!(p, kind) do
+    keys =
+      case kind do
+        :jws -> [:embedded_key, :expected, :permitted]
+        :jwe -> [:expected, :permitted]
+        :batch -> [:permitted]
+      end
+
+    ensure(is_map(p) and Enum.sort(Map.keys(p)) == keys, :invalid_policy)
+    reserved = if kind == :jws, do: ~w(alg jwk), else: ~w(alg enc iv tag epk apu apv)
+    if kind == :jws, do: ensure(p.embedded_key in [:refuse, :require], :invalid_policy)
+    expected = Map.get(p, :expected, %{})
+    expected!(expected, p.permitted, reserved)
+  end
+
+  # Shared by both JOSE policies and each batch item's public expectations.
+  def expected!(
+        expected,
+        permitted,
+        reserved \\ ~w(alg enc iv tag epk apu apv),
+        encoded_size \\ nil
+      ) do
+    ensure(
+      proper_list?(permitted) and length(permitted) <= 64 and Enum.uniq(permitted) == permitted and
+        Enum.all?(permitted, &(is_binary(&1) and String.valid?(&1))),
+      :invalid_policy
+    )
+
+    ensure(
+      is_map(expected) and not is_struct(expected) and map_size(expected) <= 64,
+      :invalid_policy
+    )
+
+    ensure(
+      Enum.all?(
+        Map.keys(expected),
+        &(is_binary(&1) and &1 not in reserved and &1 not in permitted)
+      ) and
+        Enum.all?(permitted, &(&1 not in reserved)),
+      :invalid_policy
+    )
+
+    case safe(fn ->
+           tree(expected)
+           size = encoded_size || byte_size(json_encode(expected))
+           ensure(size <= 16_384, :invalid_policy)
+           {:ok, size}
+         end) do
+      {:ok, size} -> size
+      _ -> fail(:invalid_policy)
+    end
+  end
+
+  def json_encode(value), do: value |> json_null() |> :json.encode() |> IO.iodata_to_binary()
+  defp json_null(nil), do: :null
+  defp json_null(v) when is_map(v), do: Map.new(v, fn {k, x} -> {k, json_null(x)} end)
+  defp json_null(v) when is_list(v), do: Enum.map(v, &json_null/1)
+  defp json_null(v), do: v
+
+  def protected!(header, expected, permitted, read) do
+    ensure(
+      Enum.all?(Map.keys(header), &(&1 in read or is_map_key(expected, &1) or &1 in permitted)),
+      :unexpected_member
+    )
+
+    ensure(
+      Enum.all?(expected, fn {k, v} -> Map.has_key?(header, k) and header[k] === v end),
+      :protected_mismatch
+    )
+
+    :ok
   end
 
   def selected(header, kind, algorithms, encryption \\ nil) do
@@ -212,14 +323,28 @@ defmodule RequestSeal.JOSE.Support do
   def decode(encoded) do
     ensure(is_binary(encoded), :invalid_base64)
 
+    # RFC 4648 §3.5: the final sextet's unused bits must be zero.
+    # The decoder checks the alphabet; check padding and the tail directly
+    # instead of allocating a second encoding of every ciphertext/payload.
+    ensure(canonical64?(encoded), :invalid_base64)
+
     case Base.url_decode64(encoded, padding: false) do
       {:ok, value} ->
-        ensure(b64(value) == encoded, :invalid_base64)
         value
 
       _ ->
         fail(:invalid_base64)
     end
+  end
+
+  defp canonical64?(encoded) do
+    :binary.match(encoded, "=") == :nomatch and
+      case rem(byte_size(encoded), 4) do
+        0 -> true
+        2 -> :binary.last(encoded) in ~c"AQgw"
+        3 -> :binary.last(encoded) in ~c"AEIMQUYcgkosw048"
+        _ -> false
+      end
   end
 
   def random(size) do

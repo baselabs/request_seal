@@ -10,8 +10,8 @@ defmodule RequestSeal.Telemetry do
   attacker-controlled or high-cardinality value ever appears in event names,
   measurements, or metadata. Handlers own storage and aggregation.
 
-  Every event carries one measurement, `:duration`, an integer in
-  `System.monotonic_time/0` native units covering the emitting call.
+  Duration measurements use `System.monotonic_time/0` native units. Events
+  carry `:duration` unless their row below specifies a different measurement set.
 
   | Event | Emitted by | Metadata |
   | --- | --- | --- |
@@ -20,7 +20,9 @@ defmodule RequestSeal.Telemetry do
   | `[:request_seal, :replay, :claim]` | the required-replay commit shared by every profile | `:outcome` (`:claimed`, `:already_claimed`, or `:error`), `:reason` (atom or nil) |
   | `[:request_seal, :custody, :sign, :stop]` | the shared custody signing path of both `RequestSeal.sign/4` forms | `:outcome` (`:ok` or `:error`), `:reason` (a bounded `RequestSeal.Custody.Error` reason atom or nil) |
   | `[:request_seal, :custody, :wrap]` | `RequestSeal.Custody.wrap/3` | `:outcome` (`:ok` or `:failed`) only |
-  | `[:request_seal, :custody, :unwrap]` | `RequestSeal.Custody.unwrap/3` | empty; no per-item outcome |
+  | `[:request_seal, :custody, :unwrap]` | public and internal custody unwrap calls | empty; measurements are `:duration` and `:items`, no per-item outcome |
+  | `[:request_seal, :jose, :content_authentication]` | single and batch JWE AEAD, immediately after the real call returns | only `:outcome` (`:ok` or `:failed`); no measurements |
+  | `[:request_seal, :jose, :decrypt_many]` | `RequestSeal.JOSE.JWE.decrypt_many/2` | empty; measurements are `:count`, `:groups`, `:failed`, `:deadline_exceeded` only |
 
   A rejected verification reports its bounded `reason` and `layer` exactly as
   returned to the caller; `:limit` makes resource exhaustion observable. An
@@ -61,7 +63,9 @@ defmodule RequestSeal.Telemetry do
     [:request_seal, :replay, :claim],
     [:request_seal, :custody, :sign, :stop],
     [:request_seal, :custody, :wrap],
-    [:request_seal, :custody, :unwrap]
+    [:request_seal, :custody, :unwrap],
+    [:request_seal, :jose, :content_authentication],
+    [:request_seal, :jose, :decrypt_many]
   ]
 
   @doc """

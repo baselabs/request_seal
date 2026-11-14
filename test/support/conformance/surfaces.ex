@@ -37,6 +37,8 @@ defmodule RequestSeal.Conformance.Surfaces do
     "jws.sign" => :jws_sign,
     "jws.verify" => :jws_verify,
     "jwe.decrypt" => :jwe_decrypt,
+    "jwe.protected/v1" => :jwe_protected,
+    "jwe.decrypt_many/v1" => :jwe_decrypt_many,
     "nested.decrypt" => :nested_decrypt,
     "web_bot_auth.verify" => :web_bot_auth,
     "discovery.body" => :discovery_body,
@@ -586,15 +588,290 @@ defmodule RequestSeal.Conformance.Surfaces do
     i = c["inputs"]
     p = c["policy"]
 
-    resolver = fn facts ->
-      j = C.load(root, i["key"])
-      V.jws_policy(j, facts.algorithm).key_resolver.(facts)
+    if p["protected"] do
+      protected = p["protected"]
+
+      mode =
+        case protected["embedded_key"] do
+          "refuse" -> :refuse
+          "require" -> :require
+        end
+
+      # Resolver descriptors select real keys or explicit caller-boundary faults.
+      # A handle is real custody, released in this case's own finalizer.
+      fixture = V.fixture("rfc7515.json")["A.2"]["key"]
+
+      handle =
+        if i["resolver"] == "handle" do
+          {:ok, handle} = RequestSeal.Custody.Local.new({:jws, "RS256"}, V.rsa(fixture))
+          handle
+        end
+
+      try do
+        policy = %{
+          algorithms: p["algorithms"],
+          timeout: C.int(p["timeout"]),
+          protected: %{
+            expected: json_pairs(root, protected["expected"]),
+            permitted: protected["permitted"],
+            embedded_key: mode
+          },
+          key_resolver: fn request ->
+            key =
+              case i["resolver"] do
+                "embedded" -> :embedded
+                "public" -> Map.get(request, :embedded_key) || V.public(C.load(root, i["key"]))
+                "handle" -> handle
+                "closure" -> fn _, _, _ -> :ok end
+                "null" -> nil
+              end
+
+            {:ok, %{algorithm: request.algorithm, key: key}}
+          end
+        }
+
+        with {:ok, result} <- JWS.verify(C.bytes(i["compact"]), policy),
+             do: {:ok, %{"valid" => true, "payload" => C.b64(result.payload)}}
+      after
+        if handle, do: RequestSeal.Custody.release(handle)
+      end
+    else
+      base = V.jws_policy(C.load(root, i["key"]), hd(p["algorithms"]))
+      policy = %{base | algorithms: p["algorithms"], timeout: C.int(p["timeout"])}
+
+      with {:ok, result} <- JWS.verify(C.bytes(i["compact"]), policy),
+           do: {:ok, %{"valid" => true, "payload" => C.b64(result.payload)}}
+    end
+  end
+
+  defp json_pairs(root, value) do
+    %{"pairs" => pairs} = C.load(root, value)
+    C.require!(length(Enum.uniq_by(pairs, &hd/1)) == length(pairs), :duplicate_json_pair)
+    Map.new(pairs, fn [key, value] -> {key, json_value(value)} end)
+  end
+
+  defp json_value(%{"int" => _} = value) when map_size(value) == 1, do: C.int(value)
+
+  defp json_value(value) when is_map(value),
+    do: Map.new(value, fn {k, v} -> {k, json_value(v)} end)
+
+  defp json_value(value) when is_list(value), do: Enum.map(value, &json_value/1)
+  defp json_value(value), do: value
+
+  defp open_policy(resolver) do
+    %{
+      algorithms: RequestSeal.JOSE.Support.algorithms(:jwe),
+      encryption: RequestSeal.JOSE.Support.encryption(),
+      max_plaintext: 1_048_576,
+      timeout: 30_000,
+      resolve_timeout: 10_000,
+      unwrap_timeout: 10_000,
+      protected: %{expected: %{}, permitted: []},
+      key_resolver: resolver
+    }
+  end
+
+  def jwe_protected(root, c) do
+    i = c["inputs"]
+    p = i["policy"]
+
+    policy = %{
+      open_policy(fn _ -> :error end)
+      | protected: %{expected: json_pairs(root, p["expected"]), permitted: p["permitted"]}
+    }
+
+    case JWE.decrypt(i["token"], policy) do
+      # An unknown key is past all protected admission checks. A width-failed
+      # admitted token follows the real fallback AEAD path instead.
+      {:error, %{reason: reason}} when reason in [:unknown_key, :decryption_failed] ->
+        {:ok, %{"accepted" => true}}
+
+      error ->
+        error
+    end
+  end
+
+  # A single explicit algorithm table is shared by every named custody key.
+  @key_algorithms Map.new(
+                    for(
+                      name <-
+                        ~w(RSA-OAEP RSA-OAEP-256 A128KW A256KW A128GCMKW A256GCMKW dir ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW),
+                      do: {{"jwe", name}, {:jwe, name}}
+                    ) ++
+                      for(
+                        name <- ~w(RS256 PS256 PS384 PS512 HS256 ES256 ES384 EdDSA),
+                        do: {{"jws", name}, {:jws, name}}
+                      ) ++
+                      for(
+                        name <-
+                          ~w(rsa-pss-sha512 rsa-v1_5-sha256 hmac-sha256 ecdsa-p256-sha256 ecdsa-p384-sha384 ed25519),
+                        do: {{"http", name}, name}
+                      ) ++
+                      [{{"derive", "hkdf-sha256"}, {:derive, "hkdf-sha256"}}]
+                  )
+
+  defp native_key(root, entry) do
+    C.require!(entry["state"] in ["live", "released"], :key_state)
+    %{"kind" => kind, "name" => name} = entry["algorithm"]
+    algorithm = Map.fetch!(@key_algorithms, {kind, name})
+
+    capabilities =
+      Enum.map(entry["capabilities"], fn
+        "unwrap" -> :unwrap
+        "wrap" -> :wrap
+        "sign" -> :sign
+        "verify" -> :verify
+        "derive" -> :derive
+      end)
+
+    material = entry["material"]
+
+    result =
+      case material["format"] do
+        "jwk" ->
+          RequestSeal.Custody.Local.import(algorithm, native_jwk(root, material["value"]), :jwk,
+            capabilities: capabilities
+          )
+
+        "raw" ->
+          bytes = C.bytes(C.load(root, material["value"]))
+
+          descriptor =
+            case algorithm do
+              {:jwe, "dir"} -> {:cek, bytes}
+              {:derive, "hkdf-sha256"} -> {:ikm, bytes}
+              {:jwe, _} -> {:aes, bytes}
+            end
+
+          RequestSeal.Custody.Local.new(algorithm, descriptor, capabilities: capabilities)
+      end
+
+    {:ok, handle} = result
+
+    case entry["state"] do
+      "live" -> :ok
+      "released" -> :ok = RequestSeal.Custody.release(handle)
     end
 
-    policy = %{algorithms: p["algorithms"], timeout: C.int(p["timeout"]), key_resolver: resolver}
+    handle
+  end
 
-    with {:ok, result} <- JWS.verify(C.bytes(i["compact"]), policy),
-         do: {:ok, %{"valid" => true, "payload" => C.b64(result.payload)}}
+  defp native_jwk(root, value) do
+    case C.load(root, value) do
+      %{"pairs" => pairs} -> Map.new(pairs, &List.to_tuple/1)
+      jwk -> jwk
+    end
+  end
+
+  def jwe_decrypt_many(root, c) do
+    i = c["inputs"]
+    # The callback API carries public header facts, not batch positions. Reject
+    # ambiguous descriptors rather than guessing callback order on concurrent
+    # execution. Repeated requests with identical outcomes are countable.
+    calls = :ets.new(:conformance_resolver, [:public])
+
+    handles =
+      Enum.reduce(i["keys"], %{}, fn {name, entry}, acc ->
+        try do
+          Map.put(acc, name, native_key(root, entry))
+        catch
+          kind, reason ->
+            for {_, handle} <- acc, do: RequestSeal.Custody.release(handle)
+            :ets.delete(calls)
+            :erlang.raise(kind, reason, __STACKTRACE__)
+        end
+      end)
+
+    try do
+      outcomes = Enum.map(i["resolver"], &{C.int(&1["index"]), &1["outcome"]})
+
+      C.require!(
+        length(Enum.uniq_by(outcomes, &elem(&1, 0))) == length(outcomes),
+        :duplicate_resolver_index
+      )
+
+      requests =
+        outcomes
+        |> Enum.map(fn {index, outcome} ->
+          C.require!(index >= 0 and index < length(i["items"]), :resolver_index)
+          item = Enum.fetch!(i["items"], index)
+          [header | _] = String.split(item["token"], ".")
+          {C.json(RequestSeal.JOSE.Support.decode(header)), outcome}
+        end)
+        |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+        |> Map.new(fn {header, outcomes} ->
+          # Identical requests may repeat when their outcomes are identical.
+          # Different indexed outcomes cannot be selected from header facts.
+          C.require!(length(Enum.uniq(outcomes)) == 1, :ambiguous_resolver_index)
+          {header, {length(outcomes), hd(outcomes)}}
+        end)
+
+      resolver = fn request ->
+        case Map.fetch(requests, request.header) do
+          :error ->
+            :ets.insert(calls, {:unexpected, true})
+            :error
+
+          {:ok, {count, outcome}} ->
+            actual = :ets.update_counter(calls, request.header, {2, 1}, {request.header, 0})
+
+            if actual > count do
+              :ets.insert(calls, {:unexpected, true})
+              :error
+            else
+              case outcome do
+                %{"key" => name} ->
+                  {:ok, %{algorithm: request.algorithm, key: Map.fetch!(handles, name)}}
+
+                "error" ->
+                  :error
+
+                "raise" ->
+                  raise "conformance resolver exception"
+              end
+            end
+        end
+      end
+
+      items =
+        Enum.map(i["items"], &%{token: &1["token"], expected: json_pairs(root, &1["expected"])})
+
+      policy =
+        open_policy(resolver)
+        |> Map.put(:protected, %{permitted: []})
+        |> Map.merge(%{
+          max_tokens: 10_000,
+          max_total_input: 67_108_864,
+          max_total_plaintext: 67_108_864
+        })
+
+      result = JWE.decrypt_many(items, policy)
+      C.require!(not :ets.member(calls, :unexpected), :unexpected_resolver_call)
+
+      for {header, {count, _}} <- requests do
+        C.require!(:ets.lookup(calls, header) == [{header, count}], :missing_resolver_call)
+      end
+
+      with {:ok, results} <- result do
+        {:ok,
+         %{
+           "results" =>
+             results
+             |> Enum.with_index()
+             |> Enum.map(fn {result, index} ->
+               base = %{"index" => C.number(index)}
+
+               case result do
+                 {:ok, value} -> Map.put(base, "plaintext", C.b64(value.plaintext))
+                 {:error, error} -> Map.put(base, "rule_id", C.rule_id(error))
+               end
+             end)
+         }}
+      end
+    after
+      for {_, handle} <- handles, do: RequestSeal.Custody.release(handle)
+      :ets.delete(calls)
+    end
   end
 
   def aes_kw(_root, c) do
@@ -798,6 +1075,9 @@ defmodule RequestSeal.Conformance.Surfaces do
             encryption: p["encryption"],
             max_plaintext: 1_048_576,
             timeout: 5000,
+            resolve_timeout: 1000,
+            unwrap_timeout: 1000,
+            protected: %{expected: %{}, permitted: ~w(kid typ cty)},
             key_resolver: fn _ -> {:ok, %{algorithm: alg, key: handle}} end
           }
 

@@ -97,7 +97,11 @@ defmodule RequestSeal.CustodySinkTest do
     try do
       # The callback crosses the real run boundary; the sink stays test-owned.
       task =
-        Task.async(fn -> Custody.unwrap(handle, [{0, @wrapped, %{}, 128}], sink, context) end)
+        Task.async(fn ->
+          Custody.run(context, fn ->
+            Custody.unwrap(handle, [{0, @wrapped, %{}, 128}], sink, context)
+          end)
+        end)
 
       assert_receive {:holder_ready, holder, _, _, _}
 
@@ -134,7 +138,11 @@ defmodule RequestSeal.CustodySinkTest do
         sink = Sink.new(items, context)
 
         try do
-          task = Task.async(fn -> Custody.unwrap(handle, items, sink, context) end)
+          task =
+            Task.async(fn ->
+              Custody.run(context, fn -> Custody.unwrap(handle, items, sink, context) end)
+            end)
+
           tag = sink.tag
           assert_receive {^tag, 0, ^expected}
           assert Task.await(task) == {:ok, :ok}
@@ -145,6 +153,58 @@ defmodule RequestSeal.CustodySinkTest do
       end
     after
       Custody.release(handle)
+    end
+  end
+
+  test "Local stops a running unwrap range when its context owner dies between items" do
+    kek = Base.decode16!("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F")
+    {:ok, handle} = Custody.Local.new({:jwe, "A256KW"}, {:aes, kek})
+    {holder, _capability} = handle.ref.()
+    {owner, owner_monitor} = spawn_monitor(fn -> receive do: (:stop -> :ok) end)
+    items = for index <- 0..9999, do: {index, @wrapped, %{}, 128}
+    context = %Context{owner: owner, deadline: System.monotonic_time(:millisecond) + 20_000}
+    sink = Sink.new(items, context)
+    tag = sink.tag
+
+    task =
+      Task.async(fn ->
+        Custody.run(context, fn -> Custody.unwrap(handle, items, sink, context) end)
+      end)
+
+    try do
+      assert_receive {^tag, _, {:ok, _}}
+      :erlang.suspend_process(holder)
+      Process.exit(owner, :kill)
+      assert_receive {:DOWN, ^owner_monitor, _, ^owner, _}
+      drain_deliveries(tag)
+      :erlang.resume_process(holder)
+      # A real metadata request is processed only after the running unwrap
+      # range finishes. It provides an ordered barrier without sleeping.
+      {:ok, _identity} = Custody.identity(handle)
+      remaining = drain_deliveries(tag)
+      # An already-running native unwrap may still deliver its one result.
+      assert remaining <= 1
+      Task.await(task, 25_000)
+    after
+      if Process.alive?(holder) do
+        try do
+          :erlang.resume_process(holder)
+        rescue
+          ArgumentError -> :ok
+        end
+      end
+
+      Sink.close(sink)
+      Process.exit(owner, :kill)
+      Custody.release(handle)
+    end
+  end
+
+  defp drain_deliveries(tag, count \\ 0) do
+    receive do
+      {^tag, _, _} -> drain_deliveries(tag, count + 1)
+    after
+      0 -> count
     end
   end
 end

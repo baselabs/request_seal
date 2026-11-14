@@ -60,6 +60,37 @@ plaintext until complete AEAD validation. Recipient integrity alone establishes
 neither origin, identity, nor request association. Caller callbacks select keys
 and application trust explicitly; generic JOSE cannot infer them from wire data.
 
+Protected-member expectations are public context, checked before authentication.
+A matching forged header can still reach resolution and custody, so resolvers
+must not authorize, consume replay state, or perform other trusted side effects.
+An application that treats the expectation predicate as sensitive normalizes
+`:protected_mismatch` at its boundary. Unknown members reject unless explicitly
+expected or permitted; embedded JWS signature keys require explicit approval.
+Certificate chains remain uninterpreted caller data under the same member rule.
+
+JWE prepares a random fallback CEK before every key-management branch. A wrong
+public encrypted-key width bypasses resolution and unwrap, then authenticates
+with that fallback. Custodian refusals, failed unwrap calls, and unwrap-budget
+overruns also authenticate under the fallback and share `:decryption_failed`.
+The success flag additionally requires an accepted, width-valid key delivery.
+No key-management failure can become successful plaintext, even if its fallback
+were to authenticate. Admission deadline failures have the input layer, resolver
+deadlines the key-resolver failure, and only unfinished content authentication
+uses the admitted-work `:deadline_exceeded` crypto result.
+
+Batch admission workers process contiguous ranges with per-item exception
+boundaries. The coordinator accepts only assigned, unsettled positions dequeued
+before R. Admission and resolution share one barrier before grouping, so a late
+admission cannot cause another unwrap call to a previously selected handle.
+Every child, including idle pool workers, is cancelled and reaped before normal
+finalization; linked workers also terminate on abnormal coordinator exit.
+Batch sinks settle each index once. Summary failure settles only undelivered
+positions, preserving an accepted prefix. The sensitive coordinator owns all
+results and revokes aliases before discarding late deliveries. Caller death
+cancels the coordinator and its disposable workers; no partial plaintext reaches
+the caller. Content-authentication telemetry carries only an outcome, batch
+telemetry only aggregate counts, and custody unwrap only duration and item count.
+
 ## Failure behavior
 
 Malformed or unsupported input returns a stable error before cryptographic work when safe. Generic verification requires an explicitly selected signature label. Required digest, discovery, clock, custody, replay, or related-request data that is unavailable fails closed for that profile.
@@ -70,8 +101,9 @@ verification-function callbacks, and function signers in the explicit three-key
 `sign/4` form, run synchronously in the calling process (`t:RequestSeal.signing_spec/0`
 signers run in custody's monitored workers under `:signing_timeout`);
 callers own their external-work deadlines or delegate to bounded custody/discovery
-operations. A timeout is distinct from invalid cryptography and from policy rejection,
-but none produces an authenticated principal. Replay errors are always nonretryable;
+operations. A work-deadline timeout is distinct from invalid cryptography and policy
+rejection; the JWE unwrap-budget timeout deliberately shares the authenticated
+key-management failure path described above. None produces an authenticated principal. Replay errors are always nonretryable;
 a timeout may have committed. Discovery classifies transient failures separately,
 including retryable 5xx and nonretryable 4xx status failures. Callers own retry
 scheduling and whether replaying the whole operation is safe. Errors retain no

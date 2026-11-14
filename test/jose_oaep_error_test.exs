@@ -12,23 +12,22 @@ defmodule RequestSeal.JOSEOAEPErrorTest do
       {:ok, token} =
         JWE.encrypt([{"alg", algorithm}, {"enc", "A256GCM"}], "authenticated plaintext", public)
 
+      {:ok, handle} = RequestSeal.Custody.Local.new({:jwe, algorithm}, {:rsa, private})
+      on_exit(fn -> RequestSeal.Custody.release(handle) end)
+
       policy = %{
         algorithms: [algorithm],
         encryption: ["A256GCM"],
         max_plaintext: 1024,
-        timeout: 5000,
+        timeout: 30_000,
+        resolve_timeout: 5000,
+        unwrap_timeout: 10_000,
+        protected: %{expected: %{}, permitted: ~w(kid typ cty)},
         key_resolver: fn _ ->
           {:ok,
            %{
              algorithm: algorithm,
-             unwrap: fn ek, h ->
-               KeyManagement.unwrap(
-                 algorithm,
-                 ek,
-                 RequestSeal.JOSEVectors.params(algorithm, h),
-                 {:rsa, private}
-               )
-             end
+             key: handle
            }}
         end
       }
@@ -85,7 +84,10 @@ defmodule RequestSeal.JOSEOAEPErrorTest do
         algorithms: [algorithm],
         encryption: ["A256GCM"],
         max_plaintext: 1024,
-        timeout: 5000,
+        timeout: 30_000,
+        resolve_timeout: 5000,
+        unwrap_timeout: 10_000,
+        protected: %{expected: %{}, permitted: ~w(kid typ cty)},
         key_resolver: fn _ -> {:ok, %{algorithm: algorithm, key: handle}} end
       }
 

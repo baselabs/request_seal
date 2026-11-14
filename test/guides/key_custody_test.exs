@@ -83,6 +83,9 @@ defmodule RequestSeal.GuideKeyCustodyTest do
           encryption: ["A256GCM"],
           max_plaintext: 1_048_576,
           timeout: 5_000,
+          resolve_timeout: 1000,
+          unwrap_timeout: 1000,
+          protected: %{expected: %{}, permitted: ~w(kid typ cty)},
           key_resolver: fn %{algorithm: "RSA-OAEP-256"} ->
             {:ok, %{algorithm: "RSA-OAEP-256", key: recipient_handle}}
           end

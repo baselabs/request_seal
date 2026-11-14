@@ -47,6 +47,9 @@ defmodule RequestSeal.Custody.Local do
         encryption: ["A256GCM"],
         max_plaintext: 1_048_576,
         timeout: 5_000,
+        resolve_timeout: 1000,
+        unwrap_timeout: 1000,
+        protected: %{expected: %{}, permitted: ~w(kid typ cty)},
         key_resolver: fn _ -> {:ok, %{algorithm: "RSA-OAEP-256", key: handle}} end
       }
       RequestSeal.JOSE.JWE.decrypt(compact, policy)
@@ -633,26 +636,45 @@ defmodule RequestSeal.Custody.Local do
     ensure(:unwrap in capabilities, :unsupported_operation)
     {:jwe, alg} = bound
 
-    Enum.reduce_while(items, :ok, fn {index, encrypted, params, bits}, :ok ->
-      if Context.remaining(context) > 0 do
-        outcome =
-          case RequestSeal.JOSE.KeyManagement.unwrap(alg, encrypted, params, material) do
-            {:ok, cek} when bits in [128, 256] and is_binary(cek) and bit_size(cek) == bits ->
-              {:ok, cek}
+    monitor = Process.monitor(context.owner)
 
-            _ ->
-              :error
-          end
+    try do
+      Enum.reduce_while(items, :ok, fn {index, encrypted, params, bits}, :ok ->
+        cond do
+          owner_cancelled?(monitor) ->
+            {:halt, {:error, :custodian_failure}}
 
-        Sink.deliver(sink, index, outcome)
-        {:cont, :ok}
-      else
-        {:halt, {:error, :deadline_exceeded}}
-      end
-    end)
+          Context.remaining(context) > 0 ->
+            outcome =
+              case RequestSeal.JOSE.KeyManagement.unwrap(alg, encrypted, params, material) do
+                {:ok, cek} when bits in [128, 256] and is_binary(cek) and bit_size(cek) == bits ->
+                  {:ok, cek}
+
+                _ ->
+                  :error
+              end
+
+            Sink.deliver(sink, index, outcome)
+            {:cont, :ok}
+
+          true ->
+            {:halt, {:error, :deadline_exceeded}}
+        end
+      end)
+    after
+      Process.demonitor(monitor, [:flush])
+    end
   end
 
   defp holder_operation(operation, state, _context), do: holder_operation(operation, state)
+
+  defp owner_cancelled?(monitor) do
+    receive do
+      {:DOWN, ^monitor, :process, _, _} -> true
+    after
+      0 -> false
+    end
+  end
 
   defp holder_operation({:sign, algorithm, bytes}, {bound, material, _, _, capabilities}) do
     ensure(algorithm == bound, :key_mismatch)

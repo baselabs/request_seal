@@ -23,7 +23,9 @@ defmodule RequestSeal.TelemetryTest do
              [:request_seal, :replay, :claim],
              [:request_seal, :custody, :sign, :stop],
              [:request_seal, :custody, :wrap],
-             [:request_seal, :custody, :unwrap]
+             [:request_seal, :custody, :unwrap],
+             [:request_seal, :jose, :content_authentication],
+             [:request_seal, :jose, :decrypt_many]
            ]
   end
 

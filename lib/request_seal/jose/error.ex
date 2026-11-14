@@ -3,6 +3,7 @@ defmodule RequestSeal.JOSE.Error do
   Closed, redacted JOSE errors. Only `:deadline_exceeded` is retryable.
 
   Input errors: `:invalid_options`, `:invalid_policy`, `:limit`,
+  `:unexpected_member`, `:protected_mismatch` (both `:input`),
   `:invalid_serialization`, `:invalid_base64`, `:invalid_header`,
   `:duplicate_member`, `:unsupported_header`, `:unsupported_serialization`,
   `:compression_unsupported`, `:detached_payload`, `:invalid_iv`, `:invalid_tag`.
@@ -19,7 +20,7 @@ defmodule RequestSeal.JOSE.Error do
     compression_unsupported detached_payload algorithm_not_permitted algorithm_mismatch
     unsupported_critical_header unknown_key key_resolver_failed invalid_signature signer_failed
     invalid_iv invalid_tag decryption_failed entropy_failure deadline_exceeded nesting_depth
-    content_type_mismatch)a
+    content_type_mismatch unexpected_member protected_mismatch)a
   defstruct [:reason, :layer, :correlation, retryable: false]
   @type reason :: unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))
   @type t :: %__MODULE__{reason: reason(), layer: atom(), retryable: boolean(), correlation: nil}

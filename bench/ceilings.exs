@@ -47,18 +47,22 @@ defmodule RequestSeal.Ceilings do
       |> String.trim()
 
     IO.puts(
-      "machine=#{String.trim(machine)} cpu=#{cpu} OTP=#{otp_version} ERTS=#{:erlang.system_info(:version)} Elixir=#{System.version()} word_bytes=#{:erlang.system_info(:wordsize)} samples=#{@samples}"
+      "machine=#{String.trim(machine)} cpu=#{cpu} OTP=#{otp_version} ERTS=#{:erlang.system_info(:version)} Elixir=#{System.version()} word_bytes=#{:erlang.system_info(:wordsize)} schedulers=#{System.schedulers_online()} samples=#{@samples}"
     )
 
     IO.puts(
       "units: time=microseconds; reductions=current parser process; nearest-rank p50/p99; GC before each parser sample; 10 warmups; worst=highest observed candidate p99"
     )
 
-    sf()
-    signature()
-    jose()
-    discovery()
-    oaep()
+    opens()
+
+    unless "--opens-only" in System.argv() do
+      sf()
+      signature()
+      jose()
+      discovery()
+      oaep()
+    end
   end
 
   defp measure(parser, cases) do
@@ -168,7 +172,7 @@ defmodule RequestSeal.Ceilings do
       {:ok, signed} = JWS.sign_protected(header, payload, ctx.signer)
       {:ok, _} = JWS.verify(signed, ctx.jws)
 
-      jwe_header = [{"alg", "dir"}, {"enc", "A256GCM"}, {"x", [[[0]]]}, {"padding", ""}]
+      jwe_header = [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"x", [[[0]]]}, {"padding", ""}]
       {wire, _} = Header.serialize(jwe_header)
       decoded_size = byte_size(Support.decode(wire))
 
@@ -274,16 +278,21 @@ defmodule RequestSeal.Ceilings do
       {:ok, valid} =
         JWE.encrypt([{"alg", algorithm}, {"enc", "A256GCM"}], "timing measurement", public)
 
+      {:ok, handle} = RequestSeal.Custody.Local.new({:jwe, algorithm}, {:rsa, key})
+
       policy = %{
         algorithms: [algorithm],
         encryption: ["A256GCM"],
         max_plaintext: 1024,
         timeout: 5000,
+        resolve_timeout: 1000,
+        unwrap_timeout: 1000,
+        protected: %{expected: %{}, permitted: ~w(kid typ cty)},
         key_resolver: fn _ ->
           {:ok,
            %{
              algorithm: algorithm,
-             unwrap: fn ek, h -> KeyManagement.unwrap(algorithm, ek, h, {:rsa, key}) end
+             key: handle
            }}
         end
       }
@@ -392,6 +401,194 @@ defmodule RequestSeal.Ceilings do
       IO.puts(
         "OAEP algorithm=#{algorithm} caller_failures=#{inspect(Map.take(results, failures))} errors_equal=#{errors_equal} failure_results_equal=#{failure_results_equal} all_results_equal=#{all_results_equal}"
       )
+
+      RequestSeal.Custody.release(handle)
+    end
+  end
+
+  defp opens do
+    alias RequestSeal.Custody
+    kek = :crypto.strong_rand_bytes(32)
+    {:ok, legacy} = Custody.Local.new({:jwe, "A256GCMKW"}, {:aes, kek})
+    {:ok, kw} = Custody.Local.new({:jwe, "A256KW"}, {:aes, kek})
+
+    try do
+      # The 1.x comparison used GCMKW, 100 independently sealed 1,299-byte
+      # envelopes, and JSON decoding. Use public JOSE fields and generic data;
+      # benchmark inputs describe no application signing profile.
+      object = Map.new(1..15, &{"field#{&1}", String.duplicate("v", 16)})
+      padding = 550 - byte_size(Support.json_encode(object))
+
+      plaintext =
+        object
+        |> Map.update!("field1", &(&1 <> String.duplicate("v", padding)))
+        |> Support.json_encode()
+
+      550 = byte_size(plaintext)
+      compact = legacy_token(kek, :binary.copy("a", 32), nil)
+
+      page =
+        for _ <- 1..100,
+            do: %{
+              token: legacy_token(kek, plaintext, 360),
+              expected: %{"cty" => "application/json"}
+            }
+
+      true = Enum.all?(page, &(byte_size(&1.token) == 1299))
+
+      kw_page =
+        for _ <- 1..100 do
+          {:ok, token} =
+            JWE.encrypt(
+              [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "application/json"}],
+              plaintext,
+              kw
+            )
+
+          %{token: token, expected: %{"cty" => "application/json"}}
+        end
+
+      policy = fn algorithm, handle ->
+        %{
+          algorithms: [algorithm],
+          encryption: ["A256GCM"],
+          max_plaintext: 16_384,
+          timeout: 5000,
+          resolve_timeout: 1000,
+          unwrap_timeout: 1000,
+          protected: %{expected: %{"cty" => "application/json"}, permitted: ["padding"]},
+          key_resolver: fn _ -> {:ok, %{algorithm: algorithm, key: handle}} end
+        }
+      end
+
+      single = policy.("A256GCMKW", legacy)
+
+      batch = fn p ->
+        p
+        |> Map.put(:protected, %{permitted: ["padding"]})
+        |> Map.merge(%{
+          max_tokens: 100,
+          max_total_input: 1_048_576,
+          max_total_plaintext: 1_048_576
+        })
+      end
+
+      legacy_batch = batch.(single)
+      kw_batch = batch.(policy.("A256KW", kw))
+
+      for {items, p} <- [{page, legacy_batch}, {kw_page, kw_batch}] do
+        one_round_trip!(items, p)
+      end
+
+      open_page = fn items, p ->
+        {:ok, results} = JWE.decrypt_many(items, p)
+        Enum.each(results, fn {:ok, result} -> :json.decode(result.plaintext) end)
+      end
+
+      IO.puts(
+        "OPEN methodology=median_of_round_means baseline_algorithm=A256GCMKW page_tokens=100 compact_bytes=1299 plaintext_bytes=550 protected_json_bytes=360 includes_json_decode=true"
+      )
+
+      for {name, algorithm, baseline, n, rounds, fun} <- [
+            {"compact_open", "A256GCMKW", 61, 2000, 7,
+             fn -> {:ok, _} = JWE.decrypt(compact, single) end},
+            {"page_100", "A256GCMKW", 4200, 20, 9, fn -> open_page.(page, legacy_batch) end},
+            {"kw_page_100", "A256KW", nil, 20, 9, fn -> open_page.(kw_page, kw_batch) end}
+          ] do
+        for _ <- 1..max(div(n, 4), 1), do: fun.()
+
+        times =
+          for _ <- 1..rounds do
+            {us, _} = :timer.tc(fn -> for _ <- 1..n, do: fun.() end)
+            us / n
+          end
+
+        median = quantile(times, 0.5)
+        true = is_number(median)
+
+        gate =
+          if name == "page_100",
+            do: if(median <= 4200, do: "PASS", else: "FAIL"),
+            else: "diagnostic"
+
+        IO.puts(
+          "OPEN case=#{name} algorithm=#{algorithm} rounds=#{rounds} per_round=#{n} time_median_us=#{Float.round(median, 1)} time_max_round_us=#{Float.round(Enum.max(times), 1)} baseline_us=#{baseline || "none"} custody_calls=1 gate=#{gate}"
+        )
+      end
+    after
+      Custody.release(legacy)
+      Custody.release(kw)
+    end
+  end
+
+  defp legacy_token(kek, plaintext, header_bytes) do
+    # RFC 7518 §4.7 AES-GCM key wrapping and RFC 7516 compact serialization.
+    # This is a decrypt-only legacy input; JWE.encrypt does not produce GCMKW.
+    cek = :crypto.strong_rand_bytes(32)
+    wrap_iv = :crypto.strong_rand_bytes(12)
+
+    {encrypted, wrap_tag} =
+      :crypto.crypto_one_time_aead(:aes_256_gcm, kek, wrap_iv, cek, "", 16, true)
+
+    pairs = [
+      {"alg", "A256GCMKW"},
+      {"enc", "A256GCM"},
+      {"cty", "application/json"},
+      {"iv", Support.b64(wrap_iv)},
+      {"tag", Support.b64(wrap_tag)},
+      {"padding", ""}
+    ]
+
+    {protected, _} = Header.serialize(pairs)
+
+    pairs =
+      if header_bytes do
+        List.keyreplace(
+          pairs,
+          "padding",
+          0,
+          {"padding", String.duplicate("a", header_bytes - byte_size(Support.decode(protected)))}
+        )
+      else
+        pairs
+      end
+
+    {protected, _} = Header.serialize(pairs)
+    iv = :crypto.strong_rand_bytes(12)
+
+    {ct, tag} =
+      :crypto.crypto_one_time_aead(:aes_256_gcm, cek, iv, plaintext, protected, 16, true)
+
+    Enum.join(
+      [protected, Support.b64(encrypted), Support.b64(iv), Support.b64(ct), Support.b64(tag)],
+      "."
+    )
+  end
+
+  defp one_round_trip!(items, policy) do
+    parent = self()
+    handler = make_ref()
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:request_seal, :custody, :unwrap],
+        fn _, measurements, _, _ -> send(parent, {:round_trip, measurements.items}) end,
+        nil
+      )
+
+    try do
+      {:ok, results} = JWE.decrypt_many(items, policy)
+      true = Enum.all?(results, &match?({:ok, _}, &1))
+      receive do: ({:round_trip, 100} -> :ok)
+
+      receive do
+        {:round_trip, _} -> raise "more than one custody call for a page"
+      after
+        0 -> :ok
+      end
+    after
+      :telemetry.detach(handler)
     end
   end
 

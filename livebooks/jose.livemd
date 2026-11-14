@@ -23,6 +23,7 @@ reading = ~s({"sensor":"greenhouse-3","temperature_c":21.4})
 jws_policy = %{
   algorithms: ["EdDSA"],
   timeout: 5_000,
+  protected: %{expected: %{}, permitted: ~w(kid typ cty x5c), embedded_key: :refuse},
   key_resolver: fn %{algorithm: "EdDSA"} ->
     {:ok, %{algorithm: "EdDSA", key: signing_key}}
   end
@@ -55,20 +56,18 @@ IO.puts("Changed payload and unlisted algorithm rejected")
 
 ## Encrypt the signed token
 
-The JWE wraps a fresh content-encryption key with an AES key you hold. The wrapping key never leaves your callbacks.
+The JWE wraps a fresh content-encryption key with an AES key you hold. The wrapping key stays in its sensitive custody holder.
 
 ```elixir
-wrapping_key = {:aes, :crypto.strong_rand_bytes(32)}
-
-wrap = fn algorithm, cek ->
-  RequestSeal.JOSE.KeyManagement.wrap(algorithm, cek, %{}, wrapping_key)
-end
+{:ok, wrapping_handle} = RequestSeal.Custody.Local.new(
+  {:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)}
+)
 
 {:ok, encrypted} =
   RequestSeal.JOSE.JWE.encrypt(
     [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "JWS"}],
     token,
-    wrap
+    wrapping_handle
   )
 
 5 = length(String.split(encrypted, "."))
@@ -85,13 +84,14 @@ jwe_policy = %{
   encryption: ["A256GCM"],
   max_plaintext: 1_048_576,
   timeout: 5_000,
+  resolve_timeout: 1000,
+  unwrap_timeout: 1000,
+  protected: %{expected: %{}, permitted: ~w(kid typ cty)},
   key_resolver: fn %{algorithm: "A256KW"} ->
     {:ok,
      %{
        algorithm: "A256KW",
-       unwrap: fn bytes, _header ->
-         RequestSeal.JOSE.KeyManagement.unwrap("A256KW", bytes, %{}, wrapping_key)
-       end
+       key: wrapping_handle
      }}
   end
 }
@@ -138,6 +138,9 @@ recipient_policy = %{
   encryption: ["A256GCM"],
   max_plaintext: 1_048_576,
   timeout: 5_000,
+  resolve_timeout: 1000,
+  unwrap_timeout: 1000,
+  protected: %{expected: %{}, permitted: ~w(kid typ cty)},
   key_resolver: fn %{algorithm: "RSA-OAEP-256"} ->
     {:ok, %{algorithm: "RSA-OAEP-256", key: recipient}}
   end
@@ -153,6 +156,7 @@ recipient_policy = %{
 # The public-key health check tells the two cases apart.
 {:error, %{reason: :key_not_found}} = RequestSeal.Custody.public_key(recipient)
 
+:ok = RequestSeal.Custody.release(wrapping_handle)
 :ok = RequestSeal.Custody.Local.release(signing_handle)
 IO.puts("Recipient handle decrypted; released handle reported separately")
 ```

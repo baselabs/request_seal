@@ -15,11 +15,14 @@ defmodule RequestSeal.JOSE do
   64 members per object, depth four, and 64 entries per array. Integers are within
   ±999,999,999,999,999; floats and duplicate members reject at every depth.
   Base64url is canonical and unpadded. Compression (`zip`), detached JWS, JSON
-  serializations, the `jku`, `x5u`, and `jwk` key headers, `b64`, and `crit` are
-  unsupported; `kid` and `x5c` are accepted only as untrusted header data.
+  serializations, `jku`, `x5u`, `b64`, and `crit` are unsupported. JWS can
+  require an embedded public `jwk` under explicit policy; otherwise it is
+  refused. Every unread member, including `kid` and `x5c`, must be explicitly
+  expected or permitted and remains untrusted before authentication.
 
-  Key-management functions are custodian-side primitives. Decryption callbacks
-  own private keys and return a CEK only inside the bounded sensitive worker.
+  Key-management functions are custodian-side primitives. Decryption resolves
+  custody handles; CEKs travel directly to sensitive sink owners. Single and
+  batch opens share explicit admission, resolution, unwrap, and AEAD budgets.
   Successful recipient integrity does not establish origin or a principal.
   """
   @typedoc "JWS algorithm wire name, such as `\"EdDSA\"` or `\"ES256\"`."

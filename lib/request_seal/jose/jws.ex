@@ -187,15 +187,34 @@ defmodule RequestSeal.JOSE.JWS do
         `"EdDSA"`. The received `alg` must be in this list.
       * `:timeout` - integer milliseconds, 1 to 300,000, shared by key
         resolution and verification.
-      * `:key_resolver` - arity-one function receiving
-        `%{algorithm: wire_name, header: decoded_header_map}`. It returns
-        `:error` or `{:ok, %{algorithm: same_wire_name, key: key}}` with exactly
-        those two entry keys. X25519 signature keys reject as
-        `:algorithm_mismatch`, layer `:key`. `key` is a `RequestSeal.PublicKey` or an arity-three
-        verification function receiving `({:jws, wire_name}, exact_base_bytes,
-        signature_bytes)` and returning exactly `:ok` on validity; any other
-        return, including `{:ok, value}`, is `:invalid_signature`. Use the
-        function form for `"HS256"` so the secret stays in caller-owned custody.
+      * `:protected` - exactly `%{expected: map, permitted: names,
+        embedded_key: :refuse | :require}`. Expected values are decoded JSON
+        terms compared exactly; absence and difference both return
+        `:protected_mismatch`. At most 64 string keys and 16,384 serialized
+        bytes are allowed. Permitted names are a unique list of at most 64
+        strings. Overlap, alg or jwk in either set, and any extra field reject
+        as `:invalid_policy`. The read set is alg, plus jwk under :require;
+        every other member must be expected or permitted, else
+        `:unexpected_member`. x5c is uninterpreted and needs explicit naming.
+      * `:key_resolver` - arity one receiving `%{algorithm: alg, header: header}`
+        and, under :require, `embedded_key: PublicKey.t()`. It returns `:error`
+        or exactly `{:ok, %{algorithm: same_alg, key: key}}`. Under :refuse,
+        key is a PublicKey or a :verify KeyHandle bound to `{:jws, alg}`;
+        closures and :embedded return `:key_resolver_failed`. Under :require,
+        only `key: :embedded` is accepted; public keys and handles are refused.
+
+  Admission checks header refusals and algorithm selection, then the member
+  set and expected values before resolution. Under :refuse, jwk is unsupported.
+  Under :require, jwk must be a public RSA (only kty/n/e, 2,048–8,192 bits), EC
+  (only kty/crv/x/y, P-256 or P-384), or OKP Ed25519 (only kty/crv/x) object
+  accepted by `RequestSeal.PublicKey.import/2`. Missing/extra/private members,
+  oct, X25519, nonobjects, or import failure give `:invalid_header`/`:input`.
+  Shape precedes binding: a valid imported key incompatible with alg gives
+  `:algorithm_mismatch`/`:key`. Both checks precede the resolver. The signature
+  is always checked against the selected embedded key over the received bytes.
+  jku and x5u remain unsupported; x5c supplies no automatic certificate trust.
+  This is the RFC 9449 embedded signature-key primitive, without DPoP claims,
+  method/URI/time/token binding, replay, identity, or authorization checks.
 
   ## Returns
 
@@ -204,13 +223,14 @@ defmodule RequestSeal.JOSE.JWS do
     * `{:error, %RequestSeal.JOSE.Error{}}` - reasons this function can return:
       `:invalid_policy`, `:invalid_serialization`, `:unsupported_serialization`,
       `:limit`, `:invalid_base64`, `:invalid_header`, `:duplicate_member`,
+      `:unexpected_member`, `:protected_mismatch` (input layer),
       `:unsupported_critical_header` (`"crit"`), `:compression_unsupported`
-      (`"zip"`), `:unsupported_header` (`"jku"`, `"x5u"`, `"jwk"`, `"b64"`, regardless
-      of value), `:algorithm_not_permitted`, `:detached_payload` (empty payload
+      (`"zip"`), `:unsupported_header` (`"jku"`, `"x5u"`, `"b64"` regardless of
+      value, and `"jwk"` under `:refuse`), `:algorithm_not_permitted`, `:detached_payload` (empty payload
       segment), `:unknown_key` (resolver returned `:error`), `:algorithm_mismatch`
-      (resolver returned another algorithm or selected an X25519 key), `:key_resolver_failed` (resolver
+      (resolver returned another algorithm, embedded binding mismatch, or selected an X25519 key), `:key_resolver_failed` (resolver
       exception or invalid entry), `:invalid_signature` (empty or invalid
-      signature, or verification-function failure), and `:deadline_exceeded` (the
+      signature, or custody verification failure), and `:deadline_exceeded` (the
       only retryable reason). Meanings: `RequestSeal.JOSE.Error`.
 
   ## Examples
@@ -221,7 +241,7 @@ defmodule RequestSeal.JOSE.JWS do
       iex> {:ok, handle} = RequestSeal.Custody.Local.new({:jws, "EdDSA"}, {:ed25519, seed})
       iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
       iex> {:ok, token} = RequestSeal.JOSE.JWS.sign([{"alg", "EdDSA"}], "payload", handle)
-      iex> policy = %{algorithms: ["EdDSA"], timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: key}} end}
+      iex> policy = %{algorithms: ["EdDSA"], timeout: 5_000, protected: %{expected: %{}, permitted: [], embedded_key: :refuse}, key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: key}} end}
       iex> {:ok, result} = RequestSeal.JOSE.JWS.verify(token, policy)
       iex> result.payload
       "payload"
@@ -244,24 +264,39 @@ defmodule RequestSeal.JOSE.JWS do
 
   defp verify_internal(compact, p) do
     [protected, payload_wire, signature_wire] = compact(compact, 3)
-    h = Header.parse(protected)
+    h = Header.parse(protected, p.protected.embedded_key)
     alg = selected(h, :jws, p.algorithms)
+    read = if p.protected.embedded_key == :require, do: ~w(alg jwk), else: ~w(alg)
+    protected!(h, p.protected.expected, p.protected.permitted, read)
+    embedded = if p.protected.embedded_key == :require, do: embedded!(h["jwk"], alg), else: nil
     ensure(payload_wire != "", :detached_payload)
     payload = decode(payload_wire)
     signature = decode(signature_wire)
     ensure(signature != "", :invalid_signature, :crypto)
-    entry = resolve(p.key_resolver, %{algorithm: alg, header: h})
+    request = %{algorithm: alg, header: h}
+    request = if embedded, do: Map.put(request, :embedded_key, embedded), else: request
+    entry = resolve(p.key_resolver, request)
     ensure(Enum.sort(Map.keys(entry)) == [:algorithm, :key], :key_resolver_failed, :key)
     base = protected <> "." <> payload_wire
 
+    key =
+      if p.protected.embedded_key == :require do
+        ensure(entry.key == :embedded, :key_resolver_failed, :key)
+        embedded
+      else
+        ensure(entry.key != :embedded, :key_resolver_failed, :key)
+        entry.key
+      end
+
     result =
-      case entry.key do
+      case key do
         %RequestSeal.PublicKey{} = key ->
           ensure(not match?({:x25519, _}, key.material), :algorithm_mismatch, :key)
           RequestSeal.Crypto.verify({:jws, alg}, base, signature, key)
 
-        fun when is_function(fun, 3) ->
-          callback(fn -> fun.({:jws, alg}, base, signature) end, :invalid_signature, :crypto)
+        %RequestSeal.KeyHandle{} = handle ->
+          ensure(handle.algorithm == {:jws, alg}, :algorithm_mismatch, :key)
+          RequestSeal.Custody.verify(handle, base, signature, timeout: p.timeout)
 
         _ ->
           fail(:key_resolver_failed, :key)
@@ -269,5 +304,34 @@ defmodule RequestSeal.JOSE.JWS do
 
     ensure(result == :ok, :invalid_signature, :crypto)
     {:ok, %Result{algorithm: alg, header: h, protected: protected, payload: payload}}
+  end
+
+  defp embedded!(jwk, alg) do
+    ensure(is_map(jwk) and not is_struct(jwk), :invalid_header)
+
+    keys =
+      case jwk do
+        %{"kty" => "RSA"} -> ~w(e kty n)
+        %{"kty" => "EC", "crv" => crv} when crv in ["P-256", "P-384"] -> ~w(crv kty x y)
+        %{"kty" => "OKP", "crv" => "Ed25519"} -> ~w(crv kty x)
+        _ -> fail(:invalid_header)
+      end
+
+    ensure(Enum.sort(Map.keys(jwk)) == keys, :invalid_header)
+
+    key =
+      case RequestSeal.PublicKey.import(jwk, :jwk) do
+        {:ok, key} -> key
+        _ -> fail(:invalid_header)
+      end
+
+    bound =
+      RequestSeal.Crypto.Support.safe(:key_mismatch, fn ->
+        RequestSeal.PublicKey.bind!(key, RequestSeal.Crypto.Algorithm.resolve({:jws, alg}))
+        :ok
+      end)
+
+    ensure(bound == :ok, :algorithm_mismatch, :key)
+    key
   end
 end

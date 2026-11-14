@@ -65,6 +65,9 @@ recipient_policy = %{
   encryption: ["A256GCM"],
   max_plaintext: 1_048_576,
   timeout: 5_000,
+  resolve_timeout: 1000,
+  unwrap_timeout: 1000,
+  protected: %{expected: %{}, permitted: ~w(kid typ cty)},
   key_resolver: fn %{algorithm: "RSA-OAEP-256"} ->
     {:ok, %{algorithm: "RSA-OAEP-256", key: recipient_handle}}
   end
@@ -112,6 +115,12 @@ integrity alone does not establish sender identity or authorization.
 Signing and verification also accept per-call `max_bytes:`: an integer from 1
 through 16,777,216, with the existing 1,048,576-byte default. Bytes over the
 selected value return `:invalid_data` before the private reference is read.
+Local checks the operation owner's liveness and deadline before each item of an
+unwrap range. Cancellation can leave one already-running native item to finish;
+its late delivery is discarded by the revoked sink. JWE tracks the unwrap
+callback and its cancellation watcher directly, preserving the completion event
+when the callback is killed and reaping both before finalization.
+
 Invalid values and duplicate options return `:invalid_options`; `unwrap/3`
 does not accept this option. `RequestSeal.Crypto.sign/4` and `verify/5` expose
 the same option for direct primitive calls. `RequestSeal.SignatureBase` retains

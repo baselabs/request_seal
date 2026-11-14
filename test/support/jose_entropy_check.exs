@@ -34,25 +34,28 @@ true = plaintext == v["plaintext"]
 direct =
   File.read!("test/fixtures/jose/5_6.direct_encryption_using_aes-gcm.json") |> :json.decode()
 
-key = decode.(direct["input"]["key"]["k"])
+handle =
+  RequestSeal.Test.JOSEBatchCustodian.start(
+    "dir",
+    {:cek, decode.(direct["input"]["key"]["k"])},
+    :all,
+    self()
+  )
 
 policy = %{
   algorithms: ["dir"],
   encryption: ["A128GCM"],
   timeout: 5000,
   max_plaintext: 1_048_576,
-  key_resolver: fn _ ->
-    {:ok,
-     %{
-       algorithm: "dir",
-       unwrap: fn bytes, _h ->
-         RequestSeal.JOSE.KeyManagement.unwrap("dir", bytes, %{}, {:cek, key})
-       end
-     }}
-  end
+  resolve_timeout: 1000,
+  unwrap_timeout: 1000,
+  protected: %{expected: %{}, permitted: ~w(kid)},
+  key_resolver: fn _ -> {:ok, %{algorithm: "dir", key: handle}} end
 }
 
 {:error, %RequestSeal.JOSE.Error{reason: :entropy_failure}} =
   RequestSeal.JOSE.JWE.decrypt(direct["output"]["compact"], policy)
+
+RequestSeal.Custody.release(handle)
 
 IO.puts("CSPRNG FAILED; PUBLISHED AES WORKS; ENCRYPT/DECRYPT ENTROPY FAILURE")

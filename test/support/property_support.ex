@@ -192,37 +192,32 @@ defmodule RequestSeal.PropertySupport do
     jws = %{
       algorithms: ["EdDSA"],
       timeout: 5000,
+      protected: %{expected: %{}, permitted: ~w(cty x padding), embedded_key: :refuse},
       key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: public}} end
     }
 
-    {:ok, owner} = Agent.start_link(fn -> :crypto.strong_rand_bytes(32) end)
+    {:ok, owner} =
+      Agent.start_link(fn ->
+        {:ok, h} =
+          RequestSeal.Custody.Local.new({:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)})
 
-    wrap = fn "A256KW", cek ->
-      RequestSeal.JOSE.KeyManagement.wrap("A256KW", cek, %{}, {:aes, Agent.get(owner, & &1)})
-    end
+        h
+      end)
+
+    handle = Agent.get(owner, & &1)
 
     jwe = %{
       algorithms: ["A256KW"],
       encryption: ["A256GCM"],
       max_plaintext: 1_048_576,
       timeout: 5000,
-      key_resolver: fn _ ->
-        {:ok,
-         %{
-           algorithm: "A256KW",
-           unwrap: fn ek, _h ->
-             RequestSeal.JOSE.KeyManagement.unwrap(
-               "A256KW",
-               ek,
-               %{},
-               {:aes, Agent.get(owner, & &1)}
-             )
-           end
-         }}
-      end
+      resolve_timeout: 1000,
+      unwrap_timeout: 1000,
+      protected: %{expected: %{}, permitted: ~w(cty x padding)},
+      key_resolver: fn _ -> {:ok, %{algorithm: "A256KW", key: handle}} end
     }
 
-    %{signer: signer, jws: jws, jwe: jwe, wrap: wrap, owner: owner}
+    %{signer: signer, jws: jws, jwe: jwe, wrap: handle, owner: owner}
   end
 
   def source(type, attrs \\ %{}) do

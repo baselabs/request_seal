@@ -73,33 +73,26 @@ defmodule RequestSeal.ReasonAlignmentTest do
     on_exit(fn -> RequestSeal.Custody.release(handle) end)
     {:ok, token} = JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], "reading", handle)
 
-    policy = fn material ->
-      %{
+    # 2.0 unwrap failures come from custody, never resolver closures.
+    {:ok, wrong} =
+      RequestSeal.Custody.Local.new({:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)})
+
+    on_exit(fn -> RequestSeal.Custody.release(wrong) end)
+    refused = %{handle | ref: fn -> raise "custody unavailable" end}
+
+    for recipient <- [wrong, refused] do
+      policy = %{
         algorithms: ["A256KW"],
         encryption: ["A256GCM"],
-        max_plaintext: 1_024,
-        timeout: 5_000,
-        key_resolver: fn _ ->
-          {:ok,
-           %{
-             algorithm: "A256KW",
-             unwrap: fn bytes, h ->
-               KeyManagement.unwrap(
-                 "A256KW",
-                 bytes,
-                 RequestSeal.JOSEVectors.params("A256KW", h),
-                 material
-               )
-             end
-           }}
-        end
+        max_plaintext: 1024,
+        timeout: 5000,
+        resolve_timeout: 1000,
+        unwrap_timeout: 1000,
+        protected: %{expected: %{}, permitted: []},
+        key_resolver: fn _ -> {:ok, %{algorithm: "A256KW", key: recipient}} end
       }
-    end
 
-    # Every unwrap failure reaches a decrypting peer as the same error.
-    for material <- [short, {:cek, cek}, {:aes, :crypto.strong_rand_bytes(32)}] do
-      assert {:error, %{reason: :decryption_failed, layer: :crypto}} =
-               JWE.decrypt(token, policy.(material))
+      assert {:error, %{reason: :decryption_failed, layer: :crypto}} = JWE.decrypt(token, policy)
     end
   end
 
