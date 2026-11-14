@@ -1,6 +1,6 @@
 defmodule RequestSeal.Custody do
   @moduledoc """
-  Caller-owned signing, secret verification, key unwrapping, and public metadata.
+  Caller-owned signing, secret verification, key wrapping/unwrapping, and public metadata.
 
   Each callback runs in a fresh runner, never linked to the caller. A monitored
   middle process traps exits, monitors the caller before linking the runner, and
@@ -28,102 +28,191 @@ defmodule RequestSeal.Custody do
   enforced the caller's bound, which `RequestSeal.Custody.Context` does not carry.
   """
   alias RequestSeal.{KeyHandle, KeyIdentity, PublicKey}
-  alias RequestSeal.Custody.{Context, Error, Support}
+  alias RequestSeal.Custody.{Context, Error, Sink, Support}
   import Support, only: [fail: 1, ensure: 2]
 
-  @type unwrap_algorithm :: {:jwe, binary()}
-  @type algorithm :: RequestSeal.Crypto.algorithm() | unwrap_algorithm()
+  @type key_algorithm :: {:jwe, binary()}
+  @type algorithm ::
+          RequestSeal.Crypto.algorithm()
+          | key_algorithm()
+          | {:derive, binary()}
+          | {atom(), term()}
+  @type params ::
+          %{}
+          | %{iv: <<_::96>>, tag: <<_::128>>}
+          | %{
+              epk: PublicKey.t(),
+              apu: binary(),
+              apv: binary(),
+              algorithm_id: binary(),
+              key_bits: 128 | 256
+            }
+  @type item :: {non_neg_integer(), binary(), params(), 128 | 256}
 
-  @callback sign(term(), RequestSeal.Crypto.algorithm(), binary(), Context.t()) ::
+  @callback sign(term(), algorithm(), binary(), Context.t()) ::
               {:ok, binary()} | {:error, Error.reason()}
-  @callback verify(term(), RequestSeal.Crypto.algorithm(), binary(), binary(), Context.t()) ::
+  @callback verify(term(), algorithm(), binary(), binary(), Context.t()) ::
               :ok | {:error, Error.reason()}
   @callback public_key(term()) :: {:ok, PublicKey.t()} | {:error, Error.reason()}
   @callback identity(term()) :: KeyIdentity.t() | {:error, Error.reason()}
-  @callback unwrap(term(), unwrap_algorithm(), binary(), Context.t()) ::
-              {:ok, binary()} | {:error, Error.reason()}
-  @optional_callbacks verify: 5, unwrap: 4
+  @callback unwrap(term(), key_algorithm(), [item()], Sink.t(), Context.t()) ::
+              :ok | {:error, Error.reason()}
+  @callback wrap(term(), key_algorithm(), binary(), Context.t()) ::
+              {:ok, %{encrypted_key: binary(), params: params()}} | {:error, Error.reason()}
+  @callback release(term(), Context.t()) :: :ok | {:error, Error.reason()}
+  @optional_callbacks verify: 5, unwrap: 5, wrap: 4, release: 2
 
   @doc """
-  Unwrap a bounded RSA-OAEP encrypted key using the handle's exact algorithm.
+  Unwrap a bounded list with the handle's exact key-management algorithm.
 
-  Only `{:jwe, "RSA-OAEP"}` and `{:jwe, "RSA-OAEP-256"}` handles with the `:unwrap`
-  capability are accepted. The result is the unwrapped key bytes, never the
-  private key. Callers must authenticate content before exposing plaintext;
-  `RequestSeal.JOSE.JWE` performs that step with a random fallback CEK on unwrap
-  failure.
+  `items` contains 1–10,000 `{encrypted_key, params, content_bits}` tuples in
+  input order. Each encrypted key is a binary of 0–1,024 bytes, and content bits
+  are 128 or 256. Params are exactly `%{}` for RSA-OAEP, AES-KW, and `dir`, or
+  `%{iv: twelve_bytes, tag: sixteen_bytes}` for AES-GCMKW. The handle must grant
+  `:unwrap`. Only `:timeout` is accepted: 1–300,000 ms, default 5,000; unknown,
+  duplicate, and invalid options reject before the handle and items.
 
-  Unwrapped bytes pass from the sensitive local holder through the sensitive
-  custody runner and middle process to the caller. On the JWE handle path that
-  caller is JWE's sensitive worker, which authenticates content before returning
-  plaintext. A direct `unwrap/3` caller receives the bytes and owns their protection.
+  The owner accepts each delivery strictly before one absolute monotonic
+  deadline. A settled position never changes. Expiry revokes the alias, drains
+  tagged envelopes, then times out undelivered positions. A call summary settles
+  only positions still undelivered; an accepted prefix survives later failure.
+  CEKs travel straight from the holder to the owner, bypassing the runner.
 
-  JWE deliberately maps a released or unavailable handle to the same error as a
-  forged message. Operators should check `RequestSeal.Custody.public_key(handle)`
-  at startup to distinguish custody availability from message rejection;
-  `{:ok, public_key}` confirms public resolution, while `{:error, error}` exposes
-  the custody failure. Deadline expiration remains a distinct JWE error.
+  Returns `{:ok, results}` in input order, with each result `{:ok, cek}`,
+  `{:error, :decryption_failed}`, or `{:error, :deadline_exceeded}`. Input and
+  handle validation returns `{:error, Custody.Error.t()}` with
+  `:invalid_options`, `:invalid_handle`, `:unsupported_algorithm`,
+  `:unsupported_operation`, or `:invalid_data`. Callback failures settle
+  undelivered items without exposing diagnostics. Direct callers own the
+  returned CEKs; authenticate content before exposing plaintext.
 
-  ## Parameters
-
-    * `handle` - a `t:RequestSeal.KeyHandle.t/0` whose algorithm is
-      `{:jwe, "RSA-OAEP"}` or `{:jwe, "RSA-OAEP-256"}` and whose capabilities
-      are exactly `[:unwrap]`.
-    * `encrypted_key` - the JWE encrypted key, a binary of 1–1,024 bytes. Inside
-      the custodian it must also equal the RSA modulus width.
-    * `opts` - keyword list; see Options.
-
-  ## Options
-
-    * `:timeout` - operation deadline in milliseconds, integer 1–300,000
-      (`:infinity` is refused). Default `5_000`.
-
-  `:max_bytes` is refused. Unknown, duplicate, out-of-range, or non-integer
-  options return `:invalid_options` before the handle is checked.
-
-  ## Returns
-
-    * `{:ok, key_bytes}` - the unwrapped key, 1–1,024 bytes.
-    * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
-      `:invalid_options`, `:invalid_handle` (malformed handle, or an `:unwrap`
-      capability on a handle that is not an RSA-OAEP handle),
-      `:unsupported_algorithm` (a non-JWE handle naming an unknown algorithm),
-      `:unsupported_operation` (the handle lacks `:unwrap`), `:invalid_data`
-      (`encrypted_key` is not a binary of 1–1,024 bytes), `:decryption_failed`
-      (OAEP failure, modulus-width mismatch, or an empty plaintext),
-      `:deadline_exceeded`, `:key_not_found` (holder released or stopped), and
-      `:custodian_failure`. `RequestSeal.Custody.Local` also returns
-      `:key_mismatch` when the handle's `algorithm` no longer matches its holder.
-      A custodian reason outside the `RequestSeal.Custody.Error` list becomes
-      `:custodian_failure`. Meanings: `RequestSeal.Custody.Error`.
-
-  ## Examples
-
-  A document recipient key unwraps a content-encryption key that was wrapped to
-  its public key; a forged encrypted key is refused.
-
-      iex> private = :public_key.generate_key({:rsa, 2048, 65_537})
-      iex> {:RSAPrivateKey, _, n, e, _, _, _, _, _, _, _} = private
-      iex> {:ok, handle} = RequestSeal.Custody.Local.new({:jwe, "RSA-OAEP-256"}, {:rsa, private})
-      iex> cek = :crypto.strong_rand_bytes(32)
-      iex> {:ok, %{encrypted_key: encrypted_key}} =
-      ...>   RequestSeal.JOSE.KeyManagement.wrap("RSA-OAEP-256", cek, %{}, {:rsa, {:RSAPublicKey, n, e}})
-      iex> RequestSeal.Custody.unwrap(handle, encrypted_key) == {:ok, cek}
-      true
-      iex> RequestSeal.Custody.unwrap(handle, :binary.copy(<<1>>, 256))
-      {:error, %RequestSeal.Custody.Error{reason: :decryption_failed, retryable: false}}
-      iex> RequestSeal.Custody.unwrap(handle, encrypted_key, max_bytes: 1_024)
-      {:error, %RequestSeal.Custody.Error{reason: :invalid_options, retryable: false}}
-      iex> RequestSeal.Custody.Local.release(handle)
+      iex> {:ok, handle} = RequestSeal.Custody.Local.new({:jwe, "A256KW"}, {:aes, <<0::256>>})
+      iex> {:ok, wrapped} = RequestSeal.Custody.wrap(handle, <<0::128>>)
+      iex> RequestSeal.Custody.unwrap(handle, [{wrapped.encrypted_key, %{}, 128}])
+      {:ok, [{:ok, <<0::128>>}]}
+      iex> RequestSeal.Custody.release(handle)
       :ok
   """
-  @spec unwrap(KeyHandle.t(), binary(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
-  def unwrap(handle, encrypted_key, opts \\ []) do
-    operation(handle, :unwrap, opts, fn _max ->
-      ensure(is_binary(encrypted_key) and byte_size(encrypted_key) in 1..1024, :invalid_data)
-      [encrypted_key]
+  @spec unwrap(KeyHandle.t(), [{binary(), params(), 128 | 256}], keyword()) ::
+          {:ok, [{:ok, binary()} | {:error, :decryption_failed | :deadline_exceeded}]}
+          | {:error, Error.t()}
+  def unwrap(handle, items, opts \\ []) do
+    started = System.monotonic_time()
+
+    try do
+      Support.safe(
+        fn ->
+          timeout = Support.timeout(opts)
+
+          context = %Context{
+            owner: self(),
+            deadline: System.monotonic_time(:millisecond) + timeout
+          }
+
+          handle!(handle)
+          ensure(:unwrap in handle.capabilities, :unsupported_operation)
+          indexed = items!(handle.algorithm, items)
+          sink = Sink.new(indexed, context)
+          results = Sink.collect(sink, fn -> unwrap(handle, indexed, sink, context) end)
+
+          {:ok,
+           Enum.map(results, fn
+             {:ok, cek} -> {:ok, cek}
+             :error -> {:error, :decryption_failed}
+             :timeout -> {:error, :deadline_exceeded}
+           end)}
+        end,
+        :custodian_failure
+      )
+    after
+      RequestSeal.Telemetry.emit(
+        [:request_seal, :custody, :unwrap],
+        System.monotonic_time() - started,
+        %{}
+      )
+    end
+  end
+
+  # Internal delivery form: the caller supplies its own sink. JWE's sensitive
+  # worker owns that sink and collects it; the runner returns only the summary.
+  @doc false
+  @spec unwrap(KeyHandle.t(), [item()], Sink.t(), Context.t()) :: {:ok, :ok} | {:error, term()}
+  def unwrap(handle, items, sink, context) do
+    run(context, fn ->
+      handle!(handle)
+      ensure(:unwrap in handle.capabilities, :unsupported_operation)
+
+      normalize(
+        :unwrap,
+        handle.custodian.unwrap(handle.ref, handle.algorithm, items, sink, context)
+      )
     end)
   end
+
+  defp items!(algorithm, items) do
+    ensure(is_list(items) and length(items) in 1..10_000, :invalid_data)
+    {:jwe, alg} = algorithm
+
+    Enum.with_index(items, fn
+      {encrypted, params, bits}, index
+      when is_binary(encrypted) and byte_size(encrypted) <= 1024 and bits in [128, 256] ->
+        ensure(
+          match?(
+            :ok,
+            RequestSeal.JOSE.Support.safe(fn ->
+              RequestSeal.JOSE.KeyManagement.validate_params!(alg, params)
+            end)
+          ),
+          :invalid_data
+        )
+
+        {index, encrypted, params, bits}
+
+      _, _ ->
+        fail(:invalid_data)
+    end)
+  end
+
+  @doc """
+  Wrap a 128- or 256-bit CEK with an AES-KW handle granting `:wrap`.
+
+  The CEK is a binary of exactly 16 or 32 bytes. Options are exactly `:timeout`,
+  1–300,000 ms (default 5,000). Returns
+  `{:ok, %{encrypted_key: bytes, params: %{}}}`; validation, capability,
+  deadline, or custodian failure returns a bounded `Custody.Error`. GCMKW and
+  `dir` handles cannot wrap. Telemetry contains only `outcome: :ok | :failed`.
+  """
+  @spec wrap(KeyHandle.t(), binary(), keyword()) :: {:ok, map()} | {:error, Error.t()}
+  def wrap(handle, cek, opts \\ []) do
+    started = System.monotonic_time()
+
+    result =
+      operation(handle, :wrap, opts, fn _ ->
+        ensure(is_binary(cek) and byte_size(cek) in [16, 32], :invalid_data)
+        [cek]
+      end)
+
+    outcome = if match?({:ok, _}, result), do: :ok, else: :failed
+
+    RequestSeal.Telemetry.emit(
+      [:request_seal, :custody, :wrap],
+      System.monotonic_time() - started,
+      %{outcome: outcome}
+    )
+
+    result
+  end
+
+  @doc """
+  Release a handle through its custodian under the default 5,000 ms deadline.
+
+  Idempotent: `:ok` confirms the key is destroyed or never existed. A timeout
+  or custodian error does not confirm destruction; the caller may retry.
+  A custodian without `release/2` returns `:unsupported_operation`. Invalid
+  handles and callback failures return bounded `Custody.Error` values.
+  """
+  @spec release(KeyHandle.t()) :: :ok | {:error, Error.t()}
+  def release(handle), do: operation(handle, :release, [], fn _ -> [] end)
 
   @doc """
   Sign exact bounded bytes with the algorithm bound to a handle.
@@ -288,7 +377,7 @@ defmodule RequestSeal.Custody do
       algorithm, use, and operation restrictions the key carries.
     * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
       `:invalid_handle`, `:unsupported_algorithm` (the handle names an unknown
-      algorithm), `:no_public_key` (HMAC custody), `:key_not_found` (local holder
+      algorithm), `:no_public_key` (symmetric custody), `:key_not_found` (local holder
       released or stopped), `:deadline_exceeded`, `:invalid_key` (the custodian
       returned public material that fails validation), and `:custodian_failure`.
       A custodian reason outside the `RequestSeal.Custody.Error` list becomes
@@ -369,7 +458,12 @@ defmodule RequestSeal.Custody do
         handle!(handle)
 
         ensure(
-          op not in [:sign, :verify, :unwrap] or op in handle.capabilities,
+          op not in [:sign, :verify, :wrap] or op in handle.capabilities,
+          :unsupported_operation
+        )
+
+        ensure(
+          op != :release or function_exported?(handle.custodian, :release, 2),
           :unsupported_operation
         )
 
@@ -377,7 +471,7 @@ defmodule RequestSeal.Custody do
         context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
 
         case run(context, fn -> invoke(handle, op, args, context) end) do
-          {:ok, :ok} when op == :verify -> :ok
+          {:ok, :ok} when op in [:verify, :release] -> :ok
           result -> result
         end
       end,
@@ -393,7 +487,7 @@ defmodule RequestSeal.Custody do
 
     ensure(
       is_list(handle.capabilities) and handle.capabilities != [] and
-        Enum.all?(handle.capabilities, &(&1 in [:sign, :verify, :unwrap])) and
+        Enum.all?(handle.capabilities, &(&1 in [:sign, :verify, :wrap, :unwrap])) and
         Enum.uniq(handle.capabilities) == handle.capabilities,
       :invalid_handle
     )
@@ -406,12 +500,16 @@ defmodule RequestSeal.Custody do
     )
 
     case handle.algorithm do
-      {:jwe, alg} when alg in ["RSA-OAEP", "RSA-OAEP-256"] ->
-        ensure(handle.capabilities == [:unwrap], :invalid_handle)
-        ensure(function_exported?(handle.custodian, :unwrap, 4), :invalid_handle)
+      {:jwe, alg} when alg in ~w(RSA-OAEP RSA-OAEP-256 A128GCMKW A256GCMKW dir A128KW A256KW) ->
+        allowed = if alg in ~w(A128KW A256KW), do: [:wrap, :unwrap], else: [:unwrap]
+        ensure(Enum.all?(handle.capabilities, &(&1 in allowed)), :invalid_handle)
+
+        for {capability, arity} <- [unwrap: 5, wrap: 4], capability in handle.capabilities do
+          ensure(function_exported?(handle.custodian, capability, arity), :invalid_handle)
+        end
 
       _ ->
-        ensure(:unwrap not in handle.capabilities, :invalid_handle)
+        ensure(not Enum.any?(handle.capabilities, &(&1 in [:wrap, :unwrap])), :invalid_handle)
         RequestSeal.Crypto.Algorithm.resolve(handle.algorithm)
     end
   end
@@ -434,12 +532,15 @@ defmodule RequestSeal.Custody do
     normalize(:verify, result)
   end
 
-  defp invoke(handle, op, args, context) when op in [:sign, :unwrap],
+  defp invoke(handle, op, args, context) when op in [:sign, :wrap],
     do:
       normalize(
         op,
         apply(handle.custodian, op, [handle.ref, handle.algorithm | args] ++ [context])
       )
+
+  defp invoke(handle, :release, [], context),
+    do: normalize(:release, handle.custodian.release(handle.ref, context))
 
   defp invoke(handle, op, [], _), do: normalize(op, apply(handle.custodian, op, [handle.ref]))
 
@@ -452,10 +553,12 @@ defmodule RequestSeal.Custody do
 
   defp normalize(:sign, {:ok, _}), do: {:error, Error.new(:invalid_signing_output)}
 
-  defp normalize(:unwrap, {:ok, bytes}) when is_binary(bytes) and byte_size(bytes) in 1..1024,
-    do: {:ok, bytes}
+  defp normalize(op, :ok) when op in [:unwrap, :release], do: :ok
 
-  defp normalize(:unwrap, {:ok, <<>>}), do: {:error, Error.new(:decryption_failed)}
+  defp normalize(:wrap, {:ok, %{encrypted_key: bytes, params: params} = value})
+       when map_size(value) == 2 and is_binary(bytes) and byte_size(bytes) in [24, 40] and
+              params == %{},
+       do: {:ok, value}
 
   defp normalize(:public_key, {:ok, %PublicKey{} = public}) do
     PublicKey.validate!(public)

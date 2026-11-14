@@ -3,7 +3,10 @@ defmodule RequestSeal.JOSE.Support do
   alias RequestSeal.{Custody, KeyHandle}
   alias RequestSeal.JOSE.Error
   @jws ~w(RS256 PS256 PS384 PS512 HS256 ES256 ES384 EdDSA)
-  @jwe ~w(RSA-OAEP-256 RSA-OAEP A128GCMKW A256GCMKW dir)
+  @wrap ~w(RSA-OAEP-256 RSA-OAEP A128KW A256KW)
+  # The ECDH-ES family joins @encrypt together with its implementation.
+  @encrypt @wrap
+  @jwe @encrypt ++ ~w(A128GCMKW A256GCMKW dir)
   @enc ~w(A128GCM A256GCM)
   def json_object(bytes) do
     ensure(byte_size(bytes) <= 16_384, :limit)
@@ -143,7 +146,7 @@ defmodule RequestSeal.JOSE.Support do
 
   defp list(xs, allowed) do
     ensure(
-      is_list(xs) and length(xs) in 1..8 and Enum.uniq(xs) == xs and
+      is_list(xs) and length(xs) in 1..10 and Enum.uniq(xs) == xs and
         Enum.all?(xs, &(&1 in allowed)),
       :invalid_policy
     )
@@ -162,6 +165,8 @@ defmodule RequestSeal.JOSE.Support do
 
   def algorithms(:jws), do: @jws
   def algorithms(:jwe), do: @jwe
+  def algorithms(:jwe_encrypt), do: @encrypt
+  def algorithms(:jwe_wrap), do: @wrap
   def encryption, do: @enc
 
   def bytes(bytes) do

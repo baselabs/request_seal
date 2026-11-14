@@ -51,7 +51,7 @@ defmodule RequestSeal.GuideJoseTest do
 
         {:ok, encrypted} =
           RequestSeal.JOSE.JWE.encrypt(
-            [{"alg", "A256GCMKW"}, {"enc", "A256GCM"}],
+            [{"alg", "A256KW"}, {"enc", "A256GCM"}],
             token,
             wrap
           )
@@ -65,16 +65,16 @@ defmodule RequestSeal.GuideJoseTest do
       E.eval(
         ~S'''
         jwe_policy = %{
-          algorithms: ["A256GCMKW"],
+          algorithms: ["A256KW"],
           encryption: ["A256GCM"],
           max_plaintext: 1_048_576,
           timeout: 5_000,
-          key_resolver: fn %{algorithm: "A256GCMKW"} ->
+          key_resolver: fn %{algorithm: "A256KW"} ->
             {:ok,
              %{
-               algorithm: "A256GCMKW",
-               unwrap: fn bytes, header ->
-                 RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", bytes, header, wrapping_key)
+               algorithm: "A256KW",
+               unwrap: fn bytes, _header ->
+                 RequestSeal.JOSE.KeyManagement.unwrap("A256KW", bytes, %{}, wrapping_key)
                end
              }}
           end

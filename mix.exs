@@ -140,26 +140,26 @@ defmodule RequestSeal.MixProject do
     # Ash needs StreamData in dev/prod; scope the test override here to keep it out of Hex requirements.
     test_dependencies =
       if Mix.env() == :test,
-        do: [{:stream_data, "~> 1.1", only: :test, override: true}],
+        do: [{:stream_data, ">= 1.4.0 and < 2.0.0", only: :test, override: true}],
         else: []
 
     [
       {:ex_doc, "~> 0.40.4", only: [:dev, :test], runtime: false},
       # Static analysis in the declared gate; PLT is cached in CI.
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:dialyxir, ">= 1.4.8 and < 2.0.0", only: [:dev, :test], runtime: false},
       # The only required dependency: the versioned telemetry contract emits
       # through it (ADR 0006). No transitive dependencies.
-      {:telemetry, "~> 1.0"},
+      {:telemetry, ">= 1.4.2 and < 2.0.0"},
       # Require the Ash security patch line used by the optional integrations.
-      {:ash, "~> 3.37 and >= 3.37.2", optional: true},
+      {:ash, ">= 3.37.4 and < 4.0.0", optional: true},
       {:simple_sat, "~> 0.1", only: :test},
       # Use stable Req; 0.8.0-rc.0 is a release candidate.
       # Consumers own client startup; importing this library starts no pool.
       {:req, "~> 0.7.4", optional: true, runtime: false},
       {:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false},
-      {:plug, "~> 1.20.3", optional: true, runtime: false},
-      {:bandit, "~> 1.14", only: :test},
-      {:phoenix, "~> 1.8.15", only: :test},
+      {:plug, ">= 1.20.3 and < 2.0.0", optional: true, runtime: false},
+      {:bandit, ">= 1.14.1 and < 2.0.0", only: :test},
+      {:phoenix, ">= 1.8.15 and < 2.0.0", only: :test},
       {:postgrex, "~> 0.22.4", optional: true, runtime: false}
     ] ++ test_dependencies ++ owned_integrations()
   end
@@ -170,7 +170,7 @@ defmodule RequestSeal.MixProject do
     if Version.match?(System.version(), ">= 1.20.0") do
       [
         {:ash_onetime, "~> 1.9 and >= 1.9.2", optional: true},
-        {:ash_hooks, "~> 2.0 or ~> 3.0", optional: true}
+        {:ash_hooks, ">= 3.0.0 and < 4.0.0", optional: true}
       ]
     else
       []

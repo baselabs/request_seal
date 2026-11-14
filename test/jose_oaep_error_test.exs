@@ -21,7 +21,14 @@ defmodule RequestSeal.JOSEOAEPErrorTest do
           {:ok,
            %{
              algorithm: algorithm,
-             unwrap: fn ek, h -> KeyManagement.unwrap(algorithm, ek, h, {:rsa, private}) end
+             unwrap: fn ek, h ->
+               KeyManagement.unwrap(
+                 algorithm,
+                 ek,
+                 RequestSeal.JOSEVectors.params(algorithm, h),
+                 {:rsa, private}
+               )
+             end
            }}
         end
       }
@@ -99,7 +106,7 @@ defmodule RequestSeal.JOSEOAEPErrorTest do
           )
 
         assert {:error, %{reason: :decryption_failed}} =
-                 RequestSeal.Custody.unwrap(handle, corrupt)
+                 unwrap_one(handle, corrupt)
 
         padding = Enum.join([h, Support.b64(corrupt), iv, ct, tag], ".")
 
@@ -115,6 +122,14 @@ defmodule RequestSeal.JOSEOAEPErrorTest do
       end
 
       assert :ok = RequestSeal.Custody.Local.release(handle)
+    end
+  end
+
+  defp unwrap_one(handle, encrypted, opts \\ []) do
+    case RequestSeal.Custody.unwrap(handle, [{encrypted, %{}, 256}], opts) do
+      {:ok, [{:ok, cek}]} -> {:ok, cek}
+      {:ok, [{:error, reason}]} -> {:error, RequestSeal.Custody.Error.new(reason)}
+      error -> error
     end
   end
 end

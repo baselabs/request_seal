@@ -420,8 +420,8 @@ class ToolchainTest(unittest.TestCase):
         for old, new in [
             ('Version.match?(System.version(), ">= 1.20.0")', 'true'),
             ('{:ash_onetime, "~> 1.9 and >= 1.9.2", optional: true}', '{:ash_onetime, "~> 1.9 and >= 1.9.2"}'),
-            ('{:ash_hooks, "~> 2.0 or ~> 3.0", optional: true}', '{:ash_hooks, "== 2.0.3", optional: true}'),
-            ('{:ash, "~> 3.37 and >= 3.37.2", optional: true}', '{:ash, "~> 3.37", optional: true}'),
+            ('{:ash_hooks, ">= 3.0.0 and < 4.0.0", optional: true}', '{:ash_hooks, "== 2.0.3", optional: true}'),
+            ('{:ash, ">= 3.37.4 and < 4.0.0", optional: true}', '{:ash, "~> 3.37", optional: true}'),
             ('] ++ test_dependencies ++ owned_integrations()', '] ++ test_dependencies'),
         ]:
             with self.subTest(old=old):
@@ -429,6 +429,19 @@ class ToolchainTest(unittest.TestCase):
                 self.assertIn(old, changed["mix.exs"])
                 changed["mix.exs"] = changed["mix.exs"].replace(old, new)
                 self.assertTrue(gate.toolchain_errors(changed))
+
+    def test_stable_locked_requirements_reject_old_ranges(self):
+        for name, version in {"telemetry": "1.4.2", "ash": "3.37.4", "plug": "1.20.3",
+                              "bandit": "1.14.1", "phoenix": "1.8.15", "stream_data": "1.4.0",
+                              "dialyxir": "1.4.8", "ash_hooks": "3.0.0"}.items():
+            with self.subTest(name=name):
+                sources = self.sources()
+                major = int(version.split(".")[0])
+                old = '{:' + name + ', ">= ' + version + ' and < ' + str(major + 1) + '.0.0"'
+                new = '{:' + name + ', "~> ' + version + '"'
+                self.assertIn(old, sources["mix.exs"])
+                sources["mix.exs"] = sources["mix.exs"].replace(old, new)
+                self.assertTrue(gate.toolchain_errors(sources), name)
 
     def test_ci_runs_optional_clients_on_floor(self):
         workflow = self.sources()[".github/workflows/ci.yml"]

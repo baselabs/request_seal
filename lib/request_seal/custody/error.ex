@@ -13,7 +13,7 @@ defmodule RequestSeal.Custody.Error do
   * `:invalid_key`, `:key_mismatch`: invalid material or incompatible binding.
   * `:invalid_data`, `:invalid_signature`, `:limit`: invalid or excessive bytes.
   * `:invalid_signing_output`: signing returned malformed or excessive output bytes.
-  * `:decryption_failed`: RSA-OAEP key unwrapping failed; no private diagnostics.
+  * `:decryption_failed`: key unwrapping failed; no private diagnostics.
   * `:no_public_key`: symmetric custody has no public export.
   * `:key_not_found`: the selected key was released, removed, or is unavailable.
   * `:deadline_exceeded`: the absolute operation deadline expired.

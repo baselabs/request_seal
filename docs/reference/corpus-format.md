@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-11-11 · Governed by: public architecture · Review when: corpus schema, surfaces, or publication changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-11-13 · Governed by: public architecture · Review when: corpus schema, surfaces, or publication changes -->
 
 # Conformance corpus format
 
@@ -79,6 +79,7 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `accept_signature.parse` | Raw field bytes, explicit target kind | Canonical `bytes` |
 | `digest.content` | Exact body bytes, selected algorithms and field kind | Canonical digest `bytes` |
 | `crypto.verify` | Algorithm, public source key, data and signature bytes | `valid` |
+| `key_management.aes_kw/v1` | `alg` (A128KW/A256KW), `kek` byte tag, `operation` (wrap/unwrap), and `key_data` or `wrapped` byte tag | `wrapped` or `key_data` byte tag |
 | `key.import` | Public material and format | `{"valid":true,"public":{"thumbprint":"<RFC 7638 thumbprint>"}}` |
 | `jws.sign`, `jws.verify`, `jwe.decrypt`, `nested.decrypt` | Compact bytes or protected occurrence pairs, keys and pinned policy | Exact compact bytes or verified/decrypted `payload` |
 | `web_bot_auth.verify` | Message, injected directory body, trusted origins, explicit clock and policy | Per-label canonical verification facts |
@@ -107,6 +108,22 @@ with `core/input.invalid_policy`; skew retains its existing integer range of
 Retention is the minimum present freshness end: expiration
 plus skew, or creation plus max-age plus skew plus one. Expiration is exclusive;
 max-age accepts its final second.
+
+## AES-KW source ledger
+
+The `key_management.aes_kw/v1` surface uses RFC 3394 sections 4.1 through 4.6.
+Sections 4.1, 4.3, 4.5, and 4.6 assert published wrap and unwrap bytes. Sections
+4.2 and 4.4 assert `jose/key.algorithm_mismatch` because their 192-bit KEKs
+cannot supply either supported algorithm's exact key width. Primitive key data
+may be 192 bits even though JWE content keys are only 128 or 256 bits.
+
+Each new source has `ledger.json` beside its published vectors. Every upstream
+item appears exactly once as `{"item":"<id>","case":"<case id>"}` or
+`{"item":"<id>","excluded":"<reason>"}`. Consumers reject missing or duplicate
+items, rows with neither or both dispositions, missing cases, and empty
+exclusions. RFC 3394's ledger points to each wrap case; its `-unwrap` companion
+asserts the inverse independently. Bytes retain the existing `b64` tag; no
+hexadecimal or numeric encoding is added to manifests.
 
 ## Batch manifests
 
@@ -141,7 +158,7 @@ executed = singles + asserted batch items.
 Wycheproof formats enumerate all groups and tests, preserving `tcId`, inputs and
 valid/invalid outcomes. The AES suite exercises the real JOSE GCM primitive through
 GCM key unwrapping with empty AAD, under the selected compact JWE restrictions.
-The selected key-wrap set is A128GCMKW/A256GCMKW; it excludes A192GCMKW,
+This decrypt-only AES-GCMKW surface selects A128GCMKW/A256GCMKW; it excludes A192GCMKW,
 which [RFC 7518 Section 4.7](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.7)
 also registers. The declared overrides reject 192-bit keys under that selection
 and IVs other than 96 bits or tags other than 128 bits under Section 4.7.1.

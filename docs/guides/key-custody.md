@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-13 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # Keep signing keys behind a handle
 
@@ -78,9 +78,9 @@ recipient_result.plaintext
 :ok = RequestSeal.Custody.Local.release(recipient_handle)
 ```
 
-The RSA private key stays in the sensitive local holder. The CEK passes through
-the sensitive custody runner and middle process to JWE's sensitive worker. Those
-four processes see the CEK; the outer JWE middle process and your decrypt caller
+The private key stays in the sensitive local holder. Each CEK passes directly
+to JWE's sensitive worker through an owner-created sink. The custody runner
+and middle process receive only the summary; your decrypt caller can
 receive only the authenticated result. A direct `Custody.unwrap/3` caller receives
 unwrapped bytes and owns their protection. On the BEAM, binaries are immutable:
 a CEK that crossed those processes cannot be zeroed and stays in their heaps
@@ -132,6 +132,15 @@ not raise the agent's limit.
 ## Errors
 
 `RequestSeal.Custody.Error` uses bounded reasons. `:key_not_found` means the holder or agent key is gone. `:key_mismatch` means the material cannot serve the selected algorithm. `:unsupported_format` includes PKCS #8 v2 containers. `:deadline_exceeded` stops the operation. Agent `:custodian_unavailable` can describe a retryable pre-send connection failure; post-send `:custodian_protocol` is nonretryable because the signing request may already have reached the agent. `:custodian_rejected` means the agent does not hold the trusted key; `:unsupported_algorithm` means no implementation for that selection. Only `:deadline_exceeded` and `:custodian_unavailable` are retryable. Verification proves mathematical validity, not identity attribution or authority.
+
+AES-KW handles grant a nonempty subset of `[:wrap, :unwrap]`; GCMKW and `dir`
+handles grant only `[:unwrap]`. `Custody.wrap/3` accepts a 128- or 256-bit CEK.
+`Custody.unwrap/3` accepts a list of `{encrypted_key, params, content_bits}` and
+returns results in that order. Params are `%{}` except GCMKW's decoded
+`%{iv: twelve_bytes, tag: sixteen_bytes}`. Per-item failures are closed
+`:decryption_failed` or `:deadline_exceeded` values, while handle and input
+validation retain bounded custody errors. Accepted items survive a later stall.
+`Custody.release/1` is idempotent; `:ok` confirms destruction.
 
 ## Long-lived owner
 

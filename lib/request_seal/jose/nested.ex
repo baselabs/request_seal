@@ -56,9 +56,9 @@ defmodule RequestSeal.JOSE.Nested do
       iex> {:ok, jws} = RequestSeal.JOSE.JWS.sign([{"alg", "EdDSA"}], ~s({"order":"A-1001","status":"shipped"}), handle)
       iex> kek = {:aes, :crypto.strong_rand_bytes(32)}
       iex> wrap = fn algorithm, cek -> RequestSeal.JOSE.KeyManagement.wrap(algorithm, cek, %{}, kek) end
-      iex> {:ok, jwe} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}, {"cty", "JWT"}], jws, wrap)
-      iex> unwrap = fn bytes, header -> RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", bytes, header, kek) end
-      iex> jwe_policy = %{algorithms: ["A256GCMKW"], encryption: ["A256GCM"], max_plaintext: 4_096, timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "A256GCMKW", unwrap: unwrap}} end}
+      iex> {:ok, jwe} = RequestSeal.JOSE.JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "JWT"}], jws, wrap)
+      iex> unwrap = fn bytes, _header -> RequestSeal.JOSE.KeyManagement.unwrap("A256KW", bytes, %{}, kek) end
+      iex> jwe_policy = %{algorithms: ["A256KW"], encryption: ["A256GCM"], max_plaintext: 4_096, timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "A256KW", unwrap: unwrap}} end}
       iex> jws_policy = %{algorithms: ["EdDSA"], timeout: 5_000, key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: key}} end}
       iex> {:ok, %{jws: inner}} = RequestSeal.JOSE.Nested.verify(jwe, jwe_policy, jws_policy, content_types: ["JWT"])
       iex> inner.payload

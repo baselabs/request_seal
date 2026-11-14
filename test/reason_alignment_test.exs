@@ -33,41 +33,64 @@ defmodule RequestSeal.ReasonAlignmentTest do
 
   test "unwrap keeps the corpus-pinned KEK size reason and decryption stays uniform" do
     alias RequestSeal.JOSE.{JWE, KeyManagement}
-    cek = :crypto.strong_rand_bytes(32)
-    kek = {:aes, :crypto.strong_rand_bytes(32)}
 
-    {:ok, %{encrypted_key: wrapped, header: header}} =
-      KeyManagement.wrap("A256GCMKW", cek, %{}, kek)
+    vector =
+      RequestSeal.JOSEVectors.fixture(
+        "5_7.key_wrap_using_aes-gcm_keywrap_with_aes-cbc-hmac-sha2.json"
+      )
+
+    cek = RequestSeal.JOSEVectors.b64(vector["generated"]["cek"])
+    kek = {:aes, RequestSeal.JOSEVectors.b64(vector["input"]["key"]["k"])}
+    wrapped = RequestSeal.JOSEVectors.b64(vector["encrypting_key"]["encrypted_key"])
+    header = vector["encrypting_content"]["protected"]
 
     short = {:aes, :crypto.strong_rand_bytes(16)}
 
     assert {:error, %{reason: :algorithm_mismatch}} =
-             KeyManagement.unwrap("A256GCMKW", wrapped, header, short)
+             KeyManagement.unwrap(
+               "A256GCMKW",
+               wrapped,
+               RequestSeal.JOSEVectors.params("A256GCMKW", header),
+               short
+             )
 
     for material <- [{:cek, cek}, {:rsa, :none}, :none] do
       assert {:error, %{reason: :decryption_failed}} =
-               KeyManagement.unwrap("A256GCMKW", wrapped, header, material)
+               KeyManagement.unwrap(
+                 "A256GCMKW",
+                 wrapped,
+                 RequestSeal.JOSEVectors.params("A256GCMKW", header),
+                 material
+               )
     end
 
     for material <- [short, {:cek, cek}, {:rsa, :none}, :none] do
-      assert {:error, %{reason: :algorithm_mismatch}} =
+      assert {:error, %{reason: :algorithm_not_permitted, layer: :input}} =
                KeyManagement.wrap("A256GCMKW", cek, %{}, material)
     end
 
-    wrap = fn alg, key -> KeyManagement.wrap(alg, key, %{}, kek) end
-    {:ok, token} = JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}], "reading", wrap)
+    {:ok, handle} = RequestSeal.Custody.Local.new({:jwe, "A256KW"}, kek)
+    on_exit(fn -> RequestSeal.Custody.release(handle) end)
+    {:ok, token} = JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], "reading", handle)
 
     policy = fn material ->
       %{
-        algorithms: ["A256GCMKW"],
+        algorithms: ["A256KW"],
         encryption: ["A256GCM"],
         max_plaintext: 1_024,
         timeout: 5_000,
         key_resolver: fn _ ->
           {:ok,
            %{
-             algorithm: "A256GCMKW",
-             unwrap: fn bytes, h -> KeyManagement.unwrap("A256GCMKW", bytes, h, material) end
+             algorithm: "A256KW",
+             unwrap: fn bytes, h ->
+               KeyManagement.unwrap(
+                 "A256KW",
+                 bytes,
+                 RequestSeal.JOSEVectors.params("A256KW", h),
+                 material
+               )
+             end
            }}
         end
       }

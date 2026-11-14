@@ -174,13 +174,13 @@ def toolchain_errors(sources):
         "mix.exs": ['elixir: "~> 1.18"', "unless Code.ensure_loaded?(:json) do",
             '{:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false}',
             '{:req, "~> 0.7.4", optional: true, runtime: false}',
-            '{:ash, "~> 3.37 and >= 3.37.2", optional: true}',
+            '{:ash, ">= 3.37.4 and < 4.0.0", optional: true}',
             '] ++ test_dependencies ++ owned_integrations()',
             'defp owned_integrations do\n'
             '    if Version.match?(System.version(), ">= 1.20.0") do\n'
             '      [\n'
             '        {:ash_onetime, "~> 1.9 and >= 1.9.2", optional: true},\n'
-            '        {:ash_hooks, "~> 2.0 or ~> 3.0", optional: true}\n'
+            '        {:ash_hooks, ">= 3.0.0 and < 4.0.0", optional: true}\n'
             '      ]\n'
             '    else\n'
             '      []\n'
@@ -206,6 +206,10 @@ def toolchain_errors(sources):
             "- if: matrix.lane == 'latest'\n        run: python3 scripts/check.py" + postgres_env,
         ],
     }
+    for name, version in {"telemetry": "1.4.2", "plug": "1.20.3", "bandit": "1.14.1",
+                          "phoenix": "1.8.15", "stream_data": "1.4.0", "dialyxir": "1.4.8"}.items():
+        next_major = int(version.split(".")[0]) + 1
+        required["mix.exs"].append('{:' + name + ', ">= ' + version + ' and < ' + str(next_major) + '.0.0"')
     for path, values in required.items():
         for value in values:
             if sources[path].count(value) != 1:

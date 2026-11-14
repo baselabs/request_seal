@@ -30,6 +30,7 @@ defmodule RequestSeal.Conformance do
       require!(Enum.sort(manifests) == Enum.sort(listed), :case_inventory)
 
       case_ids = MapSet.new(cases, & &1["id"])
+      verify_ledgers!(root, case_ids)
 
       Enum.each(cases, fn entry ->
         case_ = json(read_file(root, entry["manifest"]))
@@ -192,6 +193,35 @@ defmodule RequestSeal.Conformance do
 
     Enum.each(files, fn f ->
       require!(sha(read_file(root, f["path"])) == f["sha256"], {:file_digest, f["path"]})
+    end)
+  end
+
+  defp verify_ledgers!(root, case_ids) do
+    # New sources declare their complete upstream item set independently of cases.
+    rows = json(read_file(root, "sources/rfc3394/ledger.json"))
+    vectors = json(read_file(root, "sources/rfc3394/vectors.json"))
+    expected = Enum.map(vectors, & &1["item"])
+    require!(Enum.sort(expected) == ~w(4.1 4.2 4.3 4.4 4.5 4.6), :source_ledger)
+
+    require!(
+      is_list(rows) and Enum.sort(Enum.map(rows, & &1["item"])) == Enum.sort(expected),
+      :source_ledger
+    )
+
+    Enum.each(rows, fn row ->
+      case row do
+        %{"item" => item, "case" => id} when map_size(row) == 2 ->
+          require!(is_binary(item) and MapSet.member?(case_ids, id), :source_ledger)
+
+        %{"item" => item, "excluded" => reason} when map_size(row) == 2 ->
+          require!(
+            is_binary(item) and is_binary(reason) and String.trim(reason) != "",
+            :source_ledger
+          )
+
+        _ ->
+          require!(false, :source_ledger)
+      end
     end)
   end
 

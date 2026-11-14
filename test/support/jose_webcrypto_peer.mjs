@@ -28,6 +28,10 @@ async function encrypt(alg,enc,key,plaintext) {
   const cek = alg==='dir' ? dec(key.k) : randomBytes(enc==='A128GCM'?16:32);
   const iv=randomBytes(12); const h={alg,enc}; let ek=Buffer.alloc(0);
   if (alg.startsWith('RSA')) ek=Buffer.from(await subtle.encrypt(oaepSpec(alg),await importKey(key,oaepSpec(alg),'encrypt'),cek));
+  if (alg === 'A128KW' || alg === 'A256KW') {
+    const contentKey = await subtle.importKey('raw',cek,{name:'AES-GCM'},true,['encrypt']);
+    ek=Buffer.from(await subtle.wrapKey('raw',contentKey,await importKey(key,{name:'AES-KW'},'wrapKey'),'AES-KW'));
+  }
   if (alg.endsWith('GCMKW')) {
     const wiv=randomBytes(12);
     const kek=await importKey(key,{name:'AES-GCM'},'encrypt');
@@ -45,6 +49,10 @@ async function decrypt(alg,enc,key,compact) {
   let cek;
   if(alg==='dir')cek=dec(key.k);
   else if(alg.startsWith('RSA'))cek=await subtle.decrypt(oaepSpec(alg),await importKey(key,oaepSpec(alg),'decrypt'),dec(ek));
+  else if(alg==='A128KW'||alg==='A256KW') {
+    const contentKey=await subtle.unwrapKey('raw',dec(ek),await importKey(key,{name:'AES-KW'},'unwrapKey'),'AES-KW',{name:'AES-GCM'},true,['decrypt']);
+    cek=await subtle.exportKey('raw',contentKey);
+  }
   else cek=await subtle.decrypt({name:'AES-GCM',iv:dec(h.iv),tagLength:128},await importKey(key,{name:'AES-GCM'},'decrypt'),Buffer.concat([dec(ek),dec(h.tag)]));
   const k=await subtle.importKey('raw',cek,{name:'AES-GCM'},false,['decrypt']);
   return b64(await subtle.decrypt({name:'AES-GCM',iv:dec(iv),additionalData:utf8(p),tagLength:128},k,Buffer.concat([dec(ct),dec(tag)])));

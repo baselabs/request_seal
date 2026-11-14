@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
+<!-- Status: current · Kind: reference · Updated: 2026-11-13 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
 
 # Domain glossary
 
@@ -14,7 +14,7 @@
 | Identity attribution | Verified association between the signing key and a claimed agent/domain/issuer. |
 | Authentication | Successful cryptography plus all required profile, trust, integrity, time and replay rules. |
 | Authorization | The caller's decision about what the authenticated party may do. |
-| Custodian | Owner of signing, secret-bearing verification, or key-unwrapping capability; an opaque handle may invoke a remote HSM/KMS without exposing its key. |
+| Custodian | Owner of signing, secret-bearing verification, key-wrapping, or key-unwrapping capability; an opaque handle may invoke a remote HSM/KMS without exposing its key. |
 | Key handle | An opaque, algorithm-bound reference to a key held by a custodian; private key bytes never leave the custodian. |
 | Signing spec | The label, algorithm, covered components, lifetime, and optional parameters of a signature to create (`t:RequestSeal.signing_spec/0`). |
 | Policy | The verifier's explicit acceptance choices: algorithms, required components, key resolver, freshness, body integrity, and replay (`RequestSeal.Policy`). |

@@ -27,8 +27,8 @@ plaintext =
 true = plaintext == v["plaintext"]
 
 {:error, %RequestSeal.JOSE.Error{reason: :entropy_failure}} =
-  RequestSeal.JOSE.JWE.encrypt([{"alg", "dir"}, {"enc", "A128GCM"}], "", fn _, cek ->
-    RequestSeal.JOSE.KeyManagement.wrap("dir", cek, %{}, {:cek, cek})
+  RequestSeal.JOSE.JWE.encrypt([{"alg", "A256KW"}, {"enc", "A128GCM"}], "", fn _, cek ->
+    RequestSeal.JOSE.KeyManagement.wrap("A256KW", cek, %{}, {:aes, <<0::256>>})
   end)
 
 direct =
@@ -45,8 +45,8 @@ policy = %{
     {:ok,
      %{
        algorithm: "dir",
-       unwrap: fn bytes, h ->
-         RequestSeal.JOSE.KeyManagement.unwrap("dir", bytes, h, {:cek, key})
+       unwrap: fn bytes, _h ->
+         RequestSeal.JOSE.KeyManagement.unwrap("dir", bytes, %{}, {:cek, key})
        end
      }}
   end

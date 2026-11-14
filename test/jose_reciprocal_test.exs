@@ -53,7 +53,13 @@ defmodule RequestSeal.JOSEReciprocalTest do
         max_plaintext: 1_048_576,
         timeout: 5000,
         key_resolver: fn _ ->
-          {:ok, %{algorithm: alg, unwrap: fn ek, h -> KeyManagement.unwrap(alg, ek, h, desc) end}}
+          {:ok,
+           %{
+             algorithm: alg,
+             unwrap: fn ek, h ->
+               KeyManagement.unwrap(alg, ek, RequestSeal.JOSEVectors.params(alg, h), desc)
+             end
+           }}
         end
       }
 
@@ -112,48 +118,35 @@ defmodule RequestSeal.JOSEReciprocalTest do
       end
 
       plaintext = :crypto.strong_rand_bytes(length)
+      encrypt_alg = Enum.at(~w(RSA-OAEP-256 RSA-OAEP A128KW A256KW), rem(round, 4))
 
       {recipient, recipient_key} =
-        if alg in ~w(RSA-OAEP RSA-OAEP-256) do
+        if encrypt_alg in ~w(RSA-OAEP RSA-OAEP-256) do
           {:rsa, k} = desc = rsa_key()
           {:ok, pub} = RequestSeal.PublicKey.import({:rsa, elem(k, 2), elem(k, 3)}, :raw)
           {pub, private_jwk(desc)}
         else
-          owner = self()
-          k = :crypto.strong_rand_bytes(if alg == "A128GCMKW", do: 16, else: 32)
-
-          recipient = fn a, cek ->
-            if a == "dir" do
-              send(owner, {:direct_key, cek})
-              KeyManagement.wrap(a, cek, %{}, {:cek, cek})
-            else
-              KeyManagement.wrap(a, cek, %{}, {:aes, k})
-            end
-          end
-
-          {recipient, %{"kty" => "oct", "k" => enc(k)}}
+          k = :crypto.strong_rand_bytes(if encrypt_alg == "A128KW", do: 16, else: 32)
+          {:ok, handle} = RequestSeal.Custody.Local.new({:jwe, encrypt_alg}, {:aes, k})
+          {handle, %{"kty" => "oct", "k" => enc(k)}}
         end
 
-      assert {:ok, compact} =
-               JWE.encrypt([{"alg", alg}, {"enc", enc}], plaintext, recipient, timeout: 5000)
+      try do
+        assert {:ok, compact} =
+                 JWE.encrypt([{"alg", encrypt_alg}, {"enc", enc}], plaintext, recipient,
+                   timeout: 5000
+                 )
 
-      recipient_key =
-        if alg == "dir",
-          do:
-            (receive do
-               {:direct_key, k} -> %{"kty" => "oct", "k" => enc(k)}
-             after
-               1000 -> flunk("direct custody provisioning failed")
-             end),
-          else: recipient_key
-
-      assert peer(%{
-               operation: "decrypt",
-               algorithm: alg,
-               encryption: enc,
-               key: recipient_key,
-               compact: compact
-             })["plaintext"] == enc(plaintext)
+        assert peer(%{
+                 operation: "decrypt",
+                 algorithm: encrypt_alg,
+                 encryption: enc,
+                 key: recipient_key,
+                 compact: compact
+               })["plaintext"] == enc(plaintext)
+      after
+        if match?(%RequestSeal.KeyHandle{}, recipient), do: RequestSeal.Custody.release(recipient)
+      end
     end
 
     IO.puts("RECIPROCAL TOOL 32 Node-to-Elixir and 32 Elixir-to-Node rounds passed")
@@ -217,7 +210,7 @@ defmodule RequestSeal.JOSEReciprocalTest do
 
       assert code == 0, out
 
-      assert RequestSeal.Custody.unwrap(unwrap_handle, File.read!(Path.join(dir, "wrapped"))) ==
+      assert unwrap_one(unwrap_handle, File.read!(Path.join(dir, "wrapped"))) ==
                {:ok, cek}
 
       assert KeyManagement.unwrap(
@@ -277,7 +270,7 @@ defmodule RequestSeal.JOSEReciprocalTest do
       assert code == 0, out
 
       assert {:error, %{reason: :decryption_failed}} =
-               RequestSeal.Custody.unwrap(unwrap_handle, File.read!(Path.join(dir, "wrapped")))
+               unwrap_one(unwrap_handle, File.read!(Path.join(dir, "wrapped")))
 
       assert {:error, %{reason: :decryption_failed}} =
                KeyManagement.unwrap(
@@ -317,5 +310,13 @@ defmodule RequestSeal.JOSEReciprocalTest do
              key: %{kty: "oct", k: Base.url_encode64(key, padding: false)},
              compact: compact
            }) == %{"valid" => true}
+  end
+
+  defp unwrap_one(handle, encrypted, opts \\ []) do
+    case RequestSeal.Custody.unwrap(handle, [{encrypted, %{}, 256}], opts) do
+      {:ok, [{:ok, cek}]} -> {:ok, cek}
+      {:ok, [{:error, reason}]} -> {:error, RequestSeal.Custody.Error.new(reason)}
+      error -> error
+    end
   end
 end

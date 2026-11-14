@@ -5,14 +5,17 @@ defmodule RequestSeal.Custody.Local do
   `new/3` builds a handle from OTP key material and `import/4` from one private
   PEM, PKCS #8 DER, or private JWK. All six HTTP algorithms and the eight
   explicit JWS extensions in `RequestSeal.Crypto` are supported for signing, and
-  `{:jwe, "RSA-OAEP"}` or `{:jwe, "RSA-OAEP-256"}` for unwrap-only custody. Each
+  RSA-OAEP, AES-KW, AES-GCMKW, and `dir` JWE custody. AES-KW handles grant
+  `:wrap` and/or `:unwrap`; GCMKW, `dir`, and RSA handles grant `:unwrap` only. Each
   handle binds exactly one algorithm; an unwrap handle cannot sign or verify.
   Construction derives a public key and performs an actual sign/verify
-  before returning a signing handle. Unwrap construction validates RSA CRT components
-  and performs an actual OAEP wrap/unwrap. Only `equivalence: nonsecret_binary` is accepted, and
+  before returning a signing handle. RSA-OAEP construction validates CRT
+  components and performs an actual OAEP wrap/unwrap; AES-KW construction
+  performs a real wrap/unwrap. Decrypt-only symmetric handles validate key widths. Only `equivalence: nonsecret_binary` is accepted, and
   only for HMAC (1–256 bytes). Absent HMAC equivalence remains `:unknown`; no value
   is derived from the secret. HMAC verification stays inside the custodian.
-  No private key export, global store, server, or telemetry is provided.
+  No private key export, global store, or server is provided. The custody facade
+  emits bounded wrap and unwrap telemetry without key identity.
 
   Each successful construction starts one unsupervised holder process. It marks
   itself sensitive before receiving key material; the handle references only its
@@ -49,9 +52,9 @@ defmodule RequestSeal.Custody.Local do
       RequestSeal.JOSE.JWE.decrypt(compact, policy)
 
   The resolver's work and the holder request share the JWE deadline. Private RSA
-  material stays in the holder. The CEK passes through the sensitive custody
-  runner and middle process to JWE's sensitive worker for authenticated content
-  decryption. OAEP padding and GCM tag failures return the same complete
+  material stays in the holder. Each CEK is delivered straight to JWE's
+  sensitive worker through its owner-created sink; the custody runner and
+  middle process receive only a summary. OAEP padding and GCM tag failures return the same complete
   `RequestSeal.JOSE.Error`. A released or unavailable handle produces that same
   error as a forged message, by design; use
   `RequestSeal.Custody.public_key(handle)` as a startup health check to expose
@@ -61,7 +64,7 @@ defmodule RequestSeal.Custody.Local do
   @behaviour RequestSeal.Custody
   alias RequestSeal.{Crypto, KeyHandle, KeyIdentity, PublicKey}
   alias RequestSeal.Crypto.Algorithm
-  alias RequestSeal.Custody.Support
+  alias RequestSeal.Custody.{Context, Sink, Support}
   import Support, only: [fail: 1, ensure: 2, unwrap: 1]
   @rsa {1, 2, 840, 113_549, 1, 1, 1}
   @pss {1, 2, 840, 113_549, 1, 1, 10}
@@ -70,29 +73,37 @@ defmodule RequestSeal.Custody.Local do
   @max_bytes_ceiling Crypto.max_bytes_ceiling()
 
   @doc """
-  Construct an algorithm-bound signing or RSA-OAEP unwrap capability from OTP material.
+  Construct an algorithm-bound signing or key-management capability from OTP material.
 
-  Construction validates the material, derives its public key (none for HMAC),
-  performs an actual sign/verify (or OAEP wrap/unwrap) round trip, and then starts
-  one holder process owned by the caller. Release the handle with `release/1`.
+  Construction validates material and derives its public key (none for symmetric
+  material). Signing, OAEP, and AES-KW perform actual round trips; decrypt-only
+  symmetric families validate their exact key widths. It then starts one holder
+  process owned by the caller. Release the handle with `release/1`.
 
   ## Parameters
 
     * `algorithm` - an HTTP identifier from `RequestSeal.Crypto.algorithms/0`,
       `{:jws, name}` for a JWS extension listed in `RequestSeal.Crypto`, or
-      `{:jwe, "RSA-OAEP"}` / `{:jwe, "RSA-OAEP-256"}` for unwrap-only custody.
+      `{:jwe, name}` for RSA-OAEP, RSA-OAEP-256, A128KW, A256KW,
+      A128GCMKW, A256GCMKW, or dir.
     * `material` - an operation-local OTP descriptor that fits `algorithm`:
       * `{:rsa, otp_private_key}` - a two-prime `:RSAPrivateKey` record with a
         2048–8192-bit modulus and consistent CRT components; RSA signing
-        algorithms and both JWE algorithms.
+        algorithms and both OAEP algorithms.
       * `{:ec, "P-256" | "P-384", scalar_bytes}` - a 32- or 48-byte scalar on the
         algorithm's curve.
       * `{:ed25519, seed_bytes}` - a 32-byte seed.
       * `{:hmac, secret_bytes}` - a 32–16,384-byte secret.
+      * `{:aes, kek}` - exactly 16 bytes for A128KW/A128GCMKW or 32 for
+        A256KW/A256GCMKW.
+      * `{:cek, key}` - exactly 16 or 32 bytes for `dir`.
     * `opts` - keyword list; see Options.
 
   ## Options
 
+    * `:capabilities` - for JWE only, a nonempty unique subset of the family's
+      capabilities. AES-KW defaults to `[:wrap, :unwrap]`; other JWE families
+      default to `[:unwrap]` and refuse `:wrap`.
     * `:equivalence` - a nonsecret binary of 1–256 bytes, accepted only for HMAC
       algorithms; it becomes the handle's `:symmetric` `RequestSeal.KeyIdentity`.
       When absent, an HMAC handle's identity is `:unknown`. No default.
@@ -100,10 +111,12 @@ defmodule RequestSeal.Custody.Local do
   ## Returns
 
     * `{:ok, %RequestSeal.KeyHandle{}}` - capabilities `[:sign, :verify]` for a
-      signing algorithm, `[:unwrap]` for a JWE algorithm.
+      signing algorithm, `[:wrap, :unwrap]` (or the selected subset) for AES-KW,
+      `[:unwrap]` for other JWE algorithms.
     * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
       `:unsupported_algorithm`, `:invalid_options` (an option other than a single
-      `:equivalence`, or `:equivalence` on a non-HMAC algorithm or outside
+      `:equivalence`/`:capabilities`, invalid capabilities, or `:equivalence`
+      on a non-HMAC algorithm or outside
       1–256 bytes), `:invalid_key` (malformed, out-of-range, or inconsistent
       material), and `:key_mismatch` (material of a type or curve that does not
       fit `algorithm`). Holder startup can also return `:custodian_failure` or
@@ -172,10 +185,13 @@ defmodule RequestSeal.Custody.Local do
   signing operations reject. Public metadata retains these restrictions, and the
   handle's capabilities are limited to the permitted operations: `[:unwrap]` for
   OAEP, `[:sign, :verify]` when `key_ops` is absent or includes `"verify"`, and
-  `[:sign]` otherwise.
+  `[:sign]` otherwise. Symmetric JWE `oct` imports use the AES or direct
+  descriptor from `new/3`. AES-KW grants only operations allowed by `key_ops`;
+  GCMKW and `dir` require a decrypt/unwrap operation and grant only `:unwrap`.
 
   ## Options
 
+    * `:capabilities` - as in `new/3`, additionally narrowed by JWK `key_ops`.
     * `:equivalence` - as in `new/3`: a nonsecret binary of 1–256 bytes, accepted
       only for HMAC algorithms. No default.
 
@@ -231,7 +247,23 @@ defmodule RequestSeal.Custody.Local do
 
   defp construct(algorithm, material, opts, type, expected, capabilities) do
     {jose, family, _} = selection(algorithm)
-    Support.options(opts, [:equivalence])
+
+    allowed =
+      if match?({:jwe, _}, algorithm), do: [:equivalence, :capabilities], else: [:equivalence]
+
+    Support.options(opts, allowed)
+
+    if Keyword.has_key?(opts, :capabilities) do
+      selected = Keyword.fetch!(opts, :capabilities)
+
+      ensure(
+        is_list(selected) and selected != [] and Enum.uniq(selected) == selected and
+          Enum.all?(selected, &(&1 in capabilities)),
+        :invalid_options
+      )
+    end
+
+    capabilities = Keyword.get(opts, :capabilities, capabilities)
     equivalence = Keyword.get(opts, :equivalence)
 
     if Keyword.has_key?(opts, :equivalence) do
@@ -244,7 +276,12 @@ defmodule RequestSeal.Custody.Local do
     ensure(type != :rsa_pss or jose in ~w(PS256 PS384 PS512), :key_mismatch)
     public = derive(material, type)
     expected_material = if is_struct(expected, PublicKey), do: expected.material, else: expected
-    ensure(expected_material == nil or public.material == expected_material, :invalid_key)
+
+    ensure(
+      expected_material == nil or (public != nil and public.material == expected_material),
+      :invalid_key
+    )
+
     validate_operation(algorithm, material, public)
     public = if is_struct(expected, PublicKey), do: PublicKey.validate!(expected), else: public
 
@@ -272,12 +309,21 @@ defmodule RequestSeal.Custody.Local do
   defp selection({:jwe, jose}) when jose in ["RSA-OAEP", "RSA-OAEP-256"],
     do: {jose, :rsa, [:unwrap]}
 
+  defp selection({:jwe, jose}) when jose in ["A128KW", "A256KW"],
+    do: {jose, :aes, [:wrap, :unwrap]}
+
+  defp selection({:jwe, jose}) when jose in ["A128GCMKW", "A256GCMKW"],
+    do: {jose, :aes, [:unwrap]}
+
+  defp selection({:jwe, "dir"}), do: {"dir", :cek, [:unwrap]}
+
   defp selection(algorithm) do
     {jose, {family, _, _, _}} = Algorithm.resolve(algorithm)
     {jose, family, [:sign, :verify]}
   end
 
-  defp validate_operation({:jwe, alg}, material, public) do
+  defp validate_operation({:jwe, alg}, material, public)
+       when alg in ["RSA-OAEP", "RSA-OAEP-256"] do
     ensure(match?({:rsa, _}, material), :key_mismatch)
     {:rsa, private} = material
     Crypto.validate_rsa_private!(private)
@@ -294,13 +340,35 @@ defmodule RequestSeal.Custody.Local do
     ensure(:crypto.hash_equals(cek, recovered), :invalid_key)
   end
 
+  defp validate_operation({:jwe, alg}, {:aes, kek}, _)
+       when alg in ~w(A128KW A256KW A128GCMKW A256GCMKW) do
+    width = if alg in ~w(A128KW A128GCMKW), do: 16, else: 32
+    ensure(is_binary(kek) and byte_size(kek) == width, :invalid_key)
+
+    if alg in ~w(A128KW A256KW) do
+      cek = :crypto.strong_rand_bytes(32)
+      wrapped = RequestSeal.JOSE.KeyManagement.wrap(alg, cek, %{}, {:aes, kek}) |> unwrap()
+
+      recovered =
+        RequestSeal.JOSE.KeyManagement.unwrap(alg, wrapped.encrypted_key, %{}, {:aes, kek})
+        |> unwrap()
+
+      ensure(:crypto.hash_equals(cek, recovered), :invalid_key)
+    end
+  end
+
+  defp validate_operation({:jwe, "dir"}, {:cek, key}, _),
+    do: ensure(is_binary(key) and byte_size(key) in [16, 32], :invalid_key)
+
+  defp validate_operation({:jwe, _}, _, _), do: fail(:key_mismatch)
+
   defp validate_operation(algorithm, material, public) do
     signature = Crypto.sign(algorithm, "", material) |> unwrap()
     Crypto.verify(algorithm, "", signature, public || material) |> unwrap()
   end
 
   @doc """
-  Stop a local holder and discard its key material. Releasing it again returns `:ok`.
+  Stop a local holder and confirm destruction. Releasing it again returns `:ok`.
 
   Waits up to 5,000 ms for the holder to exit. Later operations on the handle
   return `:key_not_found`.
@@ -335,23 +403,29 @@ defmodule RequestSeal.Custody.Local do
       fn ->
         ensure(match?(%KeyHandle{custodian: __MODULE__}, handle), :invalid_handle)
         ensure(map_size(handle) == 5 and is_function(handle.ref, 0), :invalid_handle)
-        {pid, token} = address(handle.ref)
-        monitor = Process.monitor(pid)
-        send(pid, {:release, token})
-
-        try do
-          receive do
-            {:DOWN, ^monitor, :process, ^pid, _} -> :ok
-          after
-            5_000 -> {:error, :deadline_exceeded}
-          end
-          |> Support.unwrap()
-        after
-          Process.demonitor(monitor, [:flush])
-        end
+        release(handle.ref, default_context()) |> Support.unwrap()
       end,
       :invalid_handle
     )
+  end
+
+  @doc false
+  @impl true
+  def release(ref, context) do
+    {pid, token} = address(ref)
+    monitor = Process.monitor(pid)
+
+    try do
+      send(pid, {:release, token})
+
+      receive do
+        {:DOWN, ^monitor, :process, ^pid, _} -> :ok
+      after
+        max(Context.remaining(context), 0) -> {:error, :deadline_exceeded}
+      end
+    after
+      Process.demonitor(monitor, [:flush])
+    end
   end
 
   @impl true
@@ -369,8 +443,13 @@ defmodule RequestSeal.Custody.Local do
   def verify(_, _, _, _, _), do: {:error, :invalid_data}
 
   @impl true
-  def unwrap(ref, algorithm, bytes, context),
-    do: request(ref, {:unwrap, algorithm, bytes}, context)
+  @doc false
+  def unwrap(ref, algorithm, items, sink, context),
+    do: request(ref, {:unwrap, algorithm, items, sink}, context)
+
+  @impl true
+  @doc false
+  def wrap(ref, algorithm, cek, context), do: request(ref, {:wrap, algorithm, cek}, context)
 
   @impl true
   def public_key(ref), do: request(ref, :public_key, default_context())
@@ -408,7 +487,7 @@ defmodule RequestSeal.Custody.Local do
         {^reply, result} -> result
         {:DOWN, ^monitor, :process, ^pid, _} -> {:error, :key_not_found}
       after
-        RequestSeal.Custody.Context.remaining(context) -> {:error, :deadline_exceeded}
+        max(Context.remaining(context), 0) -> {:error, :deadline_exceeded}
       end
     after
       :erlang.unalias(reply)
@@ -490,7 +569,11 @@ defmodule RequestSeal.Custody.Local do
         # automatically revoked when the custody worker is killed.
         if valid_token?(candidate, token) and Process.alive?(owner) and Process.alive?(runner) and
              Process.alive?(context.owner) and RequestSeal.Custody.Context.remaining(context) > 0 do
-          result = Support.safe(fn -> holder_operation(operation, state) end, :custodian_failure)
+          result =
+            Support.safe(
+              fn -> holder_operation(operation, state, context) end,
+              :custodian_failure
+            )
 
           if RequestSeal.Custody.Context.remaining(context) > 0,
             do: send(reply, {reply, result})
@@ -516,6 +599,36 @@ defmodule RequestSeal.Custody.Local do
 
   defp valid_token?(_, _), do: false
 
+  defp holder_operation(
+         {:unwrap, algorithm, items, sink},
+         {bound, material, _, _, capabilities},
+         context
+       ) do
+    ensure(algorithm == bound, :key_mismatch)
+    ensure(:unwrap in capabilities, :unsupported_operation)
+    {:jwe, alg} = bound
+
+    Enum.reduce_while(items, :ok, fn {index, encrypted, params, bits}, :ok ->
+      if Context.remaining(context) > 0 do
+        outcome =
+          case RequestSeal.JOSE.KeyManagement.unwrap(alg, encrypted, params, material) do
+            {:ok, cek} when bits in [128, 256] and is_binary(cek) and bit_size(cek) == bits ->
+              {:ok, cek}
+
+            _ ->
+              :error
+          end
+
+        Sink.deliver(sink, index, outcome)
+        {:cont, :ok}
+      else
+        {:halt, {:error, :deadline_exceeded}}
+      end
+    end)
+  end
+
+  defp holder_operation(operation, state, _context), do: holder_operation(operation, state)
+
   defp holder_operation({:sign, algorithm, bytes}, {bound, material, _, _, capabilities}) do
     ensure(algorithm == bound, :key_mismatch)
     ensure(:sign in capabilities, :unsupported_operation)
@@ -538,11 +651,15 @@ defmodule RequestSeal.Custody.Local do
   defp holder_operation(:public_key, {_, _, public, _, _}), do: {:ok, public}
   defp holder_operation(:identity, {_, _, _, identity, _}), do: identity
 
-  defp holder_operation({:unwrap, algorithm, bytes}, {bound, material, _, _, capabilities}) do
+  defp holder_operation({:wrap, algorithm, cek}, {bound, material, _, _, capabilities}) do
     ensure(algorithm == bound, :key_mismatch)
-    ensure(:unwrap in capabilities, :unsupported_operation)
+    ensure(:wrap in capabilities, :unsupported_operation)
     {:jwe, alg} = bound
-    RequestSeal.JOSE.KeyManagement.unwrap(alg, bytes, %{}, material)
+
+    case RequestSeal.JOSE.KeyManagement.wrap(alg, cek, %{}, material) do
+      {:ok, %{encrypted_key: encrypted}} -> {:ok, %{encrypted_key: encrypted, params: %{}}}
+      _ -> {:error, :custodian_failure}
+    end
   end
 
   defp derive({:rsa, {:RSAPrivateKey, _, n, e, _, _, _, _, _, _, _}}, type),
@@ -561,6 +678,8 @@ defmodule RequestSeal.Custody.Local do
   end
 
   defp derive({:hmac, _}, _), do: nil
+  defp derive({:aes, _}, _), do: nil
+  defp derive({:cek, _}, _), do: nil
   defp derive(_, _), do: fail(:invalid_key)
 
   defp decode(value, :pem, jose) do
@@ -599,10 +718,17 @@ defmodule RequestSeal.Custody.Local do
     for key <- ~w(alg use key_ops),
         do: ensure(not Map.has_key?(value, key) or value[key] != nil, :invalid_key)
 
-    encryption = jose in ["RSA-OAEP", "RSA-OAEP-256"]
+    encryption = jose in ~w(RSA-OAEP RSA-OAEP-256 A128KW A256KW A128GCMKW A256GCMKW dir)
     use = if encryption, do: "enc", else: "sig"
     allowed_ops = if encryption, do: ~w(encrypt decrypt wrapKey unwrapKey), else: ~w(sign verify)
-    required_ops = if encryption, do: ~w(decrypt unwrapKey), else: ~w(sign)
+
+    required_ops =
+      cond do
+        jose in ~w(A128KW A256KW) -> ~w(encrypt decrypt wrapKey unwrapKey)
+        encryption -> ~w(decrypt unwrapKey)
+        true -> ~w(sign)
+      end
+
     ensure(value["alg"] in [nil, jose] and value["use"] in [nil, use], :key_mismatch)
     ops = value["key_ops"]
 
@@ -617,9 +743,26 @@ defmodule RequestSeal.Custody.Local do
 
     capabilities =
       cond do
-        encryption -> [:unwrap]
-        ops == nil or "verify" in ops -> [:sign, :verify]
-        true -> [:sign]
+        jose in ~w(A128KW A256KW) ->
+          Enum.filter([:wrap, :unwrap], fn capability ->
+            ops == nil or
+              Enum.any?(
+                ops,
+                &(&1 in if(capability == :wrap,
+                    do: ~w(encrypt wrapKey),
+                    else: ~w(decrypt unwrapKey)
+                  ))
+              )
+          end)
+
+        encryption ->
+          [:unwrap]
+
+        ops == nil or "verify" in ops ->
+          [:sign, :verify]
+
+        true ->
+          [:sign]
       end
 
     {material, expected} =
@@ -658,7 +801,14 @@ defmodule RequestSeal.Custody.Local do
           {{:ed25519, b64(d)}, {:ed25519, b64(x)}}
 
         %{"kty" => "oct", "k" => k} ->
-          {{:hmac, b64(k)}, nil}
+          kind =
+            cond do
+              jose == "dir" -> :cek
+              jose in ~w(A128KW A256KW A128GCMKW A256GCMKW) -> :aes
+              true -> :hmac
+            end
+
+          {{kind, b64(k)}, nil}
 
         _ ->
           fail(:invalid_key)
@@ -681,7 +831,10 @@ defmodule RequestSeal.Custody.Local do
 
   defp decode(_, _, _), do: fail(:unsupported_format)
 
-  defp capabilities(jose) when jose in ["RSA-OAEP", "RSA-OAEP-256"], do: [:unwrap]
+  defp capabilities(jose) when jose in ~w(RSA-OAEP RSA-OAEP-256 A128GCMKW A256GCMKW dir),
+    do: [:unwrap]
+
+  defp capabilities(jose) when jose in ~w(A128KW A256KW), do: [:wrap, :unwrap]
   defp capabilities(_), do: [:sign, :verify]
 
   defp canonical(type, der) do

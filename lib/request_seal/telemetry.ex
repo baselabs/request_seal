@@ -20,6 +20,9 @@ defmodule RequestSeal.Telemetry do
   | `[:request_seal, :replay, :claim]` | the required-replay commit shared by every profile | `:outcome` (`:claimed`, `:already_claimed`, or `:error`), `:reason` (atom or nil) |
   | `[:request_seal, :custody, :sign, :stop]` | the shared custody signing path of both `RequestSeal.sign/4` forms | `:outcome` (`:ok` or `:error`), `:reason` (a bounded `RequestSeal.Custody.Error` reason atom or nil) |
 
+  | `[:request_seal, :custody, :wrap]` | `RequestSeal.Custody.wrap/3` | `:outcome` (`:ok` or `:failed`) only |
+  | `[:request_seal, :custody, :unwrap]` | `RequestSeal.Custody.unwrap/3` | empty; no per-item outcome |
+
   A rejected verification reports its bounded `reason` and `layer` exactly as
   returned to the caller; `:limit` makes resource exhaustion observable. An
   `:internal` reason marks an unexpected internal
@@ -46,11 +49,13 @@ defmodule RequestSeal.Telemetry do
     [:request_seal, :verify, :stop],
     [:request_seal, :web_bot_auth, :verify, :stop],
     [:request_seal, :replay, :claim],
-    [:request_seal, :custody, :sign, :stop]
+    [:request_seal, :custody, :sign, :stop],
+    [:request_seal, :custody, :wrap],
+    [:request_seal, :custody, :unwrap]
   ]
 
   @doc """
-  The v1 event names, as documented above.
+  The event names, including AES-KW wrap and indexed unwrap, documented above.
   """
   @spec events() :: [list(atom())]
   def events, do: @events

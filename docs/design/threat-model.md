@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: design · Updated: 2026-11-11 · Governed by: public architecture · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
+<!-- Status: current · Kind: design · Updated: 2026-11-13 · Governed by: public architecture · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
 
 # RequestSeal threat model
 
@@ -34,7 +34,7 @@ The caller controls accepted profiles, trusted origins/proxies, trust anchors, d
 | Replay race or poisoning | Validate signature/profile/linked objects before invoking the caller commitment function or atomic store. Bind the selected verified nonce, challenge, or transaction identifier to caller-defined scope; reject ambiguous required inputs and required callback/store failures. | Real concurrent backend race; same identifier through direct and every adapter constructor; caller-scope checks; callback error/cancellation; unauthenticated poison attempt. |
 | Discovery SSRF | Caller-controlled allowlist; HTTPS; no automatic redirects; DNS/IP revalidation; private/link-local/loopback denial; response/decompression/key-count/time bounds. | Real controlled network probes for IPv4/IPv6, redirect, rebinding, oversized response, cancellation. |
 | Stale/removed key acceptance | Source-bound cache expiry, fetched-at metadata, refresh semantics, explicit removed-key behavior, no stale resurrection. | Actual rotation/removal against the named discovery adapter. |
-| Key exfiltration | Opaque handle; signing and key-unwrapping custody boundaries; public-only serialization; redaction; no secret fields in inspection. | Real local and remote signer error pathways plus log/telemetry scan. |
+| Key exfiltration | Opaque handle; signing, key-wrapping, and key-unwrapping custody boundaries; public-only serialization; redaction; no secret fields in inspection. | Real local and remote signer error pathways plus log/telemetry scan. |
 | Forwarded-header spoofing | Explicit trusted-proxy policy and authoritative external origin; retain ingress and reconstructed facts. | Actual proxy route with trusted and untrusted hops. |
 | Cross-origin relay | `@authority` coverage binds a signature to its origin, so the verifier's origin must come from its own configuration: a declared origin, or a connection origin only where the application answers for its own authorities alone (RFC 9421 Section 7.4.3). `origin: :connection` takes the authority from the sender's Host line. | A request signed for another authority sent to a server answering for any host. |
 | Retry/redirect reuse | Req re-signs each final attempt and requires cross-origin policy; selected nonce/time parameters regenerate. Finch signs each explicit caller invocation; callers own its retry/redirect loop. Responses bind to the supplied request. | Actual redirect/retry flows, including cross-origin denial. |

@@ -3,30 +3,29 @@ defmodule RequestSeal.JOSEJWETest do
   alias RequestSeal.JOSE.{JWE, KeyManagement, Nested}
   import RequestSeal.JOSEVectors
 
-  test "JWE encryption emits compact protected JSON with ordered wrapping additions" do
+  test "JWE encryption emits compact protected JSON with caller member order" do
     v = fixture("5_7.key_wrap_using_aes-gcm_keywrap_with_aes-cbc-hmac-sha2.json")
     key = {:aes, b64(v["input"]["key"]["k"])}
     wrap = fn alg, cek -> KeyManagement.wrap(alg, cek, %{}, key) end
-    header = [{"alg", "A256GCMKW"}, {"kid", "k1"}, {"enc", "A128GCM"}]
+    header = [{"alg", "A256KW"}, {"kid", "k1"}, {"enc", "A128GCM"}]
 
     assert {:ok, compact} = JWE.encrypt(header, "plaintext", wrap)
     [protected, _, _, _, _] = String.split(compact, ".")
     json = b64(protected)
-    additions = :json.decode(json)
-
-    assert json ==
-             ~s({"alg":"A256GCMKW","kid":"k1","enc":"A128GCM","iv":"#{additions["iv"]}","tag":"#{additions["tag"]}"})
+    assert json == ~s({"alg":"A256KW","kid":"k1","enc":"A128GCM"})
 
     policy = %{
-      algorithms: ["A256GCMKW"],
+      algorithms: ["A256KW"],
       encryption: ["A128GCM"],
       max_plaintext: 1_048_576,
       timeout: 5000,
       key_resolver: fn _ ->
         {:ok,
          %{
-           algorithm: "A256GCMKW",
-           unwrap: fn ek, h -> KeyManagement.unwrap("A256GCMKW", ek, h, key) end
+           algorithm: "A256KW",
+           unwrap: fn ek, h ->
+             KeyManagement.unwrap("A256KW", ek, RequestSeal.JOSEVectors.params("A256KW", h), key)
+           end
          }}
       end
     }
@@ -47,7 +46,14 @@ defmodule RequestSeal.JOSEJWETest do
         ] do
       [protected, ek, iv_wire, ct, tag] = String.split(compact, ".")
       h = b64(protected) |> :json.decode()
-      assert KeyManagement.unwrap("RSA-OAEP", b64(ek), h, rsa(key)) == {:ok, cek}
+
+      assert KeyManagement.unwrap(
+               "RSA-OAEP",
+               b64(ek),
+               RequestSeal.JOSEVectors.params("RSA-OAEP", h),
+               rsa(key)
+             ) == {:ok, cek}
+
       assert b64(iv_wire) == iv
 
       assert :crypto.crypto_one_time_aead(
@@ -83,7 +89,7 @@ defmodule RequestSeal.JOSEJWETest do
     assert KeyManagement.unwrap(
              "A256GCMKW",
              b64(w["encrypting_key"]["encrypted_key"]),
-             w["encrypting_content"]["protected"],
+             RequestSeal.JOSEVectors.params("A256GCMKW", w["encrypting_content"]["protected"]),
              {:aes, b64(w["input"]["key"]["k"])}
            ) == {:ok, b64(w["generated"]["cek"])}
   end
@@ -151,7 +157,12 @@ defmodule RequestSeal.JOSEJWETest do
                       %{
                         algorithm: "RSA-OAEP-256",
                         unwrap: fn ek, h ->
-                          KeyManagement.unwrap("RSA-OAEP-256", ek, h, rsa(a["key"]))
+                          KeyManagement.unwrap(
+                            "RSA-OAEP-256",
+                            ek,
+                            RequestSeal.JOSEVectors.params("RSA-OAEP-256", h),
+                            rsa(a["key"])
+                          )
                         end
                       }}
                    end
@@ -191,7 +202,7 @@ defmodule RequestSeal.JOSEJWETest do
 
       if g["keySize"] in [128, 256] do
         alg = if g["keySize"] == 128, do: "A128GCMKW", else: "A256GCMKW"
-        actual = KeyManagement.unwrap(alg, ct, %{"iv" => enc(iv), "tag" => enc(tag)}, {:aes, key})
+        actual = KeyManagement.unwrap(alg, ct, %{iv: iv, tag: tag}, {:aes, key})
 
         cond do
           byte_size(iv) != 12 -> assert match?({:error, %{reason: :invalid_iv}}, actual)
@@ -312,7 +323,14 @@ defmodule RequestSeal.JOSESafetyTest do
         {:ok,
          %{
            algorithm: "dir",
-           unwrap: fn ek, h -> KeyManagement.unwrap("dir", ek, h, {:cek, key}) end
+           unwrap: fn ek, h ->
+             KeyManagement.unwrap(
+               "dir",
+               ek,
+               RequestSeal.JOSEVectors.params("dir", h),
+               {:cek, key}
+             )
+           end
          }}
       end
 
@@ -320,7 +338,7 @@ defmodule RequestSeal.JOSESafetyTest do
                JWE.decrypt(c, %{p | key_resolver: resolver})
     end
 
-    assert {:error, %{reason: :algorithm_mismatch}} =
+    assert {:error, %{reason: :algorithm_not_permitted, layer: :input}} =
              KeyManagement.wrap(
                "A128GCMKW",
                b64(v["input"]["key"]["k"]),
@@ -744,22 +762,15 @@ defmodule RequestSeal.JOSECompositionTest do
 
     kek = :crypto.strong_rand_bytes(32)
 
-    for {extra, reason} <- [
-          {%{"zip" => "DEF"}, :unsupported_header},
-          {%{"iv" => "duplicate"}, :duplicate_member}
-        ] do
+    for extra <- [%{"zip" => "DEF"}, %{"iv" => "duplicate"}] do
       wrapper = fn alg, cek ->
         {:ok, wrapped} = KeyManagement.wrap(alg, cek, %{}, {:aes, kek})
         additions = Map.merge(wrapped.header, extra)
         {:ok, %{wrapped | header: additions}}
       end
 
-      header =
-        if reason == :duplicate_member,
-          do: [{"alg", "A256GCMKW"}, {"enc", "A256GCM"}, {"iv", "caller-iv"}],
-          else: [{"alg", "A256GCMKW"}, {"enc", "A256GCM"}]
-
-      assert {:error, %{reason: ^reason}} = JWE.encrypt(header, v["plaintext"], wrapper)
+      assert {:error, %{reason: :unsupported_header}} =
+               JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], v["plaintext"], wrapper)
     end
 
     for n <- [15, 17] do
@@ -769,11 +780,11 @@ defmodule RequestSeal.JOSECompositionTest do
         {:ok, %{wrapped | header: header}}
       end
 
-      assert {:error, %{reason: :invalid_tag}} =
-               JWE.encrypt([{"alg", "A256GCMKW"}, {"enc", "A256GCM"}], v["plaintext"], wrapper)
+      assert {:error, %{reason: :unsupported_header}} =
+               JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], v["plaintext"], wrapper)
     end
 
-    assert {:error, %{reason: :algorithm_mismatch}} =
+    assert {:error, %{reason: :algorithm_not_permitted, layer: :input}} =
              KeyManagement.wrap(
                "dir",
                :crypto.strong_rand_bytes(16),
@@ -781,7 +792,7 @@ defmodule RequestSeal.JOSECompositionTest do
                {:cek, :crypto.strong_rand_bytes(16)}
              )
 
-    assert {:error, %{reason: :algorithm_not_permitted}} =
+    assert {:ok, %{encrypted_key: wrapped, header: %{}}} =
              KeyManagement.wrap(
                "A128KW",
                :crypto.strong_rand_bytes(16),
@@ -789,7 +800,9 @@ defmodule RequestSeal.JOSECompositionTest do
                {:aes, :crypto.strong_rand_bytes(16)}
              )
 
-    assert {:error, %{reason: :algorithm_not_permitted}} =
+    assert byte_size(wrapped) == 24
+
+    assert {:error, %{reason: :decryption_failed}} =
              KeyManagement.unwrap(
                "A128KW",
                :crypto.strong_rand_bytes(16),
@@ -842,13 +855,13 @@ defmodule RequestSeal.JOSEBoundaryTest do
     assert {:error, %{reason: :limit}} = Support.safe(fn -> Header.json(object) end)
   end
 
-  test "direct encryption cannot emit a nonempty encrypted key" do
+  test "direct encryption is refused before the wrapper can emit an encrypted key" do
     wrapper = fn alg, cek ->
       {:ok, wrapped} = KeyManagement.wrap(alg, cek, %{}, {:cek, cek})
       {:ok, %{wrapped | encrypted_key: :crypto.strong_rand_bytes(1)}}
     end
 
-    assert {:error, %{reason: :decryption_failed}} =
+    assert {:error, %{reason: :algorithm_not_permitted, layer: :input}} =
              JWE.encrypt([{"alg", "dir"}, {"enc", "A128GCM"}], "", wrapper)
   end
 
@@ -861,7 +874,7 @@ defmodule RequestSeal.JOSEBoundaryTest do
              KeyManagement.unwrap(
                "A256GCMKW",
                b64(v["encrypting_key"]["encrypted_key"]),
-               Map.put(h, "tag", enc(short)),
+               %{iv: b64(h["iv"]), tag: short},
                {:aes, b64(v["input"]["key"]["k"])}
              )
   end

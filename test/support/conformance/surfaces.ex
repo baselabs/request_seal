@@ -31,6 +31,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     "digest.content" => :digest,
     "crypto.verify" => :crypto_verify,
     "key.import" => :key_import,
+    "key_management.aes_kw/v1" => :aes_kw,
     "jws.sign" => :jws_sign,
     "jws.verify" => :jws_verify,
     "jwe.decrypt" => :jwe_decrypt,
@@ -594,6 +595,35 @@ defmodule RequestSeal.Conformance.Surfaces do
          do: {:ok, %{"valid" => true, "payload" => C.b64(result.payload)}}
   end
 
+  def aes_kw(_root, c) do
+    i = c["inputs"]
+
+    case i["operation"] do
+      "wrap" ->
+        with {:ok, result} <-
+               KeyManagement.wrap(
+                 i["alg"],
+                 C.bytes(i["key_data"]),
+                 %{},
+                 {:aes, C.bytes(i["kek"])}
+               ),
+             do: {:ok, %{"wrapped" => C.b64(result.encrypted_key)}}
+
+      "unwrap" ->
+        with {:ok, key} <-
+               KeyManagement.unwrap(
+                 i["alg"],
+                 C.bytes(i["wrapped"]),
+                 %{},
+                 {:aes, C.bytes(i["kek"])}
+               ),
+             do: {:ok, %{"key_data" => C.b64(key)}}
+
+      _ ->
+        C.require!(false, :aes_kw_operation)
+    end
+  end
+
   def jwe_decrypt(root, c) do
     i = c["inputs"]
     j = C.load(root, i["key"])
@@ -836,7 +866,7 @@ defmodule RequestSeal.Conformance.Surfaces do
       KeyManagement.unwrap(
         alg,
         V.hex(t["ct"]),
-        %{"iv" => V.enc(iv), "tag" => V.enc(tag)},
+        %{iv: iv, tag: tag},
         {:aes, key}
       )
 

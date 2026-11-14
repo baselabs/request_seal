@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-16 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-13 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
 
 # Sign JWS and encrypt JWE envelopes
 
@@ -42,7 +42,7 @@ end
 
 {:ok, encrypted} =
   RequestSeal.JOSE.JWE.encrypt(
-    [{"alg", "A256GCMKW"}, {"enc", "A256GCM"}],
+    [{"alg", "A256KW"}, {"enc", "A256GCM"}],
     token,
     wrap
   )
@@ -52,16 +52,16 @@ Select the trusted wrapping key and verify the inner signature after decryption:
 
 ```elixir
 jwe_policy = %{
-  algorithms: ["A256GCMKW"],
+  algorithms: ["A256KW"],
   encryption: ["A256GCM"],
   max_plaintext: 1_048_576,
   timeout: 5_000,
-  key_resolver: fn %{algorithm: "A256GCMKW"} ->
+  key_resolver: fn %{algorithm: "A256KW"} ->
     {:ok,
      %{
-       algorithm: "A256GCMKW",
-       unwrap: fn bytes, header ->
-         RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", bytes, header, wrapping_key)
+       algorithm: "A256KW",
+       unwrap: fn bytes, _header ->
+         RequestSeal.JOSE.KeyManagement.unwrap("A256KW", bytes, %{}, wrapping_key)
        end
      }}
   end
@@ -91,7 +91,7 @@ exactly like a forged message.
 
 ## Options and bounds
 
-JWS algorithms are `RS256`, `PS256`, `PS384`, `PS512`, `HS256`, `ES256`, `ES384`, and `EdDSA`. JWE key management is `RSA-OAEP-256`, `RSA-OAEP`, `A128GCMKW`, `A256GCMKW`, or `dir`; content encryption is `A128GCM` or `A256GCM`.
+JWS algorithms are `RS256`, `PS256`, `PS384`, `PS512`, `HS256`, `ES256`, `ES384`, and `EdDSA`. JWE encryption uses `RSA-OAEP-256`, `RSA-OAEP`, `A128KW`, or `A256KW`; decryption also admits `A128GCMKW`, `A256GCMKW`, and `dir`; content encryption is `A128GCM` or `A256GCM`.
 
 Choose exact algorithm allowlists, timeout, content-encryption algorithms, and maximum plaintext. Compact envelopes are at most 1 MiB, protected JSON at most 16 KiB and depth four. Base64url is canonical and unpadded. Duplicate JSON members and floats reject. Compression, detached JWS, JSON serializations, the `jku`, `x5u`, and `jwk` key headers, `b64`, and `crit` are unsupported (`x5c` is accepted only as untrusted data); choose a different protocol contract when those are required.
 

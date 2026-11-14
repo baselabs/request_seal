@@ -16,12 +16,14 @@ defmodule RequestSeal.TelemetryTest do
     on_exit(fn -> :telemetry.detach("telemetry-contract-test") end)
   end
 
-  test "the v1 event list is exactly the documented four events" do
+  test "the event list includes the documented wrap and indexed unwrap events" do
     assert @events == [
              [:request_seal, :verify, :stop],
              [:request_seal, :web_bot_auth, :verify, :stop],
              [:request_seal, :replay, :claim],
-             [:request_seal, :custody, :sign, :stop]
+             [:request_seal, :custody, :sign, :stop],
+             [:request_seal, :custody, :wrap],
+             [:request_seal, :custody, :unwrap]
            ]
   end
 

@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: RFC 7515, RFC 7516, RFC 7518 · Review when: the JOSE API changes -->
+<!-- Status: current · Kind: guide · Updated: 2026-11-13 · Governed by: RFC 7515, RFC 7516, RFC 7518 · Review when: the JOSE API changes -->
 
 # JWS inside JWE in Livebook
 
@@ -68,7 +68,7 @@ end
 
 {:ok, encrypted} =
   RequestSeal.JOSE.JWE.encrypt(
-    [{"alg", "A256GCMKW"}, {"enc", "A256GCM"}, {"cty", "JWS"}],
+    [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "JWS"}],
     token,
     wrap
   )
@@ -83,16 +83,16 @@ IO.puts("JWE produced: #{byte_size(encrypted)} compact bytes")
 
 ```elixir
 jwe_policy = %{
-  algorithms: ["A256GCMKW"],
+  algorithms: ["A256KW"],
   encryption: ["A256GCM"],
   max_plaintext: 1_048_576,
   timeout: 5_000,
-  key_resolver: fn %{algorithm: "A256GCMKW"} ->
+  key_resolver: fn %{algorithm: "A256KW"} ->
     {:ok,
      %{
-       algorithm: "A256GCMKW",
-       unwrap: fn bytes, header ->
-         RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", bytes, header, wrapping_key)
+       algorithm: "A256KW",
+       unwrap: fn bytes, _header ->
+         RequestSeal.JOSE.KeyManagement.unwrap("A256KW", bytes, %{}, wrapping_key)
        end
      }}
   end

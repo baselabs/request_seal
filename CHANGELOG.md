@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased 2.0.0
+
+- Replace single-key custody unwrap with indexed lists and an owner-owned,
+  revocable sink. Accepted positions survive a later stall or callback failure;
+  expiry revokes delivery and settles only unfinished positions. CEKs travel
+  directly from sensitive holders to their owner, bypassing custody runners.
+- Add RFC 3394 A128KW/A256KW primitives and local wrap/unwrap handles. AES uses
+  OTP ECB, all unwrap rounds run before the complete default ICV check, and
+  KEKs have exact 16/32-byte widths. Add published RFC 3394 corpus cases and a
+  complete upstream-item ledger.
+- Add `Custody.wrap/3` and idempotent `Custody.release/1`, whose success confirms
+  destruction. Wrap telemetry contains only an outcome; unwrap telemetry has no
+  per-item outcome or key identity.
+- Refuse GCMKW and `dir` encryption and primitive wrap as
+  `:algorithm_not_permitted`, layer `:input`, before recipient or key work.
+  Their local handles grant unwrap only and now work as JWE `key:` entries.
+- Change `KeyManagement.unwrap/4` to closed decoded params instead of headers.
+  JWE retains its existing policy, parse order, callback forms, and deadline.
+- Set stable dependency ranges from each locked version through the next major,
+  retaining the existing ash_onetime requirement.
+
 ## 1.0.0 - 2026-11-11
 
 The first stable release. From 1.0.0 the public API follows the [compatibility and deprecation policy](docs/reference/compatibility.md). It fixes a Web Bot Auth replay weakness present in every earlier release, removes quorum verification, and tightens several parsers and resource bounds. Every application upgrading from 0.5 changes its requirement; the notes under "Upgrading from 0.5" say who must change more.

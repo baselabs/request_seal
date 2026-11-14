@@ -58,6 +58,22 @@ def verify(root):
                 raise ValueError("case_metadata")
         if "batch" in case and case["batch"]["count"] != entry.get("count"):
             raise ValueError("batch_count")
+    rows = decode((root / "sources/rfc3394/ledger.json").read_bytes())
+    vectors = decode((root / "sources/rfc3394/vectors.json").read_bytes())
+    expected = sorted(v["item"] for v in vectors)
+    if expected != ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6"] or not isinstance(rows, list):
+        raise ValueError("source_ledger")
+    if sorted(row.get("item", "") for row in rows) != expected:
+        raise ValueError("source_ledger")
+    for row in rows:
+        if set(row) == {"item", "case"}:
+            if row["case"] not in ids:
+                raise ValueError("source_ledger")
+        elif set(row) == {"item", "excluded"}:
+            if not isinstance(row["excluded"], str) or not row["excluded"].strip():
+                raise ValueError("source_ledger")
+        else:
+            raise ValueError("source_ledger")
     print("PASS: corpus canonical metadata and " + str(len(paths)) + " file digests")
 
 

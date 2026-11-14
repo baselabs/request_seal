@@ -8,7 +8,8 @@ defmodule RequestSeal.JOSE.KeyManagement do
   Private keys and symmetric material remain the caller custodian's responsibility.
 
   RSA-OAEP uses SHA-1/MGF1 SHA-1; RSA-OAEP-256 uses SHA-256/MGF1 SHA-256,
-  both with an empty label. A128GCMKW/A256GCMKW use AES GCM with empty AAD.
+  both with an empty label. AES-KW uses RFC 3394; decrypt-only
+  A128GCMKW/A256GCMKW use AES GCM with empty AAD.
   JOSE envelopes enforce the content cipher's CEK width; primitives also support
   published unwrap stages belonging to other content algorithms without enabling
   those algorithms.
@@ -26,55 +27,32 @@ defmodule RequestSeal.JOSE.KeyManagement do
   alias RequestSeal.{Crypto, PublicKey}
 
   @doc """
-  Wrap a content-encryption key (CEK) for one recipient (RFC 7518).
+  Wrap a CEK with RSA-OAEP or RFC 3394 AES-KW.
 
-  The result is the shape a `RequestSeal.JOSE.JWE.encrypt/4` wrapper returns.
+  `alg` is admitted before the header, CEK, or descriptor is inspected. Only
+  `RSA-OAEP`, `RSA-OAEP-256`, `A128KW`, and `A256KW` are permitted; GCMKW and
+  `dir` return `:algorithm_not_permitted`, layer `:input`.
+  Pass a map for the unused `header`. `material` is `{:rsa, otp_public_key}` or
+  `{:aes, kek}` with exactly 16 bytes for A128KW or 32 for A256KW. Key data is
+  bounded to 1,048,576 bytes; AES-KW requires at least 16 bytes, divisible by 8.
+  No RFC 5649 padding or alternate ICV is supported.
 
-  ## Parameters
+  Returns `{:ok, %{encrypted_key: bytes, header: %{}}}`. Validation failures are
+  bounded JOSE errors: `:invalid_header`, `:invalid_serialization`, `:limit`,
+  `:algorithm_mismatch` (key layer); OTP failures are `:signer_failed` (crypto).
 
-    * `alg` - `"RSA-OAEP-256"`, `"RSA-OAEP"`, `"A128GCMKW"`, `"A256GCMKW"`, or
-      `"dir"`.
-    * `bytes` - the CEK, a binary of at most 1,048,576 bytes. RSA-OAEP limits it
-      further by the modulus size.
-    * `header` - a map; not read when wrapping (pass `%{}`).
-    * `material` - the descriptor matching `alg`:
-      * `{:rsa, {:RSAPublicKey, n, e}}` - OTP RSA public key, 2048 to 8192 bits,
-        for `"RSA-OAEP"` and `"RSA-OAEP-256"`.
-      * `{:aes, kek}` - 16-byte KEK for `"A128GCMKW"`, 32-byte KEK for
-        `"A256GCMKW"`.
-      * `{:cek, key}` - for `"dir"`; `key` must equal `bytes`.
-
-  ## Returns
-
-    * `{:ok, %{encrypted_key: bytes, header: additions}}` - RSA returns a
-      modulus-width encrypted key and `%{}`; GCM key wrapping returns the wrapped
-      key and `%{"iv" => b64, "tag" => b64}` (fresh 12-byte IV, 16-byte tag, which
-      must be protected); `"dir"` returns `""` and `%{}`.
-    * `{:error, %RequestSeal.JOSE.Error{}}` - reasons this function can return:
-      `:algorithm_not_permitted`, `:invalid_header` (non-map header),
-      `:invalid_serialization` (non-binary CEK), `:limit`, `:algorithm_mismatch`
-      (descriptor does not fit `alg`, wrong KEK size, or `"dir"` key differs),
-      `:entropy_failure`, and `:signer_failed` (invalid RSA key or OTP failure).
-      Meanings: `RequestSeal.JOSE.Error`.
-
-  ## Examples
-
-      iex> kek = :crypto.strong_rand_bytes(16)
-      iex> cek = :crypto.strong_rand_bytes(16)
-      iex> {:ok, %{encrypted_key: wrapped, header: header}} = RequestSeal.JOSE.KeyManagement.wrap("A128GCMKW", cek, %{}, {:aes, kek})
-      iex> {byte_size(wrapped), Enum.sort(Map.keys(header))}
-      {16, ["iv", "tag"]}
-      iex> {:error, error} = RequestSeal.JOSE.KeyManagement.wrap("A256GCMKW", cek, %{}, {:aes, kek})
-      iex> error.reason
-      :algorithm_mismatch
+      iex> kek = :binary.copy(<<0>>, 16)
+      iex> {:ok, wrapped} = RequestSeal.JOSE.KeyManagement.wrap("A128KW", <<0::128>>, %{}, {:aes, kek})
+      iex> byte_size(wrapped.encrypted_key)
+      24
   """
   @spec wrap(binary(), binary(), map(), tuple()) ::
           {:ok, map()} | {:error, RequestSeal.JOSE.Error.t()}
   def wrap(alg, bytes, header, material) do
     safe(
       fn ->
-        ensure(alg in algorithms(:jwe), :algorithm_not_permitted)
-        ensure(is_map(header), :invalid_header)
+        ensure(alg in algorithms(:jwe_wrap), :algorithm_not_permitted)
+        ensure(is_map(header) and not is_struct(header), :invalid_header)
         bytes(bytes)
         {encrypted, additions} = wrap_bytes(alg, bytes, material)
         {:ok, %{encrypted_key: encrypted, header: additions}}
@@ -85,67 +63,66 @@ defmodule RequestSeal.JOSE.KeyManagement do
   end
 
   @doc """
-  Recover a content-encryption key (CEK) from its wrapped form (RFC 7518).
+  Recover key data using the selected algorithm and closed, decoded params.
 
-  Received widths reject before OTP is called. Use it inside a
-  `RequestSeal.JOSE.JWE.decrypt/2` `unwrap:` callback, which supplies the
-  encrypted key and decoded protected header.
+  Admission of `alg` precedes params and key validation. Params are exactly
+  `%{}` for RSA-OAEP, AES-KW, and `dir`, or exactly
+  `%{iv: twelve_bytes, tag: sixteen_bytes}` for AES-GCMKW. Headers and extra
+  members reject as `:invalid_header`; invalid GCM widths as `:invalid_iv` or
+  `:invalid_tag`, all at layer `:input`.
 
-  ## Parameters
+  `material` is `{:rsa, otp_private_key}`, `{:aes, kek}`, or `{:cek, bytes}`.
+  KEKs are exactly 16 or 32 bytes for the corresponding AES algorithm; a wrong
+  size is `:algorithm_mismatch`, layer `:key`. Input is bounded to 1,048,576
+  bytes. RFC 3394 requires at least 24 wrapped bytes, divisible by 8: all 6n
+  ECB rounds run before the complete eight-byte ICV is compared using
+  `:crypto.hash_equals/2`. No recovered byte is returned before that check.
 
-    * `alg` - `"RSA-OAEP-256"`, `"RSA-OAEP"`, `"A128GCMKW"`, `"A256GCMKW"`, or
-      `"dir"`.
-    * `bytes` - the encrypted key, a binary of at most 1,048,576 bytes. RSA
-      requires exactly the modulus width; `"dir"` requires `""`.
-    * `header` - the decoded protected header map. GCM key wrapping reads its
-      `"iv"` (12 bytes) and `"tag"` (16 bytes), canonical unpadded Base64url.
-    * `material` - the descriptor matching `alg`:
-      * `{:rsa, rsa_private_key}` - OTP `:RSAPrivateKey` record, two-prime,
-        2048 to 8192 bits, CRT components checked.
-      * `{:aes, kek}` - 16-byte KEK for `"A128GCMKW"`, 32-byte KEK for
-        `"A256GCMKW"`.
-      * `{:cek, key}` - for `"dir"`; a 16- or 32-byte key, returned as the CEK.
+  Returns `{:ok, key_data}` or a bounded JOSE error. Unsupported algorithms
+  return `:algorithm_not_permitted`, layer `:input`; nonbinary or excessive
+  input returns `:invalid_serialization` or `:limit`. All other recovery
+  failures return `:decryption_failed`, layer `:crypto`. The primitive admits
+  published key-data widths beyond JWE's 128/256-bit CEKs; JWE checks its width.
 
-  ## Returns
-
-    * `{:ok, cek}` - the unwrapped bytes. This function does not check the width
-      against a content cipher; `RequestSeal.JOSE.JWE.decrypt/2` does.
-    * `{:error, %RequestSeal.JOSE.Error{}}` - reasons this function can return:
-      `:algorithm_not_permitted`, `:invalid_header` (non-map header),
-      `:invalid_serialization` (non-binary input), `:limit`, `:algorithm_mismatch`
-      (KEK of the wrong size), `:invalid_base64`, `:invalid_iv`, `:invalid_tag`,
-      and `:decryption_failed` (descriptor does not fit `alg`, invalid private
-      key, wrong encrypted-key width, or authentication failure). Meanings:
-      `RequestSeal.JOSE.Error`.
-
-  ## Examples
-
-      iex> kek = :crypto.strong_rand_bytes(32)
-      iex> cek = :crypto.strong_rand_bytes(32)
-      iex> {:ok, %{encrypted_key: wrapped, header: header}} = RequestSeal.JOSE.KeyManagement.wrap("A256GCMKW", cek, %{}, {:aes, kek})
-      iex> RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", wrapped, header, {:aes, kek}) == {:ok, cek}
+      iex> kek = :binary.copy(<<0>>, 32)
+      iex> cek = <<0::256>>
+      iex> {:ok, wrapped} = RequestSeal.JOSE.KeyManagement.wrap("A256KW", cek, %{}, {:aes, kek})
+      iex> RequestSeal.JOSE.KeyManagement.unwrap("A256KW", wrapped.encrypted_key, %{}, {:aes, kek}) == {:ok, cek}
       true
-      iex> {:error, error} = RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", wrapped, header, {:aes, :crypto.strong_rand_bytes(32)})
-      iex> error.reason
-      :decryption_failed
-      iex> {:error, error} = RequestSeal.JOSE.KeyManagement.unwrap("A256GCMKW", wrapped, %{}, {:aes, kek})
-      iex> error.reason
-      :invalid_base64
   """
-  @spec unwrap(binary(), binary(), map(), tuple()) ::
+  @spec unwrap(binary(), binary(), RequestSeal.Custody.params(), tuple()) ::
           {:ok, binary()} | {:error, RequestSeal.JOSE.Error.t()}
-  def unwrap(alg, bytes, header, material) do
+  def unwrap(alg, bytes, params, material) do
     safe(
       fn ->
         ensure(alg in algorithms(:jwe), :algorithm_not_permitted)
-        ensure(is_map(header), :invalid_header)
+        params_shape!(alg, params)
         bytes(bytes)
-        {:ok, unwrap_bytes(alg, bytes, header, material)}
+        {:ok, unwrap_bytes(alg, bytes, params, material)}
       end,
       :decryption_failed,
       :crypto
     )
   end
+
+  @doc false
+  def validate_params!(alg, params) when alg in ~w(A128GCMKW A256GCMKW) do
+    params_shape!(alg, params)
+    ensure(is_binary(params.iv) and byte_size(params.iv) == 12, :invalid_iv)
+    ensure(is_binary(params.tag) and byte_size(params.tag) == 16, :invalid_tag)
+    :ok
+  end
+
+  def validate_params!(_alg, params), do: ensure(params == %{}, :invalid_header)
+
+  defp params_shape!(alg, params) when alg in ~w(A128GCMKW A256GCMKW),
+    do:
+      ensure(
+        is_map(params) and not is_struct(params) and Enum.sort(Map.keys(params)) == [:iv, :tag],
+        :invalid_header
+      )
+
+  defp params_shape!(_alg, params), do: ensure(params == %{}, :invalid_header)
 
   defp wrap_bytes(alg, bytes, {:rsa, key}) when alg in ["RSA-OAEP", "RSA-OAEP-256"] do
     {:RSAPublicKey, n, e} = key
@@ -155,21 +132,10 @@ defmodule RequestSeal.JOSE.KeyManagement do
     {encrypted, %{}}
   end
 
-  defp wrap_bytes(alg, bytes, {:aes, kek}) when alg in ["A128GCMKW", "A256GCMKW"] do
+  defp wrap_bytes(alg, bytes, {:aes, kek}) when alg in ["A128KW", "A256KW"] do
     kek!(alg, kek)
-    iv = random(12)
-    {encrypted, tag} = :crypto.crypto_one_time_aead(:aes_gcm, kek, iv, bytes, "", 16, true)
-    {encrypted, %{"iv" => b64(iv), "tag" => b64(tag)}}
-  end
-
-  defp wrap_bytes("dir", bytes, {:cek, key}) do
-    ensure(
-      is_binary(key) and byte_size(key) == byte_size(bytes) and :crypto.hash_equals(key, bytes),
-      :algorithm_mismatch,
-      :key
-    )
-
-    {"", %{}}
+    ensure(byte_size(bytes) >= 16 and rem(byte_size(bytes), 8) == 0, :algorithm_mismatch, :key)
+    {kw(alg, kek, bytes, true), %{}}
   end
 
   defp wrap_bytes(_, _, _), do: fail(:algorithm_mismatch, :key)
@@ -181,13 +147,19 @@ defmodule RequestSeal.JOSE.KeyManagement do
     :public_key.decrypt_private(bytes, key, oaep(alg))
   end
 
-  defp unwrap_bytes(alg, bytes, h, {:aes, kek}) when alg in ["A128GCMKW", "A256GCMKW"] do
+  defp unwrap_bytes(alg, bytes, _, {:aes, kek}) when alg in ["A128KW", "A256KW"] do
     kek!(alg, kek)
-    iv = decode(h["iv"])
-    ensure(byte_size(iv) == 12, :invalid_iv)
-    tag = decode(h["tag"])
-    ensure(byte_size(tag) == 16, :invalid_tag)
-    plaintext = :crypto.crypto_one_time_aead(:aes_gcm, kek, iv, bytes, "", tag, false)
+    ensure(byte_size(bytes) >= 24 and rem(byte_size(bytes), 8) == 0, :decryption_failed, :crypto)
+    kw(alg, kek, bytes, false)
+  end
+
+  defp unwrap_bytes(alg, bytes, params, {:aes, kek}) when alg in ["A128GCMKW", "A256GCMKW"] do
+    kek!(alg, kek)
+    validate_params!(alg, params)
+
+    plaintext =
+      :crypto.crypto_one_time_aead(:aes_gcm, kek, params.iv, bytes, "", params.tag, false)
+
     ensure(is_binary(plaintext), :decryption_failed, :crypto)
     plaintext
   end
@@ -207,10 +179,44 @@ defmodule RequestSeal.JOSE.KeyManagement do
   defp kek!(alg, kek),
     do:
       ensure(
-        is_binary(kek) and byte_size(kek) == if(alg == "A128GCMKW", do: 16, else: 32),
+        is_binary(kek) and byte_size(kek) == if(alg in ["A128KW", "A128GCMKW"], do: 16, else: 32),
         :algorithm_mismatch,
         :key
       )
+
+  @icv <<0xA6A6A6A6A6A6A6A6::64>>
+  defp kw(alg, kek, bytes, encrypt?) do
+    cipher = if alg == "A128KW", do: :aes_128_ecb, else: :aes_256_ecb
+    {a, data} = if encrypt?, do: {@icv, bytes}, else: :erlang.split_binary(bytes, 8)
+    blocks = for <<block::binary-size(8) <- data>>, do: block
+    n = length(blocks)
+    rounds = if encrypt?, do: 0..5, else: 5..0//-1
+    indices = if encrypt?, do: 1..n, else: n..1//-1
+
+    {a, blocks} =
+      Enum.reduce(rounds, {a, List.to_tuple(blocks)}, fn j, state ->
+        Enum.reduce(indices, state, fn i, {a, r} ->
+          <<counter::64>> = a
+          t = n * j + i
+          input_a = if encrypt?, do: a, else: <<Bitwise.bxor(counter, t)::64>>
+
+          <<next_a::64, next_r::binary-size(8)>> =
+            :crypto.crypto_one_time(cipher, kek, input_a <> elem(r, i - 1), encrypt?)
+
+          next_a = if encrypt?, do: Bitwise.bxor(next_a, t), else: next_a
+          {<<next_a::64>>, put_elem(r, i - 1, next_r)}
+        end)
+      end)
+
+    recovered = blocks |> Tuple.to_list() |> IO.iodata_to_binary()
+
+    if encrypt? do
+      a <> recovered
+    else
+      ensure(:crypto.hash_equals(a, @icv), :decryption_failed, :crypto)
+      recovered
+    end
+  end
 
   defp oaep(alg) do
     digest = if alg == "RSA-OAEP-256", do: :sha256, else: :sha

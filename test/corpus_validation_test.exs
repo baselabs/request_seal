@@ -303,4 +303,37 @@ defmodule RequestSeal.CorpusValidationTest do
                end)
     end
   end
+
+  test "both consumers reject missing duplicate unaccounted and invalid upstream ledger rows" do
+    for mutation <- [
+          fn rows -> tl(rows) end,
+          fn rows -> rows ++ [hd(rows)] end,
+          fn rows -> [Map.delete(hd(rows), "case") | tl(rows)] end,
+          fn rows -> [Map.put(hd(rows), "excluded", "also excluded") | tl(rows)] end,
+          fn rows -> [Map.put(hd(rows), "case", "missing-case") | tl(rows)] end,
+          fn rows -> [%{"item" => "4.1", "excluded" => ""} | tl(rows)] end
+        ] do
+      assert {:error, :source_ledger} =
+               changed(fn root, index ->
+                 path = "sources/rfc3394/ledger.json"
+                 file = Path.join(root, path)
+                 File.write!(file, Canonical.encode(mutation.(C.json(File.read!(file)))))
+
+                 index =
+                   update_in(
+                     index,
+                     ["files"],
+                     &Enum.map(&1, fn entry ->
+                       if entry["path"] == path,
+                         do: Map.put(entry, "sha256", C.sha(File.read!(file))),
+                         else: entry
+                     end)
+                   )
+
+                 File.write!(Path.join(root, "index.json"), Canonical.encode(index))
+                 assert_python_rejects(root, "source_ledger")
+                 index
+               end)
+    end
+  end
 end

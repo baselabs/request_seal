@@ -34,7 +34,10 @@ defmodule RequestSeal.JOSEVectors do
   end
 
   def jwe_policy(j, alg, enc) do
-    descriptor = if j["kty"] == "RSA", do: rsa(j), else: {:cek, b64(j["k"])}
+    descriptor =
+      if j["kty"] == "RSA",
+        do: rsa(j),
+        else: {if(alg == "dir", do: :cek, else: :aes), b64(j["k"])}
 
     %{
       algorithms: [alg],
@@ -45,11 +48,18 @@ defmodule RequestSeal.JOSEVectors do
         {:ok,
          %{
            algorithm: alg,
-           unwrap: fn ek, h -> RequestSeal.JOSE.KeyManagement.unwrap(alg, ek, h, descriptor) end
+           unwrap: fn ek, h ->
+             RequestSeal.JOSE.KeyManagement.unwrap(alg, ek, params(alg, h), descriptor)
+           end
          }}
       end
     }
   end
+
+  def params(alg, header) when alg in ~w(A128GCMKW A256GCMKW),
+    do: %{iv: b64(header["iv"]), tag: b64(header["tag"])}
+
+  def params(_, _), do: %{}
 
   def replace(compact, index, value),
     do: compact |> String.split(".") |> List.replace_at(index, value) |> Enum.join(".")

@@ -25,7 +25,7 @@ defmodule RequestSeal.JOSEPropertyTest do
       assert {:ok, signed} = JWS.sign([{"alg", "EdDSA"}], payload, ctx.signer)
 
       assert {:ok, encrypted} =
-               JWE.encrypt([{"alg", "dir"}, {"enc", "A256GCM"}], payload, ctx.wrap)
+               JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], payload, ctx.wrap)
 
       for input <- [bytes, P.change(signed, index, mask), P.change(encrypted, index, mask)],
           result <- [JWS.verify(input, ctx.jws), JWE.decrypt(input, ctx.jwe)] do
@@ -48,7 +48,7 @@ defmodule RequestSeal.JOSEPropertyTest do
       assert {:ok, signed} = JWS.sign([{"alg", "EdDSA"}], payload, ctx.signer)
 
       assert {:ok, encrypted} =
-               JWE.encrypt([{"alg", "dir"}, {"enc", "A256GCM"}], payload, ctx.wrap)
+               JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], payload, ctx.wrap)
 
       assert {:ok, _} = JWS.verify(signed, ctx.jws)
       assert {:ok, _} = JWE.decrypt(encrypted, ctx.jwe)
@@ -70,7 +70,7 @@ defmodule RequestSeal.JOSEPropertyTest do
             max_run_time: :infinity,
             initial_seed: @seed
           ) do
-      for {kind, alg, enc, count} <- [{:jws, "EdDSA", nil, 3}, {:jwe, "dir", "A256GCM", 5}] do
+      for {kind, alg, enc, count} <- [{:jws, "EdDSA", nil, 3}, {:jwe, "A256KW", "A256GCM", 5}] do
         json =
           :json.encode(if enc, do: %{"alg" => alg, "enc" => enc}, else: %{"alg" => alg})
           |> IO.iodata_to_binary()
@@ -233,19 +233,27 @@ defmodule RequestSeal.JOSEPropertyTest do
       assert {:ok, signed} = JWS.sign([{"alg", "EdDSA"}], payload, ctx.signer)
 
       assert {:ok, nested} =
-               JWE.encrypt([{"alg", "dir"}, {"enc", "A256GCM"}, {"cty", "JWS"}], signed, ctx.wrap)
+               JWE.encrypt(
+                 [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "JWS"}],
+                 signed,
+                 ctx.wrap
+               )
 
       assert {:ok, _} = Nested.verify(nested, ctx.jwe, ctx.jws, content_types: ["JWS"])
 
       assert {:ok, deeper} =
-               JWE.encrypt([{"alg", "dir"}, {"enc", "A256GCM"}, {"cty", "JWS"}], nested, ctx.wrap)
+               JWE.encrypt(
+                 [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "JWS"}],
+                 nested,
+                 ctx.wrap
+               )
 
       assert {:error, %Error{reason: :nesting_depth}} =
                Nested.verify(deeper, ctx.jwe, ctx.jws, content_types: ["JWS"])
 
       assert {:ok, storm} =
                JWE.encrypt(
-                 [{"alg", "dir"}, {"enc", "A256GCM"}, {"cty", "JWS"}],
+                 [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "JWS"}],
                  :binary.copy(".", 700_000),
                  ctx.wrap
                )
@@ -256,7 +264,11 @@ defmodule RequestSeal.JOSEPropertyTest do
       assert {:ok, signed} = JWS.sign([{"alg", "EdDSA"}, {"cty", "JWS"}], signed, ctx.signer)
 
       assert {:ok, deeper} =
-               JWE.encrypt([{"alg", "dir"}, {"enc", "A256GCM"}, {"cty", "JWS"}], signed, ctx.wrap)
+               JWE.encrypt(
+                 [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "JWS"}],
+                 signed,
+                 ctx.wrap
+               )
 
       assert {:error, %Error{reason: :nesting_depth}} =
                Nested.verify(deeper, ctx.jwe, ctx.jws, content_types: ["JWS"])

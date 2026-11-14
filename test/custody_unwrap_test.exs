@@ -11,58 +11,60 @@ defmodule RequestSeal.CustodyUnwrapTest do
     {:ok, private: :public_key.generate_key({:rsa, 2048, 65537})}
   end
 
-  test "non-RSA key management uses an unwrap callback and refuses custody handles", %{
-    private: private
-  } do
-    assert {:ok, handle} = Local.new({:jwe, "RSA-OAEP-256"}, {:rsa, private})
+  test "GCMKW and dir decrypt with either closed-param callbacks or matching custody handles" do
+    direct = RequestSeal.JOSEVectors.fixture("5_6.direct_encryption_using_aes-gcm.json")
+
+    assert {:ok, handle} =
+             Local.new({:jwe, "dir"}, {:cek, Support.decode(direct["input"]["key"]["k"])})
 
     try do
-      for alg <- ~w(dir A128GCMKW A256GCMKW) do
-        key = :crypto.strong_rand_bytes(if alg == "A128GCMKW", do: 16, else: 32)
-        material = if alg == "dir", do: {:cek, key}, else: {:aes, key}
+      assert {:ok, result} =
+               JWE.decrypt(direct["output"]["compact"], policy(handle, "dir", "A128GCM"))
 
-        wrap = fn algorithm, cek ->
-          KeyManagement.wrap(
-            algorithm,
-            cek,
-            %{},
-            if(alg == "dir", do: {:cek, cek}, else: material)
+      assert result.plaintext == direct["input"]["plaintext"]
+    after
+      Local.release(handle)
+    end
+
+    for alg <- ~w(A128GCMKW A256GCMKW) do
+      key = :crypto.strong_rand_bytes(if alg == "A128GCMKW", do: 16, else: 32)
+      {:ok, handle} = Local.new({:jwe, alg}, {:aes, key})
+
+      try do
+        request = %{
+          operation: "encrypt",
+          algorithm: alg,
+          encryption: "A256GCM",
+          key: %{"kty" => "oct", "k" => Support.b64(key)},
+          plaintext: Support.b64("payload")
+        }
+
+        compact =
+          RequestSeal.JOSEPeer.with_input(IO.iodata_to_binary(:json.encode(request)), fn path ->
+            {out, 0} = RequestSeal.JOSEPeer.run(path)
+            :json.decode(out)["jwe"]
+          end)
+
+        p = policy(handle, alg)
+        assert {:ok, %{plaintext: "payload"}} = JWE.decrypt(compact, p)
+
+        unwrap = fn bytes, header ->
+          KeyManagement.unwrap(
+            alg,
+            bytes,
+            RequestSeal.JOSEVectors.params(alg, header),
+            {:aes, key}
           )
         end
-
-        # Direct encryption provisions its fresh CEK in caller-owned custody.
-        wrapping_owner = self()
-
-        wrap = fn algorithm, cek ->
-          if alg == "dir", do: send(wrapping_owner, {:direct_cek, cek})
-          wrap.(algorithm, cek)
-        end
-
-        assert {:ok, compact} = JWE.encrypt([{"alg", alg}, {"enc", "A256GCM"}], "payload", wrap)
-
-        material =
-          if alg == "dir",
-            do:
-              (
-                assert_receive {:direct_cek, cek}
-                {:cek, cek}
-              ),
-            else: material
-
-        unwrap = fn bytes, header -> KeyManagement.unwrap(alg, bytes, header, material) end
-        p = policy(handle, alg)
 
         assert {:ok, %{plaintext: "payload"}} =
                  JWE.decrypt(compact, %{
                    p
                    | key_resolver: fn _ -> {:ok, %{algorithm: alg, unwrap: unwrap}} end
                  })
-
-        assert JWE.decrypt(compact, p) ==
-                 {:error, RequestSeal.JOSE.Error.new(:decryption_failed, :crypto)}
+      after
+        Local.release(handle)
       end
-    after
-      Local.release(handle)
     end
   end
 
@@ -101,10 +103,11 @@ defmodule RequestSeal.CustodyUnwrapTest do
       try do
         assert_receive {:cek_runner, runner}, 1000
         {:links, [middle]} = Process.info(runner, :links)
-        {:monitored_by, [jwe_worker]} = Process.info(middle, :monitored_by)
-        # The middle is monitored by the JWE caller of Custody.unwrap/3.
+        {:monitored_by, [helper]} = Process.info(middle, :monitored_by)
+        {:monitored_by, helper_monitors} = Process.info(helper, :monitored_by)
+        jwe_worker = Enum.find(helper_monitors, &(&1 != middle))
         {holder, _} = original.()
-        recipients = [holder, runner, middle, jwe_worker]
+        recipients = [holder, runner, middle, helper, jwe_worker]
 
         sensitivity =
           Enum.map(recipients, fn pid ->
@@ -146,7 +149,7 @@ defmodule RequestSeal.CustodyUnwrapTest do
       assert {:ok, wrapped} = KeyManagement.wrap(alg, "", %{}, public_descriptor(public))
       assert {:ok, ""} = KeyManagement.unwrap(alg, wrapped.encrypted_key, %{}, {:rsa, private})
 
-      assert Custody.unwrap(handle, wrapped.encrypted_key) ==
+      assert unwrap_one(handle, wrapped.encrypted_key) ==
                {:error, Custody.Error.new(:decryption_failed)}
 
       assert {:ok, compact} = JWE.encrypt([{"alg", alg}, {"enc", "A256GCM"}], "text", public)
@@ -209,7 +212,12 @@ defmodule RequestSeal.CustodyUnwrapTest do
           %{key: handle},
           %{
             unwrap: fn bytes, header ->
-              KeyManagement.unwrap("RSA-OAEP-256", bytes, header, {:rsa, private})
+              KeyManagement.unwrap(
+                "RSA-OAEP-256",
+                bytes,
+                RequestSeal.JOSEVectors.params("RSA-OAEP-256", header),
+                {:rsa, private}
+              )
             end
           }
         ] do
@@ -294,12 +302,21 @@ defmodule RequestSeal.CustodyUnwrapTest do
       assert {:ok, handle} = Local.import({:jwe, "RSA-OAEP-256"}, group["privateKeyPem"], :pem)
 
       for v <- group["tests"], v["label"] == "" do
-        result = Custody.unwrap(handle, Base.decode16!(v["ct"], case: :mixed))
+        result = unwrap_one(handle, Base.decode16!(v["ct"], case: :mixed))
 
         case {v["result"], v["msg"]} do
-          {"valid", ""} -> assert_error(result, :decryption_failed)
-          {"valid", msg} -> assert result == {:ok, Base.decode16!(msg, case: :mixed)}
-          _ -> assert {:error, _} = result
+          {"valid", ""} ->
+            assert_error(result, :decryption_failed)
+
+          {"valid", msg} when byte_size(msg) == 64 ->
+            assert result == {:ok, Base.decode16!(msg, case: :mixed)}
+
+          {"valid", msg} when byte_size(msg) == 32 ->
+            assert Custody.unwrap(handle, [{Base.decode16!(v["ct"], case: :mixed), %{}, 128}]) ==
+                     {:ok, [{:ok, Base.decode16!(msg, case: :mixed)}]}
+
+          _ ->
+            assert {:error, _} = result
         end
       end
 
@@ -318,7 +335,10 @@ defmodule RequestSeal.CustodyUnwrapTest do
       for enc <- ~w(A128GCM A256GCM) do
         cek = :crypto.strong_rand_bytes(if enc == "A128GCM", do: 16, else: 32)
         assert {:ok, wrapped} = KeyManagement.wrap(alg, cek, %{}, public_descriptor(public))
-        assert Custody.unwrap(handle, wrapped.encrypted_key) == {:ok, cek}
+
+        assert Custody.unwrap(handle, [{wrapped.encrypted_key, %{}, bit_size(cek)}]) ==
+                 {:ok, [{:ok, cek}]}
+
         assert {:ok, compact} = JWE.encrypt([{"alg", alg}, {"enc", enc}], "plaintext", public)
         assert {:ok, result} = JWE.decrypt(compact, policy(handle, alg, enc))
         assert result.plaintext == "plaintext"
@@ -327,7 +347,7 @@ defmodule RequestSeal.CustodyUnwrapTest do
       assert_error(Custody.sign(handle, "bytes"), :unsupported_operation)
       assert_error(Custody.verify(handle, "bytes", <<0>>), :unsupported_operation)
       assert :ok = Local.release(handle)
-      assert_error(Custody.unwrap(handle, :crypto.strong_rand_bytes(256)), :key_not_found)
+      assert_error(unwrap_one(handle, :crypto.strong_rand_bytes(256)), :decryption_failed)
     end
   end
 
@@ -345,7 +365,10 @@ defmodule RequestSeal.CustodyUnwrapTest do
       assert {:ok, public} = Custody.public_key(handle)
       cek = :crypto.strong_rand_bytes(32)
       assert {:ok, wrapped} = KeyManagement.wrap(alg, cek, %{}, public_descriptor(public))
-      assert Custody.unwrap(handle, wrapped.encrypted_key) == {:ok, cek}
+
+      assert Custody.unwrap(handle, [{wrapped.encrypted_key, %{}, bit_size(cek)}]) ==
+               {:ok, [{:ok, cek}]}
+
       assert :ok = Local.release(handle)
     end
 
@@ -388,8 +411,8 @@ defmodule RequestSeal.CustodyUnwrapTest do
   test "invalid keys byte bounds and options reject", %{private: private} do
     assert {:ok, handle} = Local.new({:jwe, "RSA-OAEP-256"}, {:rsa, private})
 
-    for value <- [nil, [], <<>>, :crypto.strong_rand_bytes(1025)] do
-      assert_error(Custody.unwrap(handle, value), :invalid_data)
+    for value <- [nil, [], :crypto.strong_rand_bytes(1025)] do
+      assert_error(unwrap_one(handle, value), :invalid_data)
     end
 
     for opts <- [
@@ -399,10 +422,10 @@ defmodule RequestSeal.CustodyUnwrapTest do
           [timeout: 1, timeout: 2],
           [extra: true]
         ] do
-      assert_error(Custody.unwrap(handle, <<0>>, opts), :invalid_options)
+      assert_error(unwrap_one(handle, <<0>>, opts), :invalid_options)
     end
 
-    assert_error(Custody.unwrap(handle, :crypto.strong_rand_bytes(255)), :decryption_failed)
+    assert_error(unwrap_one(handle, :crypto.strong_rand_bytes(255)), :decryption_failed)
 
     for index <- 4..9 do
       assert_error(
@@ -413,7 +436,7 @@ defmodule RequestSeal.CustodyUnwrapTest do
 
     small = :public_key.generate_key({:rsa, 1024, 65537})
     assert_error(Local.new({:jwe, "RSA-OAEP"}, {:rsa, small}), :invalid_key)
-    assert_error(Local.new({:jwe, "A128GCMKW"}, {:rsa, private}), :unsupported_algorithm)
+    assert_error(Local.new({:jwe, "A128GCMKW"}, {:rsa, private}), :key_mismatch)
 
     assert_error(
       Local.new({:jwe, "RSA-OAEP"}, {:hmac, :crypto.strong_rand_bytes(32)}),
@@ -437,9 +460,9 @@ defmodule RequestSeal.CustodyUnwrapTest do
     assert {:error, %{reason: :decryption_failed, layer: :crypto}} =
              JWE.decrypt(compact, policy(signing, "RSA-OAEP-256"))
 
-    assert_error(Custody.unwrap(signing, :crypto.strong_rand_bytes(256)), :unsupported_operation)
+    assert_error(unwrap_one(signing, :crypto.strong_rand_bytes(256)), :unsupported_operation)
     forged = %{handle | algorithm: {:jwe, "RSA-OAEP-256"}}
-    assert_error(Custody.unwrap(forged, :crypto.strong_rand_bytes(256)), :key_mismatch)
+    assert_error(unwrap_one(forged, :crypto.strong_rand_bytes(256)), :decryption_failed)
     assert :ok = Local.release(handle)
 
     assert {:ok, compact} =
@@ -511,7 +534,7 @@ defmodule RequestSeal.CustodyUnwrapTest do
         Task.async(fn ->
           if mode == :jwe_deadline,
             do: JWE.decrypt(compact, %{policy(observed, "RSA-OAEP-256") | timeout: 300}),
-            else: Custody.unwrap(observed, wrapped.encrypted_key, timeout: 300)
+            else: unwrap_one(observed, wrapped.encrypted_key, timeout: 300)
         end)
 
       try do
@@ -534,7 +557,9 @@ defmodule RequestSeal.CustodyUnwrapTest do
         :erlang.resume_process(holder)
       end
 
-      assert Custody.unwrap(handle, wrapped.encrypted_key) == {:ok, cek}
+      assert Custody.unwrap(handle, [{wrapped.encrypted_key, %{}, bit_size(cek)}]) ==
+               {:ok, [{:ok, cek}]}
+
       refute_receive {_, {:ok, ^cek}}, 20
     end
 
@@ -561,13 +586,13 @@ defmodule RequestSeal.CustodyUnwrapTest do
       cek = :crypto.strong_rand_bytes(32)
       assert {:ok, wrapped} = KeyManagement.wrap(alg, cek, %{}, public_descriptor(public))
       crashing = %{handle | ref: fn -> raise text_canary end}
-      errors = [Custody.unwrap(handle, <<0>>), Custody.unwrap(crashing, wrapped.encrypted_key)]
+      errors = [unwrap_one(handle, <<0>>), unwrap_one(crashing, wrapped.encrypted_key)]
 
       values = [
         handle,
         public,
         Custody.identity(handle),
-        Custody.unwrap(handle, wrapped.encrypted_key) | errors
+        unwrap_one(handle, wrapped.encrypted_key) | errors
       ]
 
       for value <- values do
@@ -596,17 +621,17 @@ defmodule RequestSeal.CustodyUnwrapTest do
         capture_io(fn ->
           log =
             capture_log(fn ->
-              assert_error(Custody.unwrap(crashing, wrapped.encrypted_key), :custodian_failure)
+              assert_error(unwrap_one(crashing, wrapped.encrypted_key), :decryption_failed)
 
               assert_error(
-                Custody.unwrap(handle, :crypto.strong_rand_bytes(256)),
+                unwrap_one(handle, :crypto.strong_rand_bytes(256)),
                 :decryption_failed
               )
 
               monitor = Process.monitor(holder)
               Process.exit(holder, :kill)
               assert_receive {:DOWN, ^monitor, :process, ^holder, :killed}
-              assert_error(Custody.unwrap(handle, wrapped.encrypted_key), :key_not_found)
+              assert_error(unwrap_one(handle, wrapped.encrypted_key), :decryption_failed)
             end)
 
           refute log =~ text_canary
@@ -678,5 +703,13 @@ defmodule RequestSeal.CustodyUnwrapTest do
 
   defp assert_error(result, reason) do
     assert {:error, %Custody.Error{reason: ^reason}} = result
+  end
+
+  defp unwrap_one(handle, encrypted, opts \\ []) do
+    case RequestSeal.Custody.unwrap(handle, [{encrypted, %{}, 256}], opts) do
+      {:ok, [{:ok, cek}]} -> {:ok, cek}
+      {:ok, [{:error, reason}]} -> {:error, RequestSeal.Custody.Error.new(reason)}
+      error -> error
+    end
   end
 end
