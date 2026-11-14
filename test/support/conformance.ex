@@ -197,31 +197,59 @@ defmodule RequestSeal.Conformance do
   end
 
   defp verify_ledgers!(root, case_ids) do
-    # New sources declare their complete upstream item set independently of cases.
-    rows = json(read_file(root, "sources/rfc3394/ledger.json"))
-    vectors = json(read_file(root, "sources/rfc3394/vectors.json"))
-    expected = Enum.map(vectors, & &1["item"])
-    require!(Enum.sort(expected) == ~w(4.1 4.2 4.3 4.4 4.5 4.6), :source_ledger)
-
     require!(
-      is_list(rows) and Enum.sort(Enum.map(rows, & &1["item"])) == Enum.sort(expected),
+      Enum.sort(Enum.map(json(read_file(root, "sources/rfc3394/vectors.json")), & &1["item"])) ==
+        ~w(4.1 4.2 4.3 4.4 4.5 4.6),
       :source_ledger
     )
 
-    Enum.each(rows, fn row ->
-      case row do
-        %{"item" => item, "case" => id} when map_size(row) == 2 ->
-          require!(is_binary(item) and MapSet.member?(case_ids, id), :source_ledger)
+    sources = [
+      {"rfc3394", ~w(4.1 4.2 4.3 4.4 4.5 4.6)},
+      {"rfc7518", ~w(C-kdf C-agree)},
+      {"rfc7748", ["6.1"]},
+      {"rfc8037", ["A.1", "A.6"]},
+      {"rfc7520",
+       Path.wildcard(Path.join(root, "sources/rfc7520/*.json"))
+       |> Enum.map(&Path.basename/1)
+       |> Enum.reject(&(&1 == "ledger.json"))},
+      {"wycheproof",
+       for(
+         file <-
+           ~w(aes_wrap_test.json ecdh_secp256r1_test.json ecdh_secp384r1_test.json x25519_test.json),
+         g <- json(read_file(root, "sources/wycheproof/" <> file))["testGroups"],
+         t <- g["tests"],
+         do: file <> "/" <> Integer.to_string(t["tcId"])
+       )},
+      {"cross-jose",
+       for(
+         row <- json(read_file(root, "sources/cross-jose/vectors.json")),
+         do: Enum.join([row["provider"], row["alg"], row["enc"], row["key"]["crv"] || "oct"], "/")
+       )}
+    ]
 
-        %{"item" => item, "excluded" => reason} when map_size(row) == 2 ->
-          require!(
-            is_binary(item) and is_binary(reason) and String.trim(reason) != "",
-            :source_ledger
-          )
+    Enum.each(sources, fn {source, expected} ->
+      rows = json(read_file(root, "sources/" <> source <> "/ledger.json"))
 
-        _ ->
-          require!(false, :source_ledger)
-      end
+      require!(
+        is_list(rows) and Enum.sort(Enum.map(rows, & &1["item"])) == Enum.sort(expected),
+        :source_ledger
+      )
+
+      Enum.each(rows, fn row ->
+        case row do
+          %{"item" => item, "case" => id} when map_size(row) == 2 ->
+            require!(is_binary(item) and MapSet.member?(case_ids, id), :source_ledger)
+
+          %{"item" => item, "excluded" => reason} when map_size(row) == 2 ->
+            require!(
+              is_binary(item) and is_binary(reason) and String.trim(reason) != "",
+              :source_ledger
+            )
+
+          _ ->
+            require!(false, :source_ledger)
+        end
+      end)
     end)
   end
 
@@ -349,6 +377,9 @@ defmodule RequestSeal.Conformance do
     data = read_file(root, batch["file"]) |> json()
 
     case batch["item_format"] do
+      "rfc7520-gcmkw/1" ->
+        [{nil, data}]
+
       "rfc9421-signature-bases/1" ->
         Enum.flat_map(data, fn item ->
           transformations =
@@ -383,6 +414,20 @@ defmodule RequestSeal.Conformance do
 
   defp batch_item(_, "wycheproof-ecdsa/1", group, item, _, override),
     do: Surfaces.ecdsa_item(group, item, override)
+
+  defp batch_item(_, "wycheproof-aes-kw/1", g, t, _, override),
+    do: Surfaces.aes_kw_item(g, t, override)
+
+  defp batch_item(_, "wycheproof-ecdh/1", g, t, _, override),
+    do: Surfaces.ecdh_item(g, t, override)
+
+  defp batch_item(_, "wycheproof-x25519/1", g, t, _, override),
+    do: Surfaces.x25519_item(g, t, override)
+
+  defp batch_item(_, "rfc7520-gcmkw/1", _, v, _, _), do: Surfaces.rfc7520_gcmkw(v)
+
+  defp batch_item(_, "rfc7748-x25519/1", _, t, _, _), do: Surfaces.x25519_item(nil, t, nil)
+  defp batch_item(_, "rfc8037-epk/1", _, t, _, _), do: Surfaces.rfc8037_epk(t)
 
   defp batch_item(_, _, _, _, _, _), do: throw({:corpus, :item_format})
 

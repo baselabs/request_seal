@@ -3,10 +3,11 @@ defmodule RequestSeal.JOSE.JWE do
   Compact RFC 7516 encryption with explicitly pinned algorithms and AES GCM.
 
   `encrypt/4` generates a fresh content-encryption key (CEK) and IV and hands the
-  CEK to the recipient's public key, AES-KW handle, or caller wrapper;
+  CEK to an RSA public key, AES-KW handle, or caller wrapper. ECDH-ES instead
+  agrees a fresh CEK with a public recipient, adding its public ephemeral key;
   `decrypt/2` authenticates
   and decrypts under an explicit policy. Key management is `RSA-OAEP-256`,
-  `RSA-OAEP`, `A128KW`, or `A256KW`; decryption also admits A128GCMKW,
+  `RSA-OAEP`, `A128KW`, `A256KW`, or the ECDH-ES family; decryption also admits A128GCMKW,
   A256GCMKW, and `dir`. Content encryption is A128GCM or A256GCM. No symmetric secret can be supplied in a public key or header.
 
   On the decryption handle path, RSA-OAEP private operations stay inside the
@@ -37,6 +38,8 @@ defmodule RequestSeal.JOSE.JWE do
   alias RequestSeal.{Custody, KeyHandle, PublicKey, JOSE}
   alias JOSE.{Header, KeyManagement, Support}
   alias JOSE.JWE.Result
+  alias KeyManagement.Agreement
+  @ecdh ~w(ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW)
   import Support
 
   @doc """
@@ -53,7 +56,8 @@ defmodule RequestSeal.JOSE.JWE do
 
     * `header` - `t:RequestSeal.JOSE.header/0` with unique members, at most 64
       pairs, nesting depth at most four, serialized size at most 16,384 bytes.
-      `"alg"` must be RSA-OAEP-256, RSA-OAEP, A128KW, or A256KW;
+      `"alg"` must be RSA-OAEP-256, RSA-OAEP, A128KW, A256KW,
+      ECDH-ES, ECDH-ES+A128KW, or ECDH-ES+A256KW;
       GCMKW and `dir` are refused as `:algorithm_not_permitted`, layer `:input`,
       before recipient validation, custody, or random draws; `"enc"` must be `"A128GCM"` or `"A256GCM"`. `"crit"`, `"zip"`,
       `"jku"`, `"x5u"`, `"jwk"`, and `"b64"` reject regardless of their values.
@@ -63,12 +67,18 @@ defmodule RequestSeal.JOSE.JWE do
       * a `RequestSeal.PublicKey` with RSA material, for `"RSA-OAEP"` and
         `"RSA-OAEP-256"`. Its `algorithm` must be nil or the header `alg`, `use`
         nil or `"enc"`, and `operations` nil or include `"encrypt"` or `"wrapKey"`.
+      * a P-256, P-384, or X25519 `RequestSeal.PublicKey` for ECDH-ES and
+        its +A128KW/+A256KW variants. Its metadata must permit key agreement.
+        Decoded `apu`/`apv` are bounded to 1,024 bytes and distinct when both
+        are present; their caller-supplied Base64url is preserved. A fresh
+        ephemeral key supplies `epk`, which cannot replace a caller member.
       * a `RequestSeal.KeyHandle` binding `{:jwe, "A128KW"}` or
         `{:jwe, "A256KW"}` and granting `:wrap`. Custody wraps a copy of the
         generated CEK and returns no header additions.
       * an arity-two function receiving `(wire_algorithm, generated_cek_bytes)`
         and returning `{:ok, %{encrypted_key: bytes, header: %{}}}`. This 1.x
-        callback form uses the same envelope-encrypt allowlist.
+        callback form is refused for ECDH-ES before key work and never
+        receives an agreed CEK.
     * `opts` - keyword list.
 
   ## Options
@@ -134,9 +144,42 @@ defmodule RequestSeal.JOSE.JWE do
     h = Header.from_pairs(header)
     alg = selected(h, :jwe, algorithms(:jwe_encrypt), encryption())
     bytes(plaintext)
-    cek = random(width(h["enc"]))
+    ensure(alg not in @ecdh or is_struct(recipient, PublicKey), :invalid_options)
+
+    {cek, ek, additions} =
+      if alg in @ecdh do
+        params_in = Agreement.header_parties!(h)
+
+        case KeyManagement.agree(alg, h["enc"], recipient, params_in) do
+          {:ok, result} -> {result.cek, result.encrypted_key, result.header}
+          {:error, %JOSE.Error{} = error} -> fail(error.reason, error.layer)
+        end
+      else
+        cek = random(width(h["enc"]))
+        {ek, additions} = wrap_recipient(alg, cek, h, recipient, deadline)
+        {cek, ek, additions}
+      end
+
     iv = random(12)
 
+    ensure(
+      additions == %{} or (alg in @ecdh and Map.keys(additions) == ["epk"]),
+      :unsupported_header
+    )
+
+    ensure(not Enum.any?(Map.keys(additions), &Map.has_key?(h, &1)), :duplicate_member)
+    {protected, h} = Header.serialize(header ++ Enum.sort(additions))
+    encrypted_key!(alg, ek, h)
+
+    {ct, tag} =
+      :crypto.crypto_one_time_aead(cipher(h["enc"]), cek, iv, plaintext, protected, 16, true)
+
+    compact = Enum.map_join([protected, b64(ek), b64(iv), b64(ct), b64(tag)], ".", & &1)
+    bytes(compact)
+    {:ok, compact}
+  end
+
+  defp wrap_recipient(alg, cek, h, recipient, deadline) do
     wrap =
       case recipient do
         %PublicKey{} = key ->
@@ -185,22 +228,7 @@ defmodule RequestSeal.JOSE.JWE do
           fail(:signer_failed, :crypto)
       end
 
-    ensure(
-      map_size(additions) <= 2 and Enum.all?(Map.keys(additions), &(&1 in ~w(iv tag))),
-      :unsupported_header
-    )
-
-    ensure(alg in ~w(A128GCMKW A256GCMKW) or additions == %{}, :unsupported_header)
-    ensure(not Enum.any?(Map.keys(additions), &Map.has_key?(h, &1)), :duplicate_member)
-    {protected, h} = Header.serialize(header ++ Enum.sort(additions))
-    encrypted_key!(alg, ek, h)
-
-    {ct, tag} =
-      :crypto.crypto_one_time_aead(cipher(h["enc"]), cek, iv, plaintext, protected, 16, true)
-
-    compact = Enum.map_join([protected, b64(ek), b64(iv), b64(ct), b64(tag)], ".", & &1)
-    bytes(compact)
-    {:ok, compact}
+    {ek, additions}
   end
 
   @doc """
@@ -217,12 +245,13 @@ defmodule RequestSeal.JOSE.JWE do
       segments. JSON serializations (input starting with `{` or `[`) reject. The
       protected header follows the bounds in `RequestSeal.JOSE.JWS.sign_protected/4`
       and is at most 21,846 Base64url bytes. The IV must decode to 12 bytes and the
-      tag to 16 bytes. The encrypted key must be empty for `"dir"`, the CEK width
+      tag to 16 bytes. The encrypted key must be empty for `"dir"` and direct ECDH-ES, the CEK width
       for GCM key wrapping (with protected `"iv"` and `"tag"` members), and 256 to
       1,024 bytes for RSA. AES-KW requires 24 or 40 bytes for a 128- or 256-bit CEK.
     * `policy` - a map containing exactly these atom keys:
       * `:algorithms` - nonempty unique list selected from `"RSA-OAEP-256"`,
-        `"RSA-OAEP"`, `"A128KW"`, `"A256KW"`, `"A128GCMKW"`, `"A256GCMKW"`, and `"dir"`.
+        `"RSA-OAEP"`, `"A128KW"`, `"A256KW"`, `"A128GCMKW"`, `"A256GCMKW"`, `"dir"`, `"ECDH-ES"`,
+        `"ECDH-ES+A128KW"`, and `"ECDH-ES+A256KW"`.
       * `:encryption` - nonempty unique list selected from `"A128GCM"` and
         `"A256GCM"`.
       * `:max_plaintext` - integer bytes, 1 to 1,048,576; bounds the ciphertext.
@@ -237,7 +266,10 @@ defmodule RequestSeal.JOSE.JWE do
         `enc` key size counts as failure. The `key:` handle form works for
         every implemented key-management family, binds `{:jwe, same_name}`,
         and must grant `:unwrap`. GCMKW params are decoded before delivery to
-        custody. Callback entries continue to receive the full header; callers
+        custody. ECDH params include the revalidated public `epk`, decoded
+        parties, and exact KDF selection. Parse refusals are `:invalid_header`
+        before resolution; held-key mismatch/all-zero X25519 use the fallback
+        CEK and end `:decryption_failed`. Callback entries continue to receive the full header; callers
         using `KeyManagement.unwrap/4` must translate it to that primitive's
         closed params. The existing 1.x policy, parse order, and whole-operation
         deadline remain in force.
@@ -299,9 +331,10 @@ defmodule RequestSeal.JOSE.JWE do
     ct = decode(ct_wire)
     ensure(byte_size(ct) <= p.max_plaintext, :limit)
     encrypted_key!(alg, ek, h)
+    params = unwrap_params(alg, h)
     entry = resolve(p.key_resolver, %{algorithm: alg, encryption: h["enc"], header: h})
 
-    unwrap = unwrapper(entry, alg, deadline)
+    unwrap = unwrapper(entry, alg, deadline, params)
 
     # Generate fallback unconditionally so the success path also performs CSPRNG work.
     fallback = random(width(h["enc"]))
@@ -327,19 +360,18 @@ defmodule RequestSeal.JOSE.JWE do
      }}
   end
 
-  defp unwrapper(%{algorithm: _, unwrap: fun} = entry, _, _)
+  defp unwrapper(%{algorithm: _, unwrap: fun} = entry, _, _, _)
        when map_size(entry) == 2 and is_function(fun, 2) do
     fun
   end
 
-  defp unwrapper(%{algorithm: _, key: %KeyHandle{} = handle} = entry, alg, deadline)
+  defp unwrapper(%{algorithm: _, key: %KeyHandle{} = handle} = entry, alg, deadline, params)
        when map_size(entry) == 2 do
     fn bytes, header ->
       ensure(handle.algorithm == {:jwe, alg}, :decryption_failed, :crypto)
       ensure(:unwrap in handle.capabilities, :decryption_failed, :crypto)
       remaining = deadline - System.monotonic_time(:millisecond)
       ensure(remaining > 0, :deadline_exceeded, :crypto)
-      params = unwrap_params(alg, header)
       context = %Custody.Context{owner: self(), deadline: deadline}
       items = [{0, bytes, params, width(header["enc"]) * 8}]
       sink = Custody.Sink.new(items, context)
@@ -352,17 +384,20 @@ defmodule RequestSeal.JOSE.JWE do
     end
   end
 
-  defp unwrapper(_, _, _), do: fail(:key_resolver_failed, :key)
+  defp unwrapper(_, _, _, _), do: fail(:key_resolver_failed, :key)
 
   defp unwrap_params(alg, h) when alg in ~w(A128GCMKW A256GCMKW),
     do: %{iv: decode(h["iv"]), tag: decode(h["tag"])}
 
+  defp unwrap_params(alg, h) when alg in @ecdh, do: Agreement.header_params!(alg, h)
+
   defp unwrap_params(_, _), do: %{}
 
-  defp encrypted_key!(alg, ek, h) when alg in ~w(A128KW A256KW),
+  defp encrypted_key!(alg, ek, h) when alg in ~w(A128KW A256KW ECDH-ES+A128KW ECDH-ES+A256KW),
     do: ensure(byte_size(ek) == width(h["enc"]) + 8, :decryption_failed, :crypto)
 
-  defp encrypted_key!("dir", ek, _), do: ensure(ek == "", :decryption_failed, :crypto)
+  defp encrypted_key!(alg, ek, _) when alg in ["dir", "ECDH-ES"],
+    do: ensure(ek == "", :decryption_failed, :crypto)
 
   defp encrypted_key!(alg, ek, h) when alg in ~w(A128GCMKW A256GCMKW) do
     ensure(byte_size(ek) == width(h["enc"]), :decryption_failed, :crypto)

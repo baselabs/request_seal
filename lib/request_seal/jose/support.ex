@@ -4,8 +4,7 @@ defmodule RequestSeal.JOSE.Support do
   alias RequestSeal.JOSE.Error
   @jws ~w(RS256 PS256 PS384 PS512 HS256 ES256 ES384 EdDSA)
   @wrap ~w(RSA-OAEP-256 RSA-OAEP A128KW A256KW)
-  # The ECDH-ES family joins @encrypt together with its implementation.
-  @encrypt @wrap
+  @encrypt @wrap ++ ~w(ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW)
   @jwe @encrypt ++ ~w(A128GCMKW A256GCMKW dir)
   @enc ~w(A128GCM A256GCM)
   def json_object(bytes) do

@@ -133,14 +133,37 @@ not raise the agent's limit.
 
 `RequestSeal.Custody.Error` uses bounded reasons. `:key_not_found` means the holder or agent key is gone. `:key_mismatch` means the material cannot serve the selected algorithm. `:unsupported_format` includes PKCS #8 v2 containers. `:deadline_exceeded` stops the operation. Agent `:custodian_unavailable` can describe a retryable pre-send connection failure; post-send `:custodian_protocol` is nonretryable because the signing request may already have reached the agent. `:custodian_rejected` means the agent does not hold the trusted key; `:unsupported_algorithm` means no implementation for that selection. Only `:deadline_exceeded` and `:custodian_unavailable` are retryable. Verification proves mathematical validity, not identity attribution or authority.
 
-AES-KW handles grant a nonempty subset of `[:wrap, :unwrap]`; GCMKW and `dir`
+AES-KW handles grant a nonempty subset of `[:wrap, :unwrap]`; ECDH-ES, GCMKW, and `dir`
 handles grant only `[:unwrap]`. `Custody.wrap/3` accepts a 128- or 256-bit CEK.
 `Custody.unwrap/3` accepts a list of `{encrypted_key, params, content_bits}` and
 returns results in that order. Params are `%{}` except GCMKW's decoded
-`%{iv: twelve_bytes, tag: sixteen_bytes}`. Per-item failures are closed
+`%{iv: twelve_bytes, tag: sixteen_bytes}` and ECDH's
+`%{epk: public_key, apu: bytes, apv: bytes, algorithm_id: id, key_bits: bits}`.
+The custodian receives decoded params and never parses a protected header. Per-item failures are closed
 `:decryption_failed` or `:deadline_exceeded` values, while handle and input
 validation retain bounded custody errors. Accepted items survive a later stall.
 `Custody.release/1` is idempotent; `:ok` confirms destruction.
+
+## ECDH recipient keys
+
+Bind a handle to `{:jwe, "ECDH-ES"}`, `{:jwe, "ECDH-ES+A128KW"}`, or
+`{:jwe, "ECDH-ES+A256KW"}`. `Local.new/3` takes
+`{:ec, "P-256" | "P-384", scalar}` (32 or 48 bytes), or
+`{:x25519, scalar}` (32 bytes). Construction performs an actual agreement and
+recovery round trip. These handles grant only `[:unwrap]`; requesting `:wrap`
+is refused at construction. Senders encrypt to the public key returned by
+`Custody.public_key/1`, and decryption resolvers return the exact algorithm-bound
+handle. Holders remain sensitive and refuse system state inspection.
+
+`Local.import/4` accepts private EC or OKP X25519 JWKs and checks that their
+public components match the private scalar. JWK `alg` must match the selected
+member, `use` must permit encryption, and `key_ops` must permit `deriveKey`,
+`deriveBits`, `decrypt`, or `unwrapKey`. An explicit capability option can only
+narrow this permission. The holder validates `epk` against its curve and rejects
+an all-zero X25519 shared secret; each failed item delivers only `:error` to the
+sink. CEKs go directly to their owner, and the custody runner sees only a summary.
+These are the public mechanisms of [RFC 7518 §4.6](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.6)
+and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html).
 
 ## Long-lived owner
 

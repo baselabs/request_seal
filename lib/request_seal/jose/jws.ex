@@ -190,7 +190,8 @@ defmodule RequestSeal.JOSE.JWS do
       * `:key_resolver` - arity-one function receiving
         `%{algorithm: wire_name, header: decoded_header_map}`. It returns
         `:error` or `{:ok, %{algorithm: same_wire_name, key: key}}` with exactly
-        those two entry keys. `key` is a `RequestSeal.PublicKey` or an arity-three
+        those two entry keys. X25519 signature keys reject as
+        `:algorithm_mismatch`, layer `:key`. `key` is a `RequestSeal.PublicKey` or an arity-three
         verification function receiving `({:jws, wire_name}, exact_base_bytes,
         signature_bytes)` and returning exactly `:ok` on validity; any other
         return, including `{:ok, value}`, is `:invalid_signature`. Use the
@@ -207,7 +208,7 @@ defmodule RequestSeal.JOSE.JWS do
       (`"zip"`), `:unsupported_header` (`"jku"`, `"x5u"`, `"jwk"`, `"b64"`, regardless
       of value), `:algorithm_not_permitted`, `:detached_payload` (empty payload
       segment), `:unknown_key` (resolver returned `:error`), `:algorithm_mismatch`
-      (resolver returned another algorithm), `:key_resolver_failed` (resolver
+      (resolver returned another algorithm or selected an X25519 key), `:key_resolver_failed` (resolver
       exception or invalid entry), `:invalid_signature` (empty or invalid
       signature, or verification-function failure), and `:deadline_exceeded` (the
       only retryable reason). Meanings: `RequestSeal.JOSE.Error`.
@@ -256,6 +257,7 @@ defmodule RequestSeal.JOSE.JWS do
     result =
       case entry.key do
         %RequestSeal.PublicKey{} = key ->
+          ensure(not match?({:x25519, _}, key.material), :algorithm_mismatch, :key)
           RequestSeal.Crypto.verify({:jws, alg}, base, signature, key)
 
         fun when is_function(fun, 3) ->

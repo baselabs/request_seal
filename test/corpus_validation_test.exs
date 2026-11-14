@@ -304,6 +304,35 @@ defmodule RequestSeal.CorpusValidationTest do
     end
   end
 
+  test "both consumers reject missing and duplicated ECDH source ledger items" do
+    for source <- ~w(rfc7518 rfc7520 rfc7748 rfc8037 wycheproof cross-jose),
+        mutation <- [:missing, :duplicate] do
+      assert {:error, :source_ledger} =
+               changed(fn root, index ->
+                 path = "sources/" <> source <> "/ledger.json"
+                 file = Path.join(root, path)
+                 rows = C.json(File.read!(file))
+                 rows = if mutation == :missing, do: tl(rows), else: rows ++ [hd(rows)]
+                 File.write!(file, Canonical.encode(rows))
+
+                 index =
+                   update_in(
+                     index,
+                     ["files"],
+                     &Enum.map(&1, fn entry ->
+                       if entry["path"] == path,
+                         do: Map.put(entry, "sha256", C.sha(File.read!(file))),
+                         else: entry
+                     end)
+                   )
+
+                 File.write!(Path.join(root, "index.json"), Canonical.encode(index))
+                 assert_python_rejects(root, "source_ledger")
+                 index
+               end)
+    end
+  end
+
   test "both consumers reject missing duplicate unaccounted and invalid upstream ledger rows" do
     for mutation <- [
           fn rows -> tl(rows) end,

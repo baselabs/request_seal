@@ -1,6 +1,6 @@
 defmodule RequestSeal.PublicKey do
   @moduledoc """
-  Public-only RSA, P-256, P-384, and Ed25519 key formats and algorithm binding.
+  Public-only RSA, P-256, P-384, Ed25519, and X25519 key formats and algorithm binding.
 
   Formats follow [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html),
   [RFC 7518](https://www.rfc-editor.org/rfc/rfc7518.html),
@@ -70,9 +70,9 @@ defmodule RequestSeal.PublicKey do
 
     * `value` - the encoded public key, matching `format`:
       * `:raw` - `{:rsa, n, e}`, `{:rsa_pss, n, e}`,
-        `{:ec, "P-256" | "P-384", uncompressed_point}`, or `{:ed25519, public_bytes}`.
+        `{:ec, "P-256" | "P-384", uncompressed_point}`, `{:ed25519, public_bytes}`, or `{:x25519, public_bytes}` (32 bytes).
       * `:jwk` - a public JWK map of at most 32 entries: `"RSA"` (`"n"`, `"e"`),
-        `"EC"` (`"crv"`, `"x"`, `"y"`), or `"OKP"` Ed25519 (`"x"`). Components are
+        `"EC"` (`"crv"`, `"x"`, `"y"`), or `"OKP"` Ed25519/X25519 (`"x"`). Components are
         canonical unpadded Base64url of at most 1,366 characters; RSA integers have
         no leading zero byte. Private members (`d`, `p`, `q`, `dp`, `dq`, `qi`,
         `oth`) and symmetric `k` reject. `alg` (printable ASCII, 1–64 bytes), `use`
@@ -121,6 +121,7 @@ defmodule RequestSeal.PublicKey do
   @doc """
   Export a validated public key without dropping algorithm or operation restrictions.
 
+  X25519 exports to JWK and raw forms only; it is for ECDH-ES, never signatures.
   Ed25519 supplied structs must pass RFC 8032 point decoding as well as the
   canonical and small-order checks before any format is exported.
 
@@ -178,6 +179,8 @@ defmodule RequestSeal.PublicKey do
   Ed25519 supplied structs undergo RFC 8032 point decoding, canonical encoding,
   and small-order validation before hashing.
 
+  X25519 uses the RFC 8037 OKP members `crv`, `kty`, and `x`.
+
   ## Parameters
 
     * `key` - a `t:t/0`; it is revalidated first.
@@ -213,8 +216,12 @@ defmodule RequestSeal.PublicKey do
               {"n", Base.url_encode64(:binary.encode_unsigned(n), padding: false)}
             ]
 
-          {:ed25519, public} ->
-            [{"crv", "Ed25519"}, {"kty", "OKP"}, {"x", Base.url_encode64(public, padding: false)}]
+          {type, public} when type in [:ed25519, :x25519] ->
+            [
+              {"crv", if(type == :x25519, do: "X25519", else: "Ed25519")},
+              {"kty", "OKP"},
+              {"x", Base.url_encode64(public, padding: false)}
+            ]
 
           {:ec, curve, <<4, point::binary>>} ->
             width = div(byte_size(point), 2)
@@ -289,8 +296,8 @@ defmodule RequestSeal.PublicKey do
           ensure(byte_size(x) == size and byte_size(y) == size, :invalid_key)
           {:ec, crv, <<4, x::binary, y::binary>>}
 
-        %{"kty" => "OKP", "crv" => "Ed25519", "x" => x} ->
-          {:ed25519, b64(x)}
+        %{"kty" => "OKP", "crv" => crv, "x" => x} when crv in ["Ed25519", "X25519"] ->
+          {if(crv == "X25519", do: :x25519, else: :ed25519), b64(x)}
 
         _ ->
           fail(:invalid_key)
@@ -449,6 +456,11 @@ defmodule RequestSeal.PublicKey do
     material
   end
 
+  defp material!({:x25519, bytes} = material) do
+    ensure(bounded_binary?(bytes, 32, 32), :invalid_key)
+    material
+  end
+
   defp material!({:ed25519, bytes} = material) do
     ensure(bounded_binary?(bytes, 32, 32), :invalid_key)
     <<encoded::little-unsigned-256>> = bytes
@@ -506,8 +518,12 @@ defmodule RequestSeal.PublicKey do
             "y" => Base.url_encode64(y, padding: false)
           }
 
-        {:ed25519, x} ->
-          %{"kty" => "OKP", "crv" => "Ed25519", "x" => Base.url_encode64(x, padding: false)}
+        {type, x} when type in [:ed25519, :x25519] ->
+          %{
+            "kty" => "OKP",
+            "crv" => if(type == :x25519, do: "X25519", else: "Ed25519"),
+            "x" => Base.url_encode64(x, padding: false)
+          }
 
         _ ->
           fail(:unsupported_format)
@@ -519,6 +535,9 @@ defmodule RequestSeal.PublicKey do
       fn {name, value}, acc -> if value == nil, do: acc, else: Map.put(acc, name, value) end
     )
   end
+
+  defp encode(%__MODULE__{material: {:x25519, _}}, format) when format in [:pem, :der],
+    do: fail(:unsupported_format)
 
   defp encode(key, :der) do
     {oid, params, bytes} =

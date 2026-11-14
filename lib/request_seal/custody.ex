@@ -68,7 +68,10 @@ defmodule RequestSeal.Custody do
   `items` contains 1–10,000 `{encrypted_key, params, content_bits}` tuples in
   input order. Each encrypted key is a binary of 0–1,024 bytes, and content bits
   are 128 or 256. Params are exactly `%{}` for RSA-OAEP, AES-KW, and `dir`, or
-  `%{iv: twelve_bytes, tag: sixteen_bytes}` for AES-GCMKW. The handle must grant
+  `%{iv: twelve_bytes, tag: sixteen_bytes}` for AES-GCMKW, or
+  `%{epk: public_key, apu: bytes, apv: bytes, algorithm_id: id, key_bits: bits}`
+  for ECDH-ES. Params are decoded before custody; no header is parsed here.
+  The handle must grant
   `:unwrap`. Only `:timeout` is accepted: 1–300,000 ms, default 5,000; unknown,
   duplicate, and invalid options reject before the handle and items.
 
@@ -500,7 +503,8 @@ defmodule RequestSeal.Custody do
     )
 
     case handle.algorithm do
-      {:jwe, alg} when alg in ~w(RSA-OAEP RSA-OAEP-256 A128GCMKW A256GCMKW dir A128KW A256KW) ->
+      {:jwe, alg}
+      when alg in ~w(RSA-OAEP RSA-OAEP-256 A128GCMKW A256GCMKW dir A128KW A256KW ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW) ->
         allowed = if alg in ~w(A128KW A256KW), do: [:wrap, :unwrap], else: [:unwrap]
         ensure(Enum.all?(handle.capabilities, &(&1 in allowed)), :invalid_handle)
 

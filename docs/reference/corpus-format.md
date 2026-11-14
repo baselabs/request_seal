@@ -80,6 +80,8 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `digest.content` | Exact body bytes, selected algorithms and field kind | Canonical digest `bytes` |
 | `crypto.verify` | Algorithm, public source key, data and signature bytes | `valid` |
 | `key_management.aes_kw/v1` | `alg` (A128KW/A256KW), `kek` byte tag, `operation` (wrap/unwrap), and `key_data` or `wrapped` byte tag | `wrapped` or `key_data` byte tag |
+| `key_management.ecdh_kdf/v1` | `z`, `apu`, `apv` byte tags; `algorithm_id` string; `keydatalen` tagged bits (128/256) | `output` byte tag |
+| `key_management.agree/v1` | `alg`, `enc`, `recipient` JWK pairs, `recipient_private` JWK pairs/source ref, `ephemeral_private` byte tag, optional `cek` byte tag for +KW, decoded `apu`/`apv` byte tags | `cek`, `encrypted_key` byte tags and `epk` JWK pairs |
 | `key.import` | Public material and format | `{"valid":true,"public":{"thumbprint":"<RFC 7638 thumbprint>"}}` |
 | `jws.sign`, `jws.verify`, `jwe.decrypt`, `nested.decrypt` | Compact bytes or protected occurrence pairs, keys and pinned policy | Exact compact bytes or verified/decrypted `payload` |
 | `web_bot_auth.verify` | Message, injected directory body, trusted origins, explicit clock and policy | Per-label canonical verification facts |
@@ -125,6 +127,35 @@ exclusions. RFC 3394's ledger points to each wrap case; its `-unwrap` companion
 asserts the inverse independently. Bytes retain the existing `b64` tag; no
 hexadecimal or numeric encoding is added to manifests.
 
+## ECDH sources and deterministic agreement
+
+The KDF surface reproduces RFC 7518 Appendix C with SHA-256, length-prefixed
+AlgorithmID and parties, a 32-bit key length in SuppPubInfo, and empty
+SuppPrivInfo. Agreement uses the internal deterministic
+`KeyManagement.Agreement` stage with a published or peer-generated ephemeral
+private scalar and, for +KW, the independently selected CEK. The adapter also
+unwraps the encrypted key under `recipient_private` and the returned public
+`epk`, asserting the same CEK. Public `agree/4` uses CSPRNG inputs instead.
+
+RFC 7520 §5.4 decrypts through a real P-384 custody handle. §5.5 and §5.7
+reject at JWE because A128CBC-HS256 is outside its content-cipher list; §5.5's
+agreement and §5.7's AES-GCMKW primitive stages pass independently. §5.7 is
+GCMKW, not RFC 3394 AES-KW. The Wycheproof ledger accounts for every AES-KW,
+P-256/P-384 ECDH, and X25519 test at the provenance-pinned commit. Unsupported
+192-bit KEKs and valid compressed EC points are explicit exclusions. Strict
+ASN.1 rejection choices and zero shared secrets are manifest overrides.
+
+Cross-library fixtures name npm jose 6.2.17 or Erlang jose 1.11.13 and include
+only generated public test keys. `scripts/check_jose_libraries.py --generate`
+reproduces them using those exact tools; `scripts/import_ecdh_vectors.py`
+imports source expectations and updates the inventory and pin. Normal
+`scripts/check.py` also makes fresh RequestSeal output and has both independent
+libraries decrypt it. Both tools are pinned by content as well as version:
+`scripts/jose_libraries/package-lock.json` carries the npm tarball's integrity
+and `scripts/jose_libraries/mix.lock` the Hex checksums, so a changed artifact
+fails to install. Tool installations live in temporary directories and never
+become package runtime dependencies.
+
 ## Batch manifests
 
 Format `request-seal-conformance-batch/1` uses `class: "mixed"` and a `batch`
@@ -138,7 +169,11 @@ Parse and serialize checks of the same item are one execution, not two inventory
 
 Named formats are `httpwg-structured-fields/1`, `wycheproof-aes-gcm/1`,
 `wycheproof-rsa-oaep/1`, `wycheproof-ed25519/1`, `wycheproof-ecdsa/1` and
-`rfc9421-signature-bases/1`. Each has one consumer implementation.
+`rfc9421-signature-bases/1`, `wycheproof-aes-kw/1`, `wycheproof-ecdh/1`,
+`wycheproof-x25519/1`, `rfc7748-x25519/1`, `rfc8037-epk/1`, and
+`rfc7520-gcmkw/1`. Each has one consumer implementation. The RFC formats
+check their published shared secret/public ephemeral key or decrypt the
+published GCMKW stage without admitting CBC content encryption.
 HTTP WG format uses the original `name`, `raw`, `header_type`, `expected`,
 `must_fail`, `can_fail` and `canonical` members, including serialization-only
 files. Every `can_fail` item has exactly one `pins` entry, with chosen outcome
@@ -170,7 +205,7 @@ RSA-OAEP otherwise applies SHA-256/MGF1 SHA-256. The signature suites use raw
 Ed25519 and fixed-width ECDSA P1363. Without an override, AES items require
 128- or 256-bit keys and empty AAD, RSA-OAEP items require empty labels, and
 all Wycheproof items require a valid or invalid verdict. Unsupported shapes,
-including `acceptable`, reject with `unexpected_item_shape` and the item ID.
+including `acceptable` on the older formats, reject with `unexpected_item_shape` and the item ID.
 
 `rfc9421-signature-bases/1` enumerates each original item followed immediately by
 its `transformations` in source order. Each transformation is a separate sub-item

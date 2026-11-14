@@ -160,3 +160,9 @@ IO.puts("Recipient handle decrypted; released handle reported separately")
 ```
 
 Next: the [JOSE guide](../docs/guides/jose.md) for options, bounds, and the full error list; [key custody](../docs/guides/key-custody.md) for supervised key owners.
+
+ECDH-ES, ECDH-ES+A128KW, and ECDH-ES+A256KW also support public P-256, P-384,
+and X25519 recipients with unwrap-only custody handles, as defined by
+[RFC 7518 §4.6](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.6) and
+[RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html). Each encryption uses a
+fresh ephemeral key; the protected header gains only its public `epk`.

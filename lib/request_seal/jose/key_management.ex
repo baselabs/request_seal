@@ -1,11 +1,15 @@
 defmodule RequestSeal.JOSE.KeyManagement do
   @moduledoc """
-  Custodian-side RFC 7518 key wrapping primitives over OTP.
+  RFC 7518 key agreement and custodian-side key wrapping over OTP.
 
   `wrap/4` and `unwrap/4` consume operation-local descriptors only:
-  `{:rsa, otp_key}`, `{:aes, kek}`, `{:cek, bytes}`. RSA wrapping takes
+  `{:rsa, otp_key}`, `{:aes, kek}`, `{:cek, bytes}`, and
+  `{:ecdh, {:ec, curve, scalar} | {:x25519, scalar}}` for agreement recovery. RSA wrapping takes
   an OTP public key; unwrapping takes an OTP private key.
   Private keys and symmetric material remain the caller custodian's responsibility.
+  `agree/4` takes a public recipient and creates ephemeral private material only
+  in a sensitive worker. ECDH-ES uses the RFC 7518 SHA-256 Concat KDF, directly
+  or with the same RFC 3394 implementation as A128KW/A256KW.
 
   RSA-OAEP uses SHA-1/MGF1 SHA-1; RSA-OAEP-256 uses SHA-256/MGF1 SHA-256,
   both with an empty label. AES-KW uses RFC 3394; decrypt-only
@@ -25,6 +29,8 @@ defmodule RequestSeal.JOSE.KeyManagement do
   """
   import RequestSeal.JOSE.Support
   alias RequestSeal.{Crypto, PublicKey}
+  alias __MODULE__.Agreement
+  @ecdh ~w(ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW)
 
   @doc """
   Wrap a CEK with RSA-OAEP or RFC 3394 AES-KW.
@@ -63,15 +69,65 @@ defmodule RequestSeal.JOSE.KeyManagement do
   end
 
   @doc """
+  Agree a fresh content key with a public P-256, P-384, or X25519 recipient.
+
+  `alg` is ECDH-ES, ECDH-ES+A128KW, or ECDH-ES+A256KW. `enc` selects
+  A128GCM (128 bits) or A256GCM (256 bits). The primitive also permits the
+  published A128CBC-HS256 agreement stage (256 bits); JWE refuses that cipher.
+  `params_in` contains only optional decoded `:apu` and `:apv` binaries,
+  at most 1,024 bytes each, distinct when nonempty. Absent parties are empty.
+  Recipient JWK metadata must permit the exact algorithm and key agreement.
+
+  A sensitive worker generates an ephemeral private key on the recipient's
+  curve with the CSPRNG. Direct mode derives its CEK with RFC 7518 Concat KDF
+  and returns an empty encrypted key. The +KW modes derive a KEK and wrap a
+  separately generated random CEK using RFC 3394. The result is
+  `{:ok, %{cek: bytes, encrypted_key: bytes, header: %{"epk" => public_jwk}}}`.
+  No ephemeral private material leaves the worker. Callers own returned CEKs.
+
+  Returns bounded JOSE errors: `:algorithm_not_permitted` (input),
+  `:invalid_header` (params), `:algorithm_mismatch` (recipient, key layer),
+  `:entropy_failure`, `:decryption_failed` (agreement), or
+  `:deadline_exceeded` (the worker's 5,000 ms bound), at the crypto layer.
+  Supplied public structs are revalidated; X25519 all-zero agreement rejects.
+  """
+  @spec agree(binary(), binary(), PublicKey.t(), map()) ::
+          {:ok, %{cek: binary(), encrypted_key: binary(), header: map()}}
+          | {:error, RequestSeal.JOSE.Error.t()}
+  def agree(alg, enc, recipient, params_in) do
+    safe(fn ->
+      ensure(alg in @ecdh, :algorithm_not_permitted)
+      Agreement.selection(alg, enc)
+      Agreement.parties!(params_in)
+      Agreement.recipient!(alg, recipient)
+
+      worker(
+        5_000,
+        fn ->
+          {_public, ephemeral} = :crypto.generate_key(:ecdh, Agreement.native(recipient))
+          cek = if alg == "ECDH-ES", do: nil, else: random(div(Agreement.content_bits(enc), 8))
+          Agreement.run(alg, enc, recipient, params_in, ephemeral, cek)
+        end,
+        :decryption_failed,
+        :crypto
+      )
+    end)
+  end
+
+  @doc """
   Recover key data using the selected algorithm and closed, decoded params.
 
   Admission of `alg` precedes params and key validation. Params are exactly
   `%{}` for RSA-OAEP, AES-KW, and `dir`, or exactly
-  `%{iv: twelve_bytes, tag: sixteen_bytes}` for AES-GCMKW. Headers and extra
+  `%{iv: twelve_bytes, tag: sixteen_bytes}` for AES-GCMKW, or
+  `%{epk: public_key, apu: bytes, apv: bytes, algorithm_id: id, key_bits: bits}`
+  for ECDH-ES. The ECDH primitive revalidates the public point, party bounds,
+  exact KDF selection, held-key curve/type, and X25519 nonzero shared secret. Headers and extra
   members reject as `:invalid_header`; invalid GCM widths as `:invalid_iv` or
   `:invalid_tag`, all at layer `:input`.
 
-  `material` is `{:rsa, otp_private_key}`, `{:aes, kek}`, or `{:cek, bytes}`.
+  `material` is `{:rsa, otp_private_key}`, `{:aes, kek}`, `{:cek, bytes}`, or
+  `{:ecdh, {:ec, curve, scalar} | {:x25519, scalar}}` for ECDH-ES.
   KEKs are exactly 16 or 32 bytes for the corresponding AES algorithm; a wrong
   size is `:algorithm_mismatch`, layer `:key`. Input is bounded to 1,048,576
   bytes. RFC 3394 requires at least 24 wrapped bytes, divisible by 8: all 6n
@@ -113,6 +169,8 @@ defmodule RequestSeal.JOSE.KeyManagement do
     :ok
   end
 
+  def validate_params!(alg, params) when alg in @ecdh, do: Agreement.validate_params!(alg, params)
+
   def validate_params!(_alg, params), do: ensure(params == %{}, :invalid_header)
 
   defp params_shape!(alg, params) when alg in ~w(A128GCMKW A256GCMKW),
@@ -121,6 +179,8 @@ defmodule RequestSeal.JOSE.KeyManagement do
         is_map(params) and not is_struct(params) and Enum.sort(Map.keys(params)) == [:iv, :tag],
         :invalid_header
       )
+
+  defp params_shape!(alg, params) when alg in @ecdh, do: Agreement.validate_params!(alg, params)
 
   defp params_shape!(_alg, params), do: ensure(params == %{}, :invalid_header)
 
@@ -173,6 +233,9 @@ defmodule RequestSeal.JOSE.KeyManagement do
 
     key
   end
+
+  defp unwrap_bytes(alg, bytes, params, {:ecdh, material}) when alg in @ecdh,
+    do: Agreement.unwrap(alg, bytes, params, material)
 
   defp unwrap_bytes(_, _, _, _), do: fail(:decryption_failed, :crypto)
 

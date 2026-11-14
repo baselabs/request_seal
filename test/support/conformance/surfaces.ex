@@ -32,6 +32,8 @@ defmodule RequestSeal.Conformance.Surfaces do
     "crypto.verify" => :crypto_verify,
     "key.import" => :key_import,
     "key_management.aes_kw/v1" => :aes_kw,
+    "key_management.ecdh_kdf/v1" => :ecdh_kdf,
+    "key_management.agree/v1" => :agree,
     "jws.sign" => :jws_sign,
     "jws.verify" => :jws_verify,
     "jwe.decrypt" => :jwe_decrypt,
@@ -624,17 +626,195 @@ defmodule RequestSeal.Conformance.Surfaces do
     end
   end
 
+  def ecdh_kdf(_root, c) do
+    i = c["inputs"]
+
+    with {:ok, output} <-
+           KeyManagement.Agreement.kdf(
+             C.bytes(i["z"]),
+             i["algorithm_id"],
+             C.bytes(i["apu"]),
+             C.bytes(i["apv"]),
+             C.int(i["keydatalen"])
+           ),
+         do: {:ok, %{"output" => C.b64(output)}}
+  end
+
+  def agree(root, c) do
+    i = c["inputs"]
+
+    with {:ok, recipient} <- PublicKey.import(jwk(root, i["recipient"]), :jwk),
+         {:ok, result} <-
+           KeyManagement.Agreement.run(
+             i["alg"],
+             i["enc"],
+             recipient,
+             %{apu: C.bytes(i["apu"]), apv: C.bytes(i["apv"])},
+             C.bytes(i["ephemeral_private"]),
+             if(i["cek"], do: C.bytes(i["cek"]))
+           ) do
+      private = jwk(root, i["recipient_private"])
+
+      params =
+        KeyManagement.Agreement.header_params!(
+          i["alg"],
+          Map.merge(result.header, %{"enc" => i["enc"], "apu" => V.enc(C.bytes(i["apu"]))})
+        )
+
+      # Empty absent parties are not added as equal empty header members.
+      params = %{params | apu: C.bytes(i["apu"]), apv: C.bytes(i["apv"])}
+
+      material =
+        case private do
+          %{"kty" => "EC", "crv" => crv, "d" => d} -> {:ec, crv, V.b64(d)}
+          %{"kty" => "OKP", "crv" => "X25519", "d" => d} -> {:x25519, V.b64(d)}
+        end
+
+      C.require!(
+        KeyManagement.unwrap(i["alg"], result.encrypted_key, params, {:ecdh, material}) ==
+          {:ok, result.cek},
+        :agreement_inverse
+      )
+
+      {:ok,
+       %{
+         "cek" => C.b64(result.cek),
+         "encrypted_key" => C.b64(result.encrypted_key),
+         "epk" => %{"pairs" => Enum.map(Enum.sort(result.header["epk"]), fn {k, v} -> [k, v] end)}
+       }}
+    end
+  end
+
+  defp jwk(root, value) do
+    case C.load(root, value) do
+      %{"pairs" => pairs} -> Map.new(pairs, &List.to_tuple/1)
+      key -> key
+    end
+  end
+
+  def aes_kw_item(g, t, override) do
+    alg = if g["keySize"] == 128, do: "A128KW", else: "A256KW"
+    result = KeyManagement.unwrap(alg, V.hex(t["ct"]), %{}, {:aes, V.hex(t["key"])})
+    batch_result(result, t, override)
+  end
+
+  def ecdh_item(g, t, override) do
+    # SPKI is the published Wycheproof input, not an invented JWK. Canonical
+    # named-curve, uncompressed points pass the same PublicKey importer.
+    result =
+      RequestSeal.JOSE.Support.safe(
+        fn ->
+          case PublicKey.import(V.hex(t["public"]), :der) do
+            {:ok, public} ->
+              crv = if g["curve"] == "secp256r1", do: "P-256", else: "P-384"
+              width = if crv == "P-256", do: 32, else: 48
+              scalar = V.hex(t["private"])
+              # Upstream unsigned scalars sometimes include a DER sign octet.
+              scalar = :binary.encode_unsigned(:binary.decode_unsigned(scalar))
+              C.require!(byte_size(scalar) <= width, :scalar_width)
+              scalar = :binary.copy(<<0>>, width - byte_size(scalar)) <> scalar
+              {:ok, KeyManagement.Agreement.shared_secret(public, {:ec, crv, scalar})}
+
+            _ ->
+              RequestSeal.JOSE.Support.fail(:decryption_failed, :crypto)
+          end
+        end,
+        :decryption_failed,
+        :crypto
+      )
+
+    agreement_result(result, t, override)
+  end
+
+  def x25519_item(_g, t, override) do
+    result =
+      RequestSeal.JOSE.Support.safe(
+        fn ->
+          {:ok, public} = PublicKey.import({:x25519, V.hex(t["public"])}, :raw)
+          {:ok, KeyManagement.Agreement.shared_secret(public, {:x25519, V.hex(t["private"])})}
+        end,
+        :decryption_failed,
+        :crypto
+      )
+
+    agreement_result(result, t, override)
+  end
+
+  defp agreement_result(result, t, nil) do
+    C.require!(t["result"] in ["valid", "invalid", "acceptable"], :upstream_verdict)
+
+    if t["result"] == "invalid",
+      do: match?({:error, _}, result),
+      else: result == {:ok, V.hex(t["shared"])}
+  end
+
+  defp agreement_result({:error, error}, _, %{"outcome" => "reject", "rule_id" => rule}),
+    do: C.rule_id(error) == rule
+
+  defp agreement_result(_, _, _), do: false
+
+  def rfc8037_epk(t) do
+    {:ok, public} = PublicKey.import({:x25519, V.hex(t["public"])}, :raw)
+
+    with {:ok, result} <-
+           KeyManagement.Agreement.run(
+             "ECDH-ES+A128KW",
+             "A128GCM",
+             public,
+             %{},
+             V.hex(t["private"]),
+             <<0::128>>
+           ) do
+      result.header["epk"] == t["epk"] and x25519_item(nil, t, nil)
+    end
+  end
+
+  def rfc7520_gcmkw(v) do
+    actual =
+      KeyManagement.unwrap(
+        v["input"]["alg"],
+        V.b64(v["encrypting_key"]["encrypted_key"]),
+        %{iv: V.b64(v["encrypting_key"]["iv"]), tag: V.b64(v["encrypting_key"]["tag"])},
+        {:aes, V.b64(v["input"]["key"]["k"])}
+      )
+
+    actual == {:ok, V.b64(v["generated"]["cek"])}
+  end
+
   def jwe_decrypt(root, c) do
     i = c["inputs"]
     j = C.load(root, i["key"])
     p = c["policy"]
 
-    with {:ok, result} <-
-           JWE.decrypt(
-             C.bytes(i["compact"]),
-             V.jwe_policy(j, hd(p["algorithms"]), hd(p["encryption"]))
-           ),
-         do: {:ok, %{"valid" => true, "payload" => C.b64(result.plaintext)}}
+    # Every asymmetric agreement envelope exercises real custody, including
+    # the RFC 7520 P-384 published message; lifecycle ends with this case.
+    if j["kty"] in ["EC", "OKP"] do
+      alg = hd(p["algorithms"])
+
+      with {:ok, handle} <- RequestSeal.Custody.Local.import({:jwe, alg}, j, :jwk) do
+        try do
+          policy = %{
+            algorithms: p["algorithms"],
+            encryption: p["encryption"],
+            max_plaintext: 1_048_576,
+            timeout: 5000,
+            key_resolver: fn _ -> {:ok, %{algorithm: alg, key: handle}} end
+          }
+
+          with {:ok, result} <- JWE.decrypt(C.bytes(i["compact"]), policy),
+               do: {:ok, %{"valid" => true, "payload" => C.b64(result.plaintext)}}
+        after
+          RequestSeal.Custody.release(handle)
+        end
+      end
+    else
+      with {:ok, result} <-
+             JWE.decrypt(
+               C.bytes(i["compact"]),
+               V.jwe_policy(j, hd(p["algorithms"]), hd(p["encryption"]))
+             ),
+           do: {:ok, %{"valid" => true, "payload" => C.b64(result.plaintext)}}
+    end
   end
 
   def nested_decrypt(root, c) do

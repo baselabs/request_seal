@@ -18,7 +18,7 @@ INTERNAL_PROCESS = re.compile(
 )
 SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/web_bot_auth/PROVENANCE.md"} | {
     "corpus/sources/" + origin + "/PROVENANCE.md" for origin in (
-        "rfc3394", "rfc9421", "rfc6979", "rfc8032", "rfc7515", "rfc7516", "rfc7520",
+        "cross-jose", "rfc7518", "rfc7748", "rfc3394", "rfc9421", "rfc6979", "rfc8032", "rfc7515", "rfc7516", "rfc7520",
         "rfc7517", "rfc8037", "wycheproof", "httpwg-structured-fields",
         "web-bot-auth", "local-http",
     )

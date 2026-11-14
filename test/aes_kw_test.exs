@@ -238,24 +238,11 @@ defmodule RequestSeal.AESKWTest do
              {:error, Error.new(:algorithm_not_permitted, :input)}
   end
 
-  test "key-agreement encryption is refused before any recipient callback until it is implemented" do
-    observer = self()
-
-    recipient = fn _alg, _cek ->
-      send(observer, :recipient_invoked)
-      {:ok, %{encrypted_key: :binary.copy(<<1>>, 256), header: %{}}}
-    end
-
-    for alg <- ~w(ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW),
-        candidate <- [recipient, :invalid, nil] do
-      assert JWE.encrypt([{"alg", alg}, {"enc", "A256GCM"}], "payload", candidate) ==
-               {:error, Error.new(:algorithm_not_permitted, :input)}
-
+  test "key-agreement family uses agree and remains refused by primitive wrap" do
+    for alg <- ~w(ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW) do
       assert KeyManagement.wrap(alg, hex(@key), %{}, {:aes, hex(@k256)}) ==
                {:error, Error.new(:algorithm_not_permitted, :input)}
     end
-
-    refute_receive :recipient_invoked
   end
 
   test "wrap telemetry has only an outcome and unwrap exposes no item outcome" do

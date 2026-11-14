@@ -1,4 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-10-09 · Governed by: ADR 0009 · Review when: source bytes change -->
+<!-- Status: current · Kind: reference · Updated: 2026-11-13 · Governed by: ADR 0009 · Review when: source bytes change -->
 
 # Source provenance
 
@@ -7,3 +7,5 @@ Unchanged public companion vectors for [RFC 7520](https://www.rfc-editor.org/rfc
 `upstream-SHA256SUMS` files are historical copies from the original fixture
 layout and are not checkable in place. The local `SHA256SUMS` and corpus index
 verify this directory layout.
+
+The ECDH ledger inventories every companion JSON file. It selects §5.4/§5.5 agreement and §5.7 GCMKW stages; unrelated cookbook examples retain their existing corpus coverage. Full JWE §5.4 uses custody; §5.5 and §5.7 reject their unsupported CBC content cipher.

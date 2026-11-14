@@ -84,14 +84,40 @@ another JOSE envelope (`application/jose`, `application/jose+json`,
 
 ## Decrypt with a recipient key handle
 
-For RSA-OAEP, keep the recipient's private key in an algorithm-bound custody
+For RSA-OAEP or ECDH-ES, keep the recipient's private key in an algorithm-bound custody
 handle and return that handle from the key resolver. [Decryption keys](key-custody.md#decryption-keys)
 shows the import, the startup health check, and why a released handle fails
 exactly like a forged message.
 
+## ECDH recipients
+
+The ECDH-ES family accepts `RequestSeal.PublicKey` recipients on P-256, P-384,
+or X25519 ([RFC 7518 §4.6](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.6),
+[RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html)). Import EC JWKs or
+OKP JWKs with `crv: "X25519"`; raw X25519 material is `{:x25519, public_bytes}`
+with exactly 32 bytes. X25519 cannot verify a signature.
+
+For encryption, supply the public key to `JWE.encrypt/3`. Each call generates a
+fresh ephemeral private key inside its sensitive worker. Direct `ECDH-ES`
+derives the CEK; the +KW variants derive a KEK and wrap a separately generated
+CEK with RFC 3394. The protected header gains the public `epk`, and additions
+cannot replace any caller member. Function recipients are refused for this family.
+
+Optional protected `apu` and `apv` remain canonical Base64url in the header.
+Their decoded values are each at most 1,024 bytes and must differ when both
+members are supplied. On decryption, malformed points or parties reject as
+`:invalid_header` before resolution. The resolver returns a handle bound to the
+exact selected ECDH family member; a wrong curve, released handle, zero X25519
+agreement, or failed unwrap ends `:decryption_failed`, with no plaintext.
+
+`KeyManagement.agree/4` is the primitive for caller-owned protocol work.
+It accepts decoded parties and returns the CEK, encrypted key, and public header
+additions. `KeyManagement.wrap/4` continues to admit only RSA-OAEP and AES-KW.
+Primitive support for published CBC agreement stages does not enable CBC in JWE.
+
 ## Options and bounds
 
-JWS algorithms are `RS256`, `PS256`, `PS384`, `PS512`, `HS256`, `ES256`, `ES384`, and `EdDSA`. JWE encryption uses `RSA-OAEP-256`, `RSA-OAEP`, `A128KW`, or `A256KW`; decryption also admits `A128GCMKW`, `A256GCMKW`, and `dir`; content encryption is `A128GCM` or `A256GCM`.
+JWS algorithms are `RS256`, `PS256`, `PS384`, `PS512`, `HS256`, `ES256`, `ES384`, and `EdDSA`. JWE encryption uses `RSA-OAEP-256`, `RSA-OAEP`, `A128KW`, `A256KW`, `ECDH-ES`, `ECDH-ES+A128KW`, or `ECDH-ES+A256KW`; decryption also admits `A128GCMKW`, `A256GCMKW`, and `dir`; content encryption is `A128GCM` or `A256GCM`.
 
 Choose exact algorithm allowlists, timeout, content-encryption algorithms, and maximum plaintext. Compact envelopes are at most 1 MiB, protected JSON at most 16 KiB and depth four. Base64url is canonical and unpadded. Duplicate JSON members and floats reject. Compression, detached JWS, JSON serializations, the `jku`, `x5u`, and `jwk` key headers, `b64`, and `crit` are unsupported (`x5c` is accepted only as untrusted data); choose a different protocol contract when those are required.
 

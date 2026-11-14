@@ -2,6 +2,22 @@
 
 ## Unreleased 2.0.0
 
+- Add ECDH-ES, ECDH-ES+A128KW, and ECDH-ES+A256KW with P-256, P-384,
+  and X25519 recipients. `KeyManagement.agree/4` generates ephemeral keys and
+  CEKs inside a sensitive worker; Concat KDF uses the complete RFC 7518 encoding,
+  and the wrapping stage shares the existing RFC 3394 implementation.
+- Add X25519 public JWK/raw import and export, and unwrap-only local ECDH
+  handles with private EC/X25519 JWK import and real construction round trips.
+  X25519 signature use rejects as `:algorithm_mismatch`.
+- Validate exact public `epk` members, curve points, and bounded distinct decoded
+  parties before resolution. Held-key mismatch and zero X25519 agreement use
+  JWE's existing fallback CEK path. Direct ECDH requires an empty encrypted key.
+  ECDH encryption requires public recipients; callbacks never receive a CEK.
+- Add deterministic KDF/agreement corpus surfaces, published RFC 7518/7520/7748/
+  8037 vectors, complete Wycheproof AES-KW/ECDH/X25519 item ledgers, and reciprocal
+  checks with npm jose 6.2.17 and Erlang jose 1.11.13. Tools are isolated from
+  runtime dependencies and removed after each check.
+
 - Replace single-key custody unwrap with indexed lists and an owner-owned,
   revocable sink. Accepted positions survive a later stall or callback failure;
   expiry revokes delivery and settles only unfinished positions. CEKs travel

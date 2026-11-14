@@ -5,13 +5,13 @@ defmodule RequestSeal.Custody.Local do
   `new/3` builds a handle from OTP key material and `import/4` from one private
   PEM, PKCS #8 DER, or private JWK. All six HTTP algorithms and the eight
   explicit JWS extensions in `RequestSeal.Crypto` are supported for signing, and
-  RSA-OAEP, AES-KW, AES-GCMKW, and `dir` JWE custody. AES-KW handles grant
+  RSA-OAEP, AES-KW, AES-GCMKW, ECDH-ES (P-256, P-384, X25519), and `dir` JWE custody. AES-KW handles grant
   `:wrap` and/or `:unwrap`; GCMKW, `dir`, and RSA handles grant `:unwrap` only. Each
   handle binds exactly one algorithm; an unwrap handle cannot sign or verify.
   Construction derives a public key and performs an actual sign/verify
   before returning a signing handle. RSA-OAEP construction validates CRT
   components and performs an actual OAEP wrap/unwrap; AES-KW construction
-  performs a real wrap/unwrap. Decrypt-only symmetric handles validate key widths. Only `equivalence: nonsecret_binary` is accepted, and
+  performs a real wrap/unwrap. ECDH construction performs real agreement and recovery. Decrypt-only symmetric handles validate key widths. Only `equivalence: nonsecret_binary` is accepted, and
   only for HMAC (1–256 bytes). Absent HMAC equivalence remains `:unknown`; no value
   is derived from the secret. HMAC verification stays inside the custodian.
   No private key export, global store, or server is provided. The custody facade
@@ -70,13 +70,14 @@ defmodule RequestSeal.Custody.Local do
   @pss {1, 2, 840, 113_549, 1, 1, 10}
   @ec {1, 2, 840, 10045, 2, 1}
   @ed {1, 3, 101, 112}
+  @ecdh ~w(ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW)
   @max_bytes_ceiling Crypto.max_bytes_ceiling()
 
   @doc """
   Construct an algorithm-bound signing or key-management capability from OTP material.
 
   Construction validates material and derives its public key (none for symmetric
-  material). Signing, OAEP, and AES-KW perform actual round trips; decrypt-only
+  material). Signing, OAEP, AES-KW, and ECDH perform actual round trips; decrypt-only
   symmetric families validate their exact key widths. It then starts one holder
   process owned by the caller. Release the handle with `release/1`.
 
@@ -85,13 +86,14 @@ defmodule RequestSeal.Custody.Local do
     * `algorithm` - an HTTP identifier from `RequestSeal.Crypto.algorithms/0`,
       `{:jws, name}` for a JWS extension listed in `RequestSeal.Crypto`, or
       `{:jwe, name}` for RSA-OAEP, RSA-OAEP-256, A128KW, A256KW,
-      A128GCMKW, A256GCMKW, or dir.
+      A128GCMKW, A256GCMKW, dir, ECDH-ES, ECDH-ES+A128KW, or ECDH-ES+A256KW.
     * `material` - an operation-local OTP descriptor that fits `algorithm`:
       * `{:rsa, otp_private_key}` - a two-prime `:RSAPrivateKey` record with a
         2048–8192-bit modulus and consistent CRT components; RSA signing
         algorithms and both OAEP algorithms.
       * `{:ec, "P-256" | "P-384", scalar_bytes}` - a 32- or 48-byte scalar on the
         algorithm's curve.
+      * `{:x25519, scalar_bytes}` - a 32-byte ECDH scalar, for ECDH-ES only.
       * `{:ed25519, seed_bytes}` - a 32-byte seed.
       * `{:hmac, secret_bytes}` - a 32–16,384-byte secret.
       * `{:aes, kek}` - exactly 16 bytes for A128KW/A128GCMKW or 32 for
@@ -163,7 +165,8 @@ defmodule RequestSeal.Custody.Local do
         Ed25519. DER inside the entry must be canonical.
       * DER: a canonical PKCS #8 binary of 1–16,384 bytes with the same key types.
       * JWK: a private JWK map of at most 32 fields: `"RSA"` with all two-prime
-        CRT members, `"EC"` (P-256 or P-384), `"OKP"` Ed25519, or `"oct"`.
+        CRT members, `"EC"` (P-256 or P-384), `"OKP"` Ed25519/X25519, or `"oct"`. ECDH permits `deriveKey` or
+        `deriveBits` (also `decrypt`/`unwrapKey`) and yields `[:unwrap]` only.
         Components must be canonical unpadded Base64url; `"oth"` and explicit
         `null` `alg`, `use`, or `key_ops` reject.
     * `format` - `:pem`, `:der`, or `:jwk`.
@@ -294,7 +297,10 @@ defmodule RequestSeal.Custody.Local do
           %KeyIdentity{kind: :public, value: KeyIdentity.normalize(key.material)}
       end
 
-    state = {algorithm, material, public, identity, capabilities}
+    held_material =
+      if match?({:jwe, alg} when alg in @ecdh, algorithm), do: {:ecdh, material}, else: material
+
+    state = {algorithm, held_material, public, identity, capabilities}
     {holder, token} = start_holder(state)
 
     {:ok,
@@ -314,6 +320,8 @@ defmodule RequestSeal.Custody.Local do
 
   defp selection({:jwe, jose}) when jose in ["A128GCMKW", "A256GCMKW"],
     do: {jose, :aes, [:unwrap]}
+
+  defp selection({:jwe, jose}) when jose in @ecdh, do: {jose, :ecdh, [:unwrap]}
 
   defp selection({:jwe, "dir"}), do: {"dir", :cek, [:unwrap]}
 
@@ -359,6 +367,23 @@ defmodule RequestSeal.Custody.Local do
 
   defp validate_operation({:jwe, "dir"}, {:cek, key}, _),
     do: ensure(is_binary(key) and byte_size(key) in [16, 32], :invalid_key)
+
+  defp validate_operation({:jwe, alg}, material, public) when alg in @ecdh do
+    ensure(match?({:ec, _, _}, material) or match?({:x25519, _}, material), :key_mismatch)
+    agreed = RequestSeal.JOSE.KeyManagement.agree(alg, "A256GCM", public, %{}) |> unwrap()
+
+    params =
+      RequestSeal.JOSE.KeyManagement.Agreement.header_params!(
+        alg,
+        Map.put(agreed.header, "enc", "A256GCM")
+      )
+
+    recovered =
+      RequestSeal.JOSE.KeyManagement.unwrap(alg, agreed.encrypted_key, params, {:ecdh, material})
+      |> unwrap()
+
+    ensure(:crypto.hash_equals(agreed.cek, recovered), :invalid_key)
+  end
 
   defp validate_operation({:jwe, _}, _, _), do: fail(:key_mismatch)
 
@@ -671,6 +696,12 @@ defmodule RequestSeal.Custody.Local do
     unwrap(PublicKey.import({:ec, crv, point}, :raw))
   end
 
+  defp derive({:x25519, scalar}, _) do
+    ensure(is_binary(scalar) and byte_size(scalar) == 32, :invalid_key)
+    {public, _} = :crypto.generate_key(:ecdh, :x25519, scalar)
+    unwrap(PublicKey.import({:x25519, public}, :raw))
+  end
+
   defp derive({:ed25519, seed}, _) do
     ensure(is_binary(seed) and byte_size(seed) == 32, :invalid_key)
     {public, _} = :crypto.generate_key(:eddsa, :ed25519, seed)
@@ -718,12 +749,21 @@ defmodule RequestSeal.Custody.Local do
     for key <- ~w(alg use key_ops),
         do: ensure(not Map.has_key?(value, key) or value[key] != nil, :invalid_key)
 
-    encryption = jose in ~w(RSA-OAEP RSA-OAEP-256 A128KW A256KW A128GCMKW A256GCMKW dir)
+    encryption =
+      jose in @ecdh or jose in ~w(RSA-OAEP RSA-OAEP-256 A128KW A256KW A128GCMKW A256GCMKW dir)
+
     use = if encryption, do: "enc", else: "sig"
-    allowed_ops = if encryption, do: ~w(encrypt decrypt wrapKey unwrapKey), else: ~w(sign verify)
+
+    allowed_ops =
+      cond do
+        jose in @ecdh -> ~w(encrypt decrypt wrapKey unwrapKey deriveKey deriveBits)
+        encryption -> ~w(encrypt decrypt wrapKey unwrapKey)
+        true -> ~w(sign verify)
+      end
 
     required_ops =
       cond do
+        jose in @ecdh -> ~w(decrypt unwrapKey deriveKey deriveBits)
         jose in ~w(A128KW A256KW) -> ~w(encrypt decrypt wrapKey unwrapKey)
         encryption -> ~w(decrypt unwrapKey)
         true -> ~w(sign)
@@ -797,6 +837,9 @@ defmodule RequestSeal.Custody.Local do
 
           {{:ec, crv, d}, {:ec, crv, <<4, x::binary, y::binary>>}}
 
+        %{"kty" => "OKP", "crv" => "X25519", "x" => x, "d" => d} ->
+          {{:x25519, b64(d)}, {:x25519, b64(x)}}
+
         %{"kty" => "OKP", "crv" => "Ed25519", "x" => x, "d" => d} ->
           {{:ed25519, b64(d)}, {:ed25519, b64(x)}}
 
@@ -830,6 +873,8 @@ defmodule RequestSeal.Custody.Local do
   end
 
   defp decode(_, _, _), do: fail(:unsupported_format)
+
+  defp capabilities(jose) when jose in @ecdh, do: [:unwrap]
 
   defp capabilities(jose) when jose in ~w(RSA-OAEP RSA-OAEP-256 A128GCMKW A256GCMKW dir),
     do: [:unwrap]

@@ -58,22 +58,32 @@ def verify(root):
                 raise ValueError("case_metadata")
         if "batch" in case and case["batch"]["count"] != entry.get("count"):
             raise ValueError("batch_count")
-    rows = decode((root / "sources/rfc3394/ledger.json").read_bytes())
-    vectors = decode((root / "sources/rfc3394/vectors.json").read_bytes())
-    expected = sorted(v["item"] for v in vectors)
-    if expected != ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6"] or not isinstance(rows, list):
+    if sorted(v["item"] for v in decode((root / "sources/rfc3394/vectors.json").read_bytes())) != ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6"]:
         raise ValueError("source_ledger")
-    if sorted(row.get("item", "") for row in rows) != expected:
-        raise ValueError("source_ledger")
-    for row in rows:
-        if set(row) == {"item", "case"}:
-            if row["case"] not in ids:
-                raise ValueError("source_ledger")
-        elif set(row) == {"item", "excluded"}:
-            if not isinstance(row["excluded"], str) or not row["excluded"].strip():
-                raise ValueError("source_ledger")
-        else:
+    ledger_sources = {
+        "rfc3394": ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6"],
+        "rfc7518": ["C-kdf", "C-agree"], "rfc7748": ["6.1"],
+        "rfc8037": ["A.1", "A.6"],
+        "rfc7520": [p.name for p in (root / "sources/rfc7520").glob("*.json") if p.name != "ledger.json"],
+        "wycheproof": [file + "/" + str(t["tcId"]) for file in
+            ("aes_wrap_test.json", "ecdh_secp256r1_test.json", "ecdh_secp384r1_test.json", "x25519_test.json")
+            for g in decode((root / "sources/wycheproof" / file).read_bytes())["testGroups"] for t in g["tests"]],
+        "cross-jose": ["/".join([row["provider"], row["alg"], row["enc"], row["key"].get("crv", "oct")])
+            for row in decode((root / "sources/cross-jose/vectors.json").read_bytes())],
+    }
+    for source, expected in ledger_sources.items():
+        rows = decode((root / "sources" / source / "ledger.json").read_bytes())
+        if not isinstance(rows, list) or sorted(row.get("item", "") for row in rows) != sorted(expected):
             raise ValueError("source_ledger")
+        for row in rows:
+            if set(row) == {"item", "case"}:
+                if row["case"] not in ids:
+                    raise ValueError("source_ledger")
+            elif set(row) == {"item", "excluded"}:
+                if not isinstance(row["excluded"], str) or not row["excluded"].strip():
+                    raise ValueError("source_ledger")
+            else:
+                raise ValueError("source_ledger")
     print("PASS: corpus canonical metadata and " + str(len(paths)) + " file digests")
 
 
