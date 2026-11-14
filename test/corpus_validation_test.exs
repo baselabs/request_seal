@@ -134,6 +134,49 @@ defmodule RequestSeal.CorpusValidationTest do
     assert output =~ reason
   end
 
+  test "both consumers reject a case whose id, folder and surface prefix disagree" do
+    from = "key_management/rfc7748-6-1"
+
+    for {id, manifest} <- [
+          {"rfc7748-6-1", "cases/rfc7748-6-1.json"},
+          {"jwe/rfc7748-6-1", "cases/jwe/rfc7748-6-1.json"},
+          {from, "cases/jwe/rfc7748-6-1.json"},
+          {"key_management/extra/rfc7748-6-1", "cases/key_management/extra/rfc7748-6-1.json"}
+        ] do
+      assert {:error, :case_layout} =
+               changed(fn root, index ->
+                 entry = Enum.find(index["cases"], &(&1["id"] == from))
+                 case_ = C.json(File.read!(Path.join(root, entry["manifest"])))
+                 File.rm!(Path.join(root, entry["manifest"]))
+                 File.mkdir_p!(Path.dirname(Path.join(root, manifest)))
+                 File.write!(Path.join(root, manifest), Canonical.encode(%{case_ | "id" => id}))
+
+                 index =
+                   index
+                   |> update_in(
+                     ["cases"],
+                     &Enum.map(&1, fn e ->
+                       if e["id"] == from,
+                         do: %{e | "id" => id, "manifest" => manifest},
+                         else: e
+                     end)
+                   )
+                   |> update_in(["files"], fn files ->
+                     files
+                     |> Enum.map(fn f ->
+                       path = if f["path"] == entry["manifest"], do: manifest, else: f["path"]
+                       %{"path" => path, "sha256" => C.sha(File.read!(Path.join(root, path)))}
+                     end)
+                     |> Enum.sort_by(& &1["path"])
+                   end)
+
+                 File.write!(Path.join(root, "index.json"), Canonical.encode(index))
+                 assert_python_rejects(root, "case_layout")
+                 index
+               end)
+    end
+  end
+
   test "positive references require an existing other case and reviewed derivation" do
     for positive <- ["missing", "sign/signer-failed"] do
       assert {:error, :positive_reference} =

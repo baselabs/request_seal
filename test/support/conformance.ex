@@ -28,6 +28,7 @@ defmodule RequestSeal.Conformance do
         Enum.map(index["files"], & &1["path"]) |> Enum.filter(&String.starts_with?(&1, "cases/"))
 
       require!(Enum.sort(manifests) == Enum.sort(listed), :case_inventory)
+      require!(Enum.all?(cases, &case_layout?/1), :case_layout)
 
       case_ids = MapSet.new(cases, & &1["id"])
       verify_ledgers!(root, case_ids)
@@ -252,6 +253,19 @@ defmodule RequestSeal.Conformance do
       end)
     end)
   end
+
+  # A case id is its manifest path under cases/, and its folder is the surface prefix.
+  defp case_layout?(%{"id" => id, "surface" => surface, "manifest" => manifest})
+       when is_binary(id) and is_binary(surface) do
+    [folder | _] = String.split(surface, ".", parts: 2)
+
+    case String.split(id, "/") do
+      [^folder, name] when name != "" -> manifest == "cases/" <> id <> ".json"
+      _ -> false
+    end
+  end
+
+  defp case_layout?(_), do: false
 
   defp execute_case(root, entry, state) do
     raw = read_file(root, entry["manifest"])

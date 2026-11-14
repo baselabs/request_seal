@@ -30,7 +30,10 @@ Format `request-seal-conformance-corpus-index/1` requires:
 - `files`: every regular file below sources and cases, sorted by relative path,
   each with `path` and lowercase hexadecimal `sha256`.
 - `cases`: unique `id`, `manifest`, `surface` and `class` entries. A batch also
-  carries its tagged `count` and `not_applicable` count, including zero.
+  carries its tagged `count` and `not_applicable` count, including zero. An `id`
+  is `<surface prefix>/<name>`, where the surface prefix is the surface up to its
+  first `.` and the name holds no `/`; its `manifest` is `cases/<id>.json`.
+  Consumers reject any other layout.
 - `known_positive`: a listed positive case that must execute successfully.
 
 The Elixir consumer pins the index SHA-256 in its test support. Another repository

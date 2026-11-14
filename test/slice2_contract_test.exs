@@ -3,13 +3,13 @@ defmodule RequestSeal.Slice2ContractTest do
   alias RequestSeal.Conformance, as: C
 
   test "RFC 7518 KDF and agreement surfaces execute independent corpus expectations" do
-    for name <- [
-          "rfc7518-appendix-c-kdf",
-          "rfc7518-appendix-c-agree",
-          "rfc7520-5-4-agree",
-          "rfc7520-5-5-agree"
+    for id <- [
+          "key_management/rfc7518-appendix-c-kdf",
+          "key_management/rfc7518-appendix-c-agree",
+          "key_management/rfc7520-5-4-agree",
+          "key_management/rfc7520-5-5-agree"
         ] do
-      c = File.read!("corpus/cases/" <> name <> ".json") |> C.json()
+      c = File.read!("corpus/cases/" <> id <> ".json") |> C.json()
       assert C.Surfaces.run("corpus", c) == {:ok, c["expected"]}
       changed = put_in(c, ["inputs", "apu"], C.b64("mutated party"))
       refute C.Surfaces.run("corpus", changed) == {:ok, c["expected"]}

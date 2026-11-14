@@ -49,6 +49,13 @@ def verify(root):
         raise ValueError("duplicate_case")
     if sorted(manifests) != [p for p in paths if p.startswith("cases/")]:
         raise ValueError("case_inventory")
+    for entry in index["cases"]:
+        id, surface = entry["id"], entry["surface"]
+        if not (isinstance(id, str) and isinstance(surface, str)):
+            raise ValueError("case_layout")
+        folder, _, name = id.partition("/")
+        if folder != surface.split(".", 1)[0] or not name or "/" in name or entry["manifest"] != "cases/" + id + ".json":
+            raise ValueError("case_layout")
     if index.get("known_positive") not in ids:
         raise ValueError("known_positive")
     for entry in index["cases"]:

@@ -58,3 +58,148 @@ paths = [
   '''^test/fixtures/jose/rfc7516\.json$''',
   '''^test/fixtures/jose/rsa_oaep_2048_sha256_mgf1sha256_test\.json$''',
 ]
+
+# Conformance corpus copies of published sources: RFC 3394, RFC 7515, the RFC 7520
+# cookbook (ietf-jose/cookbook at 13692b68), RFC 9421 Appendix B.1 example keys and
+# Wycheproof (C2SP/wycheproof at 12fd3aaf). corpus/sources/*/PROVENANCE.md names each.
+[[allowlists]]
+description = "Conformance corpus copies of published JOSE, RFC 3394, RFC 9421 and Wycheproof vectors"
+paths = [
+  '''^corpus/sources/rfc3394/rfc3394\.txt$''',
+  '''^corpus/sources/rfc7515/rfc7515\.json$''',
+  '''^corpus/sources/rfc7520/5_3\.key_wrap_using_pbes2-aes-keywrap_with-aes-cbc-hmac-sha2\.json$''',
+  '''^corpus/sources/rfc7520/5_4\.key_agreement_with_key_wrapping_using_ecdh-es_and_aes-keywrap_with_aes-gcm\.json$''',
+  '''^corpus/sources/rfc7520/5_7\.key_wrap_using_aes-gcm_keywrap_with_aes-cbc-hmac-sha2\.json$''',
+  '''^corpus/sources/rfc7520/5_8\.key_wrap_using_aes-keywrap_with_aes-gcm\.json$''',
+  '''^corpus/sources/rfc7520/5_9\.compressed_content\.json$''',
+  '''^corpus/sources/rfc7520/5_10\.including_additional_authentication_data\.json$''',
+  '''^corpus/sources/rfc7520/5_11\.protecting_specific_header_fields\.json$''',
+  '''^corpus/sources/rfc7520/5_12\.protecting_content_only\.json$''',
+  '''^corpus/sources/rfc7520/5_13\.encrypting_to_multiple_recipients\.json$''',
+  '''^corpus/sources/rfc7520/6\.nesting_signatures_and_encryption\.json$''',
+  '''^corpus/sources/rfc9421/keys/ed25519_private\.pem$''',
+  '''^corpus/sources/rfc9421/keys/p256_private\.pem$''',
+  '''^corpus/sources/rfc9421/keys/rsa_private\.pem$''',
+  '''^corpus/sources/rfc9421/keys/rsa_pss_private\.pem$''',
+  '''^corpus/sources/wycheproof/aes_gcm_test\.json$''',
+  '''^corpus/sources/wycheproof/aes_wrap_test\.json$''',
+  '''^corpus/sources/wycheproof/rsa_oaep_2048_sha256_mgf1sha256_test\.json$''',
+]
+
+# Conformance case manifests that carry published RFC 7515, 7516, 7520 and 8037
+# compact tokens, and one authored rejection case built from them.
+[[allowlists]]
+description = "Conformance case manifests carrying published compact JWS and JWE vectors"
+paths = [
+  '''^corpus/cases/jwe/oaep-hash-mismatch\.json$''',
+  '''^corpus/cases/jwe/rfc7516-a1\.json$''',
+  '''^corpus/cases/jwe/rfc7520-5-4-envelope\.json$''',
+  '''^corpus/cases/jwe/rfc7520-5-5-envelope\.json$''',
+  '''^corpus/cases/jwe/rfc7520-5-7-envelope\.json$''',
+  '''^corpus/cases/jwe/rfc7520-5_2\.key_encryption_using_rsa-oaep_with_aes-gcm\.json$''',
+  '''^corpus/cases/jwe/rfc7520-5_6\.direct_encryption_using_aes-gcm\.json$''',
+  '''^corpus/cases/jws/rfc7515-a-1\.json$''',
+  '''^corpus/cases/jws/rfc7515-a-2\.json$''',
+  '''^corpus/cases/jws/rfc7515-a-3\.json$''',
+  '''^corpus/cases/jws/rfc7515-a-4\.json$''',
+  '''^corpus/cases/jws/rfc7515-a-5\.json$''',
+  '''^corpus/cases/jws/rfc7520-4_1\.rsa_v15_signature\.json$''',
+  '''^corpus/cases/jws/rfc7520-4_2\.rsa-pss_signature\.json$''',
+  '''^corpus/cases/jws/rfc7520-4_3\.ecdsa_signature\.json$''',
+  '''^corpus/cases/jws/rfc7520-4_4\.hmac-sha2_integrity_protection\.json$''',
+  '''^corpus/cases/jws/sign-rfc7515-HS256\.json$''',
+  '''^corpus/cases/jws/sign-rfc7515-RS256\.json$''',
+  '''^corpus/cases/jws/sign-rfc8037-EdDSA\.json$''',
+]
+
+# Cross-library vectors generated with pinned npm jose 6.2.17 and Erlang jose 1.11.13
+# from generated test keys (corpus/sources/cross-jose/PROVENANCE.md), and their cases.
+[[allowlists]]
+description = "Cross-library JOSE vectors from generated test keys and their case manifests"
+paths = [
+  '''^corpus/sources/cross-jose/vectors\.json$''',
+  '''^corpus/cases/jwe/cross-jose-0\.json$''',
+  '''^corpus/cases/jwe/cross-jose-1\.json$''',
+  '''^corpus/cases/jwe/cross-jose-2\.json$''',
+  '''^corpus/cases/jwe/cross-jose-3\.json$''',
+  '''^corpus/cases/jwe/cross-jose-4\.json$''',
+  '''^corpus/cases/jwe/cross-jose-5\.json$''',
+  '''^corpus/cases/jwe/cross-jose-6\.json$''',
+  '''^corpus/cases/jwe/cross-jose-7\.json$''',
+  '''^corpus/cases/jwe/cross-jose-8\.json$''',
+  '''^corpus/cases/jwe/cross-jose-9\.json$''',
+  '''^corpus/cases/jwe/cross-jose-10\.json$''',
+  '''^corpus/cases/jwe/cross-jose-11\.json$''',
+  '''^corpus/cases/jwe/cross-jose-12\.json$''',
+  '''^corpus/cases/jwe/cross-jose-13\.json$''',
+  '''^corpus/cases/jwe/cross-jose-14\.json$''',
+  '''^corpus/cases/jwe/cross-jose-15\.json$''',
+  '''^corpus/cases/jwe/cross-jose-16\.json$''',
+  '''^corpus/cases/jwe/cross-jose-17\.json$''',
+  '''^corpus/cases/jwe/cross-jose-18\.json$''',
+  '''^corpus/cases/jwe/cross-jose-19\.json$''',
+  '''^corpus/cases/jwe/cross-jose-20\.json$''',
+  '''^corpus/cases/jwe/cross-jose-21\.json$''',
+  '''^corpus/cases/jwe/cross-jose-22\.json$''',
+  '''^corpus/cases/jwe/cross-jose-23\.json$''',
+  '''^corpus/cases/jwe/cross-jose-24\.json$''',
+  '''^corpus/cases/jwe/cross-jose-25\.json$''',
+  '''^corpus/cases/jwe/cross-jose-26\.json$''',
+  '''^corpus/cases/jwe/cross-jose-27\.json$''',
+  '''^corpus/cases/jwe/cross-jose-28\.json$''',
+  '''^corpus/cases/jwe/cross-jose-29\.json$''',
+  '''^corpus/cases/jwe/cross-jose-30\.json$''',
+  '''^corpus/cases/jwe/cross-jose-31\.json$''',
+  '''^corpus/cases/jwe/cross-jose-32\.json$''',
+  '''^corpus/cases/jwe/cross-jose-33\.json$''',
+  '''^corpus/cases/jwe/cross-jose-34\.json$''',
+  '''^corpus/cases/jwe/cross-jose-35\.json$''',
+]
+
+# The same cross-library and RFC 7520 cases sat at the corpus root in one commit
+# before they moved under cases/jwe/. Both conditions must match: that commit and file.
+[[allowlists]]
+description = "Cross-library and RFC 7520 case manifests at the corpus root in one earlier commit"
+condition = "AND"
+commits = ["bd080a5949c575ca820ddf63280dd1e3613d4f23"]
+paths = [
+  '''^corpus/cases/cross-jose-0\.json$''',
+  '''^corpus/cases/cross-jose-1\.json$''',
+  '''^corpus/cases/cross-jose-2\.json$''',
+  '''^corpus/cases/cross-jose-3\.json$''',
+  '''^corpus/cases/cross-jose-4\.json$''',
+  '''^corpus/cases/cross-jose-5\.json$''',
+  '''^corpus/cases/cross-jose-6\.json$''',
+  '''^corpus/cases/cross-jose-7\.json$''',
+  '''^corpus/cases/cross-jose-8\.json$''',
+  '''^corpus/cases/cross-jose-9\.json$''',
+  '''^corpus/cases/cross-jose-10\.json$''',
+  '''^corpus/cases/cross-jose-11\.json$''',
+  '''^corpus/cases/cross-jose-12\.json$''',
+  '''^corpus/cases/cross-jose-13\.json$''',
+  '''^corpus/cases/cross-jose-14\.json$''',
+  '''^corpus/cases/cross-jose-15\.json$''',
+  '''^corpus/cases/cross-jose-16\.json$''',
+  '''^corpus/cases/cross-jose-17\.json$''',
+  '''^corpus/cases/cross-jose-18\.json$''',
+  '''^corpus/cases/cross-jose-19\.json$''',
+  '''^corpus/cases/cross-jose-20\.json$''',
+  '''^corpus/cases/cross-jose-21\.json$''',
+  '''^corpus/cases/cross-jose-22\.json$''',
+  '''^corpus/cases/cross-jose-23\.json$''',
+  '''^corpus/cases/cross-jose-24\.json$''',
+  '''^corpus/cases/cross-jose-25\.json$''',
+  '''^corpus/cases/cross-jose-26\.json$''',
+  '''^corpus/cases/cross-jose-27\.json$''',
+  '''^corpus/cases/cross-jose-28\.json$''',
+  '''^corpus/cases/cross-jose-29\.json$''',
+  '''^corpus/cases/cross-jose-30\.json$''',
+  '''^corpus/cases/cross-jose-31\.json$''',
+  '''^corpus/cases/cross-jose-32\.json$''',
+  '''^corpus/cases/cross-jose-33\.json$''',
+  '''^corpus/cases/cross-jose-34\.json$''',
+  '''^corpus/cases/cross-jose-35\.json$''',
+  '''^corpus/cases/rfc7520-5-4-envelope\.json$''',
+  '''^corpus/cases/rfc7520-5-5-envelope\.json$''',
+  '''^corpus/cases/rfc7520-5-7-envelope\.json$''',
+]

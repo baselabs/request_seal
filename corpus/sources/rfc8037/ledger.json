@@ -1,1 +1,1 @@
-[{"excluded":"Ed25519 source is retained by the existing signature corpus; this ledger covers ECDH additions.","item":"A.1"},{"case":"rfc8037-a-6","item":"A.6"}]
+[{"excluded":"Ed25519 source is retained by the existing signature corpus; this ledger covers ECDH additions.","item":"A.1"},{"case":"key_management/rfc8037-a-6","item":"A.6"}]
