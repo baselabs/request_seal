@@ -148,30 +148,54 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
             process.stdout.close()
 
 
-def toolchain_errors(sources):
-    """Validate the consumer range, exact tooling identity, and all three CI lanes."""
-    errors = []
+VERSION_LANES = ("latest", "mid", "floor")
+
+
+def version_manager_pairs(text, lanes=VERSION_LANES):
+    """Every CI lane's exact Elixir/OTP pair from .tool-versions, in lane order with the default
+    first, plus the one Node version. The build box installs what this file lists, so a lane CI runs
+    that is missing here has no toolchain there."""
     versions = {}
-    for number, line in enumerate(sources[".tool-versions"].splitlines(), 1):
+    for number, line in enumerate(text.splitlines(), 1):
         tokens = line.partition("#")[0].split()
         if not tokens:
             continue
-        if len(tokens) != 2 or tokens[0] in versions:
-            return [f"Invalid version-manager declaration on line {number}"]
-        versions[tokens[0]] = tokens[1]
-    match = re.fullmatch(r"(\d+\.\d+\.\d+)-otp-(\d+)", versions.get("elixir", ""))
-    otp = versions.get("erlang", "")
-    if not match or not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", otp):
-        return ["Invalid exact version-manager identity"]
-    node = versions.get("nodejs", "")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", node):
-        errors.append("Node requires an exact version-manager identity")
-    elixir, major = match.groups()
-    if otp.split(".")[0] != major:
-        errors.append("Version-manager Elixir/OTP identities disagree")
+        if len(tokens) < 2 or tokens[0] in versions:
+            raise ValueError(f"Invalid version-manager declaration on line {number}")
+        versions[tokens[0]] = tokens[1:]
+    elixirs, otps = versions.get("elixir", []), versions.get("erlang", [])
+    if len(elixirs) != len(lanes) or len(otps) != len(lanes):
+        raise ValueError("Invalid version-manager declarations: list one Elixir and one Erlang version "
+                         f"per CI lane, in the order {', '.join(lanes)}")
+    pairs = {}
+    for lane, elixir, otp in zip(lanes, elixirs, otps):
+        match = re.fullmatch(r"(\d+\.\d+\.\d+)-otp-(\d+)", elixir)
+        if not match or not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", otp):
+            raise ValueError(f"Invalid exact version-manager identity for the {lane} lane")
+        if otp.split(".")[0] != match.group(2):
+            raise ValueError(f"Version-manager Elixir/OTP identities disagree for the {lane} lane")
+        pairs[lane] = (match.group(1), match.group(2), otp)
+    nodes = versions.get("nodejs", [])
+    if len(nodes) != 1 or not re.fullmatch(r"\d+\.\d+\.\d+", nodes[0]):
+        raise ValueError("Node requires one exact version-manager identity")
+    return pairs, nodes[0]
+
+
+def toolchain_errors(sources):
+    """Validate the consumer range, exact tooling identity, and every CI lane against .tool-versions."""
+    errors = []
+    try:
+        pairs, node = version_manager_pairs(sources[".tool-versions"])
+    except ValueError as error:
+        return [str(error)]
+    elixir, major, otp = pairs["latest"]
+    floor_elixir, floor_major, _ = pairs["floor"]
+    floor_range = ".".join(floor_elixir.split(".")[:2])
+    lane_bindings = [f"- lane: {lane}\n            elixir: '{lane_elixir}'\n            otp: '{lane_otp}'"
+                     for lane, (lane_elixir, _, lane_otp) in pairs.items()]
     postgres_env = "\n        env:\n          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres"
     required = {
-        "mix.exs": ['elixir: "~> 1.18"', "unless Code.ensure_loaded?(:json) do",
+        "mix.exs": [f'elixir: "~> {floor_range}"', "unless Code.ensure_loaded?(:json) do",
             '{:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false}',
             '{:req, "~> 0.7.4", optional: true, runtime: false}',
             '{:ash, ">= 3.37.4 and < 4.0.0", optional: true}',
@@ -187,19 +211,16 @@ def toolchain_errors(sources):
             '    end\n'
             '  end'],
         "tools/notebooks/mix.exs": [f'elixir: "{elixir}"'],
-        "config/config.exs": ["minimum_otp = 27", ":erlang.system_info(:otp_release) |> to_string() |> String.to_integer()", "if running_otp < minimum_otp do"],
+        "config/config.exs": [f"minimum_otp = {floor_major}", ":erlang.system_info(:otp_release) |> to_string() |> String.to_integer()", "if running_otp < minimum_otp do"],
         "tools/notebooks/config/config.exs": ['import_config "../../../config/config.exs"', f'expected_otp = "{major}"', 'to_string(:erlang.system_info(:otp_release))', "if running_otp != expected_otp do"],
         # The published notebook checks the supported floor (mix.exs `elixir:` and
         # config.exs `minimum_otp`), not the maintainers' pin.
-        "livebooks/environment.livemd": ['true = Version.match?(System.version(), "~> 1.18")', "true = String.to_integer(System.otp_release()) >= 27"],
+        "livebooks/environment.livemd": [f'true = Version.match?(System.version(), "~> {floor_range}")', f"true = String.to_integer(System.otp_release()) >= {floor_major}"],
         ".github/workflows/ci.yml": [
             "runs-on: ubuntu-24.04", "timeout-minutes: 40", "fail-fast: false",
             "postgres:\n        image: postgres:18",
-            "- lane: mid\n            elixir: '1.19.5'\n            otp: '28.5.0.7'",
             "- if: matrix.lane == 'mid'\n        run: mix test --warnings-as-errors" + postgres_env,
             "- if: matrix.lane == 'floor'\n        run: python3 scripts/check_optional_clients.py",
-            "- lane: floor\n            elixir: '1.18.4'\n            otp: '27.3.4'",
-            f"- lane: latest\n            elixir: '{elixir}'\n            otp: '{otp}'",
             "elixir-version: ${{ matrix.elixir }}", "otp-version: ${{ matrix.otp }}",
             "version-type: strict", f"node-version: '{node}'",
             "- if: matrix.lane == 'floor'\n        run: mix test --warnings-as-errors" + postgres_env,
@@ -210,6 +231,7 @@ def toolchain_errors(sources):
                           "phoenix": "1.8.15", "stream_data": "1.4.0", "dialyxir": "1.4.8"}.items():
         next_major = int(version.split(".")[0]) + 1
         required["mix.exs"].append('{:' + name + ', ">= ' + version + ' and < ' + str(next_major) + '.0.0"')
+    required[".github/workflows/ci.yml"].extend(lane_bindings)
     for path, values in required.items():
         for value in values:
             if sources[path].count(value) != 1:
@@ -219,8 +241,8 @@ def toolchain_errors(sources):
     axes = re.findall(r"^ {8}(\S[^:\n]*):", body, re.MULTILINE)
     entries = re.findall(r"^ {10}-\s+", body, re.MULTILINE)
     lanes = re.findall(r"^ {10}- lane:\s*(\S+)", body, re.MULTILINE)
-    if axes != ["include"] or len(entries) != 3 or sorted(lanes) != ["floor", "latest", "mid"]:
-        errors.append("CI matrix must contain only the floor, mid, and latest lanes")
+    if axes != ["include"] or len(entries) != len(VERSION_LANES) or sorted(lanes) != sorted(VERSION_LANES):
+        errors.append(f"CI matrix must contain exactly the lanes .tool-versions lists: {', '.join(VERSION_LANES)}")
     actions = re.findall(r"uses:\s*(\S+)", sources[".github/workflows/ci.yml"])
     required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
     if not required_actions.issubset({action.split("@", 1)[0] for action in actions}) or any(not re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) for action in actions):

@@ -394,7 +394,7 @@ class ToolchainTest(unittest.TestCase):
 
     def test_version_manager_comments_and_four_part_patch_are_supported(self):
         sources = self.sources()
-        sources[".tool-versions"] = "# development pins\n" + sources[".tool-versions"].replace("29.1.1", "29.1.1.1 # exact patch")
+        sources[".tool-versions"] = "# development pins\n" + sources[".tool-versions"].replace("erlang 29.1.1 28.5.0.7 27.3.4", "erlang 29.1.1.1 28.5.0.7 27.3.4 # exact patch")
         sources[".github/workflows/ci.yml"] = sources[".github/workflows/ci.yml"].replace("29.1.1", "29.1.1.1")
         self.assertEqual([], gate.toolchain_errors(sources))
         sources[".tool-versions"] = "elixir too many tokens here"
@@ -402,6 +402,31 @@ class ToolchainTest(unittest.TestCase):
 
     def test_actual_pins_are_consistent(self):
         self.assertEqual([], gate.toolchain_errors(self.sources()))
+
+    def test_version_manager_lists_every_ci_lane_default_first(self):
+        pairs, node = gate.version_manager_pairs(self.sources()[".tool-versions"])
+        self.assertEqual(["latest", "mid", "floor"], list(pairs))
+        self.assertEqual({"latest": ("1.20.4", "29", "29.1.1"), "mid": ("1.19.5", "28", "28.5.0.7"),
+                          "floor": ("1.18.4", "27", "27.3.4")}, pairs)
+        self.assertEqual("24.21.0", node)
+
+    def test_version_manager_lane_mutations_are_rejected(self):
+        for old, new in [
+            ("elixir 1.20.4-otp-29 1.19.5-otp-28 1.18.4-otp-27", "elixir 1.20.4-otp-29 1.19.5-otp-28"),
+            ("erlang 29.1.1 28.5.0.7 27.3.4", "erlang 29.1.1 28.5.0.7"),
+            ("elixir 1.20.4-otp-29 1.19.5-otp-28 1.18.4-otp-27", "elixir 1.20.4-otp-29"),
+            ("1.18.4-otp-27", "1.18.5-otp-27"),
+            ("28.5.0.7 27.3.4", "28.5.0.8 27.3.4"),
+            ("1.19.5-otp-28 1.18.4-otp-27", "1.18.4-otp-27 1.19.5-otp-28"),
+            ("1.20.4-otp-29 1.19.5-otp-28", "1.19.5-otp-28 1.20.4-otp-29"),
+            ("1.18.4-otp-27", "1.18.4-otp-28"),
+            ("nodejs 24.21.0", "nodejs 24.21.0 22.0.0"),
+        ]:
+            with self.subTest(old=old, new=new):
+                sources = self.sources()
+                self.assertEqual(1, sources[".tool-versions"].count(old))
+                sources[".tool-versions"] = sources[".tool-versions"].replace(old, new)
+                self.assertTrue(gate.toolchain_errors(sources))
 
     def test_library_range_and_runtime_floor_are_declared(self):
         sources = self.sources()
@@ -470,7 +495,7 @@ class ToolchainTest(unittest.TestCase):
                 self.assertEqual(1, sources[path].count("    services:\n"))
                 sources[path] = sources[path].replace("    services:\n", extra + "    services:\n")
                 self.assertEqual(
-                    ["CI matrix must contain only the floor, mid, and latest lanes"],
+                    ["CI matrix must contain exactly the lanes .tool-versions lists: latest, mid, floor"],
                     gate.toolchain_errors(sources),
                 )
 
