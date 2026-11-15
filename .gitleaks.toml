@@ -1,7 +1,23 @@
-# Published vectors and explicitly labeled local cryptographic fixtures.
+# Published vectors, explicitly labeled local cryptographic fixtures, and the docs
+# check's list of ADR file names.
 # They never authenticate real accounts. Each entry names exact files, never a directory.
 [extend]
 useDefault = true
+
+# scripts/check_docs.py lists ADR file names in order; a pair such as
+# "0018-ecdh-es-key-agreement", "0019-aes-key-wrap-custody" reads as a keyword and
+# its value. Both conditions must match: that file, and a match that is two quoted
+# ADR names and nothing else.
+[[allowlists]]
+description = "Adjacent ADR file names in the docs check's source list"
+condition = "AND"
+paths = [
+  '''^scripts/check_docs\.py$''',
+]
+regexTarget = "match"
+regexes = [
+  '''^\d{4}-[a-z0-9-]+", "\d{4}-[a-z0-9-]+"$''',
+]
 
 # RFC 9421 Appendix B.1 published example keys.
 [[allowlists]]
