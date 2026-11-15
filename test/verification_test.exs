@@ -90,7 +90,7 @@ defmodule RequestSeal.VerificationTest do
     assert cache[{"sig-b26", p.field_schemas}] == {:ok, second_base}
   end
 
-  test "F5 duplicate labels fail closed in verify across and within field occurrences" do
+  test "duplicate labels fail closed in verify across and within field occurrences" do
     alias RequestSeal.MultiSignatureSupport, as: S
     m = S.signed(["sig-b26"])
     assert {:ok, _} = RequestSeal.verify(m, S.policy(), label: "sig-b26")

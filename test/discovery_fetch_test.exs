@@ -265,7 +265,6 @@ defmodule RequestSeal.DiscoveryFetchTest do
   end
 
   for encoding <- ["GZIP", "Gzip", " gzip ", "x-gzip", " X-GZip "] do
-    @tag finding: :f1
     test "gzip coding #{inspect(encoding)} preserves the encoded possession proof" do
       encoding = unquote(encoding)
       body = :zlib.gzip(Peer.directory())
@@ -285,7 +284,6 @@ defmodule RequestSeal.DiscoveryFetchTest do
     end
   end
 
-  @tag finding: :f1
   test "unknown and stacked content codings fail closed" do
     for encoding <- ["br", "X-Unknown", "gzip, identity", "gzip, gzip"] do
       p =
@@ -304,7 +302,6 @@ defmodule RequestSeal.DiscoveryFetchTest do
     end
   end
 
-  @tag finding: :f3
   test "directory proof ignores unrelated signature dictionary members" do
     for label <- ["directory", "possession"],
         extra <- [
@@ -327,7 +324,6 @@ defmodule RequestSeal.DiscoveryFetchTest do
     end
   end
 
-  @tag finding: :f3
   test "missing or invalid expected directory members fail closed despite unrelated labels" do
     for mutation <- [:missing_signature, :invalid_signature, :missing_input, :wrong_tag] do
       p =
@@ -361,7 +357,6 @@ defmodule RequestSeal.DiscoveryFetchTest do
     end
   end
 
-  @tag finding: :f2
   test "CIMD origin normalization permits equivalent JWKS origins but preserves exact client ID" do
     p =
       peer(fn socket, req ->
@@ -392,7 +387,6 @@ defmodule RequestSeal.DiscoveryFetchTest do
     reason(differently_spelled, :client_id_mismatch)
   end
 
-  @tag finding: :f2
   test "CIMD origin normalization retains literal IP, different host and HTTP denials" do
     for target <- [
           "https://127.0.0.1/keys",

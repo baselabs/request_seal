@@ -7,7 +7,7 @@ defmodule RequestSeal.Discovery.HTTP1 do
   import Support, only: [fail: 1, ensure: 2, unwrap: 1]
   @header_cap 16_384
 
-  def request(socket, uri, source, deadline, etag \\ nil) do
+  def request(socket, uri, source, deadline, etag) do
     target =
       if(uri.path in [nil, ""], do: "/", else: uri.path) <>
         if(uri.query == nil, do: "", else: "?" <> uri.query)

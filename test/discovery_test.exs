@@ -118,7 +118,6 @@ defmodule RequestSeal.DiscoveryTest do
     end
   end
 
-  @tag finding: :f2
   test "origin normalization drops only the HTTPS default port and one trailing host dot" do
     for location <- ["HTTPS://EXAMPLE.COM:443/card", "https://example.com./card"] do
       assert Source.origin(Source.url!(location)) == "https://example.com"
@@ -184,7 +183,6 @@ defmodule RequestSeal.DiscoveryTest do
     assert :error = Discovery.resolver(:invalid, algorithms: ["unknown"]).(%{keyid: "canary"})
   end
 
-  @tag fix2: true
   test "negative freshness is bounded to five minutes at construction and fetch" do
     base = %{type: :jwks_uri, location: "https://example.com/keys"}
 

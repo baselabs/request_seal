@@ -1,4 +1,4 @@
-defmodule RequestSeal.APIPolishTest do
+defmodule RequestSeal.SigningContractTest do
   use ExUnit.Case, async: true
   alias RequestSeal.{Crypto, Message}
 
@@ -25,7 +25,6 @@ defmodule RequestSeal.APIPolishTest do
     }
   end
 
-  @tag :a1
   test "adapters reject nonce options while core signing accepts caller entropy" do
     nonce = :crypto.strong_rand_bytes(32)
     fun = signer()
@@ -46,7 +45,6 @@ defmodule RequestSeal.APIPolishTest do
     assert {:ok, _} = RequestSeal.sign(message, strict(), fun, nonce: nonce)
   end
 
-  @tag :a2
   test "unsupported components retain their own bounded reason" do
     {:ok, message} = Message.request("GET", "https://example.com/", [], nil)
 
@@ -56,7 +54,6 @@ defmodule RequestSeal.APIPolishTest do
     end
   end
 
-  @tag :a2
   test "covered content length conflict is an invalid request" do
     {:ok, message} =
       Message.request("POST", "https://example.com/", [{"content-length", "999"}], "body")
@@ -65,7 +62,6 @@ defmodule RequestSeal.APIPolishTest do
              RequestSeal.sign(message, strict(~s[("content-length")]), signer())
   end
 
-  @tag :a3
   test "core defaults metadata and bounds expiry and clock" do
     {:ok, message} = Message.request("GET", "https://example.com/", [], nil)
     spec = %{label: "sig", algorithm: "hmac-sha256", components: ~s[("@method")], expires_in: 60}
@@ -87,7 +83,6 @@ defmodule RequestSeal.APIPolishTest do
              RequestSeal.sign(message, strict(), signer(), clock: fn -> -1 end)
   end
 
-  @tag :a3
   test "nested defaults and JWS algorithm defaults use actual Ed25519 signing" do
     {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
     {:ok, handle} = RequestSeal.Custody.Local.new({:jws, "EdDSA"}, {:ed25519, seed})
@@ -130,7 +125,6 @@ defmodule RequestSeal.APIPolishTest do
              RequestSeal.sign(message, Map.put(spec, :alg, true), handle)
   end
 
-  @tag :a4
   test "sign spec separates explicit input from core function and key handle" do
     Code.Typespec.fetch_specs(RequestSeal)
     |> elem(1)
@@ -138,7 +132,6 @@ defmodule RequestSeal.APIPolishTest do
     |> then(fn {_, clauses} -> assert length(clauses) == 4 end)
   end
 
-  @tag :a5
   test "builder preserves URL origin while Finch follows the wire authority" do
     assert {:error, %Message.Error{reason: :invalid_message}} =
              Message.request("GET", "https://example.com#frag", [], nil)

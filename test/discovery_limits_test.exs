@@ -322,7 +322,6 @@ defmodule RequestSeal.DiscoveryLimitsTest do
     reason(source(p, %{max_redirects: 1, redirect_scope: :any_https}), :address_denied)
   end
 
-  @tag finding: :f2
   test "same-origin redirects normalize scheme and host case and one trailing dot" do
     for host <- ["LOCALHOST", "localhost.", "LOCALHOST."] do
       p =
@@ -422,7 +421,6 @@ defmodule RequestSeal.DiscoveryLimitsTest do
   defp http_date(seconds),
     do: Calendar.strftime(DateTime.from_unix!(seconds), "%a, %d %b %Y %H:%M:%S GMT")
 
-  @tag fix2: true
   test "Expires freshness uses Date and Age while max-age takes precedence" do
     now = System.system_time(:second)
     expires = DateTime.from_unix!(now + 120)
@@ -492,7 +490,6 @@ defmodule RequestSeal.DiscoveryLimitsTest do
     assert set.expires_at == now + 30 + 170
   end
 
-  @tag fix2: true
   test "fallback freshness is configurable and all freshness remains capped" do
     now = System.system_time(:second)
     p = peer(fn socket, _ -> Peer.reply(socket, Peer.directory(), [media()]) end)
@@ -524,7 +521,6 @@ defmodule RequestSeal.DiscoveryLimitsTest do
     assert set.expires_at == now + 30
   end
 
-  @tag fix2: true
   test "5xx statuses are retryable but 4xx statuses are not" do
     for status <- [400, 401, 404, 429, 499, 500, 502, 503, 504, 599] do
       p = peer(fn socket, _ -> Peer.reply(socket, "", [], status) end)

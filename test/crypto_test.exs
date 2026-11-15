@@ -22,7 +22,6 @@ defmodule RequestSeal.CryptoTest do
   )
 
   for algorithm <- ["hmac-sha256", {:jws, "HS256"}], direction <- [:sign, :verify] do
-    @tag :review_fix
     test "HMAC 31-byte rejection and 32-byte acceptance: #{inspect(algorithm)} #{direction}" do
       algorithm = unquote(Macro.escape(algorithm))
       message = "minimum HMAC key length"
@@ -50,7 +49,6 @@ defmodule RequestSeal.CryptoTest do
 
   for {point, index} <- Enum.with_index(@small_order_ed25519),
       format <- [:raw, :der, :pem, :jwk] do
-    @tag :review_fix
     test "Ed25519 small-order point #{index} rejects at #{format} import" do
       format = unquote(format)
       valid = hex(hd(@ed)["PUBLIC KEY:"])
@@ -122,7 +120,6 @@ defmodule RequestSeal.CryptoTest do
     end
   end
 
-  @tag :review_fix
   test "Ed25519 identity-key forgery rejects at import and supplied-struct validation" do
     identity = <<1>> <> :binary.copy(<<0>>, 31)
     signature = identity <> :binary.copy(<<0>>, 32)
@@ -142,7 +139,6 @@ defmodule RequestSeal.CryptoTest do
     end
   end
 
-  @tag :review_fix
   test "NOTICE locates the RFC 6979 P-256 key separately from P-384 fixtures" do
     notice = File.read!(Path.join(__DIR__, "../NOTICE"))
     assert notice =~ "RFC 6979 Appendix A.2.6"

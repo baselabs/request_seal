@@ -551,7 +551,7 @@ defmodule RequestSeal.CustodyLocalTest do
   end
 
   @tag :holder
-  @tag :holder2_token
+  @tag :holder_token
   test "holder tokens are 32-byte binaries and a PID alone cannot authorize operations" do
     assert {:ok, handle} = Local.new("ed25519", material("ed25519"))
     {pid, token} = handle.ref.()
@@ -616,7 +616,7 @@ defmodule RequestSeal.CustodyLocalTest do
   end
 
   @tag :holder
-  @tag :holder2_lifecycle
+  @tag :holder_lifecycle
   test "a live creator releases every holder and returns the process count to baseline" do
     parent = self()
     key = material("hmac")

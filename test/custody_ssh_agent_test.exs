@@ -72,7 +72,7 @@ defmodule RequestSeal.CustodySSHAgentTest do
     assert_error(SSHAgent.new("rsa-v1_5-sha256", ctx.socket, key), :key_mismatch)
   end
 
-  @tag :max_bytes_revision
+  @tag :max_bytes
   test "direct SSH verification accepts 1,235,403 bytes and the full ceiling", ctx do
     {handle, seed} = byte_limit_key(ctx)
     context = byte_limit_context()
@@ -84,7 +84,7 @@ defmodule RequestSeal.CustodySSHAgentTest do
     end
   end
 
-  @tag :max_bytes_revision
+  @tag :max_bytes
   test "Wire signature validation accepts real signatures at 1,235,403 bytes and the ceiling",
        ctx do
     {handle, seed} = byte_limit_key(ctx)
@@ -101,7 +101,7 @@ defmodule RequestSeal.CustodySSHAgentTest do
     end
   end
 
-  @tag :max_bytes_revision
+  @tag :max_bytes
   test "direct SSH signing rejects excess bytes before reading the reference", ctx do
     {handle, _seed} = byte_limit_key(ctx)
     owner = self()
@@ -119,7 +119,7 @@ defmodule RequestSeal.CustodySSHAgentTest do
     end
   end
 
-  @tag :max_bytes_revision
+  @tag :max_bytes
   test "direct SSH verification rejects excess bytes before reading the reference", ctx do
     {handle, seed} = byte_limit_key(ctx)
     owner = self()

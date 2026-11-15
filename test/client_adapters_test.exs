@@ -1434,8 +1434,7 @@ defmodule RequestSeal.ClientAdaptersTest do
         plug: :invalid,
         finch_request: :invalid
       ] do
-    @tag :finding
-    test "F1 rejects #{key} #{inspect(value)}", %{handle: h} do
+    test "rejects #{key} #{inspect(value)}", %{handle: h} do
       {origin, task} = Peer.start([%{}], h)
       assert {:ok, req} = request(origin, h)
       req = %{req | options: Map.put(req.options, unquote(key), unquote(Macro.escape(value)))}
@@ -1446,8 +1445,7 @@ defmodule RequestSeal.ClientAdaptersTest do
   end
 
   for status <- [307, 503] do
-    @tag :finding
-    test "F2 unsigned #{status} cannot redirect or retry", %{handle: h} do
+    test "unsigned #{status} cannot redirect or retry", %{handle: h} do
       status = unquote(status)
 
       {origin, task} =
@@ -1479,8 +1477,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     end
   end
 
-  @tag :finding
-  test "F3 allowed cross-origin redirects strip all declared credentials", %{handle: h} do
+  test "allowed cross-origin redirects strip all declared credentials", %{handle: h} do
     {b, tb} = Peer.start([%{}], h)
     {a, ta} = Peer.start([%{status: 307, headers: [{"location", b <> "/foo?param=Value"}]}], h)
     credentials = ["authorization", "cookie", "proxy-authorization", "x-api-key"]
@@ -1507,8 +1504,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     Peer.finish(tb)
   end
 
-  @tag :finding
-  test "F4 synchronous verified responses stop at the bound before EOF", %{handle: h} do
+  test "synchronous verified responses stop at the bound before EOF", %{handle: h} do
     {origin, task} = Peer.start([%{body: String.duplicate("x", 100), missing_tail: 100}], h)
 
     assert {:ok, req} =
@@ -1526,8 +1522,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     Peer.finish(task)
   end
 
-  @tag :finding
-  test "F5 function signer deadline terminates its worker", %{handle: h} do
+  test "function signer deadline terminates its worker", %{handle: h} do
     owner = self()
 
     signer = fn _, base ->
@@ -1559,8 +1554,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     Peer.finish(task)
   end
 
-  @tag :finding
-  test "F6 caller death closes held sockets and leaves no late signed request or worker", %{
+  test "caller death closes held sockets and leaves no late signed request or worker", %{
     handle: h
   } do
     {origin, task} = Peer.start([%{}, :hold, %{}], h)
@@ -1585,8 +1579,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     Peer.finish(task)
   end
 
-  @tag :finding
-  test "F7 halted adapter errors bypass every retry choice", %{handle: h} do
+  test "halted adapter errors bypass every retry choice", %{handle: h} do
     owner = self()
 
     for retry <- [
@@ -1624,8 +1617,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     end
   end
 
-  @tag :finding
-  test "F5 caller death cancels an in-flight function signer before transport", %{handle: h} do
+  test "caller death cancels an in-flight function signer before transport", %{handle: h} do
     owner = self()
 
     signer = fn _, base ->
@@ -1659,8 +1651,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     Peer.finish(task)
   end
 
-  @tag :finding
-  test "F7 response rejection and collection overflow never invoke custom retries", %{handle: h} do
+  test "response rejection and collection overflow never invoke custom retries", %{handle: h} do
     owner = self()
 
     retry = fn _, _ ->

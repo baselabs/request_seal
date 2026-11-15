@@ -161,7 +161,6 @@ defmodule RequestSeal.DiscoveryCacheTest do
     end
   end
 
-  @tag fix2: true
   test "default freshness reuses the configured directory until 300 seconds elapse" do
     now = System.system_time(:second)
     {:ok, clock} = Agent.start_link(fn -> now end)
@@ -180,7 +179,6 @@ defmodule RequestSeal.DiscoveryCacheTest do
     assert accepts() == 1
   end
 
-  @tag fix2: true
   test "Expires keeps the directory cached only until its explicit expiry" do
     now = System.system_time(:second)
     {:ok, clock} = Agent.start_link(fn -> now end)
