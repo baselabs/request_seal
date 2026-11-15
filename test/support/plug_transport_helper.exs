@@ -451,20 +451,20 @@ defmodule RequestSeal.PlugTransport do
        )}
 
     pid = ExUnit.Callbacks.start_supervised!(Supervisor.child_spec(spec, id: make_ref()))
-    {:ok, {_, port}} = ThousandIsland.listener_info(pid)
+    {:ok, {ip, port}} = ThousandIsland.listener_info(pid)
+
+    # Teardown is checked on the listener's own sockets, not its port number: once
+    # they close, another socket in the same run may take the number.
+    listeners =
+      for socket <- Port.list(),
+          Port.info(socket, :name) == {:name, ~c"tcp_inet"},
+          :inet.sockname(socket) == {:ok, {ip, port}},
+          do: socket
+
+    if listeners == [], do: raise("listener socket on port #{port} not found")
 
     ExUnit.Callbacks.on_exit(fn ->
-      case :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false], 500) do
-        {:error, :econnrefused} ->
-          :ok
-
-        {:ok, socket} ->
-          :gen_tcp.close(socket)
-          raise "listener remained open after teardown"
-
-        {:error, reason} ->
-          raise "listener teardown probe returned #{reason}"
-      end
+      if Enum.any?(listeners, &Port.info/1), do: raise("listener remained open after teardown")
     end)
 
     scheme = Keyword.get(server_opts, :scheme, :http)
