@@ -22,7 +22,23 @@ SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/w
         "rfc7517", "rfc8037", "wycheproof", "httpwg-structured-fields",
         "web-bot-auth", "local-http",
     )
-} | {"corpus/sources/web-bot-auth/upstream-PROVENANCE.md"}
+} | {"corpus/sources/web-bot-auth/upstream-PROVENANCE.md"} | {"docs/ROADMAP.md", "docs/adr/LEGACY.md"} | {
+    "docs/adr/" + record + ".md" for record in (
+        "0001-library-boundary", "0002-lossless-http-and-structured-fields", "0003-source-bound-profiles",
+        "0004-key-custody-and-discovery", "0005-atomic-replay-envelope",
+        "0006-verification-results-and-observability", "0007-framework-and-proxy-adapters",
+        "0008-toolchain-and-compatibility", "0009-cross-language-corpus", "0010-dx-and-livebooks",
+        "0011-public-contract-provenance", "0013-extension-profile-boundary",
+        "0015-jose-protected-members-and-embedded-keys", "0016-bounded-jwe-open-coordinator",
+        "0017-indexed-unwrap-through-a-sink", "0018-ecdh-es-key-agreement", "0019-aes-key-wrap-custody",
+        "0020-separate-deadline-clocks", "0021-corpus-case-layout", "0022-typescript-conformance-contract",
+        "0023-public-version-line-and-2-0-boundary", "0024-provider-profiles-in-separate-packages",
+        "0025-single-label-public-verification", "0026-custody-key-generation-and-derivation",
+        "0027-key-handles-replace-closures", "0028-strict-json-object-decoding",
+        "0029-ash-onetime-2-custody-and-install-bound-replay", "0030-bounded-non-sending-capture",
+        "0031-performance-release-gates", "0032-json-serializations-and-jwt-line",
+    )
+}
 GIT_INSTALL = re.compile(
     r"\bgit\s*:\s*[\"'][^\"']*github\.com[/:]baselabs/request_seal(?:\.git)?[\"']|"
     r"\bgithub\s*:\s*(?:[\"'](?:[^\"']*/)?request_seal(?:\.git)?[\"']|:request_seal\b)",

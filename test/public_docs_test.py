@@ -34,6 +34,17 @@ class PublicDocsTest(unittest.TestCase):
         self.assertEqual([], docs.content_errors(ROOT, path, text, self.paths))
         self.assertTrue(docs.content_errors(ROOT, path, text + "\nfile:///home/person/key", self.paths))
 
+    def test_roadmap_and_decision_records_are_source_documentation_only(self):
+        configuration = docs.public_configuration(ROOT)
+        records = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs/adr").glob("*.md"))
+        self.assertIn("docs/adr/LEGACY.md", records)
+        for path in ["docs/ROADMAP.md", *records]:
+            self.assertIn(path, docs.SOURCE_DOCUMENTS)
+            self.assertNotIn(path, configuration["documents"])
+            self.assertNotIn(path, configuration["files"])
+            text = (ROOT / path).read_text()
+            self.assertEqual([], docs.content_errors(ROOT, path, text, self.paths), path)
+
     def test_current_readme_is_public(self):
         self.assertEqual([], self.errors())
 
