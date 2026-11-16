@@ -11,8 +11,10 @@ relevant source when changing its surface. No linked example alone proves peer a
 | [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) | Content and representation digests and preference fields. |
 | [Web Bot Auth WG draft, protocol-00](https://datatracker.ietf.org/doc/html/draft-ietf-webbotauth-httpsig-protocol-00) | The supported, explicitly stamped draft revision for the profile and discovery. A newer revision (protocol-01) exists; it is not yet selectable, and protocol-00 stays selectable when it is. |
 | [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html) | Generic compact JWS and JWE, and one-level JWS-in-JWE nesting (`RequestSeal.JOSE`). |
-| [RFC 7518](https://www.rfc-editor.org/rfc/rfc7518.html) | JWS and JWE algorithms, RSA-OAEP and AES-GCM key wrapping. |
-| [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html) | JWK, thumbprints, OKP keys and JOSE `EdDSA`. |
+| [RFC 7518](https://www.rfc-editor.org/rfc/rfc7518.html) | JWS and JWE algorithms. JWE encryption uses RSA-OAEP, RSA-OAEP-256, A128KW, A256KW, and ECDH-ES (direct, +A128KW, +A256KW) with its Section 4.6 Concat KDF; decryption also admits A128GCMKW, A256GCMKW, and `dir`. Content encryption is A128GCM or A256GCM. |
+| [RFC 3394](https://www.rfc-editor.org/rfc/rfc3394.html) | AES Key Wrap for A128KW and A256KW, held in custody (`RequestSeal.Custody.wrap/3`). |
+| [RFC 7748](https://www.rfc-editor.org/rfc/rfc7748.html) | X25519 key agreement for ECDH-ES. ECDH-ES also runs over P-256 and P-384. |
+| [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html) | JWK, thumbprints, OKP keys (Ed25519 and X25519) and JOSE `EdDSA`. |
 | [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html) | Ed25519 signatures. |
 | [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html), [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986.html) | HTTP semantics, message syntax, target forms, and URI authority grammar for messages and discovery fetches. |
 | [CIMD-02](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-02.html) | OAuth client ID metadata documents as a discovery source, with the root-path rule of [CIMD-03](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-03) Section 3. |
