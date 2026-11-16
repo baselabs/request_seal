@@ -1,7 +1,4 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
-
 # Develop RequestSeal
-
 
 This guide is for contributors. To use RequestSeal in your application, start with the [README](../../README.md#installation).
 
@@ -21,21 +18,13 @@ For the supported consumer range, see the [README](../../README.md).
 
 ## Run the actual checks
 
-Clone the repository and work from its root:
-
+Clone the repository and run from its root:
 ```sh
 git clone https://github.com/baselabs/request_seal.git
 cd request_seal
 mix deps.get
 python3 scripts/check.py
 ```
-
-The first run installs the locked documentation dependencies. The isolated notebook project
-has its own lockfile because Livebook and ExDoc currently require different parser versions.
-No server, container, provider account, or key is needed. PostgreSQL-backed replay tests
-run only when `REQUESTSEAL_REPLAY_PG_URL` is set. [Testing and evidence](testing.md)
-describes every check the gate runs and what each one proves.
-
 For focused development:
 
 ```sh
@@ -46,14 +35,10 @@ mix docs --warnings-as-errors
 python3 scripts/check.py --notebooks-only
 ```
 
-Open `doc/index.html` for the generated documentation. Open the files linked in
-[the notebook guide](../../livebooks/overview.md) in Livebook for interactive reading.
-The headless gate verifies code; it does not certify interactive browser accessibility.
+Open `doc/index.html` for generated docs and the [Livebooks](../../livebooks/overview.md) for interactive use.
+The headless gate checks code assertions; browser accessibility needs a separate check.
 
 ## Use RequestSeal in an application
 
-Follow the [README installation steps](../../README.md#installation). Module
-documentation is the API reference; its examples run as doctests in the declared gate.
-
-Read [the architecture](../design/architecture.md) for its contracts. See [testing and evidence](testing.md)
-for the current checks and the proof required for conformance claims.
+Follow the [README installation steps](../../README.md#installation) and executable module examples.
+The [architecture](../design/architecture.md) defines contracts; [testing and evidence](testing.md) defines conformance evidence.

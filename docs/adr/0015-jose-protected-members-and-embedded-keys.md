@@ -1,7 +1,4 @@
-<!-- Status: proposed · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
-# 0015 — Require declared protected members and approve embedded public keys
-Status: Proposed
+# 0015 — Proposed: Require declared protected members and approve embedded public keys
 
 ## Context
 
@@ -47,18 +44,6 @@ expectations.
 7. An embedded-key verification proves only that the embedded key signed the received
    bytes. It makes no claim, method, URI, time, replay, identity or authorization decision;
    an application that needs one builds it on the verified result.
-
-## Alternatives
-
-1. **Keep the 1.x shape and let callers inspect headers after success.** The call stays
-   small. Each caller must repeat the check, and an unread member passes silently.
-2. **A caller predicate over the header.** Flexible. It runs caller code on
-   unauthenticated data inside the verification deadline and has no bounded refusal
-   reason.
-3. **Treat an embedded key as an identity.** Convenient for protocols that carry the key.
-   It confuses key possession with identity and moves trust decisions into the library.
-4. **Keep refusing `jwk` in every case.** The smallest surface. Protocols that carry the
-   signing key in the header then parse and verify JOSE outside the library.
 
 ## Consequences
 

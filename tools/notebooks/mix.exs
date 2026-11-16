@@ -10,8 +10,6 @@ defmodule RequestSealNotebooks.MixProject do
       # Exact Livebook identity binds the internal importer/exporter we execute.
       deps: [
         {:livebook, "== 0.19.10", runtime: false},
-        # OBSERVED: 0.3.2 fails on OTP 29's deprecated format_status/2 callback.
-        # The current stable release implements format_status/1.
         {:aws_credentials, "~> 1.1.1", override: true, runtime: false},
         # Override upstream application pins with advisory-fixed releases.
         # This tooling executes importer/exporter only; every override is lockfile-audited.

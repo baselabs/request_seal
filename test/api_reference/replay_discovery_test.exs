@@ -4,7 +4,6 @@
 defmodule RequestSeal.APIReference.ReplayDiscoveryTest do
   use ExUnit.Case, async: true
 
-  # RequestSeal.Replay.Claim is doctested by test/public_api_documentation_test.exs.
   doctest RequestSeal.Replay
   doctest RequestSeal.Replay.ETS
 

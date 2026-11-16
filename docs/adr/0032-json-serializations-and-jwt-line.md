@@ -1,7 +1,4 @@
-<!-- Status: proposed · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
-# 0032 — Add JOSE serializations and formats in 2.2 and JWT in 2.3
-Status: Proposed
+# 0032 — Proposed: Add JOSE serializations and formats in 2.2 and JWT in 2.3
 
 ## Context
 
@@ -20,13 +17,6 @@ can follow 2.0 without a break.
    The generic embedded-key primitive in
    [ADR 0015](0015-jose-protected-members-and-embedded-keys.md) is available to
    applications that build such protocols.
-
-## Alternatives
-
-1. **Fold these into 2.0.** One release. 2.0 already carries every break, and these need
-   their own designs and corpus surfaces.
-2. **Leave JWT to other libraries.** Less surface. Applications would verify JWS here and
-   parse claims elsewhere with different bounds.
 
 ## Consequences
 

@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
-
 # Executable Livebooks
 
 Open the `.livemd` files in [Livebook](https://livebook.dev), or run all of them through the repository gate:
@@ -19,8 +17,5 @@ Each notebook installs the latest RequestSeal 1.x from Hex, generates its own ke
 | [Sign and verify a Web Bot Auth agent](web-bot-auth.livemd) | Web Bot Auth protocol-00 signing with path coverage, held-key verification, and changed-page, unknown-key, and unsigned rejections. |
 | [JWS inside JWE in Livebook](jose.livemd) | Compact JWS signing and verification, a JWS nested in a JWE, an RSA-OAEP recipient key handle, and the bounded JOSE errors. |
 
-## How the gate runs them
-
-The checker parses each notebook with Livebook's own importer and Elixir exporter, refuses unsupported cells and branched sections instead of skipping them, and runs each export in a fresh Elixir process limited to 300 seconds and 1 MiB of output. It replaces the Hex install of RequestSeal with the local checkout, so the gate tests the code in the repository; each release separately installs the published package in a clean project. The cells shown are the exact code executed.
-
-These runs prove the library's behavior on locally generated keys and published vectors. They are not interactive UI checks and do not prove acceptance by a deployed peer; see [testing and evidence](../docs/guides/testing.md) for those evidence classes.
+The gate executes actual notebook exports with bounded time and output against the checkout.
+Local assertions establish neither interactive UI behavior nor deployed-peer acceptance; see [testing and evidence](../docs/guides/testing.md).

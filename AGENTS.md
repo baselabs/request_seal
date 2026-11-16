@@ -1,7 +1,5 @@
 # RequestSeal contributor and agent contract
 
-Read docs/design/architecture.md, docs/design/threat-model.md, and
-docs/reference/glossary.md before changing behavior.
 Proposed technical contracts do not establish implemented capability.
 
 ## Scope and ownership
@@ -17,22 +15,15 @@ publishing a nonstandard private signing profile, verification-to-authorization 
 or private retry/recovery, key-purpose, or address-selection mechanism. Public sources
 establish protocol requirements; private consumer implementations do not establish them.
 
-## Workflow
+Run the covering parts of `python3 scripts/check.py` for your change.
+Publishing to Hex, deploying, and pushes to mirrors require owner approval.
+Update the CHANGELOG when behavior, a dependency, or a contract changes.
 
-Make the change, run the tests that cover it, commit with named paths, and push to `main`.
-CI runs once on `main`; if it goes red, fix forward. CI runs `python3 scripts/check.py`; run
-the parts that cover your change. Publishing to Hex, deploying and pushes to mirrors need the
-owner's approval. Update the CHANGELOG when behavior, a dependency or a contract changes.
-
-## Verification
-
-The same commands must work on macOS and Linux; Windows development uses WSL2. CI runs on
-Linux only. Toolchain pins in mix.exs, config/config.exs, .tool-versions and CI move together.
-New behavior needs meaningful positive and rejection tests. Use actual cryptography,
-independent published vectors, and authorized real peers. Do not introduce mocks,
-fake services, or generated examples presented as external conformance.
-No service is required by the scaffold.
-No fail-open fallback, implicit authorization, or sensitive telemetry.
+Commands support macOS and Linux; Windows development uses WSL2. CI runs on Linux.
+New behavior needs meaningful positive and rejection tests with actual cryptography,
+independent published vectors, and authorized real peers. Do not use mocks, fake
+services, or generated examples presented as external conformance.
+No service is required by the scaffold; no fail-open fallback, implicit authorization, or sensitive telemetry.
 
 ## Documents
 
@@ -43,6 +34,3 @@ Keep internal work plans, review history, local tooling state, and personal work
 out of public source, package contents, and generated documentation.
 No business material, named customer/prospect/sponsor/champion assessment, pricing,
 confidential design detail, machine path, or link into a private path belongs here.
-Non-record Markdown carries Status, Kind, Updated, Governed by, and
-Review when metadata. The changelog is a record. Release summaries go in
-CHANGELOG.md.

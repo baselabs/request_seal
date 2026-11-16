@@ -1,7 +1,4 @@
-<!-- Status: proposed · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
-# 0030 — Capture request bodies through a bounded call that never sends
-Status: Proposed
+# 0030 — Proposed: Capture request bodies through a bounded call that never sends
 
 ## Context
 
@@ -25,13 +22,6 @@ response.
 5. Later readers use the captured replay, never the socket.
 6. Status mapping belongs to the application. `RequestSeal.Plug.Capture` keeps its sending
    behaviour.
-
-## Alternatives
-
-1. **Keep only the sending plug.** One capture path. Applications that own their error
-   responses must reimplement the bounded read.
-2. **Give the plug an option not to send.** One module. A plug whose contract depends on an
-   option is harder to audit than two distinct functions.
 
 ## Consequences
 

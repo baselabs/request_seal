@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0025 — Verify one selected signature label in the public package
-Status: Accepted
 
 ## Context
 
@@ -20,13 +17,6 @@ state for every user.
    `:quorum` layer and the retryable deadline error are not part of the public package.
    Every RequestSeal.Error is nonretryable. Other public error types keep their documented retryability; RequestSeal.JOSE.Error marks :deadline_exceeded as retryable.
 3. Ash authorization scope stays public.
-
-## Alternatives
-
-1. **Keep quorum public.** One package for every case. The library would fix trust rules
-   that differ per deployment, and every public error would need a retry contract.
-2. **Ship quorum as an experimental module.** Visible to users who need it. It would sit
-   outside the compatibility promise inside a package that has one.
 
 ## Consequences
 

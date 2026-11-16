@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: reference · Updated: 2026-11-13 · Governed by: public architecture · Review when: corpus schema, surfaces, or publication changes -->
-
 # Conformance corpus format
 
 The repository's `corpus/` is the shared, language-neutral semantic contract.

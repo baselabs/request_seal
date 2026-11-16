@@ -16,8 +16,7 @@ defmodule RequestSeal.ReplayClaimTest do
       refute Claim.valid?(Map.put(claim, field, invalid))
     end
 
-    # The 0.3.0 retention contract supersedes the former signed-64-bit upper
-    # bound: no accepted sweep clock can evict a claim ending after year 9999.
+    # No accepted sweep clock can evict a claim ending after year 9999.
     for until <- [
           -9_223_372_036_854_775_809,
           253_402_300_800,

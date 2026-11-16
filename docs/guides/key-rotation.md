@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: custody, key resolution, or discovery cache behavior changes -->
-
 # Rotate signing keys
 
 **What you will build:** A sender that moves from one Ed25519 key to the next without rejected requests, and a verifier that accepts both keys during the overlap and then retires the old one. Prerequisite: RequestSeal installed; no framework or network is needed. Keys live in a supervised `RequestSeal.Custody.Local.Owner`, as [key custody](key-custody.md) describes.

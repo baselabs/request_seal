@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
-
 # Sign Req and Finch requests and verify responses
 
 **What you will build:** A Req client that signs outgoing JSON requests and verifies signed responses, followed by the equivalent Finch calls. Install Req (`~> 0.7.4`) and Finch (`>= 0.23.0 and < 0.25.0`), and run the receiver from [Phoenix and Plug](phoenix-and-plug.md) on Phoenix's development default port 4000 at `http://127.0.0.1:4000/webhooks`. These examples use [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) and [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html).

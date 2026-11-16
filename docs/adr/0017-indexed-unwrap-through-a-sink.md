@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0017 — Unwrap indexed items into a caller-created sink
-Status: Accepted
 
 ## Context
 
@@ -31,15 +28,6 @@ one handle, and a holder process must never run caller code.
    RSA-OAEP, AES-KW and `dir`; `%{iv: _, tag: _}` for AES-GCMKW; and the agreement params for
    ECDH-ES ([ADR 0018](0018-ecdh-es-key-agreement.md)).
 5. The `[:request_seal, :custody, :unwrap]` telemetry event carries no key data.
-
-## Alternatives
-
-1. **Keep the single-key byte return.** Simple for one token. Every batch item repeats a
-   custody round trip, and the runner and middle processes keep seeing the key.
-2. **Pass a caller function for the holder to call.** Flexible. The holder would run
-   caller code with key material in scope.
-3. **Return all keys in one runner reply.** One message. The runner, which is not the
-   holder or the receiver, sees every key.
 
 ## Consequences
 

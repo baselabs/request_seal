@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the disclosure route, release policy, or referenced contract changes -->
-
 # Security and disclosure
 
 RequestSeal signs and verifies HTTP messages and JOSE envelopes. Its security contract,

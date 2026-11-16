@@ -1,7 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
-
 # Standards and counterpart contracts
-
 
 These are primary technical inputs, first read on October 6, 2026. Recheck the
 relevant source when changing its surface. No linked example alone proves peer acceptance.

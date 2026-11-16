@@ -1,7 +1,4 @@
-<!-- Status: proposed · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
-# 0027 — Replace raw-key closures with key handles
-Status: Proposed
+# 0027 — Proposed: Replace raw-key closures with key handles
 
 ## Context
 
@@ -22,13 +19,6 @@ but the closure forms remained beside them.
    handle fits, it returns `:negotiation_unfulfillable`.
 6. The strict JSON object decoder lands in the same slice
    ([ADR 0028](0028-strict-json-object-decoding.md)).
-
-## Alternatives
-
-1. **Keep closures as an escape hatch.** Easy migration. The forbidden key paths stay open
-   and every bound has an exception.
-2. **Wrap closures in a handle type.** Same type everywhere. The closure still runs caller
-   code with key material in scope.
 
 ## Consequences
 

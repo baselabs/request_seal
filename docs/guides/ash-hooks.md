@@ -1,8 +1,6 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: ash_hooks adapter or provider contracts change -->
-
 # Webhooks with ash_hooks
 
-Add optional `{:ash_hooks, "~> 2.0 or ~> 3.0", optional: true}` with Elixir 1.20 or newer.
+Add optional `{:ash_hooks, ">= 3.0.0 and < 4.0.0", optional: true}` with Elixir 1.20 or newer.
 RequestSeal adds RFC 9421 signatures to ash_hooks deliveries and verifies inbound
 requests. ash_hooks owns delivery rows, retry/backoff, Retry-After, destination
 validation and pinning, secret references, and its ingress ledger. RequestSeal

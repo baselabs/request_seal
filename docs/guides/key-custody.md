@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-13 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
-
 # Keep signing keys behind a handle
 
 **What you will build:** A local signing handle that keeps private key material in its holder process, verifies exact signed bytes, and can be explicitly released. Prerequisite: RequestSeal installed. Ed25519 follows [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html); public JWK thumbprints follow [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html) and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html).

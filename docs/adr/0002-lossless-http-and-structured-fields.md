@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0002 — Preserve lossless HTTP evidence before interpretation
-Status: Accepted
 
 ## Context
 
@@ -12,16 +9,6 @@ Status: Accepted
 Adapters must construct a lossless `Message` from field occurrences and explicit transport facts before parsing or normalization. Preserve raw target, ordered duplicate field occurrences, headers versus trailers, raw field values, response status, related request, and body availability. Structured Fields use one bounded parser with an explicit schema per protocol field/revision. Parsed structures retain ordering where the source makes order significant and never authorize a type merely because the parser recognizes it.
 
 Component derivation consumes only this model. It covers requests, responses, related requests, all nine RFC 9421 derived components, field components, `sf`, `key`, `bs`, `tr`, `req`, and `name` (required for `@query-param`; RFC 9421 Section 2.2.8). It also covers `Accept-Signature` and multiple labeled signatures. Adapters refuse verification when required evidence is unavailable.
-
-## Strongest alternatives
-
-1. **Normalize into a conventional map.** It is convenient for callers and framework adapters. It loses duplicate occurrence/order evidence and can authenticate bytes the transport never carried.
-2. **Keep raw bytes only and let each profile parse them.** This maximizes fidelity but duplicates complex Structured Fields and component rules, increasing change amplification and inconsistent bounds.
-3. **Framework-native structs as the core model.** This reduces translation in one stack but makes RequestSeal depend on framework normalization behavior and blocks portable TypeScript corpus semantics.
-
-## Deciding evidence and deletion test
-
-RFC 9421 sections 2–5 and Appendix B are the primary deciding source. Delete the lossless model and every adapter/profile must relearn occurrence order, raw targets, trailer location, and request/response association; the module is deep. Delete a separate parser per profile and callers get simpler, so duplicate parsers fail the deletion test.
 
 ## Consequences
 
@@ -35,21 +22,10 @@ Adapters have a stricter capture contract and may reject when a framework has al
 - Known RFC 8941 fields do not accept RFC 9651-only types without an explicit field revision.
 - Elixir and TypeScript produce the same bases and rejection rule IDs from the same occurrence model.
 
+## Cross-language fidelity
 
-## Amendment
-
-October 8, 2026: the TypeScript counterpart is deferred; RequestSeal is Elixir only. The cross-language corpus format remains a design for later use.
-
-
-## Amendment: October 9, 2026
-
-The October 8 deferral is superseded. The TypeScript counterpart is designed and
-in progress as a separate native npm package named `request-seal`. It shares
-the language-neutral corpus and semantic contracts with the Elixir library.
-
-## Amendment — 2026-11-15
-
-The TypeScript counterpart is the npm package `@request-seal/core`, not `request-seal`. It
-shares the language-neutral corpus and semantic contracts through its own pin; see
-[ADR 0009](0009-cross-language-corpus.md), [ADR 0021](0021-corpus-case-layout.md) and
-[ADR 0022](0022-typescript-conformance-contract.md).
+The Elixir corpus implements the published language-neutral format.
+The separate native `@request-seal/core` package consumes that contract through
+its own corpus pin; neither package shares runtime code.
+Case layout and reciprocal conformance follow [ADR 0009](0009-cross-language-corpus.md),
+[ADR 0021](0021-corpus-case-layout.md), and [ADR 0022](0022-typescript-conformance-contract.md).

@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: an error struct, reason, layer, or retry rule changes -->
-
 # Diagnose and handle errors
 
 **What you will build:** A signed request and a table of changes to it, each asserted against the exact `reason` and `layer` RequestSeal returns, plus logging and retry rules you can apply to every error. Prerequisite: RequestSeal installed; no framework or network is needed.

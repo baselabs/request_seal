@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-13 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
-
 # Sign JWS and encrypt JWE envelopes
 
 **What you will build:** A compact signed JWS wrapped in an encrypted JWE, with authentication of both envelopes before reading the payload. Prerequisite: RequestSeal installed; no framework is needed. Sources: [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html), and [RFC 7518](https://www.rfc-editor.org/rfc/rfc7518.html).

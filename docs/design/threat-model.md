@@ -1,7 +1,4 @@
-<!-- Status: current · Kind: design · Updated: 2026-11-13 · Governed by: public architecture · Review when: a trust boundary, profile, adapter, data shape, or external effect changes -->
-
 # RequestSeal threat model
-
 
 RequestSeal processes attacker-controlled wire data at an authentication boundary. Its primary security goal is to report exactly what was cryptographically established, by which trusted association, under which profile, without granting caller authorization or payment authority.
 
@@ -84,112 +81,16 @@ attacker-controlled diagnostics.
 
 RequestSeal cannot establish that a caller's trust anchors, proxy configuration, authorization policy, payment decision, or external key-custody service are correct. It makes their inputs, provenance, and unevaluated state explicit so the caller cannot receive an accidental success signal. Actual assurance for a configured adapter comes from real-substrate evidence (see the [testing guide](../guides/testing.md)), not from the existence of the interface.
 
-## Measured input ceilings
+## Bounded parsing
 
-OBSERVED on October 16, 2026 by `MIX_ENV=test mix run bench/ceilings.exs`:
-Apple M4 (Darwin arm64), 64-bit words, Erlang/OTP 29.1.1 (ERTS 17.1), Elixir
-1.20.4 (compiled for OTP 29). The runtime OTP patch version was read from its
-`OTP_VERSION` file.
+Compact and nested parsing stop at the first excess segment; tests enforce a
+10,000-reduction separator-storm budget at the complete configured byte ceiling.
+Discovery trailing whitespace permits only SP, HTAB, LF, and CR under [RFC 8259 Section 2](https://www.rfc-editor.org/rfc/rfc8259.html#section-2).
 
-Each adversarial candidate has 10 warmups and 100 measured samples, with garbage
-collection before each measurement. Time uses integer microseconds;
-p50/p99 use nearest ranks. Reductions belong to the current parser process.
-The table independently selects the largest observed time p99 and largest
-reduction maximum per parser; the candidates can differ. Each maximum column
-records the selected candidate's largest individual sample. These are observed
-resource measurements for this run, rather than universal latency bounds.
+## Decryption timing
 
-| Parser | Time candidate / input ceilings | Time p50 / p99 / max (µs) | Reduction candidate | Reductions p50 / p99 / max |
-| --- | --- | ---: | --- | ---: |
-| Structured Fields | dictionary / bytes:65536, members:1024 | 4 696 / 7 193 / 7 946 | dictionary | 360 110 / 363 061 / 363 291 |
-| Signature base | base / bytes:1048576, components:256 | 8 799 / 10 651 / 10 922 | base | 3 332 590 / 3 333 645 / 3 333 660 |
-| Compact JWS | whitespace_storm / compact_bytes:1048576, segments:under-limit | 2 239 / 4 333 / 4 397 | compact | 2 397 577 / 2 397 641 / 2 397 642 |
-| Compact JWE | compact / compact_bytes:1048576, header_bytes:16384, depth:4 | 2 944 / 8 899 / 9 307 | compact | 2 400 050 / 2 400 112 / 2 400 114 |
-| JOSE protected JSON | bytes_depth / bytes:16384, depth:4 | 55 / 123 / 135 | bytes_depth | 33 032 / 33 098 / 33 099 |
-| JWKS body | json_shape / bytes:65536, keys:32, members:256, array:256, depth:32 | 844 / 1 565 / 1 799 | body_keys | 148 488 / 148 513 / 148 513 |
-| Key directory body | body_keys / bytes:65536, keys:32 | 335 / 1 227 / 1 347 | body_keys | 148 739 / 148 908 / 148 909 |
+RequestSeal makes no constant-time claim across machines, loads, keys, ciphertext lengths, or repeated remote observations.
 
-Structured Fields also measures the byte, parameter, inner-item, value-byte, and
-node ceilings. Its fixed grammar depth accepts container → inner list → item
-and rejects a further inner list. Signature-base inputs include the full
-1,048,576-byte output and 256 components, plus 256 query components. Compact JOSE
-measurements call the production segment parser, protected-header parser, and
-Base64url decoders; key resolution, signature verification, and decryption are
-outside those parser measurements. Before measuring, real generated envelopes
-are verified/decrypted successfully. Headers reach 16,384 bytes and depth four.
-Separator and whitespace storms reach the full compact byte ceiling. Discovery
-calls the same bounded JSON and key-import functions used by fetch, through its
-internal body entry point, with 32 actual generated public keys. Its shape
-candidate reaches 256 object members, 256 array entries, and depth 32.
-Network transport and directory possession proof are outside the body measurement.
-
-OBSERVED: one-megabyte separator rejection used 61 reductions for JWS and
-71 for JWE in this run. Compact and nested parsing stop at the first excess
-segment. Fixed-seed properties and regular regressions enforce a 10,000-reduction
-budget for separator storms, including the complete configured byte ceiling.
-Discovery trailing bytes follow [RFC 8259 Section 2](https://www.rfc-editor.org/rfc/rfc8259.html#section-2):
-SP, HTAB, LF, and CR; vertical tab, form feed, and Unicode spaces reject.
-
-## RSA-OAEP decryption timing
-
-OBSERVED in the same benchmark run: one locally generated 2,048-bit RSA key,
-A256GCM, 30 warmups per outcome, and 1,000 samples each for valid ciphertext,
-corrupted encoded-message leading zero (byte 0), corrupted masked seed (byte 1),
-corrupted masked data block (byte 200), and corrupted GCM tag, for both RSA-OAEP
-and RSA-OAEP-256. The timer measures the complete `JWE.decrypt/2` call, including
-its sensitive worker. Sample order rotates to reduce order bias. The script
-recovers the real OAEP encoded message with raw private RSA, asserts its leading
-zero, corrupts each selected byte, and applies raw public RSA. Actual unwrap
-rejection is asserted before timing. Tag corruption changes a decoded tag byte
-and re-encodes it canonically; other token bytes remain identical.
-
-| Algorithm | Outcome | Samples | Time p50 / p99 (µs) | Min / max (µs) |
-| --- | --- | ---: | ---: | ---: |
-| RSA-OAEP | valid | 1000 | 624 / 1 923 | 588 / 3 000 |
-| RSA-OAEP | leading_zero | 1000 | 623 / 2 046 | 585 / 4 316 |
-| RSA-OAEP | masked_seed | 1000 | 623 / 2 161 | 583 / 3 292 |
-| RSA-OAEP | padding | 1000 | 624 / 2 052 | 587 / 12 597 |
-| RSA-OAEP | tag | 1000 | 622 / 2 067 | 580 / 2 551 |
-| RSA-OAEP-256 | valid | 1000 | 625 / 1 755 | 587 / 4 670 |
-| RSA-OAEP-256 | leading_zero | 1000 | 624 / 1 939 | 587 / 4 371 |
-| RSA-OAEP-256 | masked_seed | 1000 | 625 / 2 013 | 587 / 10 568 |
-| RSA-OAEP-256 | padding | 1000 | 625 / 1 490 | 587 / 2 795 |
-| RSA-OAEP-256 | tag | 1000 | 626 / 2 000 | 585 / 4 944 |
-
-A paired bootstrap with 1,000 resamples reports the 99% interval for each
-corruption-minus-comparison mean. The two-sample Kolmogorov–Smirnov distance uses
-the approximate 99% critical distance 0.0729; rank probability reports the
-empirical probability that the corruption path is slower (ties count as one-half).
-The combined decision flags separation if either unadjusted criterion triggers;
-it has no joint 99% confidence or multiple-comparison error control.
-
-| Algorithm | Corruption versus | Rank probability | KS distance | Mean delta 99% interval (µs) |
-| --- | --- | ---: | ---: | ---: |
-| RSA-OAEP | leading_zero vs. valid | 0.5079 | 0.027 | [-11.918,21.919] |
-| RSA-OAEP | leading_zero vs. tag | 0.5081 | 0.03 | [-11.29,25.263] |
-| RSA-OAEP | masked_seed vs. valid | 0.4988 | 0.023 | [-24.611,13.23] |
-| RSA-OAEP | masked_seed vs. tag | 0.4992 | 0.025 | [-22.77,12.912] |
-| RSA-OAEP | padding vs. valid | 0.5013 | 0.02 | [-20.989,47.896] |
-| RSA-OAEP | padding vs. tag | 0.5015 | 0.021 | [-16.988,40.329] |
-| RSA-OAEP-256 | leading_zero vs. valid | 0.4975 | 0.028 | [-13.925,18.377] |
-| RSA-OAEP-256 | leading_zero vs. tag | 0.5042 | 0.033 | [-20.127,24.116] |
-| RSA-OAEP-256 | masked_seed vs. valid | 0.502 | 0.022 | [-16.767,41.462] |
-| RSA-OAEP-256 | masked_seed vs. tag | 0.5088 | 0.046 | [-13.359,36.373] |
-| RSA-OAEP-256 | padding vs. valid | 0.5036 | 0.024 | [-26.491,11.981] |
-| RSA-OAEP-256 | padding vs. tag | 0.5104 | 0.043 | [-22.441,10.166] |
-
-OBSERVED: no timing separation was detected for leading-zero, masked-seed, or
-masked-data-block corruption versus valid ciphertext or tag failure in this run
-at this microsecond resolution and sample count. All 12 mean intervals include
-zero; all KS distances are below 0.0729. Timing figures vary per run; the timing
-and caller-result conclusions were rechecked in this run. This measurement does
-not establish constant-time behavior on other machines, loads, keys, ciphertext
-lengths, or repeated remote observations.
-
-OBSERVED: valid ciphertext returns `{:ok, Result}`. All four corrupted ciphertext
-cases return the identical complete error:
+RSA-OAEP padding failures and GCM authentication failures return the identical complete error:
 `%RequestSeal.JOSE.Error{reason: :decryption_failed, layer: :crypto, correlation: nil, retryable: false}`.
-Computed flags are `errors_equal=true`, `failure_results_equal=true`, and
-`all_results_equal=false` for both algorithms; valid ciphertext succeeds.
-The regular OAEP regression uses real RSA and GCM and compares complete error
-structs for leading-zero, masked-seed, and multiple masked-data-block corruptions.
+Run `MIX_ENV=test mix run bench/ceilings.exs` for parser resource measurements and OAEP timing distributions.

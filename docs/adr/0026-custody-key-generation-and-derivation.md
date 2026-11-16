@@ -1,7 +1,4 @@
-<!-- Status: proposed · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
-# 0026 — Generate and derive keys inside custody
-Status: Proposed
+# 0026 — Proposed: Generate and derive keys inside custody
 
 ## Context
 
@@ -20,15 +17,6 @@ is durably recorded, or a crash between derivation and use leaves an unrecorded 
 3. Derivation uses derive/3 followed by commit/3 under the same operation deadline. Only an acknowledged atomic commit returns a usable child handle. A failed derive or an explicit commit refusal returns an ordinary error. A lost commit result triggers one release attempt under a fresh 1,000 ms context; confirmed destruction returns an ordinary error, while unconfirmed destruction returns {:cleanup_required, cleanup, error}. The redacted cleanup capability is caller-owned and may be retried through Custody.cleanup/2 until :ok.
 4. Releasing a parent does not release its children. A custodian that implements
    `derive/3` also implements `commit/3` and `release/2`.
-
-## Alternatives
-
-1. **Generate outside custody and import.** No new callbacks. The key exists in caller
-   memory first.
-2. **Derive and use in one call.** One round trip. A crash can leave a used key that no
-   record holds.
-3. **Caller-chosen KDF info.** Flexible. Two applications could collide on one derived key
-   across families.
 
 ## Consequences
 

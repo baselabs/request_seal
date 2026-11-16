@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: reference · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API, a supported standard revision, or the release policy changes -->
-
 # Compatibility and deprecation
 
 RequestSeal follows [Semantic Versioning](https://semver.org/) for every 1.x release. This page

@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: reference · Updated: 2026-11-13 · Governed by: ADR 0009 · Review when: source bytes change -->
-
 # Source provenance
 
 Published test material extracted from [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.txt), A.1. Promoted from existing fixtures without byte changes. Test keys are never operational credentials.

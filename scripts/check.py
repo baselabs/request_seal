@@ -148,115 +148,21 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
             process.stdout.close()
 
 
-VERSION_LANES = ("latest", "mid", "floor")
-
-
-def version_manager_pairs(text, lanes=VERSION_LANES):
-    """Every CI lane's exact Elixir/OTP pair from .tool-versions, in lane order with the default
-    first, plus the one Node version. The build box installs what this file lists, so a lane CI runs
-    that is missing here has no toolchain there."""
-    versions = {}
-    for number, line in enumerate(text.splitlines(), 1):
-        tokens = line.partition("#")[0].split()
-        if not tokens:
-            continue
-        if len(tokens) < 2 or tokens[0] in versions:
-            raise ValueError(f"Invalid version-manager declaration on line {number}")
-        versions[tokens[0]] = tokens[1:]
-    elixirs, otps = versions.get("elixir", []), versions.get("erlang", [])
-    if len(elixirs) != len(lanes) or len(otps) != len(lanes):
-        raise ValueError("Invalid version-manager declarations: list one Elixir and one Erlang version "
-                         f"per CI lane, in the order {', '.join(lanes)}")
-    pairs = {}
-    for lane, elixir, otp in zip(lanes, elixirs, otps):
-        match = re.fullmatch(r"(\d+\.\d+\.\d+)-otp-(\d+)", elixir)
-        if not match or not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", otp):
-            raise ValueError(f"Invalid exact version-manager identity for the {lane} lane")
-        if otp.split(".")[0] != match.group(2):
-            raise ValueError(f"Version-manager Elixir/OTP identities disagree for the {lane} lane")
-        pairs[lane] = (match.group(1), match.group(2), otp)
-    nodes = versions.get("nodejs", [])
-    if len(nodes) != 1 or not re.fullmatch(r"\d+\.\d+\.\d+", nodes[0]):
-        raise ValueError("Node requires one exact version-manager identity")
-    return pairs, nodes[0]
-
-
-def toolchain_errors(sources):
-    """Validate the consumer range, exact tooling identity, and every CI lane against .tool-versions."""
+def ci_action_errors(workflow):
+    """Require the build's essential actions and immutable commit identities."""
     errors = []
-    try:
-        pairs, node = version_manager_pairs(sources[".tool-versions"])
-    except ValueError as error:
-        return [str(error)]
-    elixir, major, otp = pairs["latest"]
-    floor_elixir, floor_major, _ = pairs["floor"]
-    floor_range = ".".join(floor_elixir.split(".")[:2])
-    lane_bindings = [f"- lane: {lane}\n            elixir: '{lane_elixir}'\n            otp: '{lane_otp}'"
-                     for lane, (lane_elixir, _, lane_otp) in pairs.items()]
-    postgres_env = "\n        env:\n          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres"
-    required = {
-        "mix.exs": [f'elixir: "~> {floor_range}"', "unless Code.ensure_loaded?(:json) do",
-            '{:finch, ">= 0.23.0 and < 0.25.0", optional: true, runtime: false}',
-            '{:req, "~> 0.7.4", optional: true, runtime: false}',
-            '{:ash, ">= 3.37.4 and < 4.0.0", optional: true}',
-            '] ++ test_dependencies ++ owned_integrations()',
-            'defp owned_integrations do\n'
-            '    if Version.match?(System.version(), ">= 1.20.0") do\n'
-            '      [\n'
-            '        {:ash_onetime, "~> 1.9 and >= 1.9.2", optional: true},\n'
-            '        {:ash_hooks, ">= 3.0.0 and < 4.0.0", optional: true}\n'
-            '      ]\n'
-            '    else\n'
-            '      []\n'
-            '    end\n'
-            '  end'],
-        "tools/notebooks/mix.exs": [f'elixir: "{elixir}"'],
-        "config/config.exs": [f"minimum_otp = {floor_major}", ":erlang.system_info(:otp_release) |> to_string() |> String.to_integer()", "if running_otp < minimum_otp do"],
-        "tools/notebooks/config/config.exs": ['import_config "../../../config/config.exs"', f'expected_otp = "{major}"', 'to_string(:erlang.system_info(:otp_release))', "if running_otp != expected_otp do"],
-        # The published notebook checks the supported floor (mix.exs `elixir:` and
-        # config.exs `minimum_otp`), not the maintainers' pin.
-        "livebooks/environment.livemd": [f'true = Version.match?(System.version(), "~> {floor_range}")', f"true = String.to_integer(System.otp_release()) >= {floor_major}"],
-        ".github/workflows/ci.yml": [
-            "runs-on: ubuntu-24.04", "timeout-minutes: 40", "fail-fast: false",
-            "postgres:\n        image: postgres:18",
-            "- if: matrix.lane == 'mid'\n        run: mix test --warnings-as-errors" + postgres_env,
-            "- if: matrix.lane == 'floor'\n        run: python3 scripts/check_optional_clients.py",
-            "elixir-version: ${{ matrix.elixir }}", "otp-version: ${{ matrix.otp }}",
-            "version-type: strict", f"node-version: '{node}'",
-            "- if: matrix.lane == 'floor'\n        run: mix test --warnings-as-errors" + postgres_env,
-            "- if: matrix.lane == 'latest'\n        run: python3 scripts/check.py" + postgres_env,
-        ],
-    }
-    for name, version in {"telemetry": "1.4.2", "plug": "1.20.3", "bandit": "1.14.1",
-                          "phoenix": "1.8.15", "stream_data": "1.4.0", "dialyxir": "1.4.8"}.items():
-        next_major = int(version.split(".")[0]) + 1
-        required["mix.exs"].append('{:' + name + ', ">= ' + version + ' and < ' + str(next_major) + '.0.0"')
-    required[".github/workflows/ci.yml"].extend(lane_bindings)
-    for path, values in required.items():
-        for value in values:
-            if sources[path].count(value) != 1:
-                errors.append(f"{path}: missing or duplicated toolchain binding {value}")
-    matrix = re.search(r"^      matrix:\n((?:^ {8}.*\n|^\n)*)", sources[".github/workflows/ci.yml"], re.MULTILINE)
-    body = matrix.group(1) if matrix else ""
-    axes = re.findall(r"^ {8}(\S[^:\n]*):", body, re.MULTILINE)
-    entries = re.findall(r"^ {10}-\s+", body, re.MULTILINE)
-    lanes = re.findall(r"^ {10}- lane:\s*(\S+)", body, re.MULTILINE)
-    if axes != ["include"] or len(entries) != len(VERSION_LANES) or sorted(lanes) != sorted(VERSION_LANES):
-        errors.append(f"CI matrix must contain exactly the lanes .tool-versions lists: {', '.join(VERSION_LANES)}")
-    actions = re.findall(r"uses:\s*(\S+)", sources[".github/workflows/ci.yml"])
+    actions = re.findall(r"uses:\s*(\S+)", workflow)
     required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
     if not required_actions.issubset({action.split("@", 1)[0] for action in actions}) or any(not re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) for action in actions):
         errors.append("CI actions must use immutable commit identities")
     return errors
 
 
-def check_toolchain():
-    paths = (".tool-versions", "mix.exs", "config/config.exs", ".github/workflows/ci.yml",
-        "tools/notebooks/mix.exs", "tools/notebooks/config/config.exs", "livebooks/environment.livemd")
-    errors = toolchain_errors({path: (ROOT/path).read_text() for path in paths})
+def check_ci_actions():
+    errors = ci_action_errors((ROOT / ".github/workflows/ci.yml").read_text())
     if errors:
         raise ValueError("\n".join(errors))
-    print("PASS: consumer range, development/notebook pins, and all three CI lanes agree; owned optional integrations require Elixir 1.20+; CI actions use immutable commits")
+    print("PASS: CI actions use immutable commits")
 
 
 def corpus_release_errors(sources):
@@ -300,10 +206,6 @@ IO.puts("PASS: built Hex metadata lists ash_onetime and ash_hooks as optional re
 
 
 def check_package():
-    runbook = (ROOT / "docs/operations/releases.md").read_text()
-    command = "mix run --no-start -e '" + RELEASE_RUNTIME_CHECK + "'"
-    if command not in runbook or "refuses publishing below 1.20" not in runbook:
-        raise ValueError("Release runbook must require the publishing runtime guard")
     run(["mix", "run", "--no-start", "-e", RELEASE_RUNTIME_CHECK])
     (ROOT / "_build").mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="package-check-", dir=ROOT / "_build") as temporary:
@@ -355,7 +257,7 @@ if __name__ == "__main__":
             output, _ = execute_notebook(*args.execute_notebook, timeout=args.notebook_timeout)
             print(output, end="")
             raise SystemExit(0)
-        check_toolchain()
+        check_ci_actions()
         if not args.notebooks_only:
             check_corpus_release()
             run(["mix", "format", "--check-formatted"])

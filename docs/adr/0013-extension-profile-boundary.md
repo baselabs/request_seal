@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0013 — Keep named application profiles in extension packages
-Status: Accepted
 
 ## Context
 
@@ -12,29 +9,25 @@ the framework-independent core or allowing extensions to impersonate core names.
 
 ## Decision
 
-Named application profiles live in extension packages against the documented
-`RequestSeal.Profile` surface: `valid_signature_input?/1`, `dictionaries/2`, `preflight/4`, and
-`verify_label/6`. This surface is unstable; pin RequestSeal exactly.
-Extensions select and enforce their public source-specific
-predicates before returning success and own any trusted principal attribution.
-The core pipeline enforces the explicitly supplied generic policy.
+Named application profiles use `RequestSeal.Profile`: `valid_signature_input?/1`,
+`dictionaries/2`, `preflight/4`, and `verify_label/6`, under the 1.x compatibility promise.
+Extensions enforce public source-specific predicates and trusted principal attribution;
+the core enforces the explicitly supplied generic policy.
 
 An extension profile map has at most eight atom keys and a required
-`name: {package, kind}` with atom values and a package distinct from
+`name: {package, kind}` of atoms, with package distinct from
 `:request_seal`, `:rfc9421`, and `:web_bot_auth`.
-The extension module defines that name as a compile-time constant, never from
-wire data. Bare atom names and the core package namespace reject with
-`:invalid_profile` at the `:input` layer. Other values are limited to atoms,
-integers from -999,999,999,999,999 through 999,999,999,999,999, or binaries of
-at most 256 bytes. The generic verifier refuses both
-`:profile` and `:principal` options with the same bounded error. Core named
-profiles retain their own acceptance predicates.
+The module defines its name at compile time, never from wire data.
+Bare atom names and core package namespaces reject with `:invalid_profile` at `:input`.
+Other values are atoms, integers from -999,999,999,999,999 to 999,999,999,999,999,
+or binaries up to 256 bytes. Generic verification rejects `:profile` and `:principal`
+options with the same bounded error; named core profiles retain their predicates.
 
-A profile stamp records selection, not proof that source-specific rules ran.
-Consumers must allowlist trusted profiles and verification implementations.
-The Ash adapter retains its closed core profile allowlist. Replay commitments
-receive the selected profile so callers can bind claims to their security scope.
-Cryptographic validity and principal attribution grant no authorization.
+A profile stamp records selection rather than proof that source-specific rules ran.
+Consumers allowlist trusted profiles and verification implementations.
+Ash retains its closed core-profile allowlist.
+Replay commitments receive the selected profile for caller-defined scope.
+Cryptographic validity and attribution grant no authorization.
 
 ## Internal dependencies
 
@@ -62,18 +55,14 @@ ADR 0011. Undocumented internals do not become part of this public surface.
 - Ash rejects an extension result before invoking caller bindings.
 - Caller commitments can separate the same nonce by profile name and reject duplicates.
 
-
-## Amendment: October 9, 2026
+## Reserved package names
 
 The core additionally reserves the hyphenated package names `:"request-seal"`
 and `:"web-bot-auth"`. These join the original reserved names to prevent
 extensions from impersonating the published core package and named profile.
 The remaining extension contract is unchanged.
 
-## Amendment — 2026-11-15
+## Proposed extension support
 
-The sentence "This surface is unstable; pin RequestSeal exactly" is superseded:
-`RequestSeal.Profile` is covered by the 1.x compatibility promise in
-`docs/reference/compatibility.md`. A strict public JSON object decoder for extension
-packages is proposed in [ADR 0028](0028-strict-json-object-decoding.md), and required
-protected members in [ADR 0015](0015-jose-protected-members-and-embedded-keys.md).
+[ADR 0028](0028-strict-json-object-decoding.md) proposes a strict public JSON object decoder;
+[ADR 0015](0015-jose-protected-members-and-embedded-keys.md) proposes required protected members.

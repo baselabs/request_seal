@@ -1,7 +1,4 @@
-<!-- Status: proposed · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
-# 0028 — Decode JSON objects strictly and only after authentication
-Status: Proposed
+# 0028 — Proposed: Decode JSON objects strictly and only after authentication
 
 ## Context
 
@@ -17,13 +14,6 @@ even when decoding fails.
 2. JWE decryption with `content: :object` returns the decoded object in the result. The
    payload is decoded only after authentication, and no plaintext is returned when decoding
    fails.
-
-## Alternatives
-
-1. **Use the general decoder and document the hazards.** No new function. Duplicate members
-   and large integers still read differently across implementations.
-2. **Return plaintext and the decode error together.** Easier debugging. The caller holds
-   plaintext from a payload it is about to refuse.
 
 ## Consequences
 

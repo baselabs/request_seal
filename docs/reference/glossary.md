@@ -1,7 +1,4 @@
-<!-- Status: current · Kind: reference · Updated: 2026-11-13 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
-
 # Domain glossary
-
 
 | Term | Meaning |
 |---|---|

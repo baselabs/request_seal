@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0020 — Keep HTTP freshness, operation deadlines and body retention on separate clocks
-Status: Accepted
 
 ## Context
 
@@ -23,15 +20,6 @@ while believing it tightens another.
    authentication clocks with required budgets
    ([ADR 0016](0016-bounded-jwe-open-coordinator.md)).
 5. Documentation names which clock a bound uses and never describes one as another.
-
-## Alternatives
-
-1. **One request-wide deadline for everything.** One option to set. Freshness is a property
-   of the signed message, not of the work, and a wall-clock bound cannot cancel work.
-2. **Make body retention configurable.** More control. The fixed bound protects adapters
-   that run before any application policy is available.
-3. **No default operation timeout.** Every call states its bound. 1.x callers rely on the
-   default, and the 2.0 decrypt budgets already remove it where sizing matters.
 
 ## Consequences
 

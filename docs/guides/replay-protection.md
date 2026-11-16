@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
-
 # Reject repeated signed requests
 
 **What you will build:** A verifier that accepts each signed nonce once, rejects duplicates, and reclaims expired claims. Install RequestSeal; this example defines its own key, request, and policy and uses a local ETS store. This local example applies [RFC 9421 Section 7.2.2](https://www.rfc-editor.org/rfc/rfc9421.html#section-7.2.2) with one trusted key in one namespace.

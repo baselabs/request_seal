@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: draft-ietf-webbotauth-httpsig-protocol-00 · Review when: the Web Bot Auth API or the implemented draft revision changes -->
-
 # Sign and verify a Web Bot Auth agent
 
 This notebook signs a crawler's request under [Web Bot Auth protocol-00](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html) and verifies it against a held public key, the mode for an agent whose key you configured directly. It also shows what the verifier rejects. No network access is needed beyond the Hex install. Authenticating an agent's URL through HTTPS key discovery needs a real publisher; the [Web Bot Auth guide](../docs/guides/web-bot-auth.md) covers it.
