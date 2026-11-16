@@ -2,7 +2,8 @@
 
 ## Run the current gate
 
-Use Node, OpenSSL, and OpenSSH tools (`ssh-agent`, `ssh-add`, `ssh-keygen`) on `PATH`.
+Use the Elixir/OTP pairs and Node pin in `.tool-versions`, with OpenSSL and
+OpenSSH tools (`ssh-agent`, `ssh-add`, `ssh-keygen`) on `PATH`.
 Commands support macOS and Linux; Windows development uses WSL2.
 ```sh
 mix deps.get
@@ -19,7 +20,7 @@ generated cases with an explicit fixed seed and no elapsed-time cutoff:
 
 ```sh
 mix test test/property --warnings-as-errors
-ASDF_ELIXIR_VERSION=1.18.4-otp-27 ASDF_ERLANG_VERSION=27.3.4 MIX_BUILD_ROOT=_build/floor mix test test/property --warnings-as-errors
+ASDF_ELIXIR_VERSION="$(awk '$1 == "elixir" {print $NF}' .tool-versions)" ASDF_ERLANG_VERSION="$(awk '$1 == "erlang" {print $NF}' .tool-versions)" MIX_BUILD_ROOT=_build/floor mix test test/property --warnings-as-errors
 MIX_ENV=test mix run bench/ceilings.exs
 ```
 

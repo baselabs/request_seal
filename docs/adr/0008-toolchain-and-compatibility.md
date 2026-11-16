@@ -32,10 +32,11 @@ Public-key encoders try ASN.1 term parameters, then DER where the runtime requir
 without predicting encoder support from an OTP version string.
 PKCS #8 v2 (OneAsymmetricKey) rejects with `:unsupported_format` on supported runtimes.
 Finch and Req stay optional and never start caller pools.
-`scripts/check_optional_clients.py` derives their floors from package requirements
-and exercises fresh consumers against real TCP listeners and an OpenSSH agent.
+`scripts/check_optional_clients.py` reads Mix's evaluated dependency requirements
+and tests exact published floors in fresh consumers, using real cryptography,
+TCP listeners, an OpenSSH agent, and PostgreSQL.
 Core consumer checks run without clients or frameworks installed.
-Supported runtime lanes remain declared in `.github/workflows/ci.yml`.
+CI derives the floor, mid, and latest runtime lanes and Node pin from `.tool-versions`.
 Root and notebook lockfiles retain separate license and advisory checks.
 Publishing safety is defined by the runtime guard and actual Hex artifact metadata.
 
@@ -48,5 +49,12 @@ Owned integrations exercise real PostgreSQL migrations and Bandit delivery.
 
 ## Dependency ranges
 
-Ash uses `>= 3.37.4 and < 4.0.0`, Req `~> 0.7.4`, and Finch `>= 0.23.0 and < 0.25.0`.
-ash_onetime uses `~> 1.9 and >= 1.9.2`; ash_hooks uses `>= 3.0.0 and < 4.0.0`.
+Published dependencies declare tested floors independently of the development lock.
+Stable ranges use `>= FLOOR and < NEXT_MAJOR.0.0`; existing 0.x ranges and
+ash_onetime's `~> 1.9 and >= 1.9.2` retain their shapes.
+Fresh consumers resolve every published dependency available on the toolchain at
+its exact floor, assert the lock, compile with warnings as errors, and run its
+covering tests. The latest lane also tests the ash_onetime and ash_hooks floors.
+Development and test dependencies admit the lock and cap below the next major;
+0.x development ranges use a pessimistic minor cap. Every lock may advance within
+its declared range without changing a consumer floor.

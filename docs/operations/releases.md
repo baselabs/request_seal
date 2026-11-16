@@ -13,7 +13,8 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    Update `test/support/conformance_pin.ex` whenever the index digest changes.
    Maintain release and migration guidance in CHANGELOG.md.
    Confirm the explicit public document inventory and supported profiles.
-2. Run the release gate and inspect generated docs in a browser separately:
+2. Use the latest Elixir/OTP pair and Node pin from `.tool-versions`.
+   Run the release gate and inspect generated docs in a browser separately:
    ```sh
    python3 scripts/check.py
    ```
@@ -64,7 +65,7 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    This scans all fetched history, including deleted file contents. The term-file
    self-match is the scanner's positive control. An empty result establishes only
    that the configured terms were not found; inspect package/source disclosure too.
-5. Publish to Hex. From the pinned Elixir 1.20 checkout, export `HEX_API_KEY` from
+5. Publish to Hex. From the latest toolchain selected by `.tool-versions`, export `HEX_API_KEY` from
    your secret store into the publishing shell only; never write it to a file or
    print it. Verify the security
    reporting channel and package ownership, then run:

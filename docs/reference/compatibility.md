@@ -65,7 +65,7 @@ one. It keeps working for the rest of 1.x and is removed only in 2.0.
 ## Supported runtimes
 
 RequestSeal declares `elixir: "~> 1.18"`: Elixir 1.18 or newer, below 2.0, on
-Erlang/OTP 27 or newer. CI tests three pairs: Elixir 1.18.4 with OTP 27.3.4,
-1.19.5 with OTP 28.5.0.7, and 1.20.4 with OTP 29.1.1. The optional ash_onetime and
+Erlang/OTP 27 or newer. CI derives its floor, mid, and latest pairs from
+`.tool-versions`. The optional ash_onetime and
 ash_hooks integrations need Elixir 1.20. Raising the minimum Elixir or OTP version
 happens only in a minor release, with a changelog entry.

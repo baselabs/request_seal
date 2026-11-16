@@ -5,22 +5,24 @@ on:
 permissions:
   contents: read
 jobs:
+  toolchain:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pins.outputs.matrix }}
+      node: ${{ steps.pins.outputs.node }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - id: pins
+        run: python3 scripts/toolchain.py --github-output "$GITHUB_OUTPUT"
   verify:
+    needs: toolchain
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - lane: floor
-            elixir: '1.18.4'
-            otp: '27.3.4'
-          - lane: mid
-            elixir: '1.19.5'
-            otp: '28.5.0.7'
-          - lane: latest
-            elixir: '1.20.4'
-            otp: '29.1.1'
+      matrix: ${{ fromJSON(needs.toolchain.outputs.matrix) }}
     services:
       postgres:
         image: postgres:18
@@ -49,7 +51,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: '24.21.0'
+          node-version: ${{ needs.toolchain.outputs.node }}
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get --check-locked
@@ -73,7 +75,10 @@ jobs:
           REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       - if: matrix.lane == 'floor'
         run: python3 scripts/check_optional_clients.py
-      # The Elixir 1.20 lane includes ash_onetime and ash_hooks integration tests.
+        env:
+          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      # The latest gate also invokes check_optional_clients.py, including the
+      # ash_onetime and ash_hooks floors available on that toolchain.
       - if: matrix.lane == 'latest'
         run: python3 scripts/check.py
         env:

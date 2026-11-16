@@ -355,16 +355,31 @@ class NotebookProcessTest(unittest.TestCase):
 
 
 class BuildContractsTest(unittest.TestCase):
-    def test_optional_client_floors_derive_from_package_requirements(self):
+    def test_published_dependency_floors_derive_from_mix(self):
         spec = importlib.util.spec_from_file_location("optional_clients", ROOT / "scripts/check_optional_clients.py")
         clients = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(clients)
-        source = (ROOT / "mix.exs").read_text()
-        self.assertEqual(("0.23.0", "0.7.4"), clients.client_floors(source))
-        self.assertEqual(("0.24.0", "0.7.5"), clients.client_floors(
-            source.replace(">= 0.23.0", ">= 0.24.0").replace("~> 0.7.4", "~> 0.7.5")))
-        with self.assertRaises(ValueError):
-            clients.client_floors(source.replace("{:req,", "{:other,"))
+        _, runtime_path = clients.running_toolchain()
+        dependencies = clients.dependency_metadata(runtime_path)
+        published = {name: dependency for name, dependency in dependencies.items() if dependency["published"]}
+        self.assertEqual("0.23.0", published["finch"]["floor"])
+        self.assertEqual("0.7.4", published["req"]["floor"])
+        self.assertEqual("1.4.2", published["telemetry"]["floor"])
+        self.assertEqual("3.37.4", published["ash"]["floor"])
+        self.assertEqual("1.20.3", published["plug"]["floor"])
+        self.assertEqual("0.22.4", published["postgrex"]["floor"])
+        if "ash_onetime" in published:
+            self.assertEqual("1.9.2", published["ash_onetime"]["floor"])
+            self.assertEqual("3.0.0", published["ash_hooks"]["floor"])
+        self.assertFalse(dependencies["phoenix"]["published"])
+        self.assertFalse(dependencies["dialyxir"]["published"])
+        for name in published:
+            files = clients.floor_files([name])
+            self.assertTrue(any(path.endswith("_test.exs") for path in files))
+            for path in files:
+                self.assertTrue((ROOT / path).exists(), path)
+        with self.assertRaisesRegex(ValueError, "need floor coverage"):
+            clients.floor_files(["unmapped_dependency"])
 
     def test_actual_action_refs_reject_mutable_tags_and_missing_checkout(self):
         original = (ROOT / ".github/workflows/ci.yml").read_text()

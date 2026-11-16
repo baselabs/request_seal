@@ -6,8 +6,9 @@ This guide is for contributors. To use RequestSeal in your application, start wi
 
 ## Prerequisites
 
-To develop this repository, use Elixir 1.20.4 built for OTP 29, Erlang/OTP 29.1.1,
-Python 3.12 (the version CI runs), Git, Hex, Node 24.21.0, the OpenSSL command-line tool, and OpenSSH tools (`ssh-agent`,
+To develop this repository, use the latest Elixir/OTP pair and Node pin from
+`.tool-versions`, Python 3.12 (the version CI runs), Git, Hex, the OpenSSL
+command-line tool, and OpenSSH tools (`ssh-agent`,
 `ssh-add`, and `ssh-keygen`). Node is required for the
 reciprocal JOSE tests against the independent Node WebCrypto peer; OpenSSL runs
 reciprocal signature checks. `.tool-versions` lists the exact Elixir/OTP pair of every CI
