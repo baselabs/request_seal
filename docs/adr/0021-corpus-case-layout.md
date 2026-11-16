@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0021 — Keep every corpus case at its surface folder
-Status: Accepted
 
 ## Context
 
@@ -19,13 +16,6 @@ and secrets that a secret scanner flags.
 2. The Elixir corpus consumer rejects any disagreement between the ID, its surface prefix and the exact cases/<id>.json manifest path. The TypeScript consumer already reads nested manifests, but must add the same equality checks and named rejection tests as part of its 0.6 parity work. The shared index contract requires that layout.
 3. The secret-scan configuration lists every published or generated test vector in the
    corpus by exact file, so a new secret anywhere else still fails the scan.
-
-## Alternatives
-
-1. **A flat `cases/` folder.** No layout rule. Hundreds of files share one folder, and the
-   id carries no route to its surface.
-2. **A path-wide scanner exemption for `corpus/`.** One line. Any secret placed under the
-   corpus would pass unnoticed.
 
 ## Consequences
 

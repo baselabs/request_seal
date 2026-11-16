@@ -1,7 +1,3 @@
-# Grouped dependency updates. Toolchain pins in mix.exs, .tool-versions and CI
-# move together by contract; grouped updates keep related bumps in one review.
-# Hex requirements stay within the ranges mix.exs declares; reviewed updates
-# still rerun the declared gate before merging.
 version: 2
 updates:
   - package-ecosystem: "mix"

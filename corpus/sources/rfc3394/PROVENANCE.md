@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: reference · Updated: 2026-11-13 · Governed by: RFC 3394 · Review when: upstream errata or corpus encoding changes -->
-
 # RFC 3394 vectors
 
 Source: https://www.rfc-editor.org/rfc/rfc3394.txt, sections 4.1 through 4.6.

@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
-
 # Sign and verify Web Bot Auth agents
 
 **What you will build:** A signed agent request verified against a held public key, then a request whose agent URL is authenticated through trusted HTTPS key discovery. Install RequestSeal; the held-key example needs no framework or network. The implemented revision is [draft-ietf-webbotauth-httpsig-protocol-00](https://www.ietf.org/archive/id/draft-ietf-webbotauth-httpsig-protocol-00.html); select this revision explicitly when checking interoperability.

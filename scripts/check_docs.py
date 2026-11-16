@@ -9,7 +9,6 @@ import sys
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-FIELDS = ("Status", "Kind", "Updated", "Governed by", "Review when")
 MACHINE_PATH = re.compile(r"(?:/Users/[^/\s]+/|/home/[^/\s]+/|file://)")
 INTERNAL_PROCESS = re.compile(
     r"internal (?:workflow|planning|review authorization)|confidential planning|"
@@ -22,7 +21,7 @@ SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/w
         "rfc7517", "rfc8037", "wycheproof", "httpwg-structured-fields",
         "web-bot-auth", "local-http",
     )
-} | {"corpus/sources/web-bot-auth/upstream-PROVENANCE.md"} | {"docs/ROADMAP.md", "docs/adr/LEGACY.md"} | {
+} | {"corpus/sources/web-bot-auth/upstream-PROVENANCE.md"} | {
     "docs/adr/" + record + ".md" for record in (
         "0001-library-boundary", "0002-lossless-http-and-structured-fields", "0003-source-bound-profiles",
         "0004-key-custody-and-discovery", "0005-atomic-replay-envelope",
@@ -36,7 +35,7 @@ SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/w
         "0025-single-label-public-verification", "0026-custody-key-generation-and-derivation",
         "0027-key-handles-replace-closures", "0028-strict-json-object-decoding",
         "0029-ash-onetime-2-custody-and-install-bound-replay", "0030-bounded-non-sending-capture",
-        "0031-performance-release-gates", "0032-json-serializations-and-jwt-line",
+        "0032-json-serializations-and-jwt-line",
     )
 }
 GIT_INSTALL = re.compile(
@@ -216,12 +215,6 @@ def content_errors(root, relative, source, paths, version=None, published=None):
     root = root.resolve()
     errors = []
     path = root / relative
-    record = relative in ("AGENTS.md", "CHANGELOG.md", "LICENSE", "NOTICE")
-    if not record:
-        comment = re.match(r"\A<!--\s*(.*?)\s*-->", source, re.DOTALL)
-        line = comment.group(1) if comment else ""
-        if not all(f"{field}:" in line for field in FIELDS):
-            errors.append(f"{relative}: incomplete status metadata")
     if MACHINE_PATH.search(source):
         errors.append(f"{relative}: machine or private file URL")
     if INTERNAL_PROCESS.search(source):
@@ -265,13 +258,6 @@ def content_errors(root, relative, source, paths, version=None, published=None):
         elif not destination.exists():
             errors.append(f"{relative}: missing local link")
     return errors
-
-
-# Architecture fences are declaration-only types/specs/callbacks, including a
-# proposed API; evaluating them as scripts would misrepresent their purpose.
-FENCE_EXEMPTIONS = {
-    "docs/design/architecture.md": "declaration-only types/specs/callbacks",
-}
 
 
 def elixir_fences(source):
@@ -369,7 +355,7 @@ def fence_errors(root, relative, source):
         examples = elixir_fences(source)
     except ValueError as error:
         return [f"{relative}: {error}"]
-    if relative in FENCE_EXEMPTIONS or not examples:
+    if not examples:
         return []
     test = paired_test(relative)
     target = root / test
@@ -386,35 +372,6 @@ def fence_errors(root, relative, source):
     return errors
 
 
-# Public documents and library docs state current behavior only; release history
-# belongs in the CHANGELOG. A version-history marker ("From 0.5.0", "in 0.4.1 it
-# returns", "(unreleased)") is an error wherever it appears outside the CHANGELOG.
-HISTORY_MARKER = re.compile(
-    r"(?i)\b(?:from|since|until|as of)\s+v?\d+\.\d+\.\d+\b"
-    r"|\b(?:in\s+)?v?\d+\.\d+\.\d+\s+(?:it\s+)?(?:returns|rejects|accepts|emits)\b"
-    r"|\(unreleased\)"
-)
-
-
-def marker_errors(sources):
-    errors = []
-    for relative, source in sorted(sources.items()):
-        for match in HISTORY_MARKER.finditer(source):
-            errors.append(f"{relative}: release-history marker '{match.group(0)}'; state current behavior, history goes in the CHANGELOG")
-    return errors
-
-
-def history_marker_errors(root=ROOT):
-    configuration = public_configuration(root)
-    paths = sorted(configuration["documents"] - {"CHANGELOG.md"}) + sorted(
-        p.relative_to(root).as_posix() for p in (root / "lib").rglob("*.ex")
-    )
-    sources = {path: (root / path).read_text() for path in paths if (root / path).is_file()}
-    if not any(path.startswith("lib/") for path in sources) or "README.md" not in sources:
-        raise ValueError("history-marker scan did not find its README and library positive controls")
-    return marker_errors(sources)
-
-
 def check(root=ROOT):
     configuration = public_configuration(root)
     approved = configuration["documents"] | SOURCE_DOCUMENTS
@@ -427,7 +384,6 @@ def check(root=ROOT):
             source = path.read_bytes().decode("utf-8")
             errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"]))
             errors.extend(fence_errors(root, relative, source))
-    errors.extend(history_marker_errors(root))
     for relative in sorted(configuration["files"] - approved):
         path = root / relative
         if path.is_file() and not path.is_symlink():
@@ -444,7 +400,5 @@ if __name__ == "__main__":
     if errors:
         print("\n".join(errors))
         sys.exit(1)
-    print(f"PASS: {len(approved)} approved public documents, metadata, disclosure tripwires, and links")
+    print(f"PASS: {len(approved)} approved public documents, disclosure tripwires, and links")
     print("Scope: every approved Markdown Elixir fence is paired and executed; Livebooks use their dedicated execution gate")
-    for path, reason in FENCE_EXEMPTIONS.items():
-        print(f"Fence exemption: {path}: {reason}")

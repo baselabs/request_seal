@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
-
 # RequestSeal
 
 RequestSeal signs and verifies HTTP requests and responses in Elixir with RFC 9421 HTTP Message Signatures, for teams that receive webhooks, call signed APIs, or identify AI agents and crawlers with Web Bot Auth.
@@ -42,9 +40,9 @@ Add optional dependencies for the integrations you use. The table is a reference
 | `:phoenix` | `~> 1.8.15` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.23.0 and < 0.25.0` | Finch transport and caller-started pools |
-| `:ash` | `~> 3.37 and >= 3.37.2` | Ash scope protocol and authorization-enabled actions |
+| `:ash` | `>= 3.37.4 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
 | `:ash_onetime` | `~> 1.9 and >= 1.9.2` | Recommended durable replay; Elixir 1.20+ |
-| `:ash_hooks` | `~> 2.0 or ~> 3.0` | Webhook signing and verification; Elixir 1.20+ |
+| `:ash_hooks` | `>= 3.0.0 and < 4.0.0` | Webhook signing and verification; Elixir 1.20+ |
 | `:postgrex` | `~> 0.22.4` | PostgreSQL replay storage using your existing connection |
 
 For both HTTP scripts below, paste this complete list into your `deps/0` function. Jason decodes the webhook JSON:
@@ -566,4 +564,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor checks.
 ## License
 
 [Apache-2.0](LICENSE). RFC code components use BSD-3-Clause under [NOTICE](NOTICE); external vectors retain their attribution there.
-

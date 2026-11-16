@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0018 — Support ECDH-ES key agreement over P-256, P-384 and X25519
-Status: Accepted
 
 ## Context
 
@@ -29,16 +26,6 @@ whether a forged header can extract key information.
    5.5 and 5.7, RFC 7748, RFC 8037 and Wycheproof, in the `key_management.ecdh_kdf/v1` and
    `key_management.agree/v1` corpus surfaces. Independent JOSE implementations decrypt the
    library's output, and the library decrypts theirs.
-
-## Alternatives
-
-1. **Depend on a JOSE library for agreement.** Less code here. It reverses the owned-JOSE
-   decision in [ADR 0001](0001-library-boundary.md) and would put private agreement outside
-   custody.
-2. **Support only the key-wrap variants.** One fewer content-key path. Direct ECDH-ES is
-   the form many recipients publish.
-3. **Add more curves (P-521, X448).** Wider coverage. No interop target in the corpus asks
-   for them, and each curve adds vectors and refusal paths.
 
 ## Consequences
 

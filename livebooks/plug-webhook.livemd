@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-10-14 · Governed by: public architecture · Review when: the Plug integration or core verification API changes -->
-
 # Verify signed webhooks in a Plug pipeline
 
 This notebook builds a webhook receiver with `Plug.Router` and RequestSeal's Plug integration, then sends it signed, unsigned, and altered requests through `Plug.Test`. Phoenix endpoints use the same plugs. The requests go straight into the pipeline in this process; no server, port, or network is involved beyond the Hex install.

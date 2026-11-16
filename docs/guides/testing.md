@@ -1,52 +1,21 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture, threat model · Review when: an advertised capability, test runner, or evidence source changes -->
-
 # Testing and evidence
-
-
-**What you will build:** A verification workflow that distinguishes cryptographic validity, protocol behavior, and acceptance by another implementation. You will run the default gate, choose focused checks for properties and integrations, and identify when a deployed peer or caller-provisioned database is needed to establish a claim.
 
 ## Run the current gate
 
-The gate requires Node 24.21.0 and the OpenSSL command-line tool on macOS and
-Linux; Windows developers use WSL2. Node is pinned in `.tool-versions` and CI
-because the reciprocal JOSE tests run the independent Node WebCrypto peer.
-OpenSSL supplies the reciprocal signature checks. Both tools must be on `PATH`.
-
+Use Node, OpenSSL, and OpenSSH tools (`ssh-agent`, `ssh-add`, `ssh-keygen`) on `PATH`.
+Commands support macOS and Linux; Windows development uses WSL2.
 ```sh
 mix deps.get
 python3 scripts/check.py
 ```
-
-The gate checks the toolchain pins, formatting, warnings-as-errors compilation, tests
-(including doctests and every Elixir example in the public Markdown documents), corpus
-mutation checks, the optional-client matrix, the Python document tests, public-document
-inclusion and links, ExDoc output, dependency advisories, the built Hex package's
-metadata, and official Livebook import/export and execution. It runs each notebook in a fresh Elixir process and
-requires evidence that the export reached its final assertion. Integration tests start
-temporary local HTTP/TLS listeners and a real OpenSSH agent; the notebook runner
-starts no Livebook web server. Tests clean up their listeners and agent processes.
-
-Default tests use repository fixtures, real local cryptography, and local integration
-processes. The SSH custody tests require `ssh-agent`, `ssh-add`, and `ssh-keygen`.
-Database and deployed-source checks are opt-in. Deployed-source checks fetch a live
-public key directory over HTTPS: run them with `mix test --include live_source`, and set
-`REQUESTSEAL_DISCOVERY_CACERTS` to a PEM bundle to replace the operating system's trust
-roots. Public
-documentation and notebooks are enumerated explicitly in mix.exs.
+Tests use real local cryptography and temporary integration processes; no service starts automatically.
+Set `REQUESTSEAL_REPLAY_PG_URL` for database tests. Use `mix test --include live_source`
+for live directories; `REQUESTSEAL_DISCOVERY_CACERTS` can select a PEM trust bundle.
 
 ## Input properties and measurements
 
 The declared gate includes `test/property/`. Each property executes 300 successful
 generated cases with an explicit fixed seed and no elapsed-time cutoff:
-
-| Suite | Property definitions | Seed |
-| --- | ---: | ---: |
-| Structured Fields | 4 | 9651 |
-| Signature base | 4 | 9421 |
-| JOSE | 5 | 7516 |
-| Discovery | 3 | 7638 |
-| ETS replay | 1 | 6401 |
-| PostgreSQL replay | 1 | 6402 |
 
 ```sh
 mix test test/property --warnings-as-errors
@@ -54,16 +23,12 @@ ASDF_ELIXIR_VERSION=1.18.4-otp-27 ASDF_ERLANG_VERSION=27.3.4 MIX_BUILD_ROOT=_bui
 MIX_ENV=test mix run bench/ceilings.exs
 ```
 
-The benchmark is an explicit command, outside the default gate. It reports
-nearest-rank p50/p99 time and reductions at input ceilings, plus 1,000 decrypt
-samples per OAEP outcome. Measurement method, environment, distributions, and
-interpretation appear in the [threat model](../design/threat-model.md).
-Generated local keys establish implementation behavior; published vectors remain
-separate conformance evidence. Replay properties release 64 tasks together for
-both shared and distinct nonce storms. They check every stored claim, exclusive
-expiry, and bounded ETS memory or PostgreSQL storage after reclamation. The
-PostgreSQL property is included whenever `REQUESTSEAL_REPLAY_PG_URL` is set;
-connection, SQL, or contention failures fail the property without a skip fallback.
+The benchmark reports local resource use and OAEP timing; it establishes no conformance claim.
+Generated-key measurements and independent published vectors are distinct evidence.
+Replay properties race 64 tasks over shared and distinct nonces, checking every stored
+claim, exclusive expiry, and reclaimed ETS memory or PostgreSQL storage.
+The PostgreSQL property runs when `REQUESTSEAL_REPLAY_PG_URL` is set;
+connection, SQL, and contention failures fail without a skip fallback.
 
 ## Replay stores
 
@@ -121,89 +86,29 @@ One namespace should use one freshness bound because duplicates never extend ret
 Retention ends at the first rejected second, keeping the last accepted second intact.
 Neither claims nor background timers evict rows.
 
-## HTTP capture evidence
-
-The message tests round-trip saved HTTP/1.1 request/response bytes captured over verified
-TLS from the HTTP Working Group
-[public RFC source](https://raw.githubusercontent.com/httpwg/http-core/main/rfc9112.xml).
-The fixture manifest records capture method, timestamp, and SHA-256 hashes. Tests also
-exercise RFC 9421 target forms, ordered repeated fields, invalid representation, stream
-ownership, and declaration boundaries. These are value-model checks; framework adapter
-and signature conformance remain separate acceptance.
-
 ## What each kind of evidence establishes
 
-| Evidence | Establishes |
-|---|---|
-| Primary-source trace | A behavior is associated with the relevant external rule. |
-| Independent published vector | Agreement with the exact externally supplied bytes. |
-| Local primitive or generated-key round trip | Actual runtime behavior and local self-consistency. |
-| Independent implementation | Agreement with that implementation on the selected cases. |
-| Real framework, store, network, or custodian | The named integration's observed byte and lifecycle behavior. |
-| Deployed counterpart exchange | Acceptance or rejection by that exact peer under its stated preconditions. |
-| Headless notebook execution | The selected code assertions completed; interactive UI behavior is separate. |
-
-The [RFC Ed25519 notebook](../../livebooks/rfc-ed25519.livemd) checks OTP and then
-RequestSeal's signature-base construction and policy verification against independently
-published RFC 9421 bytes, and rejects altered bytes. The other
-[notebooks](../../livebooks/overview.md) are local round trips with generated keys. The
-runner validates each published Hex install cell before substituting the real checkout;
-the release runbook checks registry installation separately. No notebook establishes
-acceptance by a deployed peer.
+Published vectors establish agreement with externally supplied bytes; local generated-key
+round trips establish runtime behavior and self-consistency. Independent implementations
+establish agreement on selected cases; real integrations establish their byte and lifecycle behavior.
+Deployed counterpart exchanges establish acceptance by that peer under its preconditions.
+The [RFC Ed25519 notebook](../../livebooks/rfc-ed25519.livemd) checks published RFC 9421
+bytes directly with OTP and RequestSeal, including altered-byte rejection.
+Other [notebooks](../../livebooks/overview.md) use locally generated keys.
+The runner validates Hex install cells before substituting the checkout; registry installation is separate.
+Headless assertions establish neither interactive UI behavior nor deployed-peer acceptance.
 
 ## Web Bot Auth evidence
 
-`test/web_bot_auth_test.exs` separates these proof classes:
-
-| Class | Cases and limits |
-|---|---|
-| Published vector | Protocol-00 E.1.1 and E.2.1 verify exact generic bases and cryptography, then reject profile label and lifetime violations. E.1.2/E.2.2 reject legacy fields. E.2.3 verifies directory body and possession proof. |
-| Independent implementation | Requests produced by pinned `web-bot-auth@0.2.0` cover directory, JWKS URI, CIMD, target URI, digest, RSA, held-key, and nested interactions. Fixtures retain provenance, integrity, license, generator, and checksums. |
-| Independent primitive: request | The published E.2.1 Ed25519 request signature is reproduced with OpenSSL. |
-| Independent primitive: directory | The OpenSSL-signed hand-derived directory response is verified by RequestSeal; this is separate from the published E.2.3 vector. |
-| Real adapter | The controlled TLS directory publisher and caller cache resolve keys, verify possession proof, enforce removal, and reject cross-directory key substitution. |
-| Real store | Caller-owned ETS receives one claim for the single selected signature after it and its coverage succeed; a second selected signature rejects with `:unexpected_signature` before any claim; duplicate nonces, missing nonces, commitment failure, and outage reject. |
-
-The request fixtures establish agreement with the pinned independent signer on
-these cases. Caller-trusted offline KeySets establish the explicit trust callback
-contract; they do not stand in for a network fetch. Directory proof is a possession
-fact, distinct from caller-approved attribution. None of these tests establishes
-request acceptance by a deployed verifier; counterpart exchange is separate.
-
-## Add meaningful coverage
-
-Test the complete result and its trust boundaries. A valid signature does not by
-itself establish body integrity, trusted identity, freshness, replay protection, or
-caller authorization. Negative cases must change meaningful authenticated bytes or
-violate a specific policy requirement and assert the resulting stable failure.
-
-Use real runtime types and actual integrations. Keep provider-origin expectations
-independent of the implementation under test. Exercise concurrency on the advertised
-backend and preserve exact wire occurrences through framework adapters. Prove new
-guards reject the mutation they claim to catch; a happy path alone is insufficient.
-
-Conformance claims identify the implementation, selected cases, executed entry point,
-source revision, and counterpart assumptions. Incomplete external checks remain
-explicit. Public release acceptance also installs the actual built artifact in a
-clean consumer and inspects generated documentation and interactive notebook features.
-
-## Notebook runner checks
-
-The declared gate executes real child processes for completion, early-success exit,
-runtime failure, deadline, and output-limit checks. The official Livebook importer and
-exporter process mutations of the published notebook: empty code, omitted export,
-branched sections, unsupported cells, and import warnings must reject. Every nonempty
-code cell must occur in order in the export, including repeated cells. Notebook output
-is limited to 1 MiB and execution to 300 seconds; timeout/failure cleans up its process
-group. These are runner checks, not remote profile acceptance.
-
-The toolchain check validates the library's Elixir range and OTP floor separately
-from the exact pairs in `.tool-versions`, one per CI lane with the development and notebook
-identity first. CI declares
-floor and middle test lanes and a latest full-gate lane; each channel has a drift rejection check. CI actions use immutable
-commits resolved from their official repositories. Dependency audit evidence covers
-Hex-reported retirements and advisories; it does not claim every advisory database was
-queried independently.
+`test/web_bot_auth_test.exs` checks protocol-00 E.1.1/E.2.1 generic bases and cryptography,
+then rejects profile label/lifetime violations; E.1.2/E.2.2 reject legacy fields.
+E.2.3 checks directory body and possession proof. Pinned `web-bot-auth@0.2.0` fixtures
+exercise independent request signing; OpenSSL checks request and hand-derived directory signatures.
+Controlled TLS publishers exercise discovery, possession proof, removal, and cross-directory rejection.
+Real ETS claims follow successful single-signature validation; extra selected signatures reject before storage.
+Offline KeySets exercise explicit caller trust and do not substitute for network discovery.
+Possession proof and caller-approved attribution remain separate.
+These tests do not establish request acceptance by a deployed verifier.
 
 ## Conformance corpus
 

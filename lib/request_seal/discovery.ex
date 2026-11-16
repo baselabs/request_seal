@@ -883,11 +883,7 @@ defmodule RequestSeal.Discovery do
     now + if(no_cache, do: 0, else: ttl)
   end
 
-  # RFC 9110 HTTP-date: IMF-fixdate plus both obsolete recipient formats.
-  # Keep the strict parser: observed on OTP 29.1.1 by running the
-  # discovery_http_date_test.exs table through :httpd_util.convert_request_date/1,
-  # OTP accepts invalid dates/times, signed days, lowercase weekdays and trailing
-  # bytes, and maps every RFC 850 year to 20xx instead of the caller-clock cutoff.
+  # Parse RFC 9110 HTTP-date strictly, including both obsolete recipient formats.
   defp http_date(nil, _), do: nil
 
   defp http_date(value, now) do

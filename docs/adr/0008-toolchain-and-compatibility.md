@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0008 — Separate exact development identity from proven consumer compatibility
-Status: Accepted
 
 ## Context
 
@@ -9,22 +6,10 @@ OBSERVED in the scaffold: Elixir 1.20.4 and Erlang/OTP 29.1.1 are exact developm
 
 ## Decision
 
-Keep `.tool-versions`, `mix.exs`, the runtime OTP assertion, and Linux CI on one exact development identity: Elixir 1.20.4 / OTP 29.1.1. Update them atomically and purge incompatible build/PLT state when that identity changes.
-
-Declare package consumer floors only after a compatibility matrix actually compiles, tests, installs, and runs the supported public surface on each claimed Elixir/OTP pair. Development stays latest-first; consumer support is evidence, not an inferred range.
-
-Keep `tools/notebooks` as an isolated Mix project pinned to actual Livebook 0.19.10 importer/exporter behavior. It uses current compatible dependency overrides only where resolution, Livebook importer/exporter execution, and advisory review prove the override. It executes exported notebooks in bounded standalone `elixir` children and starts no Livebook web server. Root ExDoc remains in the root graph. Locks, licenses, advisories, package allowlist, and source provenance are verified separately for both graphs.
-
-## Strongest alternatives
-
-1. **One dependency graph.** It simplifies updates and lock handling. The observed `earmark_parser` constraints conflict, so one graph would force a component off its declared contract or block resolution.
-2. **Loosen all tool versions to ranges.** More hosts may compile. Builds lose one reproducible development identity and consumer support remains unproved.
-3. **Run CI on macOS and Windows too.** It appears to prove portability. Project policy requires Linux-only CI; developer portability is exercised separately on actual macOS/Linux paths, with WSL2 following Linux.
-4. **Ignore notebook advisories because tooling is development-only.** It narrows exposure but leaves a parser/execution supply-chain path unexamined. Overrides without actual importer/exporter execution can also break the gate silently.
-
-## Deciding evidence
-
-The exact scaffold pins and incompatible declared parser constraints decide graph isolation. `mix deps.get` alone is insufficient: the tool gate must run Livebook's real importer/exporter, standalone child execution, and deliberate runner red proofs. Advisory entries are opened and adjudicated; a zero exit code alone is not “no findings.”
+The library declares proven consumer compatibility separately from development pins.
+Consumers require Elixir `~> 1.18`, OTP 27+, and OTP `:json` availability.
+Notebook tooling is an isolated pinned Mix project using real Livebook import/export
+and bounded standalone Elixir execution, with no Livebook web server.
 
 ## Consequences
 
@@ -32,74 +17,36 @@ Two lockfiles and two audit surfaces are maintained. Development identity is una
 
 ## Acceptance
 
-- All exact development pins move in one commit and config compares `to_string(:erlang.system_info(:otp_release))`.
-- Linux CI has no macOS/Windows matrix leg; actual macOS and Linux developer receipts use the same documented commands.
-- Every claimed consumer pair installs the built package in a clean consumer and runs the selected public acceptance surface.
-- Root and notebook graphs resolve independently; their locks, licenses, advisories, and package contents are inspected.
-- Livebook 0.19.10 importer/exporter and standalone execution run with chosen overrides; failure/omission tampering turns the gate red.
+- Claimed consumer pairs install and execute actual package entry points.
+- Root and notebook dependency graphs resolve independently with inspected advisories and packages.
+- Real notebook import/export and execution reject failures and omitted cells.
 
-## Amendment: Library consumer range (October 8, 2026)
+## Runtime and tooling guarantees
 
-This amendment supersedes the root library's exact Elixir requirement and exact
-OTP assertion in the Decision and Acceptance sections. Applications keep exact
-pins; libraries declare a supported range so they do not block consumers on a
-patch version. RequestSeal declares `elixir: "~> 1.18"` and requires OTP 27 or
-newer because discovery and JOSE use the OTP `:json` module. The root config
-checks that floor instead of requiring OTP 29. The Mix project also requires
-`:json` to be available because dependency consumers do not load the library's
-config.
+The root config checks the OTP floor; Mix checks `:json` because consumers do not load library config.
+`.tool-versions` selects exact development and compatibility-test identities;
+notebook tooling retains its own exact Elixir/OTP assertions.
+macOS and Linux use the same commands; Windows uses WSL2. CI runs on Linux.
+CI actions require immutable commit SHAs.
+Public-key encoders try ASN.1 term parameters, then DER where the runtime requires it,
+without predicting encoder support from an OTP version string.
+PKCS #8 v2 (OneAsymmetricKey) rejects with `:unsupported_format` on supported runtimes.
+Finch and Req stay optional and never start caller pools.
+`scripts/check_optional_clients.py` derives their floors from package requirements
+and exercises fresh consumers against real TCP listeners and an OpenSSH agent.
+Core consumer checks run without clients or frameworks installed.
+Supported runtime lanes remain declared in `.github/workflows/ci.yml`.
+Root and notebook lockfiles retain separate license and advisory checks.
+Publishing safety is defined by the runtime guard and actual Hex artifact metadata.
 
-The exact development identity remains Elixir 1.20.4 built for OTP 29 and
-Erlang/OTP 29.1.1 in `.tool-versions`. Notebook tooling retains its exact Elixir
-requirement, OTP assertion, and executable environment checks. Its isolated
-dependency graph remains unchanged.
+## Optional integrations
 
-Linux CI declares three lanes: Elixir 1.18.4 / OTP 27.3.4 and Elixir 1.19.5 /
-OTP 28.5.0.7 run the complete `mix test --warnings-as-errors` suite, including
-OpenSSH agent, Node WebCrypto, and PostgreSQL replay checks; Elixir 1.20.4 /
-OTP 29.1.1 runs `python3 scripts/check.py`, including documentation and notebook
-execution. All three lanes receive the PostgreSQL service URL. The floor lane
-also runs `scripts/check_optional_clients.py` with fresh consumers using its
-running toolchain. The CI job timeout bounds every lane to 40 minutes. Local
-compatibility checks use Elixir 1.18.4 / OTP 27.3.4, Elixir 1.19.5 / OTP 28.5.0.3, and
-Elixir 1.20.4 / OTP 29.1.1 with separate build roots; the CI middle lane uses
-the newest OTP 28 patch on the hex.pm ubuntu-24.04 build list (28.5.0.7).
-Declaring this matrix does not establish a hosted run.
+ash_onetime and ash_hooks development dependencies require Elixir 1.20+.
+Published optional requirements are built on the latest toolchain and remain available to consumers.
+Core checks ensure optional bridges do not compile without their dependencies.
+Owned integrations exercise real PostgreSQL migrations and Bandit delivery.
 
-CI actions remain pinned to immutable commit SHAs. The gate validates the
-library range, optional client requirements, development and notebook pins,
-all three lane identities and commands, Ubuntu runner, matrix failure policy,
-PostgreSQL image, and timeout; mutation tests reject drift in each channel.
-Public-key encoders try ASN.1 term parameters first, then DER parameters when
-required by the active runtime, without predicting support from an OTP release
-string. PKCS #8 v2 (OneAsymmetricKey) containers reject with
-`:unsupported_format` on every supported runtime.
+## Dependency ranges
 
-Optional client requirements become `finch >= 0.23.0 and < 0.25.0` and
-`req ~> 0.7.4`. They remain optional and do not start client pools. The optional
-client check compiles a fresh consumer locked to Finch 0.23.0 and Req 0.7.4 and
-runs the client adapter tests against real TCP listeners and an OpenSSH agent.
-The separate core consumer check continues to verify operation without HTTP
-clients or frameworks installed.
-
-## Amendment: Optional durable replay and webhook integrations (October 8, 2026)
-
-ash_onetime 1.5 and ash_hooks 2.0 require Elixir 1.20. The dependency list
-includes both optional ranges only when `Version.match?(System.version(), ">= 1.20.0")`.
-Floor and mid lanes compile core and their available integrations without these
-packages; the latest lane executes the owned-package tests, including real
-PostgreSQL migrations and a Bandit delivery receiver, through `scripts/check.py`.
-Version-conditional root development dependencies do not change the published
-optional requirements: release metadata is built on the latest toolchain.
-Ash requires `~> 3.34 and >= 3.34.3` on every lane. The core consumer check
-also verifies that neither optional bridge compiles without its dependency.
-
-## Amendment — 2026-11-15
-
-The ranges above have moved. Ash is `>= 3.37.4 and < 4.0.0` on every lane, Req is
-`~> 0.7.4`, Finch is `>= 0.23.0 and < 0.25.0`, and the Elixir requirement is `~> 1.18`. The
-integrations that need Elixir 1.20 are still added only under the `>= 1.20.0` condition:
-ash_onetime `~> 1.9 and >= 1.9.2` and ash_hooks `>= 3.0.0 and < 4.0.0`. CI runs the floor
-lane (Elixir 1.18.4, OTP 27.3.4), the mid lane (1.19.5, OTP 28.5.0.7) and the latest lane
-(1.20.4, OTP 29.1.1). This supersedes the ash_onetime 1.5, ash_hooks 2.0 and Ash 3.34
-statements above. New ranges take the form `>= x.y.z and < (x+1).0.0`.
+Ash uses `>= 3.37.4 and < 4.0.0`, Req `~> 0.7.4`, and Finch `>= 0.23.0 and < 0.25.0`.
+ash_onetime uses `~> 1.9 and >= 1.9.2`; ash_hooks uses `>= 3.0.0 and < 4.0.0`.

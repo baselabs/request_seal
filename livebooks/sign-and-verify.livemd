@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the core signing, verification, digest, or replay API changes -->
-
 # Sign and verify HTTP messages in Livebook
 
 This notebook walks the core RequestSeal journey with locally generated keys: sign a request with a covered body digest, verify it under an explicit policy, sign a response bound to that request, accept a request only once, and read the errors each layer returns. It uses only the core library: no framework, server, or network access beyond the Hex install. Every cell asserts its result, so a changed outcome stops the notebook.

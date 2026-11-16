@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0005 — Claim replay atomically for the complete authenticated envelope
-Status: Accepted
 
 ## Context
 
@@ -9,22 +6,10 @@ Nonce checking performed as a read followed by a write admits races. Claiming to
 
 ## Decision
 
-Define an optional replay port with one atomic `claim` operation. A caller-supplied commitment function binds a verified nonce, challenge, or transaction identifier to a security scope the caller defines. RequestSeal accepts that function and its bounded result; it neither derives the commitment nor supplies an application-specific recipe. The selected profile identifies the required authenticated replay identifier and validates its binding. A required policy rejects when that identifier, caller function, scope, or required store is unavailable or ambiguous.
-
-Validate syntax, cryptography, digest, required linked objects, freshness, and trust association before invoking the commitment function and store. Claim exactly once for the complete validated envelope before returning authenticated success. Commitment and store errors, cancellation, and deadlines fail closed when replay is required. Generic cryptographic verification remains available with replay explicitly not evaluated. Retention metadata follows the authenticated validity window and never changes the caller-supplied uniqueness value. [RFC 9421 Section 7.2.2](https://www.rfc-editor.org/rfc/rfc9421.html#section-7.2.2) describes nonce and replay considerations; application replay scope remains caller policy. [ADR 0011](0011-public-contract-provenance.md) records this boundary of responsibility.
-
-Profiles state whether replay protection is required. Required-store absence, timeout, or error fails closed. Adapters may be in-memory, database-backed, or distributed, but documentation names the actual guarantee each has proven. Retention expiry is derived from the authenticated profile window, with bounded policy controlled by the adapter contract. Direct and adapter constructors must produce the same uniqueness key from the same authenticated envelope.
-
-## Strongest alternatives
-
-1. **Check then insert.** It is easy for any store. It cannot guarantee one winner under concurrency.
-2. **Claim before verification.** It reduces expensive duplicate cryptography. An attacker can consume valid nonces without possessing a key.
-3. **Claim once per signature.** It maps directly to RFC labels. It breaks linked/nested envelopes and creates partial-consumption recovery problems.
-4. **Require one bundled replay service.** It could deliver uniform semantics. It violates the framework/store-free library boundary and forces deployment architecture on consumers.
-
-## Deciding evidence and deletion test
-
-The silent failure is two workers both accepting one authenticated action. Only an atomic store operation decides that race. Delete the replay port and every profile/caller must reconstruct namespacing, ordering, and failure behavior; keep it. Delete a bundled store and consumers without replay or with their own distributed store get simpler; do not bundle one as required infrastructure.
+An optional replay port atomically claims a caller-supplied commitment over one
+validated signature's covered identifier and caller-defined security scope.
+Profile, syntax, cryptography, digest, freshness, and trust checks precede commitment and storage.
+Required missing/ambiguous input, callback/store failure, cancellation, or deadline fails closed.
 
 ## Consequences
 
@@ -32,19 +17,13 @@ Verification has a deliberate external commit point. A caller that retries after
 
 ## Acceptance
 
-- Real concurrent calls against each advertised backend produce exactly one `:claimed` result for one namespace.
-- Same nonce in distinct profiles/principals can coexist only where the namespace contract says so.
-- The same duplicate input through the direct message constructor and every Req, Finch, Plug/Phoenix, and reverse-proxy constructor maps to one replay identity.
-- Changing retention metadata does not modify the caller commitment.
-- Actual caller functions bind verified nonce/challenge/transaction identifiers and enforce their declared scopes; missing, ambiguous, failed, or canceled required callbacks reject.
-- Commitment functions are never invoked on unvalidated input; the library supplies no application commitment recipe.
-- Invalid signatures and incomplete linked envelopes cannot consume a claim.
-- Store outage/timeout never returns an authenticated success for a replay-required profile.
-- Expiry, eviction, restart, and distributed-node behavior are exercised on the actual backend.
+- Real concurrent backend claims have one winner per namespace and commitment.
+- Direct and adapter paths use the same verified inputs and callback contract.
+- Retention changes never alter commitment identity or consume invalid input.
+- Required missing/failed callbacks and unavailable stores reject authenticated success.
+- Actual backends exercise expiry, reclamation, restart, and distributed-node guarantees.
 
-## Amendment — 2026-11-15
+## Selected-signature scope
 
-Required replay claims exactly one selected signature over its covered values. The
-complete authenticated envelope in the Decision is that one label, its covered components
-and its parameters; multi-signature evaluation is not part of the public package
-([ADR 0025](0025-single-label-public-verification.md)).
+One claim covers one label's authenticated components and parameters; labels do not enter identity.
+[RFC 9421 Section 7.2.2](https://www.rfc-editor.org/rfc/rfc9421.html#section-7.2.2) and [ADR 0025](0025-single-label-public-verification.md) define the boundary.

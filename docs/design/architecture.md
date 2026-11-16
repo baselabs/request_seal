@@ -1,7 +1,4 @@
-<!-- Status: current · Kind: design · Updated: 2026-11-13 · Governed by: accepted architectural decisions · Review when: a supported standard, profile, public contract, or trust boundary changes -->
-
 # RequestSeal architecture
-
 
 RequestSeal is one framework-independent Elixir library for signing and verifying HTTP messages and generic compact JOSE, with Web Bot Auth protocol-00 and an explicit named-profile extension surface. The lossless message value model (the Message/occurrence/body/transport portion of
 the lossless-HTTP decision) is implemented by `RequestSeal.Message`, `FieldOccurrence`,
@@ -50,8 +47,6 @@ Req / Finch / Plug / Phoenix / Ash / ash_hooks
        caller-owned handles and optional concrete adapters
 ```
 
-The deletion test keeps these boundaries honest. Deleting the lossless HTTP layer makes every adapter relearn component derivation, duplicate-field ordering, raw-target preservation, trailer timing, and response/request association. Deleting profiles makes every caller relearn externally owned policy. Deleting the boundary ports forces network, custody, and storage into pure protocol code. Conversely, a pass-through module that only renames an OTP or framework call fails the test and must be inlined into its owning adapter.
-
 ## Generic JOSE contracts
 
 Generic compact JWS/JWE and one-level JWS-in-JWE nesting are implemented by
@@ -72,9 +67,9 @@ and authorization require independently selected caller policy.
 
 The lossless model preserves the following semantics. Its executable module documentation
 defines constructor options, validation, limits, and errors. Generic single-label
-signing and verification are implemented with the following signatures:
+signing and verification use these declaration reference fragments:
 
-```elixir
+```text
 # Implemented message model and generic single-label API.
 @type message :: %RequestSeal.Message{
   kind: :request | :response,
@@ -187,9 +182,9 @@ Private key material never enters a general message or result structure. A `KeyH
 
 `RequestSeal.Custody` implements a cancellation- and deadline-aware contract for opaque, algorithm-bound `KeyHandle` values. `Custody.Local` holds OTP signing and RSA-OAEP, AES-KW, AES-GCMKW, and direct recipient descriptors in sensitive per-handle processes, imports unencrypted private PEM/PKCS #8 DER/JWK, and verifies HMAC within custody. Each handle binds one algorithm. AES-KW handles grant wrap and/or unwrap; RSA-OAEP, AES-GCMKW, and direct handles grant unwrap only. JWE resolvers return these handles so key operations stay in the sensitive holder; CEKs travel directly through a revocable owner-owned sink to the sensitive JWE worker. The custody runner receives only the summary. JWE's outer middle process and the decrypt caller receive only the authenticated result. Direct unwrap callers receive unwrapped bytes and own their protection. OAEP rejection retains random-CEK fallback and the same complete error as GCM authentication failure. `Custody.SSHAgent` optionally signs through an explicit caller-owned OpenSSH agent socket, selects exact public components, and verifies every returned signature before release. Operations run in monitored workers; deadline expiry or caller death terminates the worker and closes its connections. Local handles reference only the holder PID and token. The holder monitors its creator and exits on creator death or explicit `Local.release/1`; stopped holders return `:key_not_found`. Private state is excluded from handle serialization, function environments, process inspection, and system introspection. Symmetric equivalence is a caller-supplied nonsecret value or remains unknown. These operations establish mathematical validity only. A KMS or HSM custodian would implement the same `RequestSeal.Custody` behavior; none ships with RequestSeal. `Custody.Local.Owner` supervises Ed25519 seed sources. Discovery is an explicit caller-configured adapter with HTTPS requirements, redirect policy, address/range restrictions, response and decompression limits, key-count limits, bounded caches, and rotation/removal semantics. A source that serves an `ETag` makes cache revalidation conditional (`If-None-Match`, RFC 9110 Section 13.1.2; RFC 9111 Section 4.3); a 304 keeps the stored key set under the 304's own freshness directives, JWKS keys may assert `alg` in either the RFC 7517 JOSE or HTTP registry spelling (normalized once at import), and DNS answers split the nonretryable authoritative `:domain_not_found` from the retryable `:resolution_failed`. `Discovery.Source` is caller-configured; a signature key ID never selects a URL. `Discovery.fetch/2` performs a bounded fetch only on explicit invocation, with SSL started by the caller. The generic resolver accepts a snapshot or caller-started cache/source pair. Cache refresh, removal, and invalidation are explicit, with no background timers or stale-key fallback. IDs default to RFC thumbprints; JWKS/CIMD may select directory-assigned IDs while retaining thumbprints for revocation and removal. Directory sources require thumbprint IDs. Freshness honors HTTP cache directives and key/proof expiry; CIMD failures are not negatively cached.
 
-Replay protection is an optional but profile-required port where applicable. The caller supplies a bounded commitment function binding a verified nonce, challenge, or transaction identifier to a caller-defined scope. RequestSeal does not derive this commitment. The store exposes one atomic operation over its result:
+Replay protection is an optional but profile-required port where applicable. The caller supplies a bounded commitment function binding a verified nonce, challenge, or transaction identifier to a caller-defined scope. RequestSeal does not derive this commitment. The replay behaviour has these callback declaration reference fragments:
 
-```elixir
+```text
 # Implemented RequestSeal.Replay callbacks.
 @callback claim(term(), RequestSeal.Replay.Claim.t(), RequestSeal.Custody.Context.t()) ::
   :claimed | :already_claimed | {:error, :unavailable | :timeout | :full | :failure}
@@ -211,7 +206,6 @@ of `expires + skew` and `created + max_age + skew + 1`, over present bounds.
 Validate the selected signature, its coverage and the body before one atomic claim. Missing or failed required storage rejects authentication.
 Direct and framework construction paths preserve that same identity. Actual backend
 concurrency evidence establishes the advertised store guarantee.
-
 
 ## Layered verification and authorization boundary
 

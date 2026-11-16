@@ -1,29 +1,14 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0001 — Own one native standards library
-Status: Accepted
 
 ## Context
 
 RequestSeal must cover complete RFC 9421 semantics, all current IANA algorithms, RFC 9651 Structured Fields, RFC 9530 digests, the source-selected Web Bot Auth draft and generic compact JOSE. It must work without a framework, network, process, or store. Elixir is the project-owned reference implementation; native TypeScript implements the same contract and corpus without a Go runtime.
 
-
 ## Decision
 
-Build one Elixir library that owns HTTP message-signature parsing, signature-base construction, Structured Fields schemas, digest integration, named profiles, layered results, and the shared corpus. Use OTP `:crypto`/`:public_key` through an internal algorithm boundary. Use one qualified JOSE dependency for JWK/JWS/JWT/JWE primitives required by generic JOSE and discovery; it does not own RequestSeal profile decisions or result semantics. Exact dependency versions are selected and locked by the implementation/release qualification gate rather than guessed in this design record.
-
-Prefer qualified internal reuse plus targeted extensions where a candidate preserves the complete required behavior. Implement owned machinery where qualification fails. An internal translating adapter may hide a dependency model completely; reuse does not require a second public API. Existing signature libraries also remain independent interoperability counterparts and sources of adversarial vectors. RequestSeal may contribute corrections upstream, but its public contract cannot be a pass-through wrapper over one of them.
-
-## Strongest alternatives
-
-1. **Owned public semantics over a qualified internal engine and targeted extensions.** This preserves RequestSeal's model, errors, profiles, custody, and corpus while reusing protocol machinery. It is preferred when actual qualification proves raw occurrences, targets, trailers, multiple signatures, bounds, and errors survive its internal boundary. A different internal type alone is not a reason to reject it.
-2. **Entirely owned protocol machinery over runtime primitives.** This permits exact control where an engine cannot preserve required semantics. Choose it for demonstrated qualification failures; owning the code by itself is not evidence that new parser/base code is better. Candidate-specific extensions must be tested before concluding that a reported feature gap precludes reuse.
-3. **One Go core called from both languages.** One executable implementation could reduce duplicated protocol logic. It adds a runtime/process or NIF boundary, weakens Elixir installation/custody ergonomics, and violates the accepted native-language contract.
-4. **Two unrelated implementations and test suites.** This maximizes idiomatic freedom. It lacks one semantic arbiter and makes quiet drift in profiles and rejection behavior likely.
-
-## Deciding evidence and deletion test
-
-An owned semantic boundary keeps the message model, profiles, errors, and custody contracts independent of an internal dependency. Internal reuse is selected through actual lossless qualification, not by exposing a second public model. Retain an internal adapter only when it hides real representation or lifecycle differences. A pass-through wrapper that hides no knowledge is inlined. Published vectors and differential cases decide whether a candidate preserves the required behavior; source inspection alone does not prove that qualification.
+Own HTTP message-signature parsing, bases, Structured Fields schemas, digests, profiles,
+results, and the shared corpus in one Elixir library over OTP cryptographic primitives.
+Public semantics remain independent of other signature libraries.
 
 ## Consequences
 
@@ -37,34 +22,21 @@ RequestSeal carries full responsibility for standards maintenance and corpus qua
 - No public module merely forwards another signature library's API.
 - Native TypeScript runs reciprocal corpus checks without Elixir or Go.
 
+## Native primitives
 
-## Amendment
+Compact JOSE and public-key handling use bounded owned machinery over OTP
+`:crypto` and `:public_key`; no JOSE runtime dependency is required.
+Published vectors and independent cryptographic peers exercise those boundaries.
+The portable corpus defines exact shared bytes and rejection semantics.
 
-October 8, 2026: the TypeScript counterpart is deferred; RequestSeal is Elixir only. The cross-language corpus format remains a design for later use.
+## Native counterpart
 
-## Implementation amendment: October 8, 2026
+The separate native npm package `@request-seal/core` shares corpus data and
+semantic contracts with Elixir, without sharing runtime code.
+Its corpus identity pins a release tag, source commit, and index digest.
+Each repository adopts a new corpus identity explicitly.
 
-The Decision's qualified JOSE dependency was not selected. OBSERVED in
-`lib/request_seal/jose/jws.ex`, `jwe.ex`, `key_management.ex`, and
-`lib/request_seal/public_key.ex`: compact JOSE and public-key handling use the
-owned bounded machinery over OTP cryptographic primitives. The portable corpus
-remains a design; published vector fixtures run in the Elixir test suite.
+## Key-management primitives
 
-## Amendment: October 9, 2026
-
-The October 8 deferral is superseded. The TypeScript counterpart is designed and
-in progress as a separate native npm package named `request-seal`. It shares
-corpus data and semantic contracts with the Elixir library, not runtime code.
-
-The October 8 implementation amendment's statement that the portable corpus
-remains a design is superseded on October 9: `corpus/` and the Elixir consumer
-implement the published format; native TypeScript consumption remains in progress.
-
-## Amendment — 2026-11-15
-
-The TypeScript counterpart is published as the npm package `@request-seal/core`. It has no
-runtime dependencies and consumes the corpus through its own pin to the `v1.0.0` release
-tag, source commit and index digest. Compact JOSE remains on this library's own bounded
-machinery over OTP primitives: ECDH-ES key agreement
-([ADR 0018](0018-ecdh-es-key-agreement.md)) and AES Key Wrap custody
-([ADR 0019](0019-aes-key-wrap-custody.md)) extend it without a JOSE dependency.
+ECDH-ES follows [ADR 0018](0018-ecdh-es-key-agreement.md);
+AES Key Wrap custody follows [ADR 0019](0019-aes-key-wrap-custody.md).

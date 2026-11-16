@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: reference · Updated: 2026-11-13 · Governed by: ADR 0009 · Review when: source bytes change -->
-
 # Source provenance
 
 Unchanged [C2SP Wycheproof](https://github.com/C2SP/wycheproof/tree/12fd3aaf33eb5fa1f52e026912ee00c054f9d984) public vectors. Retrieved October 8, 2026. Apache-2.0.

@@ -1,7 +1,4 @@
-<!-- Status: proposed · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
-# 0016 — Open JWE through one bounded coordinator
-Status: Proposed
+# 0016 — Proposed: Open JWE through one bounded coordinator
 
 ## Context
 
@@ -42,25 +39,11 @@ expiry depends on which step was running.
    finalization misses D + 100 ms.
 8. Caller death cancels the operation without returning partial plaintext.
 
-## Alternatives
-
-1. **Keep per-token decrypt and let callers parallelize.** No new function. Every token pays
-   its own custody call, and content keys live in the caller's tasks.
-2. **One timeout split internally by fixed proportions.** Fewer options. The split hides
-   which phase failed and cannot be sized to the caller's `:max_plaintext`.
-3. **Stream plaintext per item as it authenticates.** Lower latency for early items. It
-   releases plaintext before the batch's terminal decision and complicates cancellation.
-4. **Default budgets.** Shorter calls. No default fits every plaintext bound and custody
-   latency.
-
 ## Consequences
 
-This record states the external contract. The internal process structure is recorded here once its design passes review.
-
-Budgets become required in 2.0, and closure resolvers stop working for decrypt. Batch
-telemetry carries only `count`, `groups`, `failed` and `deadline_exceeded`; custody unwrap
-carries only `duration` and `items`. The `jwe.decrypt_many` corpus surface carries the
-cross-language cases. Performance gates for the single and page workloads are in
-[ADR 0031](0031-performance-release-gates.md). The coordinator's design is under revision;
-the numbers above can change before this record is accepted, and it stays Proposed until
-the change lands on the main branch.
+This proposed lifecycle requires explicit phase budgets and handle-only decrypt resolution.
+No plaintext leaves before complete authentication; batches return one final ordered result list.
+Caller death cancels work without releasing partial plaintext.
+Batch telemetry carries only `count`, `groups`, `failed`, and `deadline_exceeded`;
+custody unwrap carries only `duration` and `items`.
+The `jwe.decrypt_many` corpus surface defines cross-language cases for the proposed API.

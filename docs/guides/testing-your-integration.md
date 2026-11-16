@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the signing, verification, Plug, or replay API changes -->
-
 # Test your integration
 
 **What you will build:** Deterministic tests for an application that signs or verifies requests with RequestSeal: generated keys per test, a fixed clock, golden signature bytes, boundary checks without sleeping, and a Plug receiver driven without a server. Prerequisite: RequestSeal and ExUnit; the Plug section also needs `:plug`. Use real keys and the real library in your tests; nothing here replaces RequestSeal with a stand-in.

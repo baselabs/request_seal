@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0011 — Keep application replay identity and public-source provenance explicit
-Status: Accepted
 
 ## Context
 
@@ -28,28 +25,16 @@ cited public standard or public provider document. Publishing a nonstandard priv
 signing profile, verification-to-authorization composition, or private retry/recovery,
 key-purpose, or address-selection mechanism requires explicit maintainer clearance.
 
-## Strongest alternative
-
-Derive application replay identities and symmetric-key equivalence inside the library,
-then generalize consumer integrations into profiles. This centralizes caller setup but
-also makes undocumented application semantics part of a portable protocol contract.
-The caller and custodian ports preserve the necessary policy without that coupling.
-
 ## Acceptance
 
-- Required replay uses verified identifier inputs and caller-defined scope; unvalidated
-  input never invokes commitment or storage. Missing/ambiguous inputs and callback/store
-  errors, cancellation, and deadlines reject without an authenticated success.
-- Direct and transport adapter paths invoke the same configured callback contract;
-  real concurrent store evidence establishes one winner for duplicate claims.
-- HMAC aliases use the custodian's opaque equivalence value; unknown equivalence cannot
-  satisfy a required distinct-key threshold, and no derivation or secret escapes.
-- Public protocol examples record their cited source and distinguish published vectors,
-  local construction, and actual counterpart acceptance.
+- Replay uses verified identifiers and caller-defined scope before one atomic claim.
+- Missing/ambiguous inputs, callback/store failures, cancellation, and deadlines reject.
+- Direct and adapter paths use the same callback contract; real backend races have one winner.
+- HMAC equivalence identity stays opaque and custodian-supplied, with no secret derivation.
+- Public examples retain cited sources and distinguish published vectors, local construction,
+  and actual counterpart acceptance.
 
-## Amendment — 2026-11-15
+## Verification scope
 
-The distinct-key policy named in the Decision and the "required distinct-key threshold"
-in the Acceptance are superseded by
-[ADR 0025](0025-single-label-public-verification.md): public verification selects one
-signature label. Opaque HMAC key-equivalence identity remains custodian-supplied.
+Public verification selects one signature label ([ADR 0025](0025-single-label-public-verification.md)).
+Opaque HMAC identity supports custody operations without adding public threshold policy.

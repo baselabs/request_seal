@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0003 — Make profiles source-bound and ambiguity fail-closed
-Status: Accepted
 
 ## Context
 
@@ -24,23 +21,6 @@ source anchors and its acceptance predicates. Conflicting source text or
 examples do not broaden the accepted wire language. Preserve exact signed
 bytes and reject ambiguity-dependent input until authoritative rules or
 independent definitive bytes select an interpretation.
-
-## Strongest alternatives
-
-1. **One evolving profile name without a revision.** It conceals acceptance changes when an external draft changes.
-2. **Permissive aliases and canonicalization.** They may accept a different preimage than the producer signed.
-3. **Treat a sample implementation as normative.** It provides executable bytes but cannot override its cited standard.
-
-## Deciding evidence and deletion test
-
-The Web Bot Auth draft establishes its own field, label, discovery, and nested
-signature rules. Its published Appendix E cases remain independent inputs,
-including cases that reject the selected profile. The
-[standards reference](../reference/standards.md) identifies the sources and the
-[testing guide](../guides/testing.md) separates construction from conformance
-and peer acceptance. Delete named profile boundaries and each caller must
-reconstruct revision-specific coverage, algorithm, freshness, and trust rules.
-Keep the boundary; reject aliases that silently broaden another profile.
 
 ## Consequences
 

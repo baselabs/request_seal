@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the public API or referenced standard changes -->
-
 # Sign and verify HTTP messages
 
 **What you will build:** A signed request and an explicit verification policy. Prerequisite: RequestSeal installed; no framework or network is needed. These examples use locally generated keys and [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) with [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) body integrity.

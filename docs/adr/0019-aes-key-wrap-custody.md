@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0019 — Wrap with AES Key Wrap and keep GCMKW and dir unwrap-only
-Status: Accepted
 
 ## Context
 
@@ -28,16 +25,6 @@ is deterministic and needs no IV state.
 5. `RequestSeal.JOSE.KeyManagement.unwrap/4` takes closed per-family params, and wrap
    telemetry carries only `outcome: :ok | :failed`. The `key_management.aes_kw/v1` corpus
    surface carries the RFC 3394 vectors.
-
-## Alternatives
-
-1. **Wrap with GCMKW using a custody invocation counter.** Keeps one symmetric family. Every
-   custodian must persist a counter that survives restarts and replicas, and a reset
-   repeats an IV.
-2. **GCMKW with random IVs and a usage limit.** No durable state. The safe limit per key is
-   a budget the custodian must still track.
-3. **Drop GCMKW and `dir` entirely.** Smaller surface. Existing senders that use them could
-   no longer be decrypted.
 
 ## Consequences
 

@@ -1,76 +1,30 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
-
 # Release and maintenance runbook
-
 
 ## Release conditions
 
-The TypeScript implementation is published on npm as `@request-seal/core` from
-`baselabs/request-seal-typescript`. Both repositories use the
-[conformance corpus](../reference/corpus-format.md).
+Release acceptance exercises advertised public entry points, the package artifact,
+documentation, and required counterparts. Named provider profiles use extension packages.
+The native TypeScript counterpart is `@request-seal/core` from `baselabs/request-seal-typescript`;
+both repositories use the [conformance corpus](../reference/corpus-format.md).
 
-Release acceptance must establish the advertised scope through the actual public entry points,
-package artifact, documentation, and required counterpart checks. The current checkout
-implements generic RFC 9421 signing, single-label verification, caller-owned
-custody, discovery, nonce replay with ETS, ash_onetime, and PostgreSQL stores, optional
-Req/Finch and Plug/Phoenix adapters, Ash scope mapping, ash_hooks delivery signing and
-ingress verification, generic compact JWS/JWE, one-level JWS-in-JWE nesting, and
-source-selected Web Bot Auth protocol-00 signing and identity attribution.
-Other named application profiles belong in extension packages.
-
-1. Set the package version and the docs `source_ref` (`v<version>`) in `mix.exs`, update every install
-   string to the form the document check requires (`~> X.Y.Z` before 1.0, then
-   `~> MAJOR.MINOR`, for example `~> 1.0` for 1.0.0), and set `elixir_release` in `corpus/index.json` to `v<version>`. The
-   declared gate fails until `elixir_release` equals `v` plus the `mix.exs`
-   version, and the corpus release workflow refuses a tag that differs from it.
-   Changing `index.json` changes its digest: update the pin in
-   `test/support/conformance_pin.ex` in the same commit. Collect changelog
-   entries under `## Unreleased`; when cutting the release, rename that heading to
-   `## <version> - YYYY-MM-DD`, as in `## 0.4.1 - 2026-10-10`. Guides, design
-   pages, the README and `lib/` docs describe current behavior only; what changed
-   and since when is written in the CHANGELOG alone. The document check rejects a
-   release-history marker such as `From <version>` anywhere else.
-   Confirm the public document allowlist and supported profiles.
-2. Use Elixir 1.20.4 / OTP 29.1.1, the exact development pins. Run focused checks
-   while editing, then run the declared gate once on the final source:
-
+1. Set the package version and docs `source_ref` (`v<version>`) in `mix.exs`.
+   Install requirements use `~> X.Y.Z` before 1.0 and `~> MAJOR.MINOR` thereafter.
+   Match `corpus/index.json`'s `elixir_release` to the package version; the tag workflow enforces it.
+   Update `test/support/conformance_pin.ex` whenever the index digest changes.
+   Maintain release and migration guidance in CHANGELOG.md.
+   Confirm the explicit public document inventory and supported profiles.
+2. Run the release gate and inspect generated docs in a browser separately:
    ```sh
    python3 scripts/check.py
    ```
-
-   The gate checks examples, notebooks against the real checkout, generated docs,
-   dependency advisories, and optional integration metadata. Local notebook execution
-   substitutes the checkout for the validated Hex install cell; it does not prove
-   registry delivery. Inspect generated docs in a browser separately.
-3. Release builds and publishing require Elixir 1.20 or newer. The `hex.publish`
-   alias refuses publishing below 1.20 before invoking Hex; older toolchains omit
-   optional integrations from development dependencies. Run the same guard before
-   building the release artifact:
-
+3. Build and publish with Elixir 1.20+ so optional integrations appear in Hex metadata:
    ```sh
    mix run --no-start -e 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])' && mix hex.build
    ```
+   Inspect the artifact against the explicit package file list in `mix.exs`, then delete it.
+   `hex_metadata.config` must mark both `ash_onetime` and `ash_hooks` optional.
 
-   Inspect `contents.tar.gz` inside `request_seal-<version>.tar`. Its files must be only
-   `lib/**/*.ex`, `mix.exs`, and the public documents explicitly allowlisted in
-   `mix.exs`, including README, CHANGELOG, LICENSE, and NOTICE. Exclude tests,
-   scripts, local credentials, internal records, and key fixtures. Record the list
-   locally and delete the inspected tarball. Inspect `hex_metadata.config` from
-   `mix hex.build --unpack`: both `ash_onetime` and `ash_hooks` must be optional
-   requirements. The latest CI lane checks and deletes its unpacked artifact.
-4. Commit the final source and push the release commit. Wait for CI on that exact
-   commit to pass all three Linux lanes: floor Elixir 1.18.4 / OTP 27.3.4, mid
-   Elixir 1.19.5 / OTP 28.5.0.7, and latest Elixir 1.20.4 / OTP 29.1.1. The floor
-   lane checks optional client floors; latest runs the full declared gate and the
-   Elixir 1.20 optional integrations.
-
-   ```sh
-   git push origin HEAD
-   gh run list --workflow ci.yml --commit "$(git rev-parse HEAD)"
-   gh run watch RUN_ID --exit-status
-   ```
-
-5. Before publishing, scan the full history of every branch and tag,
+4. Before publishing, scan the full history of every branch and tag,
    including commit messages. Use a nonempty literal private-term list kept outside
    public source, referenced by `RELEASE_PRIVATE_TERMS_FILE`. Keep scan output local;
    resolve every match before proceeding. Fetch complete history first:
@@ -110,7 +64,7 @@ Other named application profiles belong in extension packages.
    This scans all fetched history, including deleted file contents. The term-file
    self-match is the scanner's positive control. An empty result establishes only
    that the configured terms were not found; inspect package/source disclosure too.
-6. Publish to Hex. From the pinned Elixir 1.20 checkout, export `HEX_API_KEY` from
+5. Publish to Hex. From the pinned Elixir 1.20 checkout, export `HEX_API_KEY` from
    your secret store into the publishing shell only; never write it to a file or
    print it. Verify the security
    reporting channel and package ownership, then run:
@@ -127,7 +81,7 @@ Other named application profiles belong in extension packages.
    HexDocs serves the expected guides, with source links pointing at the `v<version>`
    tag (`source_ref` in `mix.exs`). Inspect actual registry checksums and optional
    metadata.
-7. Install from Hex in a clean consumer, without a path or Git override. Use an
+6. Install from Hex in a clean consumer, without a path or Git override. Use an
    empty Mix install directory and verify the installed application version and
    an actual public entry point:
 
@@ -143,21 +97,12 @@ Other named application profiles belong in extension packages.
    '
    ```
 
-   Repeat the documented signing/verifying journey in that consumer. Record the
-   exact source commit, CI result, artifact checksum, HexDocs, and clean-consumer
-   output locally. Local checks do not establish hosted CI,
-   provider acceptance, or registry delivery.
-
 ## Dependency updates
 
-The root uses ExDoc for development and tests; SimpleSat, Bandit, Phoenix, and
-StreamData for tests; and optional Ash, ash_onetime, ash_hooks, Req, Finch, Plug, and
-Postgrex dependencies. Livebook lives in `tools/notebooks` with a
-separate lockfile. It pins application dependencies that may need explicit security overrides;
-each override has a reason in its Mix file and must pass the real importer/exporter checks.
-Review `mix hex.outdated` in both environments and run `mix hex.audit` after any change.
-Toolchain or major dependency changes invalidate task-owned build artifacts and analysis caches;
-perform one clean rebuild on the final dependency set and preserve evidence.
+Root and `tools/notebooks` have separate lockfiles and advisory surfaces.
+Run `mix hex.outdated` and `mix hex.audit` in both projects after dependency changes.
+Security overrides require a reason and real Livebook importer/exporter checks.
+Rebuild incompatible build artifacts and analysis caches when the toolchain or major dependencies change.
 
 ## Incident and rollback
 

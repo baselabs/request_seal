@@ -1,5 +1,3 @@
-<!-- Status: current · Kind: guide · Updated: 2026-11-11 · Governed by: public architecture · Review when: the referenced contract or implementation changes -->
-
 # Inspect RequestSeal
 
 This notebook installs the latest RequestSeal 1.x from Hex and checks that your runtime can use it: a supported Elixir (1.18 or newer) and OTP (27 or newer), Ed25519 support in OTP's crypto, the public entry points, and the supported HTTP signature algorithms. No key, secret, or provider account is required.

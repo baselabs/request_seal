@@ -1,7 +1,4 @@
-<!-- Status: proposed · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
-# 0029 — Adopt ash_onetime 2 custody and an install-bound replay store
-Status: Proposed
+# 0029 — Proposed: Adopt ash_onetime 2 custody and an install-bound replay store
 
 ## Context
 
@@ -18,13 +15,6 @@ install, so one host can run several installs without sharing replay state.
    breaking), `:partition` and `:prefix`.
 3. Every `RequestSeal.Replay.Error` stays nonretryable. The host application creates and
    holds the install; the library never creates one.
-
-## Alternatives
-
-1. **Keep the 1.x store options.** No break. Several installs on one host would share
-   replay state.
-2. **Create an install implicitly.** Fewer options. The library would decide a lifecycle
-   the host manages.
 
 ## Consequences
 

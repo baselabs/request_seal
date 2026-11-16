@@ -1,7 +1,4 @@
-<!-- Status: accepted · Kind: decision record · Updated: 2026-11-15 · Governed by: public API, compatibility contract, and cited decisions · Review when: the implementation or a governing decision changes -->
-
 # 0024 — Keep provider-specific profiles in separate packages
-Status: Accepted
 
 ## Context
 
@@ -19,15 +16,6 @@ the core standards-only.
 3. `RequestSeal.Profile` is under the compatibility promise, so a separate profile package
    can depend on a stable major.
 
-## Alternatives
-
-1. **Bundle provider profiles in the core.** One dependency for integrators. The core would
-   change on every provider's schedule and carry rules it cannot verify against a standard.
-2. **Publish profiles as documentation only.** No package to maintain. Each integrator
-   would reimplement the profile and its tests.
-
 ## Consequences
 
-A provider profile that once lived in this repository moved to a separate package
-([LEGACY](LEGACY.md)). Changes to the profile extension surface are breaking for those
-packages and wait for a major release.
+Profile extension changes are breaking for dependent provider packages and require a major release.
