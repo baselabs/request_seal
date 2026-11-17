@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 from release import development_snapshot, package_version, release_notes
-from processes import command, install_signal_handlers, run, temporary_directory
+from processes import cleanup_on_exit, command, install_signal_handlers, run, temporary_directory
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -66,10 +66,7 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
                  "File.cd!(Path.dirname(script)); Code.require_file(script)")
     with command(["elixir", "-e", bootstrap, "--", str(script)], cwd=ROOT, env=environment,
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
-        try:
-            output = read_notebook(process, timeout, maximum_output)
-        finally:
-            process.stdout.close()
+        output = read_notebook(process, timeout, maximum_output)
     if process.returncode:
         raise ValueError(f"Notebook failed ({process.returncode}):\n{output}")
     if output.splitlines().count(completion) != 1:
@@ -81,8 +78,12 @@ def read_notebook(process, timeout, maximum_output):
     deadline = time.monotonic() + timeout
     output = bytearray()
     events = process.events
-    events.register(process.stdout, "output")
-    try:
+    def unregister_output():
+        if process.stdout.fileno() in events.files:
+            events.unregister(process.stdout)
+
+    with cleanup_on_exit(unregister_output):
+        events.register(process.stdout, "output")
         while process.stdout.fileno() in events.files or not events.exited:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -95,9 +96,6 @@ def read_notebook(process, timeout, maximum_output):
                 if len(output) + len(chunk) > maximum_output:
                     raise ValueError("Notebook output limit exceeded:\n" + output.decode("utf-8", errors="replace"))
                 output.extend(chunk)
-    finally:
-        if process.stdout.fileno() in events.files:
-            events.unregister(process.stdout)
     return output.decode("utf-8")
 
 

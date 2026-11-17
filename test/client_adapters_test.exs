@@ -838,11 +838,10 @@ defmodule RequestSeal.ClientAdaptersTest do
     File.mkdir!(dir)
     File.chmod!(dir, 0o700)
     socket = Path.join(dir, "agent")
-    {_agent_port, pid} = RequestSeal.SystemCommand.agent(socket)
+    {agent_owner, pid} = RequestSeal.SystemCommand.agent(socket)
 
     on_exit(fn ->
-      System.cmd("kill", ["-CONT", pid], stderr_to_stdout: true)
-      System.cmd("kill", ["-TERM", pid], stderr_to_stdout: true)
+      :ok = RequestSeal.SystemCommand.stop_agent(agent_owner)
       File.rm_rf!(dir)
     end)
 
@@ -859,7 +858,8 @@ defmodule RequestSeal.ClientAdaptersTest do
              )
 
     assert {:ok, handle} = RequestSeal.Custody.SSHAgent.new("ed25519", socket, public)
-    assert {_, 0} = System.cmd("kill", ["-STOP", pid])
+    :ok = RequestSeal.SystemCommand.signal_agent(agent_owner, :stop)
+    try do
     {origin, task} = Peer.start([%{}], h)
 
     req =
@@ -885,6 +885,9 @@ defmodule RequestSeal.ClientAdaptersTest do
 
     assert_receive :no_connection, 1_500
     Peer.finish(task)
+    after
+      :ok = RequestSeal.SystemCommand.signal_agent(agent_owner, :continue)
+    end
   end
 
   defp write_agent_key(dir) do

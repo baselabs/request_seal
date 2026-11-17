@@ -1,6 +1,7 @@
 """Process deadlines exercised with real launchers and surviving child runtimes."""
 import ast
 import fcntl
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -459,6 +460,192 @@ except KeyboardInterrupt:
                 child.terminate()
                 child.wait(timeout=10)
 
+    def test_signals_before_cleanup_entry_preserve_ownership_mask_and_original_error(self):
+        source = r'''import json, os, signal, sys
+from pathlib import Path
+sys.path.insert(0, "scripts")
+from processes import command, install_signal_handlers, temporary_directory
+install_signal_handlers()
+signal.signal(signal.SIGINT, signal.default_int_handler)
+signum = int(sys.argv[3])
+original = sys.argv[4] == "original"
+lines = Path("scripts/processes.py").read_text().splitlines()
+entries = {i for i, line in enumerate(lines, 1) if line.strip() == "with blocked_signals():"}
+bursts = set()
+def burst():
+    for _ in range(64):
+        os.kill(os.getpid(), signum)
+def interrupt(frame, event, arg):
+    if (event == "line" and frame.f_code.co_name in ("command", "temporary_directory")
+            and frame.f_lineno in entries):
+        bursts.add(frame.f_code.co_name)
+        burst()
+    return interrupt
+def removal(event, args):
+    if event == "shutil.rmtree" and args[0] == scratch:
+        bursts.add("removal")
+        burst()
+sys.addaudithook(removal)
+try:
+    with temporary_directory(prefix="burst-", dir=sys.argv[1]) as scratch:
+        with command(["sleep", "60"]) as child:
+            Path(sys.argv[2]).write_text(json.dumps([child.pid, scratch]))
+            os.read(int(sys.argv[5]), 1)
+            sys.settrace(interrupt)
+            if original:
+                raise ValueError("original error")
+except BaseException as error:
+    sys.settrace(None)
+    if original:
+        assert isinstance(error, ValueError) and str(error) == "original error", repr(error)
+    elif signum == signal.SIGINT:
+        assert isinstance(error, KeyboardInterrupt), repr(error)
+    else:
+        assert isinstance(error, SystemExit) and error.code == 128 + signum, repr(error)
+else:
+    raise AssertionError("cleanup signal was lost")
+assert {"command", "temporary_directory", "removal"} <= bursts, bursts
+assert not Path(scratch).exists(), scratch
+assert not ({signal.SIGINT, signal.SIGTERM, signal.SIGHUP} & signal.pthread_sigmask(signal.SIG_BLOCK, set()))
+try:
+    os.waitpid(child.pid, os.WNOHANG)
+except ChildProcessError:
+    pass
+else:
+    raise AssertionError("child was not reaped")
+print("cleanup complete; original exception and mask preserved")
+'''
+        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            for original in ("original", "signal"):
+                with self.subTest(signum=signum, exception=original), tempfile.TemporaryDirectory() as directory:
+                    ready = Path(directory) / "ready"
+                    reader, writer = os.pipe()
+                    release_reader, release_writer = os.pipe()
+                    identity = os.fstat(writer)
+                    env = dict(os.environ, REQUESTSEAL_CLEANUP_FD=str(writer),
+                               REQUESTSEAL_CLEANUP_ID=f"{identity.st_dev}:{identity.st_ino}")
+                    child = subprocess.Popen([sys.executable, "-B", "-c", source, directory,
+                                              str(ready), str(signum), original, str(release_reader)],
+                                             cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+                                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                             pass_fds=(writer, release_reader))
+                    os.close(writer)
+                    os.close(release_reader)
+                    pidfd = None
+                    try:
+                        deadline = time.monotonic() + 10
+                        while not ready.exists() or not ready.read_text():
+                            self.assertIsNone(child.poll())
+                            self.assertLess(time.monotonic(), deadline)
+                            time.sleep(0.005)
+                        pid, scratch = json.loads(ready.read_text())
+                        _, _, pidfd = self.runtime_identity(pid, child.pid)
+                        os.write(release_writer, b"x")
+                        output = child.communicate(timeout=15)[0]
+                        self.assertEqual(0, child.returncode, output.decode())
+                        self.assertFalse(Path(scratch).exists())
+                        self.assertEqual(b"+-", os.read(reader, 4096))
+                        if pidfd is not None:
+                            self.assertTrue(select.select([pidfd], [], [], 0)[0])
+                    finally:
+                        if child.poll() is None:
+                            child.terminate()
+                            child.wait(timeout=10)
+                        child.stdout.close()
+                        if pidfd is not None:
+                            try:
+                                signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            os.close(pidfd)
+                        os.close(reader)
+                        os.close(release_writer)
+
+    def test_owner_pid_file_is_atomically_published(self):
+        source = r'''import os, runpy, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+renames = []
+def audit(event, args):
+    if event == "os.rename" and args[1] == str(path):
+        assert Path(args[0]).read_text().isdigit()
+        assert not path.exists()
+        renames.append(event)
+def observe(frame, event, arg):
+    if event == "return" and frame.f_code.co_name == "open" and frame.f_locals.get("self") == path:
+        if "w" in frame.f_locals.get("mode", ""):
+            assert path.read_text().isdigit(), "pid file exposed before its contents"
+    return observe
+sys.addaudithook(audit)
+sys.settrace(observe)
+sys.argv = ["scripts/processes.py", "--pid-file", str(path), "--", "sleep", "0.1"]
+try:
+    runpy.run_path("scripts/processes.py", run_name="__main__")
+except SystemExit as error:
+    assert error.code == 0, error
+sys.settrace(None)
+assert renames == ["os.rename"], renames
+assert path.read_text().isdigit()
+assert list(path.parent.iterdir()) == [path], list(path.parent.iterdir())
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            child = subprocess.Popen([sys.executable, "-B", "-c", source, str(Path(directory) / "pid")],
+                                     cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            try:
+                child.wait(timeout=10)
+                self.assertEqual(0, child.returncode, child.stdout.read().decode())
+            finally:
+                if child.poll() is None:
+                    child.terminate()
+                    child.wait(timeout=10)
+                child.stdin.close()
+                child.stdout.close()
+
+    def test_cli_statuses_identify_child_signal_deadline_and_nonzero_exit(self):
+        for source, timeout, status, diagnostic in (
+                ("import os,signal; os.kill(os.getpid(),signal.SIGTERM)", "10", 143, b""),
+                ("import time; time.sleep(60)", "0.1", 124, b"requestseal-owner: command deadline"),
+                ("raise SystemExit(7)", "10", 7, b"")):
+            with self.subTest(status=status):
+                child = subprocess.Popen([sys.executable, "-B", "scripts/processes.py", "--timeout", timeout,
+                                          "--", sys.executable, "-B", "-c", source], cwd=ROOT,
+                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                try:
+                    child.wait(timeout=10)
+                    output = child.stdout.read()
+                    self.assertEqual(status, child.returncode, output)
+                    if diagnostic:
+                        self.assertTrue(output.startswith(diagnostic), output)
+                        self.assertEqual(1, len(output.splitlines()))
+                    else:
+                        self.assertEqual(b"", output)
+                finally:
+                    if child.poll() is None:
+                        child.terminate()
+                        child.wait(timeout=10)
+                    child.stdin.close()
+                    child.stdout.close()
+
+    def test_cleanup_wait_ignores_every_caller_descriptor(self):
+        with processes.command([sys.executable, "-B", "-c",
+                                'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); '
+                                'print("ready",flush=True); time.sleep(60)'], stdout=subprocess.PIPE) as child:
+            self.assertEqual(b"ready\n", child.stdout.readline())
+            pipes = [os.pipe() for _ in range(3)]
+            try:
+                for (reader, writer), label in zip(pipes, ("output", "stderr", "notebook")):
+                    child.events.register(reader, label)
+                    os.close(writer)  # Every EOF remains readable until unregistered.
+                wall, cpu = time.monotonic(), time.process_time()
+                processes.stop_group(child)
+                elapsed = time.monotonic() - wall
+                self.assertLess(time.process_time() - cpu, elapsed * 0.1)
+                self.assertTrue(all(reader not in child.events.files for reader, _ in pipes))
+            finally:
+                for reader, _ in pipes:
+                    os.close(reader)
+                child.stdout.close()
+
     def test_port_owner_eof_kills_a_separate_command_session(self):
         with tempfile.TemporaryDirectory() as directory:
             ready = Path(directory) / "ready"
@@ -478,8 +665,12 @@ except KeyboardInterrupt:
                 pid = int(ready.read_text())
                 _, _, pidfd = self.runtime_identity(pid, parent.pid)
                 parent.stdin.close()
-                parent.wait(timeout=10)
-                self.assertNotEqual(0, parent.returncode)
+                started = time.monotonic()
+                _, status, usage = os.wait4(parent.pid, 0)
+                parent.returncode = os.waitstatus_to_exitcode(status)
+                elapsed = time.monotonic() - started
+                self.assertLess(usage.ru_utime + usage.ru_stime, elapsed * 0.1)
+                self.assertEqual(125, parent.returncode)
                 if pidfd is not None:
                     self.assertTrue(select.select([pidfd], [], [], 2)[0])
             finally:
