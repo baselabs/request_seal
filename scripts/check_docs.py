@@ -80,6 +80,14 @@ def public_paths(root):
     return paths
 
 
+def ref_exists(root, ref):
+    result = run(["git", "show-ref", "--verify", "--quiet", ref], cwd=root,
+                 capture_output=True, check=False, timeout=30)
+    if result.returncode not in (0, 1):
+        raise ValueError(f"cannot inspect git ref {ref}")
+    return result.returncode == 0
+
+
 def public_configuration(root, ref=None):
     # Read Mix's actual project configuration without compiling or starting the app.
     marker = "REQUEST_SEAL_PUBLIC_DOCUMENT\t"
@@ -265,13 +273,11 @@ def first_party_link_errors(root, relative, url, version, published, references)
             return ["GitHub destination requires a ref and file path"]
         name, target = parts[4:]
         ref = "refs/tags/" + name
-        if name == "v" + str(version) and subprocess.run(
-                ["git", "show-ref", "--verify", "--quiet", ref], cwd=root).returncode == 1:
+        if name == "v" + str(version) and not ref_exists(root, ref):
             ref = None  # The release commit is checked before its tag exists.
         elif not name.startswith("v"):
             ref = "refs/heads/" + name
-            if run(["git", "show-ref", "--verify", "--quiet", ref], cwd=root, capture_output=True,
-                   check=False, timeout=30).returncode:
+            if not ref_exists(root, ref):
                 ref = "refs/remotes/origin/" + name
         kind = "github"
     else:
@@ -281,8 +287,7 @@ def first_party_link_errors(root, relative, url, version, published, references)
     key = ref or "WORKTREE"
     try:
         if key not in references:
-            if ref is not None and subprocess.run(
-                    ["git", "show-ref", "--verify", "--quiet", ref], cwd=root).returncode:
+            if ref is not None and not ref_exists(root, ref):
                 return ["first-party destination ref is missing: " + ref]
             configuration = public_configuration(root, ref)
             if ref is None:
