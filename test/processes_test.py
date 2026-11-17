@@ -2,6 +2,7 @@
 import ast
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -67,6 +68,46 @@ class ProcessGroupTest(unittest.TestCase):
             calls = [node for node in ast.walk(tree.body[-1]) if isinstance(node, ast.Call)
                      and isinstance(node.func, ast.Name) and node.func.id == "install_signal_handlers"]
             self.assertEqual(1, len(calls), script)
+
+    def test_every_command_entry_point_installs_handlers_explicitly(self):
+        for script in ("check.py", "release.py", "check_docs.py", "sbom.py",
+                       "check_jose_libraries.py", "check_optional_clients.py", "processes.py"):
+            tree = ast.parse((ROOT / "scripts" / script).read_text())
+            entry = next((node for node in tree.body if isinstance(node, ast.FunctionDef)
+                          and node.name == "main"), tree.body[-1])
+            calls = [node for node in ast.walk(entry) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Name) and node.func.id == "install_signal_handlers"]
+            # Some scripts have a main function called by the __main__ guard.
+            if not calls:
+                calls = [node for node in ast.walk(tree.body[-1]) if isinstance(node, ast.Call)
+                         and isinstance(node.func, ast.Name) and node.func.id == "install_signal_handlers"]
+            self.assertEqual(1, len(calls), script)
+
+    def test_import_preserves_the_default_interrupt_handler(self):
+        processes.run([sys.executable, "-B", "-c", '''import signal, sys
+sys.path.insert(0, "scripts")
+assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+before = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+import processes
+assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+assert before == {number: signal.getsignal(number) for number in before}
+'''], timeout=10)
+
+    def test_import_from_a_worker_thread_has_no_signal_side_effects(self):
+        processes.run([sys.executable, "-B", "-c", '''import signal, sys, threading
+sys.path.insert(0, "scripts")
+errors = []
+def load():
+    try:
+        import processes
+    except BaseException as error:
+        errors.append(error)
+worker = threading.Thread(target=load)
+worker.start()
+worker.join()
+assert not errors, errors
+assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+'''], timeout=10)
 
     def test_success_failure_cwd_and_environment_use_real_processes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -460,7 +501,7 @@ except KeyboardInterrupt:
                 child.terminate()
                 child.wait(timeout=10)
 
-    def test_signals_before_cleanup_entry_preserve_ownership_mask_and_original_error(self):
+    def test_signals_before_cleanup_entry_preserve_ownership_mask_and_exception_context(self):
         source = r'''import json, os, signal, subprocess, sys
 from pathlib import Path
 sys.path.insert(0, "scripts")
@@ -497,12 +538,13 @@ try:
                 raise ValueError("original error")
 except BaseException as error:
     sys.settrace(None)
-    if original:
-        assert isinstance(error, ValueError) and str(error) == "original error", repr(error)
-    elif signum == signal.SIGINT:
+    if signum == signal.SIGINT:
         assert isinstance(error, KeyboardInterrupt), repr(error)
     else:
         assert isinstance(error, SystemExit) and error.code == 128 + signum, repr(error)
+    if original:
+        assert isinstance(error.__context__, ValueError), repr(error.__context__)
+        assert str(error.__context__) == "original error", repr(error.__context__)
 else:
     raise AssertionError("cleanup signal was lost")
 assert {"command", "temporary_directory", "removal"} <= bursts, bursts
@@ -514,7 +556,7 @@ except ChildProcessError:
     pass
 else:
     raise AssertionError("child was not reaped")
-print("cleanup complete; original exception and mask preserved")
+print("cleanup complete; exception context and mask preserved")
 '''
         for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             for original in ("original", "signal"):
@@ -565,7 +607,8 @@ print("cleanup complete; original exception and mask preserved")
     def test_standalone_stop_group_defers_signals_before_its_mask_entry(self):
         source = r'''import os, signal, subprocess, sys
 sys.path.insert(0, "scripts")
-from processes import stop_group
+from processes import install_signal_handlers, stop_group
+install_signal_handlers()
 child = subprocess.Popen(["sleep", "60"], start_new_session=True)
 code = getattr(stop_group, "__wrapped__", stop_group).__code__
 def interrupt(frame, event, arg):
@@ -632,17 +675,270 @@ assert list(path.parent.iterdir()) == [path], list(path.parent.iterdir())
                 child.stdin.close()
                 child.stdout.close()
 
+    def test_cleanup_inside_a_handled_exception_delivers_interrupt(self):
+        source = '''import os, signal, sys
+from pathlib import Path
+sys.path.insert(0, "scripts")
+from processes import install_signal_handlers, temporary_directory
+install_signal_handlers()
+scratch = None
+def interrupt(event, args):
+    if event == "shutil.rmtree" and args[0] == scratch:
+        os.kill(os.getpid(), signal.SIGINT)
+sys.addaudithook(interrupt)
+try:
+    try:
+        raise ValueError("already handled")
+    except ValueError:
+        with temporary_directory() as scratch:
+            pass
+except KeyboardInterrupt:
+    assert not Path(scratch).exists()
+else:
+    raise AssertionError("cleanup inside except discarded SIGINT")
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=10)
+
+    def test_standalone_cleanup_inside_except_delivers_interrupt(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+from processes import install_signal_handlers, stop_group
+import subprocess
+install_signal_handlers()
+child = subprocess.Popen(["sleep", "60"], start_new_session=True)
+code = stop_group.__wrapped__.__code__
+def interrupt(frame, event, arg):
+    if event == "call" and frame.f_code is code:
+        sys.settrace(None)
+        os.kill(os.getpid(), signal.SIGINT)
+    return interrupt
+try:
+    try:
+        raise ValueError("already handled")
+    except ValueError:
+        sys.settrace(interrupt)
+        stop_group(child)
+except KeyboardInterrupt:
+    assert child.returncode is not None
+else:
+    raise AssertionError("standalone cleanup inside except discarded SIGINT")
+finally:
+    sys.settrace(None)
+    if child.returncode is None:
+        os.killpg(child.pid, signal.SIGKILL)
+        child.wait()
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=10)
+
+    def test_dispatcher_after_cleanup_does_not_treat_a_handled_error_as_in_flight(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+import processes
+processes.install_signal_handlers()
+finished = []
+def interrupt(frame, event, arg):
+    if (event == "line" and frame.f_code is processes._CleanupContext.__exit__.__code__
+            and frame.f_locals.get("finished")
+            and frame.f_locals["function"].__name__ == "__exit__"):
+        sys.settrace(None)
+        os.kill(os.getpid(), signal.SIGINT)
+    return interrupt
+try:
+    try:
+        raise ValueError("already handled")
+    except ValueError:
+        sys.settrace(interrupt)
+        with processes.cleanup_on_exit(finished.append, True):
+            pass
+except KeyboardInterrupt:
+    assert finished == [True], finished
+else:
+    raise AssertionError("dispatcher discarded SIGINT after cleanup")
+finally:
+    sys.settrace(None)
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=10)
+
+    def test_interrupt_then_termination_during_cleanup_exits_143(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+from processes import cleanup_on_exit, install_signal_handlers
+install_signal_handlers()
+def cleanup():
+    os.kill(os.getpid(), signal.SIGINT)
+    os.kill(os.getpid(), signal.SIGTERM)
+with cleanup_on_exit(cleanup):
+    pass
+'''
+        result = processes.run([sys.executable, "-B", "-c", source], timeout=10,
+                               capture_output=True, check=False)
+        self.assertEqual(143, result.returncode, result.stderr)
+        self.assertEqual(b"", result.stderr)
+
+    def test_distinct_pending_signals_use_class_then_arrival_order(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+from processes import cleanup_on_exit, install_signal_handlers
+install_signal_handlers()
+received = []
+for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    signal.signal(number, lambda signum, frame: received.append(signum))
+def cleanup():
+    for number in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+        os.kill(os.getpid(), number)
+    assert received == [], received
+with cleanup_on_exit(cleanup):
+    pass
+assert received == [signal.SIGHUP, signal.SIGTERM, signal.SIGINT], received
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=10)
+
+    def test_raising_handlers_do_not_discard_other_distinct_pending_signals(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+from processes import cleanup_on_exit, install_signal_handlers
+install_signal_handlers()
+received = []
+def handler(signum, frame):
+    received.append(signum)
+    if signum == signal.SIGINT:
+        raise KeyboardInterrupt
+    raise SystemExit(128 + signum)
+for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    signal.signal(number, handler)
+def cleanup():
+    for number in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
+        os.kill(os.getpid(), number)
+try:
+    with cleanup_on_exit(cleanup):
+        pass
+except SystemExit as error:
+    assert error.code == 128 + signal.SIGHUP, error
+else:
+    raise AssertionError("pending handlers did not raise")
+assert received == [signal.SIGHUP, signal.SIGTERM, signal.SIGINT], received
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=10)
+
+    def test_pending_interrupt_chains_the_exception_crossing_cleanup(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+from processes import cleanup_on_exit, install_signal_handlers
+install_signal_handlers()
+original = ValueError("original failure")
+try:
+    with cleanup_on_exit(os.kill, os.getpid(), signal.SIGINT):
+        raise original
+except KeyboardInterrupt as error:
+    assert error.__context__ is original, repr(error.__context__)
+else:
+    raise AssertionError("in-flight Exception discarded SIGINT")
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=10)
+
+    def test_pending_termination_reports_the_exception_crossing_cleanup(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+from processes import cleanup_on_exit, install_signal_handlers
+install_signal_handlers()
+original = ValueError("original failure")
+try:
+    with cleanup_on_exit(os.kill, os.getpid(), signal.SIGTERM):
+        raise original
+except SystemExit as error:
+    assert error.__context__ is original, repr(error.__context__)
+    raise
+'''
+        result = processes.run([sys.executable, "-B", "-c", source], timeout=10,
+                               capture_output=True, check=False)
+        self.assertEqual(143, result.returncode, result.stderr)
+        self.assertEqual(b"ValueError: original failure\n", result.stderr)
+
+    def test_in_flight_terminating_exceptions_keep_precedence(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+from processes import cleanup_on_exit, install_signal_handlers
+install_signal_handlers()
+original = KeyboardInterrupt() if sys.argv[1] == "interrupt" else SystemExit(19)
+try:
+    with cleanup_on_exit(os.kill, os.getpid(), signal.SIGTERM):
+        raise original
+except BaseException as error:
+    assert error is original, repr(error)
+else:
+    raise AssertionError("terminating exception was lost")
+'''
+        for original in ("interrupt", "exit"):
+            with self.subTest(original=original):
+                processes.run([sys.executable, "-B", "-c", source, original], timeout=10)
+
+    def test_exit_wait_ignores_eof_caller_descriptors_without_consuming_them(self):
+        with processes.command(["sleep", "60"]) as child:
+            reader, writer = os.pipe()
+            try:
+                child.events.register(reader, "caller")
+                os.close(writer)
+                wall, cpu = time.monotonic(), time.process_time()
+                self.assertFalse(processes.exited(child, timeout=2))
+                self.assertGreater(time.monotonic() - wall, 1.9)
+                self.assertLess(time.process_time() - cpu, 0.08)
+                self.assertEqual("caller", child.events.files[reader])
+                self.assertEqual(b"", os.read(reader, 1))
+            finally:
+                child.events.unregister(reader)
+                os.close(reader)
+
+    def test_stop_group_signals_and_reaps_after_a_registered_fd_is_closed(self):
+        with processes.command(["sleep", "60"]) as child:
+            reader, writer = os.pipe()
+            try:
+                child.events.register(reader, "caller")
+                os.close(reader)
+                processes.stop_group(child)
+                self.assertIsNotNone(child.returncode)
+                self.assertNotIn(reader, child.events.files)
+            finally:
+                os.close(writer)
+
+    @unittest.skipUnless(hasattr(select, "kqueue"), "kqueue descriptor removal")
+    def test_kqueue_unregister_tolerates_a_closed_descriptor(self):
+        with processes.command(["sleep", "60"]) as child:
+            self.assertIsNotNone(child.events.queue)
+            reader, writer = os.pipe()
+            try:
+                child.events.register(reader, "caller")
+                os.close(reader)
+                child.events.unregister(reader)
+                self.assertNotIn(reader, child.events.files)
+            finally:
+                os.close(writer)
+
+    def test_stop_group_continues_a_stopped_child_before_waiting(self):
+        with processes.command(["sleep", "60"]) as child:
+            os.killpg(child.pid, signal.SIGSTOP)
+            pid, status = os.waitpid(child.pid, os.WUNTRACED)
+            self.assertEqual(child.pid, pid)
+            self.assertTrue(os.WIFSTOPPED(status))
+            started = time.monotonic()
+            processes.stop_group(child)
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertIsNotNone(child.returncode)
+
     def test_cli_statuses_identify_child_signal_deadline_and_nonzero_exit(self):
         for source, timeout, status, diagnostic in (
                 ("import os,signal; os.kill(os.getpid(),signal.SIGTERM)", "10", 143, b""),
                 ("import time; time.sleep(60)", "0.1", 124, b"requestseal-owner: command deadline"),
                 ("raise SystemExit(7)", "10", 7, b""),
-                ("import time; time.sleep(60)", "inf", 125, b"requestseal-owner:")):
+                ("import time; time.sleep(60)", "10", 125, b"requestseal-owner: invalid owner command"),
+                ("pass", "10", 0, b"")):
             with self.subTest(status=status):
                 child = subprocess.Popen([sys.executable, "-B", "scripts/processes.py", "--timeout", timeout,
                                           "--", sys.executable, "-B", "-c", source], cwd=ROOT,
                                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 try:
+                    if status == 125:
+                        child.stdin.write(b"invalid\n")
+                        child.stdin.flush()
                     child.wait(timeout=10)
                     output = child.stdout.read()
                     self.assertEqual(status, child.returncode, output)
@@ -657,6 +953,126 @@ assert list(path.parent.iterdir()) == [path], list(path.parent.iterdir())
                         child.wait(timeout=10)
                     child.stdin.close()
                     child.stdout.close()
+
+    def test_cli_rejects_invalid_timeouts_before_spawning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "spawned"
+            pid_file = Path(directory) / "pid"
+            source = 'from pathlib import Path; import sys; Path(sys.argv[1]).touch()'
+            for timeout in ("inf", "-inf", "nan", "3000000", "0", "-1",
+                            str(math.nextafter(processes.maximum_timeout(), float("inf")))):
+                # 3,000,000 exceeds epoll's limit but fits a kqueue timespec.
+                if timeout == "3000000" and processes.maximum_timeout() >= 3_000_000:
+                    continue
+                with self.subTest(timeout=timeout):
+                    result = subprocess.run(
+                        [sys.executable, "-B", "scripts/processes.py", "--timeout=" + timeout,
+                         "--pid-file", str(pid_file), "--", sys.executable, "-B", "-c", source, str(ready)],
+                        cwd=ROOT, input=b"", capture_output=True, timeout=10)
+                    self.assertEqual(2, result.returncode, result.stderr)
+                    self.assertIn(b"usage:", result.stderr)
+                    self.assertEqual(1, result.stderr.count(b"requestseal-owner:"))
+                    self.assertNotIn(b"Traceback", result.stderr)
+                    self.assertFalse(ready.exists())
+                    self.assertFalse(pid_file.exists(), "owner spawned a child before validating timeout")
+
+    def test_cli_accepts_the_native_event_timeout_boundary(self):
+        child = subprocess.Popen(
+            [sys.executable, "-B", "scripts/processes.py", "--timeout", str(processes.maximum_timeout()),
+             "--", "sleep", "0.1"], cwd=ROOT,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            status = child.wait(timeout=10)
+            stderr = child.stderr.read()
+            self.assertEqual(0, status, stderr)
+            self.assertEqual(b"", stderr)
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=10)
+            child.stdin.close()
+            child.stdout.close()
+            child.stderr.close()
+
+    def test_cli_usage_errors_and_help_have_owner_diagnostics(self):
+        for arguments, status in (([], 2), (["--unknown"], 2), (["--help"], 0)):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, "-B", "scripts/processes.py", *arguments],
+                                        cwd=ROOT, capture_output=True, timeout=10)
+                self.assertEqual(status, result.returncode, result.stderr)
+                self.assertIn(b"usage:", result.stdout + result.stderr)
+                self.assertEqual(1, result.stderr.count(b"requestseal-owner:"))
+                self.assertNotIn(b"Traceback", result.stderr)
+
+    def test_owner_signals_report_after_stopping_the_group_without_tracebacks(self):
+        for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            with self.subTest(signum=signum), tempfile.TemporaryDirectory() as directory:
+                ready = Path(directory) / "ready"
+                lock = Path(directory) / "lock"
+                source = ('import fcntl,os,sys,time; from pathlib import Path; '
+                          'handle=open(sys.argv[2],"w"); fcntl.flock(handle,fcntl.LOCK_EX); '
+                          'Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)')
+                with processes.command(
+                        [sys.executable, "-B", "scripts/processes.py", "--", sys.executable,
+                         "-B", "-c", source, str(ready), str(lock)], cwd=ROOT,
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as owner:
+                    pidfd = None
+                    try:
+                        deadline = time.monotonic() + 10
+                        while not ready.exists() or not ready.read_text():
+                            self.assertFalse(processes.exited(owner, timeout=0))
+                            self.assertLess(time.monotonic(), deadline)
+                            time.sleep(0.005)
+                        pid = int(ready.read_text())
+                        _, _, pidfd = self.runtime_identity(pid, owner.pid)
+                        os.kill(owner.pid, signum)
+                        # Keep owner stdin open so EOF cannot win the signal race.
+                        self.assertTrue(processes.exited(owner, timeout=10))
+                        stdout, stderr = owner.communicate(timeout=1)
+                        self.assertEqual(128 + signum, owner.returncode, stderr)
+                        self.assertEqual(b"", stdout)
+                        self.assertEqual(
+                            f"requestseal-owner: received {signal.Signals(signum).name}\n".encode(), stderr)
+                        with lock.open() as handle:
+                            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            fcntl.flock(handle, fcntl.LOCK_UN)
+                        if pidfd is not None:
+                            self.assertTrue(select.select([pidfd], [], [], 0)[0])
+                    finally:
+                        if pidfd is not None:
+                            os.close(pidfd)
+
+    def test_owner_eof_and_explicit_stop_have_prefixed_statuses(self):
+        for request, status, message in ((b"", 125, b"command owner closed stdin"),
+                                         (b"stop\n", 0, b"command stopped")):
+            with self.subTest(request=request):
+                result = subprocess.run(
+                    [sys.executable, "-B", "scripts/processes.py", "--", "sleep", "60"],
+                    cwd=ROOT, input=request, capture_output=True, timeout=10)
+                self.assertEqual(status, result.returncode, result.stderr)
+                self.assertEqual(b"requestseal-owner: " + message + b"\n", result.stderr)
+
+    def test_child_stdin_is_eof_while_the_owner_command_channel_still_works(self):
+        source = 'import sys,time; assert sys.stdin.buffer.read() == b""; print("EOF",flush=True); time.sleep(60)'
+        child = subprocess.Popen(
+            [sys.executable, "-B", "scripts/processes.py", "--", sys.executable, "-B", "-c", source],
+            cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            self.assertTrue(select.select([child.stdout], [], [], 5)[0], "child blocked on owner stdin")
+            self.assertEqual(b"EOF\n", child.stdout.readline())
+            child.stdin.write(b"stop\n")
+            child.stdin.flush()
+            status = child.wait(timeout=10)
+            stderr = child.stderr.read()
+            self.assertEqual(0, status, stderr)
+            self.assertEqual(b"requestseal-owner: command stopped\n", stderr)
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=10)
+            child.stdin.close()
+            child.stdout.close()
+            child.stderr.close()
 
     def test_cleanup_wait_ignores_every_caller_descriptor(self):
         with processes.command([sys.executable, "-B", "-c",

@@ -277,7 +277,7 @@ defmodule RequestSeal.CustodySSHAgentTest do
     end
 
     assert {:ok, _} = Custody.sign(handle, @vector["base"])
-    :ok = RequestSeal.SystemCommand.signal_agent(ctx.agent_owner, :terminate)
+    assert 2 = RequestSeal.SystemCommand.signal_agent(ctx.agent_owner, :terminate)
     assert eventually(fn -> not File.exists?(ctx.socket) end)
     assert_error(Custody.sign(handle, @vector["base"]), :custodian_unavailable)
   end

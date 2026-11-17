@@ -1,20 +1,35 @@
 """Own command sessions and wait for exit without releasing their process identity.
 
-CLI statuses: the child's exit status, or 128 + N when killed by signal N;
-124 for an owner deadline; 125 for owner EOF or an owner-side failure. Owner
-failures emit one stderr line beginning ``requestseal-owner:``. As with shell
-commands, a child can itself choose a reserved status; the prefix identifies
-an owner failure in merged output.
+Entry points must call install_signal_handlers() before acquiring resources.
+Importing this module does not change signal handlers.
+
+CLI outcome                              Status
+Child exit                               The child's status
+Child killed by signal N                 128 + N
+Deadline                                 124
+Owner failure or command-channel EOF      125
+Usage error                              2 (with usage text)
+Owner signaled (TERM, HUP, INT)           128 + N, after group cleanup
+Explicit stop or help                    0
+
+Every owner outcome emits one stderr line beginning ``requestseal-owner:``;
+child outcomes emit no such line. Signals name the signal, without a traceback.
+As with shell commands, a child can itself choose a reserved status; the prefix
+distinguishes an owner outcome in merged output. Child stdin is /dev/null;
+owner stdin carries only owner commands.
 """
 import argparse
 from contextlib import contextmanager
+import errno
 from functools import wraps
+import math
 import os
 from pathlib import Path
 import select
 import selectors
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -27,31 +42,58 @@ CLEANUP_SECONDS = 5
 # A mask alone cannot protect its own entry: CPython can run an already
 # scheduled handler from pthread_sigmask. Dispatchers recognize the entire
 # protected call frame, including its first bytecode and context exit, and hold
-# the first signal until cleanup and mask restoration finish. An in-flight
-# exception wins. These command-line owners are single-threaded.
+# distinct signals until cleanup and mask restoration finish. Termination and
+# hangup precede interrupt; an in-flight KeyboardInterrupt or SystemExit wins.
+# These command-line owners are single-threaded.
 _pending_signals = {}
+
+
+def _deliver_pending(pending, original):
+    if isinstance(original, (KeyboardInterrupt, SystemExit)):
+        return
+    failure = None
+    for handler, signum, frame in sorted(
+            pending, key=lambda item: item[1] == signal.SIGINT):
+        try:
+            handler(signum, frame)
+        except BaseException as error:
+            if original is not None:
+                error.__context__ = original
+            if failure is None:
+                failure = error
+    if failure is not None:
+        if original is not None and isinstance(failure, SystemExit):
+            message = " ".join(str(original).splitlines())
+            print(f"{type(original).__name__}: {message}", file=sys.stderr)
+        raise failure
 
 
 def _cleanup_call(function):
     @wraps(function)
     def protected(*args, **kwargs):
-        original = sys.exc_info()[1]
+        # A surrounding except block is not an exception crossing this cleanup.
+        original = args[2] if function.__name__ == "__exit__" else None
+        finished = False
         try:
             result = function(*args, **kwargs)
+            if function.__name__ == "__exit__" and result:
+                original = None  # The manager suppressed the body exception.
             finished = True
-            pending = _pending_signals.pop(id(sys._getframe()), None)
-            if pending is not None and original is None:
-                handler, signum, frame = pending
-                handler(signum, frame)
+            _deliver_pending(_pending_signals.pop(id(sys._getframe()), []), original)
             return result
-        except BaseException:
-            # A deferred signal at context entry must also discharge everything
-            # acquired before yield, since Python will not call __exit__ then.
+        except BaseException as error:
+            original = error
             finished = False
-            if function.__name__ == "__enter__" and args[0].entered:
-                args[0].manager.__exit__(*sys.exc_info())
-            finished = True
-            _pending_signals.pop(id(sys._getframe()), None)
+            try:
+                # Python does not call __exit__ when __enter__ raises after yield.
+                if function.__name__ == "__enter__" and args[0].entered:
+                    args[0].manager.__exit__(*sys.exc_info())
+            except BaseException as cleanup_error:
+                original = cleanup_error
+                raise
+            finally:
+                finished = True
+                _deliver_pending(_pending_signals.pop(id(sys._getframe()), []), original)
             raise
     return protected
 
@@ -64,17 +106,20 @@ def _install_cleanup_handlers():
 
         def dispatch(signum, frame, handler=handler):
             protected = None
-            guarded = False
+            terminating = False
             current = frame
             while current is not None:
                 if current.f_code is _CleanupContext.__exit__.__code__:
-                    guarded = True
+                    terminating |= isinstance(current.f_locals.get("original"),
+                                              (KeyboardInterrupt, SystemExit))
                     if not current.f_locals.get("finished", False):
                         protected = current
                 current = current.f_back
             if protected is not None:
-                _pending_signals.setdefault(id(protected), (handler, signum, frame))
-            elif not guarded or sys.exc_info()[1] is None:
+                pending = _pending_signals.setdefault(id(protected), [])
+                if all(item[1] != signum for item in pending):
+                    pending.append((handler, signum, frame))
+            elif not terminating:
                 handler(signum, frame)
 
         dispatch._cleanup_dispatcher = True
@@ -151,7 +196,7 @@ def install_signal_handlers():
 class ProcessEvents:
     """One kernel queue for exit, cleanup messages, and captured output."""
 
-    def __init__(self, process):
+    def __init__(self, process, *, exit_only=False):
         self.process = process
         self.exited = False
         self.files = {}
@@ -177,7 +222,7 @@ class ProcessEvents:
                     self.exited = True
             else:
                 raise RuntimeError("Process exit events require Linux with pidfds, macOS, or BSD with kqueue")
-            if hasattr(process, "cleanup_reader"):
+            if not exit_only and hasattr(process, "cleanup_reader"):
                 self.register(process.cleanup_reader, "cleanup")
         except BaseException:
             self.close()
@@ -198,10 +243,18 @@ class ProcessEvents:
         if self.selector is not None:
             self.selector.unregister(fd)
         else:
-            self.queue.control([select.kevent(fd, filter=select.KQ_FILTER_READ,
-                                              flags=select.KQ_EV_DELETE)], 0, 0)
+            try:
+                self.queue.control([select.kevent(fd, filter=select.KQ_FILTER_READ,
+                                                  flags=select.KQ_EV_DELETE)], 0, 0)
+            except OSError as error:
+                # Closing a descriptor also removes its kqueue registration.
+                if error.errno not in (errno.EBADF, errno.ENOENT):
+                    raise
 
     def select(self, timeout=None):
+        if timeout is not None:
+            # Absolute deadline arithmetic can round a boundary value upward.
+            timeout = min(timeout, maximum_timeout())
         if self.selector is not None:
             events = [(key.fd, key.data) for key, _ in self.selector.select(timeout)]
         else:
@@ -233,11 +286,11 @@ class ProcessEvents:
 
 
 @cleanup_contextmanager
-def process_events(process):
-    events = getattr(process, "events", None)
+def process_events(process, *, exit_only=False):
+    events = None if exit_only else getattr(process, "events", None)
     owned = events is None
     if owned:
-        events = ProcessEvents(process)
+        events = ProcessEvents(process, exit_only=exit_only)
     try:
         yield events
     finally:
@@ -251,7 +304,9 @@ def exited(process, timeout=None):
         return True
     if timeout == 0 and hasattr(os, "waitid") and hasattr(os, "WNOWAIT"):
         return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
-    with process_events(process) as events:
+    # A separate exit queue leaves caller registrations intact and cannot wake
+    # on their output or EOF, including a continuously readable cleanup pipe.
+    with process_events(process, exit_only=True) as events:
         deadline = None if timeout is None else time.monotonic() + timeout
         while not events.exited:
             remaining = None if deadline is None else max(0, deadline - time.monotonic())
@@ -376,11 +431,12 @@ def stop_group(process):
         if owned:
             events = ProcessEvents(process)
         try:
+            signal_group(process, signal.SIGTERM)
+            signal_group(process, signal.SIGCONT)
             # Caller output and EOF descriptors must never wake cleanup waits.
             for fd in list(events.files):
                 if fd != getattr(process, "cleanup_reader", None):
                     events.unregister(fd)
-            signal_group(process, signal.SIGTERM)
             # Each nesting level gets half its parent's five-second budget,
             # reserving the other half for propagation, reaping and acknowledgment.
             # Thus inner deadlines precede outer ones at every depth. A runner
@@ -456,19 +512,57 @@ def write_pid_file(path, pid):
             temporary.unlink(missing_ok=True)
 
 
+def maximum_timeout():
+    """Largest seconds value representable by the native event timeout ABI."""
+    if sys.platform.startswith("linux"):
+        # epoll_wait takes a signed C int in milliseconds (rounded upward).
+        maximum = (1 << (struct.calcsize("i") * 8 - 1)) - 1
+        scale = 1000
+    else:
+        # CPython converts kqueue's timespec through signed 64-bit nanoseconds;
+        # its seconds field must also fit the platform's signed C long.
+        scale = 1_000_000_000
+        maximum = min((1 << (struct.calcsize("q") * 8 - 1)) - 1,
+                      ((1 << (struct.calcsize("l") * 8 - 1)) - 1) * scale)
+    seconds = maximum / scale
+    numerator, denominator = seconds.as_integer_ratio()
+    if numerator * scale > maximum * denominator:
+        seconds = math.nextafter(seconds, 0)
+    return seconds
+
+
+def command_timeout(value):
+    seconds = float(value)
+    maximum = maximum_timeout()
+    if not math.isfinite(seconds) or not 0 < seconds <= maximum:
+        raise argparse.ArgumentTypeError(f"timeout must be finite, greater than 0 and at most {maximum}s")
+    return seconds
+
+
+class _OwnerParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"requestseal-owner: {message}\n")
+
+    def exit(self, status=0, message=None):
+        if status == 0:
+            print("requestseal-owner: help requested", file=sys.stderr)
+        super().exit(status, message)
+
+
 def main():
-    install_signal_handlers()
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--timeout", type=float, default=900)
-    parser.add_argument("--pid-file", type=Path)
-    parser.add_argument("argv", nargs=argparse.REMAINDER)
-    args = parser.parse_args()
-    argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
-    if not argv:
-        parser.error("a command is required")
     try:
+        install_signal_handlers()
+        parser = _OwnerParser(description=__doc__)
+        parser.add_argument("--timeout", type=command_timeout, default=900)
+        parser.add_argument("--pid-file", type=Path)
+        parser.add_argument("argv", nargs=argparse.REMAINDER)
+        args = parser.parse_args()
+        argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+        if not argv:
+            parser.error("a command is required")
         # Port or VM death closes stdin; EOF ends the separately owned session.
-        with command(argv) as process:
+        with command(argv, stdin=subprocess.DEVNULL) as process:
             if args.pid_file:
                 write_pid_file(args.pid_file, process.pid)
             process.events.register(sys.stdin, "owner")
@@ -501,6 +595,7 @@ def main():
                     if len(incoming) > 128:
                         raise ValueError("owner command too long")
         if stopping:
+            print("requestseal-owner: command stopped", file=sys.stderr)
             return 0
         return 128 - process.returncode if process.returncode < 0 else process.returncode
     except subprocess.TimeoutExpired as error:
@@ -509,11 +604,16 @@ def main():
     except Exception as error:
         print("requestseal-owner: " + " ".join(str(error).splitlines()), file=sys.stderr)
         return 125
+    except (KeyboardInterrupt, SystemExit) as error:
+        if isinstance(error, KeyboardInterrupt):
+            signum = signal.SIGINT
+        else:
+            signum = error.code - 128 if isinstance(error.code, int) else None
+        if signum not in SIGNALS:
+            raise
+        print(f"requestseal-owner: received {signal.Signals(signum).name}", file=sys.stderr)
+        return 128 + signum
 
-
-# Standalone cleanup (for example stop_group on a caller's Popen) needs the
-# dispatcher before its first bytecode too, not only after entering a context.
-_install_cleanup_handlers()
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -88,4 +88,96 @@ defmodule RequestSeal.SystemCommandTest do
       File.rm_rf!(dir)
     end
   end
+
+  test "termination completes with the real agent status before owner teardown" do
+    dir = agent_directory()
+    socket = Path.join(dir, "agent")
+    {owner, pid} = SystemCommand.agent(socket)
+    monitor = Process.monitor(owner)
+
+    try do
+      assert 2 = SystemCommand.signal_agent(owner, :terminate)
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+      refute File.exists?(socket)
+      assert {_, 1} = System.cmd("ps", ["-p", pid, "-o", "pid="])
+      assert :ok = SystemCommand.stop_agent(owner)
+    after
+      SystemCommand.stop_agent(owner)
+      File.rm_rf!(dir)
+    end
+  end
+
+  test "caller death queued during termination cannot start a second shutdown" do
+    dir = agent_directory()
+    socket = Path.join(dir, "agent")
+    parent = self()
+    ref = make_ref()
+
+    {caller, caller_monitor} =
+      spawn_monitor(fn ->
+        {owner, _pid} = SystemCommand.agent(socket)
+        send(parent, {:agent_owner, owner})
+
+        receive do
+          :terminate -> send(owner, {{:signal, :terminate}, parent, ref})
+        end
+      end)
+
+    assert_receive {:agent_owner, owner}
+    monitor = Process.monitor(owner)
+
+    try do
+      # Queue both the real termination request and the caller's DOWN before
+      # the owner can read any port status. No synthetic exit messages are used.
+      :erlang.suspend_process(owner)
+
+      try do
+        send(caller, :terminate)
+        assert_receive {:DOWN, ^caller_monitor, :process, ^caller, :normal}
+        {:messages, messages} = Process.info(owner, :messages)
+        assert Enum.any?(messages, &match?({{:signal, :terminate}, ^parent, ^ref}, &1))
+        assert Enum.any?(messages, &match?({:DOWN, _, :process, ^caller, :normal}, &1))
+      after
+        :erlang.resume_process(owner)
+      end
+
+      assert_receive {^ref, 2}, 8_000
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+      refute File.exists?(socket)
+      assert :ok = SystemCommand.stop_agent(owner)
+    after
+      if Process.alive?(caller), do: Process.exit(caller, :kill)
+      SystemCommand.stop_agent(owner)
+      File.rm_rf!(dir)
+    end
+  end
+
+  test "readiness rejection reports the readiness reason directly" do
+    dir = agent_directory()
+    path = Path.join(dir, "occupied")
+    {:ok, socket} = :socket.open(:local, :stream)
+
+    try do
+      # The real ssh-agent must reject a Unix address already bound in the kernel.
+      :ok = :socket.bind(socket, %{family: :local, path: path})
+
+      assert_raise RuntimeError, ~r/^ssh-agent exited before readiness: [0-9]+$/, fn ->
+        SystemCommand.agent(path)
+      end
+    after
+      :socket.close(socket)
+      File.rm_rf!(dir)
+    end
+  end
+
+  defp agent_directory do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "agent-state-" <> Integer.to_string(System.unique_integer([:positive]))
+      )
+
+    File.mkdir!(dir)
+    dir
+  end
 end

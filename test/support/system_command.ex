@@ -1,6 +1,12 @@
 defmodule RequestSeal.SystemCommand do
   @moduledoc false
   @runner Path.expand("../../scripts/processes.py", __DIR__)
+  @readiness_timeout 10_000
+  @shutdown_timeout 7_000
+  @signal_timeout 5_000
+  @response_margin 1_000
+  @caller_readiness_timeout @readiness_timeout + @shutdown_timeout + @response_margin
+  @caller_response_timeout max(@signal_timeout, @shutdown_timeout) + @response_margin
 
   # A BEAM port holds the runner's stdin open. VM or port-owner death closes it,
   # so the Python owner terminates the entire session even after a test timeout.
@@ -25,10 +31,14 @@ defmodule RequestSeal.SystemCommand do
         Process.demonitor(monitor, [:flush])
         {owner, pid}
 
+      {^ref, {:error, message}} ->
+        Process.demonitor(monitor, [:flush])
+        raise message
+
       {:DOWN, ^monitor, :process, ^owner, reason} ->
         raise "ssh-agent owner failed: #{inspect(reason)}"
     after
-      15_000 -> raise "ssh-agent owner readiness deadline exceeded"
+      @caller_readiness_timeout -> raise "ssh-agent owner readiness deadline exceeded"
     end
   end
 
@@ -55,7 +65,7 @@ defmodule RequestSeal.SystemCommand do
       {:DOWN, ^monitor, :process, ^owner, reason} ->
         raise "agent owner exited: #{inspect(reason)}"
     after
-      10_000 -> raise "ssh-agent owner response deadline exceeded"
+      @caller_response_timeout -> raise "ssh-agent owner response deadline exceeded"
     end
   end
 
@@ -84,9 +94,24 @@ defmodule RequestSeal.SystemCommand do
       ])
 
     try do
-      pid = await_agent(port, socket, pid_file, System.monotonic_time(:millisecond) + 10_000)
-      send(caller, {ref, {:ready, pid}})
-      agent_loop(port, monitor)
+      deadline = System.monotonic_time(:millisecond) + @readiness_timeout
+
+      case await_agent(port, socket, pid_file, deadline) do
+        {:ok, pid} ->
+          send(caller, {ref, {:ready, pid}})
+          agent_loop(port, monitor)
+
+        {:error, reason, state} ->
+          teardown = if state == :running, do: stop_port(port), else: :ok
+
+          message =
+            case teardown do
+              :ok -> reason
+              {:error, failure} -> reason <> "; teardown failed: " <> failure
+            end
+
+          send(caller, {ref, {:error, message}})
+      end
     after
       # Explicit Port.close discards the exit-status channel. First request
       # shutdown over stdin and receive the owner's status, then close the port.
@@ -96,19 +121,29 @@ defmodule RequestSeal.SystemCommand do
 
   defp agent_loop(port, monitor) do
     receive do
-      {:stop, _from, _ref} ->
-        stop_port(port)
+      {:stop, from, ref} ->
+        finish_stop(port)
+        send(from, {ref, :ok})
+
+      {{:signal, :terminate}, from, ref} ->
+        true = Port.command(port, "signal SIGTERM\n")
+
+        case await_exit(port, @shutdown_timeout) do
+          {:ok, status} -> send(from, {ref, status})
+          {:error, message} -> raise message
+        end
 
       {{:signal, signal}, from, ref} ->
         # Signal numbers differ on BSD/macOS; resolve them in the Python owner.
-        name = %{stop: "SIGSTOP", continue: "SIGCONT", terminate: "SIGTERM"}
+        name = %{stop: "SIGSTOP", continue: "SIGCONT"}
         true = Port.command(port, "signal " <> name[signal] <> "\n")
-        await_signal(port, name[signal], "")
+        deadline = System.monotonic_time(:millisecond) + @signal_timeout
+        await_signal(port, name[signal], "", deadline)
         send(from, {ref, :ok})
         agent_loop(port, monitor)
 
       {:DOWN, ^monitor, :process, _, _} ->
-        stop_port(port)
+        finish_stop(port)
 
       {^port, {:exit_status, _}} ->
         :ok
@@ -118,7 +153,7 @@ defmodule RequestSeal.SystemCommand do
     end
   end
 
-  defp await_signal(port, name, output) do
+  defp await_signal(port, name, output, deadline) do
     receive do
       {^port, {:data, bytes}} ->
         output = output <> bytes
@@ -126,26 +161,60 @@ defmodule RequestSeal.SystemCommand do
         if String.contains?(output, "requestseal-owner: signal " <> name <> "\n") do
           :ok
         else
-          await_signal(port, name, output)
+          await_signal(port, name, output, deadline)
         end
 
       {^port, {:exit_status, status}} ->
         raise "agent owner exited during signal: #{status}"
     after
-      5_000 -> raise "ssh-agent signal deadline exceeded"
+      max(0, deadline - System.monotonic_time(:millisecond)) ->
+        raise "ssh-agent signal deadline exceeded"
     end
   end
 
   defp stop_port(port) do
-    if Port.info(port) do
-      true = Port.command(port, "stop\n")
+    # A caller's DOWN may precede an already queued port status. Consume that
+    # terminal state before attempting to write to the command channel.
+    receive do
+      {^port, {:exit_status, _status}} -> :ok
+    after
+      0 ->
+        if Port.info(port) do
+          try do
+            true = Port.command(port, "stop\n")
 
-      receive do
-        {^port, {:exit_status, 0}} -> :ok
-        {^port, {:exit_status, status}} -> raise "agent owner shutdown failed: #{status}"
-      after
-        7_000 -> raise "ssh-agent owner shutdown deadline exceeded"
-      end
+            case await_exit(port, @shutdown_timeout) do
+              {:ok, 0} -> :ok
+              {:ok, status} -> {:error, "agent owner shutdown failed: #{status}"}
+              {:error, message} -> {:error, message}
+            end
+          rescue
+            error ->
+              # Port death can race the command write after the initial check.
+              receive do
+                {^port, {:exit_status, _status}} -> :ok
+              after
+                0 -> {:error, "agent owner shutdown failed: " <> Exception.message(error)}
+              end
+          end
+        else
+          :ok
+        end
+    end
+  end
+
+  defp finish_stop(port) do
+    case stop_port(port) do
+      :ok -> :ok
+      {:error, message} -> raise message
+    end
+  end
+
+  defp await_exit(port, timeout) do
+    receive do
+      {^port, {:exit_status, status}} -> {:ok, status}
+    after
+      timeout -> {:error, "ssh-agent owner shutdown deadline exceeded"}
     end
   end
 
@@ -163,19 +232,19 @@ defmodule RequestSeal.SystemCommand do
   defp await_agent(port, socket, pid_file, deadline) do
     case agent_ready(socket, pid_file) do
       {:ok, pid} ->
-        pid
+        {:ok, pid}
 
       :retry ->
         receive do
-          {^port, {:exit_status, status}} -> raise "ssh-agent exited before readiness: #{status}"
+          {^port, {:exit_status, status}} ->
+            {:error, "ssh-agent exited before readiness: #{status}", :exited}
         after
           10 ->
             if System.monotonic_time(:millisecond) >= deadline do
-              stop_port(port)
-              raise "ssh-agent readiness deadline exceeded"
+              {:error, "ssh-agent readiness deadline exceeded", :running}
+            else
+              await_agent(port, socket, pid_file, deadline)
             end
-
-            await_agent(port, socket, pid_file, deadline)
         end
     end
   end
