@@ -373,34 +373,10 @@ def pin_markdown_links(body, version, repository_url):
 
     uses = {}
     for begin, limit, block in blocks:
-        # CommonMark §§3.1, 6.1, 6.6: code spans and raw HTML are recognized in
-        # source order, within their leaf block, before brackets are considered.
-        cursor = begin
-        while cursor < limit:
-            if visible[cursor] == "\\" and cursor + 1 < limit and visible[cursor + 1] in string.punctuation:
-                cursor += 2
-                continue
-            if visible[cursor] == "<":
-                token = HTML_TOKEN.match(visible, cursor, limit)
-                if token:
-                    pin_html(cursor, token.end())
-                    end = token.end()
-                    visible = visible[:cursor] + mask(visible[cursor:end]) + visible[end:]
-                    cursor = end
-                    continue
-            if visible[cursor] == "`":
-                opening = re.match(r"`+", visible[cursor:limit])
-                end = cursor + opening.end()
-                closing = next((run for run in re.finditer(r"`+", visible[end:limit]) if len(run[0]) == len(opening[0])), None)
-                if closing:
-                    end += closing.end()
-                    visible = visible[:cursor] + mask(visible[cursor:end]) + visible[end:]
-                cursor = end
-                continue
-            cursor += 1
-
-        # CommonMark §6.3 / Appendix: an iterative bracket stack lets an inner
-        # link deactivate earlier link openers without disabling image openers.
+        # CommonMark §§3.1, 6.1, 6.3–6.6 / Appendix: consume in source
+        # order, so code/HTML inside a destination is never parsed as link text.
+        # An iterative stack lets inner links deactivate earlier link openers
+        # without disabling image openers or recursing on nested brackets.
         stack = []
         generation = 0
         cursor = begin
@@ -409,6 +385,26 @@ def pin_markdown_links(body, version, repository_url):
             if char == "\\" and cursor + 1 < limit and visible[cursor + 1] in string.punctuation:
                 cursor += 2
                 continue
+            if char == "`":
+                opening = re.match(r"`+", visible[cursor:limit])
+                end = cursor + opening.end()
+                closing = next((run for run in re.finditer(r"`+", visible[end:limit]) if len(run[0]) == len(opening[0])), None)
+                cursor = end + closing.end() if closing else end
+                continue
+            if char == "<":
+                token = HTML_TOKEN.match(visible, cursor, limit)
+                if token:
+                    pin_html(cursor, token.end())
+                    cursor = token.end()
+                    continue
+                autolink = re.match(r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20]*|"
+                                    r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+                                    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+                                    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>", visible[cursor:limit])
+                if autolink:
+                    cursor += autolink.end()
+                    generation += 1
+                    continue
             if visible.startswith("![", cursor):
                 stack.append((cursor + 1, True, generation))
                 cursor += 2

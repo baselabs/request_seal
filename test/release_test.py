@@ -357,6 +357,9 @@ class ReleaseIdentityTest(unittest.TestCase):
 
     def test_commonmark_4_1_and_4_3_breaks_end_paragraphs_and_lazy_continuations(self):
         for marker in ("---", "***", "___", "* * *", "- - -", "   * * *"):
+            source = "para\n\n" + marker + "\n\n    code [n](docs/x.md)"
+            self.assertEqual(source, self.pin(source))
+        for marker in ("---", "***", "___", "* * *", "- - -"):
             source = "- para\n" + marker + "\n\n    code [n](docs/x.md)"
             self.assertEqual(source, self.pin(source))
         for marker in ("===", "---"):
@@ -405,6 +408,18 @@ class ReleaseIdentityTest(unittest.TestCase):
             ("![a [b](x)](y)", "![a [b](" + blob + "x)](" + raw + "y)"),
             ("[a ![b](x)](y)", "[a ![b](" + raw + "x)](" + blob + "y)"),
             ("[a [b][id]](y)\n\n[id]: x", "[a [b][id]](y)\n\n[id]: " + blob + "x"),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(expected, self.pin(source))
+
+    def test_commonmark_6_inlines_do_not_reparse_destinations_or_autolinks(self):
+        blob = "https://github.com/example/library/blob/v2.3.4/"
+        for source, expected in (
+            ("[t](docs/a`b.md) `outside`", "[t](" + blob + "docs/a%60b.md) `outside`"),
+            ("<https://example.com/[t](literal.md)>", "<https://example.com/[t](literal.md)>"),
+            ("[a <https://example.com>](literal.md)", "[a <https://example.com>](literal.md)"),
+            ("[a <team@example.com>](literal.md)", "[a <team@example.com>](literal.md)"),
+            ('<a title="`">`[t](docs/a.md)', '<a title="`">`[t](' + blob + 'docs/a.md)'),
         ):
             with self.subTest(source=source):
                 self.assertEqual(expected, self.pin(source))
