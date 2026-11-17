@@ -17,6 +17,11 @@ state for every user.
    `:quorum` layer and the retryable deadline error are not part of the public package.
    Every RequestSeal.Error is nonretryable. Other public error types keep their documented retryability; RequestSeal.JOSE.Error marks :deadline_exceeded as retryable.
 3. Ash authorization scope stays public.
+4. Several signatures in one message remain verifiable; only their combination into a quorum
+   is removed. `RequestSeal.verify/3` always verifies one label. Web Bot Auth verifies every
+   selected signature, including nested ones, when replay is `:not_required`; with required
+   replay, more than one selected signature rejects as `:unexpected_signature` at `:policy`
+   after the signatures pass and before any claim ([ADR 0005](0005-atomic-replay-envelope.md)).
 
 ## Consequences
 

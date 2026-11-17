@@ -14,8 +14,9 @@ expiry depends on which step was running.
 1. `JWE.decrypt/2` and `JWE.decrypt_many/2` share one lifecycle. No plaintext leaves before full authentication, and a batch releases none before its final list. Indexed custody delivery follows [ADR 0017](0017-indexed-unwrap-through-a-sink.md).
 2. The decrypt policy has exactly `:algorithms`, `:encryption`, `:max_plaintext`,
    `:timeout`, `:resolve_timeout`, `:unwrap_timeout`, `:key_resolver` and `:protected`
-   ([ADR 0015](0015-jose-protected-members-and-embedded-keys.md)), plus the optional
-   `:content` ([ADR 0028](0028-strict-json-object-decoding.md)). Budgets are required
+   ([ADR 0015](0015-jose-protected-members-and-embedded-keys.md)). The optional `:content`
+   key arrives with [ADR 0028](0028-strict-json-object-decoding.md) and is decided there,
+   not here. Budgets are required
    integers from 1 to 300,000 ms with `resolve_timeout + unwrap_timeout < timeout`.
 3. From call start t0 there are three clocks. R = t0 + `resolve_timeout` ends admission and
    resolution. U = the end of resolution + `unwrap_timeout` ends custody unwrap.
