@@ -3,16 +3,15 @@
 import argparse
 import datetime
 import hashlib
-from html import unescape
-from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
 import re
-import string
 import subprocess
 import uuid
-from urllib.parse import quote, urlsplit
+from urllib.parse import unquote, urlsplit
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
 SEMVER = re.compile(
@@ -55,454 +54,172 @@ def source_ref(version):
     return "main" if development_snapshot(version) else "v" + version
 
 
-def source_url(source):
-    matches = re.findall(r'^\s*source_url: "([^"]+)"', source, re.MULTILINE)
-    if len(matches) != 1 or urlsplit(matches[0]).scheme not in ("https", "http"):
-        raise ValueError("mix.exs requires one public source_url")
-    return matches[0].rstrip("/")
+# These are lexical authoring rules, including in examples and comments. They
+# deliberately do not model Markdown blocks, escaping, or renderer visibility.
+DESTINATION = r"(?:<[^<>\s]*>|[^\s()<>]*)"
+TITLE = r"(?:\"[^\"\n]*\"|'[^'\n]*')"
+INLINE_START = re.compile(r"\]\s*\(")
+INLINE = re.compile(r"\]\((" + DESTINATION + r")(?:(?:[ \t]+)" + TITLE + r")?\)")
+REFERENCE_START = re.compile(r"\[([^\]\n]*)\][ \t]*:")
+REFERENCE = re.compile(r"[ \t]+(" + DESTINATION + r")(?:(?:[ \t]+)" + TITLE + r")?[ \t]*(?=\n|$)")
+URL_ATTRIBUTE = re.compile(r"\b(?:href|src)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s<>]*))", re.I)
+RAW_HTML = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)|<![A-Za-z\[]|<\?")
 
 
-# CommonMark 0.31.2 §§4.6 and 6.6. Keep token boundaries and source offsets:
-# Keep the original tag spelling when the HTML tokenizer supplies boundaries.
-HTML_SPACE = r"[ \t\n\r]"
-HTML_NAME = r"[A-Za-z_:][A-Za-z0-9_.:-]*"
-HTML_VALUE = r'''(?:"[^"]*"|'[^']*'|[^ \t\n\r"'=<>`]+)'''
-HTML_ATTRIBUTE = HTML_NAME + r"(?:" + HTML_SPACE + r"*=" + HTML_SPACE + "*" + HTML_VALUE + r")?"
-HTML_OPEN = r"<[A-Za-z][A-Za-z0-9-]*(?:" + HTML_SPACE + "+" + HTML_ATTRIBUTE + r")*" + HTML_SPACE + r"*/?>"
-HTML_CLOSE = r"</[A-Za-z][A-Za-z0-9-]*" + HTML_SPACE + r"*>"
-HTML_TOKEN = re.compile(
-    r"<!--(?:>|->|[\s\S]*?-->)|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<![A-Za-z][^>]*>|"
-    + HTML_OPEN + "|" + HTML_CLOSE)
-HTML_BLOCK_TAGS = (
-    "address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt "
-    "fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li "
-    "link main menu menuitem nav noframes ol optgroup option p param search section summary table tbody td tfoot th "
-    "thead title tr track ul"
-).split()
-THEMATIC = re.compile(r"(?:\*[ \t]*){3,}$|(?:-[ \t]*){3,}$|(?:_[ \t]*){3,}$")
-SETEXT = re.compile(r"(?:=+|-+)[ \t]*$")
-
-
-def html_block(text, paragraph):
-    if re.match(r"<(?:script|pre|style|textarea)(?:[ \t\n>]|$)", text, re.I):
-        return re.compile(r"</(?:script|pre|style|textarea)>", re.I)
-    for opening, closing in (("<!--", "-->"), ("<?", "?>"), ("<![CDATA[", "]]>")):
-        if text.startswith(opening):
-            return re.compile(re.escape(closing))
-    if re.match(r"<![A-Za-z]", text):
-        return re.compile(">")
-    if re.match(r"</?(?:" + "|".join(HTML_BLOCK_TAGS) + r")(?:[ \t\n>]|/?>|$)", text, re.I):
-        return "blank"
-    if not paragraph and re.fullmatch(r"(?:" + HTML_OPEN + "|" + HTML_CLOSE + r")[ \t]*\n?", text):
-        return "blank"
+def first_party(url):
+    path = unquote(url.path)
+    if url.hostname == "hexdocs.pm" and (path == "/request_seal" or path.startswith("/request_seal/")):
+        return "hexdocs"
+    if url.hostname == "github.com" and (path.lower() == "/baselabs/request_seal" or path.lower().startswith("/baselabs/request_seal/")):
+        # Public advisory permalinks describe security history, not tagged files.
+        if re.fullmatch(r"/baselabs/request_seal/security/advisories/GHSA-[a-z0-9-]+", path):
+            return None
+        return "github"
     return None
 
 
-def markdown_blocks(source):
-    """Yield code visibility, content offset and leaf-block identity per line."""
-    root = {"paragraph": False, "block": None}
-    containers = []
-    fence = raw = None
-
-    def indent(line, offset, column, limit=None):
-        while offset < len(line) and line[offset] in " \t" and (limit is None or column < limit):
-            column += 4 - column % 4 if line[offset] == "\t" else 1
-            offset += 1
-        return offset, column
-
-    def interrupts(text):
-        return (THEMATIC.fullmatch(text.rstrip("\r\n")) or
-                re.match(r"(?:>|[-+*][ \t]+\S|1[.)][ \t]+\S|`{3,}|~{3,}|#{1,6}(?:[ \t\n]|$))", text) or
-                html_block(text, True))
-
-    for original in source.splitlines(keepends=True):
-        line = original.expandtabs(4)
-        offsets = [0]
-        for index, char in enumerate(original):
-            width = 4 - (len(offsets) - 1) % 4 if char == "\t" else 1
-            offsets.extend([index + 1] * width)
-        offset = column = 0
-        lazy = False
-        for index, container in enumerate(containers):
-            start, col = indent(line, offset, column)
-            if container["kind"] == "list" and col >= container["column"]:
-                offset, column = indent(line, offset, column, container["column"])
-            elif container["kind"] == "quote" and col - column <= 3 and line[start:start + 1] == ">":
-                offset, column = start + 1, col + 1
-                if line[offset:offset + 1] in (" ", "\t"):
-                    offset, column = indent(line, offset, column, column + 1)
-            elif not line.strip(" \t\r\n") and container["kind"] == "list":
-                break
-            elif containers[-1]["paragraph"] and not interrupts(line[start:]) and fence is None and raw is None:
-                lazy = True
-                break
-            else:
-                del containers[index:]
-                break
-
-        context = containers[-1] if containers else root
-        if fence and fence[0] is not context:
-            fence = None
-        if raw and raw[0] is not context:
-            raw = None
-        starts_container = False
-        if not lazy and fence is None and raw is None:
-            while True:
-                start, col = indent(line, offset, column)
-                if col - column > 3 or THEMATIC.fullmatch(line[start:].rstrip("\r\n")):
-                    break
-                if line[start:start + 1] == ">":
-                    offset, column = start + 1, col + 1
-                    if line[offset:offset + 1] in (" ", "\t"):
-                        offset, column = indent(line, offset, column, column + 1)
-                    container = {"kind": "quote", "paragraph": False, "block": None}
-                else:
-                    marker = re.match(r"(?:[-+*]|\d{1,9}[.)])(?=[ \t])", line[start:])
-                    if marker is None or (context["paragraph"] and not interrupts(line[start:])):
-                        break
-                    offset, column = start + marker.end(), col + marker.end()
-                    end, end_column = indent(line, offset, column)
-                    if end_column - column <= 4:
-                        offset, column = end, end_column
-                    else:
-                        offset, column = indent(line, offset, column, column + 1)
-                    container = {"kind": "list", "column": column, "paragraph": False, "block": None}
-                context["paragraph"] = False
-                containers.append(container)
-                context = container
-                starts_container = True
-
-        start, col = indent(line, offset, column)
-        text = line[start:]
-        blank = not text.strip(" \t\r\n")
-        code = False
-        kind = "paragraph"
-        block = context["block"]
-        if raw and raw[1] == "blank" and blank:
-            raw = None
-        if fence:
-            code = True
-            marker = re.match(r"(`{3,}|~{3,})(.*)$", text)
-            if col - column <= 3 and marker:
-                run, rest = marker.groups()
-                if run[0] == fence[1][0] and len(run) >= len(fence[1]) and not rest.strip(" \t\r\n"):
-                    fence = None
-        elif raw:
-            kind = "html"
-            if raw[1] != "blank" and raw[1].search(text):
-                raw = None
-        elif not lazy and col - column >= 4 and (starts_container or not context["paragraph"]):
-            code = not blank
-        elif col - column <= 3:
-            marker = re.match(r"(`{3,}|~{3,})(.*)$", text)
-            ending = html_block(text, context["paragraph"])
-            if marker and (marker[1][0] == "~" or "`" not in marker[2]):
-                fence = context, marker[1]
-                code = True
-            elif ending:
-                kind = "html"
-                block = {"kind": kind}
-                if ending == "blank" or not ending.search(text):
-                    raw = context, ending
-            elif not lazy and context["paragraph"] and SETEXT.fullmatch(text.rstrip("\r\n")):
-                kind = "underline"
-            elif THEMATIC.fullmatch(text.rstrip("\r\n")):
-                kind = "break"
-            elif re.match(r"#{1,6}(?:[ \t\n]|$)", text):
-                kind = "heading"
-        if blank and kind != "html":
-            kind = "blank"
-        if code:
-            kind = "code"
-        if kind == "paragraph":
-            if not context["paragraph"] or block is None:
-                block = {"kind": kind}
-        elif kind != "html":
-            block = {"kind": kind}
-        context["paragraph"] = kind == "paragraph"
-        context["block"] = block
-        yield original, code, offsets[offset], block
+def validate_destination(target, version):
+    """Classify literal URLs without decoding or rewriting Markdown syntax."""
+    if (not target or re.search(r"[^\x21-\x7e]|[<>\\\"'`()]", target)
+            or re.search(r"&(?:#\w+|[A-Za-z][A-Za-z0-9]*);|%(?![0-9A-Fa-f]{2})", target)):
+        raise ValueError("requires a literal absolute URL; ambiguous destination syntax")
+    url = urlsplit(target)
+    if url.scheme in ("http", "https"):
+        if not url.hostname or url.username is not None or url.password is not None:
+            raise ValueError("requires an absolute HTTP(S) URL without credentials")
+        if url.port is not None and not 0 < url.port < 65536:
+            raise ValueError("invalid URL port")
+    elif url.scheme == "mailto":
+        if not re.fullmatch(r"[^@/?#]+@[^@/?#]+", url.path) or url.netloc:
+            raise ValueError("requires an absolute mailto URL")
+    else:
+        raise ValueError("requires an absolute HTTP(S) or mailto URL")
+    kind = first_party(url)
+    if kind:
+        prefix = (f"/request_seal/{version}/",) if kind == "hexdocs" else (
+            f"/baselabs/request_seal/blob/v{version}/", f"/baselabs/request_seal/raw/v{version}/")
+        if (url.scheme != "https" or url.netloc != url.hostname
+                or not url.path.startswith(prefix) or url.path.endswith("/")
+                or any(part in (".", "..") for part in unquote(url.path).split("/"))):
+            raise ValueError(f"first-party destination must use version {version}")
+    return kind
 
 
-def markdown_lines(source):
-    """Yield lines with code and raw HTML blocks marked as opaque."""
-    for line, code, _, block in markdown_blocks(source):
-        yield line, code or block["kind"] == "html"
+def release_destinations(body, version, first_line=1):
+    """Validate every potential destination, without code or comment exemptions."""
+    targets = []
+
+    def destination(offset, target, ambiguous=False):
+        line = first_line + body.count("\n", 0, offset)
+        try:
+            validate_destination(target, version)
+            if ambiguous:
+                raise ValueError("ambiguous destination syntax; use a canonical single-line link or reference definition")
+        except ValueError as error:
+            raise ValueError(f"CHANGELOG.md:{line}: destination {target!r}: {error}") from error
+        targets.append(target)
+
+    for start in INLINE_START.finditer(body):
+        match = INLINE.match(body, start.start())
+        candidate = body[start.end():].split("\n", 1)[0].split(")", 1)[0]
+        destination(start.start(), match[1].removeprefix("<").removesuffix(">") if match else candidate, match is None)
+    for start in REFERENCE_START.finditer(body):
+        match = REFERENCE.match(body, start.end())
+        candidate = body[start.end():].split("\n", 1)[0].strip()
+        destination(start.start(), match[1].removeprefix("<").removesuffix(">") if match else candidate,
+                    match is None or not start[1] or start[1].startswith("^") or "\\" in start[1] or "[" in start[1])
+    for match in URL_ATTRIBUTE.finditer(body):
+        destination(match.start(), next(value for value in match.groups() if value is not None))
+    raw = RAW_HTML.search(body)
+    if raw:
+        line = first_line + body.count("\n", 0, raw.start())
+        raise ValueError(f"CHANGELOG.md:{line}: unsupported raw HTML {raw[0]!r}; use Markdown links and images")
+    return targets
 
 
-def pin_markdown_links(body, version, repository_url):
-    """Pin CommonMark destinations while preserving all other source bytes."""
-    def mask(text):
-        return re.sub(r"[^\n]", " ", text)
-
-    pieces, lines, blocks = [], [], []
-    offset = 0
-    for line, code, content, block in markdown_blocks(body):
-        lines.append((offset, offset + content, offset + len(line), block))
-        pieces.append(mask(line) if code else " " * content + line[content:])
-        if blocks and blocks[-1][2] is block:
-            blocks[-1] = blocks[-1][0], offset + len(line), block
-        else:
-            blocks.append((offset, offset + len(line), block))
-        offset += len(line)
-    visible = "".join(pieces)
-    replacements = []
-
-    def pinned(target, image, html=False):
-        original = target
-        if html:
-            target = unescape(target)
-        else:
-            # CommonMark §§2.4–2.5: escapes and semicolon-terminated entities
-            # are consumed once; an escaped ampersand cannot start an entity.
-            target = re.sub(r"\\([" + re.escape(string.punctuation) + r"])|"
-                            r"&(?:#[xX][0-9A-Fa-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});",
-                            lambda match: match[1] if match[1] is not None else unescape(match[0]), target)
-        if target.startswith(("#", "//")) or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", target):
-            return original
-        if target.startswith("?"):
-            raise ValueError("CHANGELOG.md has an invalid relative link: " + target)
-        path, fragment_mark, fragment = target.partition("#")
-        path, query_mark, query = path.partition("?")
-        segments = []
-        for part in path.lstrip("/").split("/"):
-            dots = re.sub("%2e", ".", part, flags=re.I)
-            if dots == "..":
-                if not segments:
-                    raise ValueError("CHANGELOG.md link escapes the repository: " + target)
-                segments.pop()
-            elif dots != "." and part:
-                segments.append(part)
-        path = "/".join(segments) or "."
-        target = path + query_mark + query + fragment_mark + fragment
-        target = "".join(quote(char, safe="") if ord(char) <= 32 or ord(char) == 127 or char in "<>()\\\"'`" else char
-                         for char in target)
-        target = target.replace("&", "&amp;")
-        return repository_url.rstrip("/") + ("/raw/v" if image else "/blob/v") + version + "/" + target
-
-    def pin_html(start, end):
-        source = visible[start:end]
-        line_starts = [0] + [match.end() for match in re.finditer("\n", source)]
-        attributes = re.compile(r"[ \t\r\n]+(" + HTML_NAME + r")[ \t\r\n]*=[ \t\r\n]*(" + HTML_VALUE + ")")
-
-        class Attributes(HTMLParser):
-            # Browser raw-text elements cannot contain nested HTML attributes.
-            CDATA_CONTENT_ELEMENTS = ("script", "style", "textarea")
-
-            def parse_marked_section(self, i, report=1):
-                # Raw HTML blocks may contain bogus declarations. Browsers
-                # consume these as comments; HTMLParser otherwise asserts.
-                if not self.rawdata.startswith("<![CDATA[", i):
-                    return self.parse_bogus_comment(i, report)
-                return super().parse_marked_section(i, report)
-
-            def handle_starttag(self, tag, attrs):
-                line, column = self.getpos()
-                offset = start + line_starts[line - 1] + column
-                for attr in attributes.finditer(self.get_starttag_text()):
-                    if attr[1].lower() not in ("href", "src"):
-                        continue
-                    a, b = offset + attr.start(2), offset + attr.end(2)
-                    if body[a] in "\"'":
-                        a, b = a + 1, b - 1
-                    replacements.append((a, b, pinned(body[a:b], attr[1].lower() == "src", html=True)))
-
-        parser = Attributes(convert_charrefs=False)
-        # CommonMark §6.6 also accepts these two short HTML comments.
-        parser.feed(re.sub(r"<!--(?:>|->)", lambda match: mask(match[0]), source))
-        parser.close()
-
-    # Block HTML has no Markdown inlines, even when it contains Markdown fences.
-    for start, end, block in blocks:
-        if block["kind"] == "html":
-            pin_html(start, end)
-            visible = visible[:start] + mask(visible[start:end]) + visible[end:]
-
-    title = r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))'''
-
-    def label(value):
-        return " ".join(value.split()).casefold()
-
-    def destination(start, limit):
-        if start >= limit:
-            return None
-        if visible[start] == "<":
-            end = start + 1
-            while end < limit:
-                if visible[end] == "\\" and end + 1 < limit and visible[end + 1] in string.punctuation:
-                    end += 2
-                    continue
-                if visible[end] == ">":
-                    return start + 1, end, end + 1
-                if visible[end] in "\r\n<":
-                    return None
-                end += 1
-            return None
-        end, depth = start, 0
-        while end < limit:
-            char = visible[end]
-            if char == "\\" and end + 1 < limit and visible[end + 1] in string.punctuation:
-                end += 2
-                continue
-            if char in " \t\n\r\f\v" or (char == ")" and depth == 0):
-                break
-            if ord(char) < 32 or char == "<":
-                return None
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-            end += 1
-        return (start, end, end) if depth == 0 else None
-
-    definitions = {}
-    allowed = {start for start, _, block in blocks if block["kind"] == "paragraph"}
-    for line_start, content, line_end, block in lines:
-        if line_start not in allowed:
-            continue  # CommonMark §4.7: definitions cannot interrupt paragraphs.
-        match = re.match(r" {0,3}\[((?!\^)(?:\\.|[^\]\\])+)\]:[ \t]*", visible[content:line_end])
-        if not match:
-            continue
-        start = content + match.end()
-        limit = next(end for begin, end, other in blocks if other is block)
-        if visible[start:start + 1] == "\n":
-            start += 1
-            while start < limit and visible[start] in " \t":
-                start += 1
-        found = destination(start, limit)
-        if not found or found[0] == found[1]:
-            continue
-        start, finish, after = found
-        ending = re.match(r"[ \t]*(?:\n[ \t]*)?" + title + r"[ \t]*(?:\n|$)", visible[after:limit])
-        if ending is None:
-            ending = re.match(r"[ \t]*(?:\n|$)", visible[after:limit])
-        if ending is None:
-            continue
-        end = after + ending.end()
-        if re.search(r"\n[ \t]*\n", visible[line_start:end].rstrip("\n")):
-            continue
-        key = label(body[content + match.start(1):content + match.end(1)])
-        definitions.setdefault(key, []).append((start, finish))
-        visible = visible[:line_start] + mask(visible[line_start:end]) + visible[end:]
-        allowed.add(end)
-
-    uses = {}
-    for begin, limit, block in blocks:
-        # CommonMark §§3.1, 6.1, 6.3–6.6 / Appendix: consume in source
-        # order, so code/HTML inside a destination is never parsed as link text.
-        # An iterative stack lets inner links deactivate earlier link openers
-        # without disabling image openers or recursing on nested brackets.
-        stack = []
-        generation = 0
-        cursor = begin
-        while cursor < limit:
-            char = visible[cursor]
-            if char == "\\" and cursor + 1 < limit and visible[cursor + 1] in string.punctuation:
-                cursor += 2
-                continue
-            if char == "`":
-                opening = re.match(r"`+", visible[cursor:limit])
-                end = cursor + opening.end()
-                closing = next((run for run in re.finditer(r"`+", visible[end:limit]) if len(run[0]) == len(opening[0])), None)
-                cursor = end + closing.end() if closing else end
-                continue
-            if char == "<":
-                token = HTML_TOKEN.match(visible, cursor, limit)
-                if token:
-                    pin_html(cursor, token.end())
-                    cursor = token.end()
-                    continue
-                autolink = re.match(r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20]*|"
-                                    r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
-                                    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-                                    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>", visible[cursor:limit])
-                if autolink:
-                    cursor += autolink.end()
-                    generation += 1
-                    continue
-            if visible.startswith("![", cursor):
-                stack.append((cursor + 1, True, generation))
-                cursor += 2
-                continue
-            if char == "[":
-                stack.append((cursor, False, generation))
-                cursor += 1
-                continue
-            if char != "]" or not stack:
-                cursor += 1
-                continue
-            opening, image, opened = stack.pop()
-            end = cursor + 1
-            cursor = end
-            if not image and opened != generation:
-                continue
-            matched = False
-            if visible[end:end + 1] == "(":
-                start = end + 1
-                while start < limit and visible[start] in " \t\n\r\f\v":
-                    start += 1
-                found = destination(start, limit)
-                if found:
-                    start, finish, after = found
-                    closing = re.match(r"(?:[ \t\n\r\f\v]+" + title + r")?[ \t\n\r\f\v]*\)", visible[after:limit])
-                    if closing:
-                        replacements.append((start, finish, pinned(body[start:finish], image)))
-                        cursor, matched = after + closing.end(), True
-            if not matched:
-                reference = re.match(r"\[((?:\\.|[^\[\]\\])*)\]", visible[end:limit])
-                key = label(body[end + 1:end + reference.end() - 1] if reference and reference[1]
-                            else body[opening + 1:end - 1])
-                if key in definitions:
-                    uses.setdefault(key, set()).add(image)
-                    matched = True
-                    if reference:
-                        cursor = end + reference.end()
-            if matched and not image:
-                generation += 1
-
-    for key, destinations in definitions.items():
-        kinds = uses.get(key, {False})
-        if len(kinds) > 1:
-            raise ValueError("CHANGELOG.md reference label used by both image and link: " + key)
-        for start, finish in destinations:
-            replacements.append((start, finish, pinned(body[start:finish], True in kinds)))
-    for start, end, replacement in sorted(replacements, reverse=True):
-        body = body[:start] + replacement + body[end:]
-    return body
-
-
-def release_notes(source, version, repository_url=None):
-    """Return only the body of one dated release section, never Unreleased."""
+def release_notes(source, version):
+    """Extract and validate one dated section in the documented CHANGELOG format."""
+    parse_version(version)
     source = source.replace("\r\n", "\n")
+    if "\r" in source:
+        raise ValueError("CHANGELOG.md: unsupported bare carriage return")
     sections = []
     offset = 0
-    for line, fenced in markdown_lines(source):
-        if not fenced and line.startswith("## "):
-            sections.append((offset, offset + len(line), line.rstrip("\n")))
+    fence = None
+    previous = ""
+    for number, line in enumerate(source.splitlines(keepends=True), 1):
+        text = line.rstrip("\n")
+        if fence:
+            if re.fullmatch(re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*", text):
+                fence = None
+        else:
+            marker = re.match(r"(`{3,}|~{3,})(.*)$", text)
+            if marker:
+                if "`" in marker[2]:
+                    raise ValueError(f"CHANGELOG.md:{number}: ambiguous fence info")
+                fence = marker[1]
+            elif re.match(r"[ \t>]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(?:`{3,}|~{3,}|##(?:[ \t]|$))", text):
+                if not text.startswith("## "):
+                    raise ValueError(f"CHANGELOG.md:{number}: release headings and fences must start in column one")
+            if "<!--" in text and not re.fullmatch(r"[^\n]*<!--(?:(?!-->).)*-->[^\n]*", text):
+                raise ValueError(f"CHANGELOG.md:{number}: multiline or ambiguous HTML comment is unsupported")
+            if text.startswith("## "):
+                if previous.strip():
+                    raise ValueError(f"CHANGELOG.md:{number}: release heading requires a preceding blank line")
+                heading = re.fullmatch(r"## (?:Unreleased(?: ([^ ]+))?|([^ ]+) - (\d{4}-\d{2}-\d{2}))[ \t]*", text)
+                if not heading:
+                    raise ValueError(f"CHANGELOG.md:{number}: ambiguous release heading {text!r}")
+                if heading[1] or heading[2]:
+                    parse_version(heading[1] or heading[2])
+                if heading[3]:
+                    datetime.date.fromisoformat(heading[3])
+                sections.append((offset, offset + len(line), heading[2], number + 1))
+        previous = text
         offset += len(line)
-    heading = re.compile(r"## " + re.escape(version) + r" - (\d{4}-\d{2}-\d{2})[ \t]*$")
-    matches = [(index, heading.fullmatch(section[2])) for index, section in enumerate(sections)
-               if heading.fullmatch(section[2])]
+    if fence:
+        raise ValueError("CHANGELOG.md: unclosed top-level fence")
+    matches = [index for index, section in enumerate(sections) if section[2] == version]
     if len(matches) != 1:
         raise ValueError("CHANGELOG.md requires one dated section for " + version)
-    index, match = matches[0]
-    datetime.date.fromisoformat(match[1])
+    index = matches[0]
     end = sections[index + 1][0] if index + 1 < len(sections) else len(source)
-    body = source[sections[index][1]:end].strip("\n")
+    original = source[sections[index][1]:end]
+    body = original.strip("\n")
     if not body.strip() or not re.sub(r"(?m)^#{3,6}[^\n]*$", "", body).strip():
         raise ValueError("CHANGELOG.md release section is empty for " + version)
+    first_line = sections[index][3] + len(original) - len(original.lstrip("\n"))
+    release_destinations(body, version, first_line)
+    return body + "\n"
 
-    if repository_url is None:
-        repository_url = source_url((ROOT / "mix.exs").read_text())
 
-    return pin_markdown_links(body, version, repository_url) + "\n"
+def verify_published_destinations(body, version):
+    """GET the release's pinned URLs only after publication; any non-200 fails."""
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = build_opener(NoRedirect())
+    for target in sorted(set(release_destinations(body, version))):
+        if not first_party(urlsplit(target)):
+            continue
+        try:
+            with opener.open(Request(target, headers={"User-Agent": "RequestSeal-release"}), timeout=60) as response:
+                status = response.status
+        except HTTPError as error:
+            status = error.code
+            error.close()
+        except (OSError, URLError) as error:
+            raise ValueError(f"release destination {target!r}: HTTP request failed: {error}") from error
+        print(f"HTTP {status} {target}")
+        if status != 200:
+            raise ValueError(f"release destination {target!r}: expected HTTP 200, got {status}")
 
 
 def verify_identity(root, event, ref):
     version = package_version((root / "mix.exs").read_text())
     if development_snapshot(version):
         raise ValueError("release verification refuses development snapshots")
-    release_notes((root / "CHANGELOG.md").read_text(), version, source_url((root / "mix.exs").read_text()))
+    release_notes((root / "CHANGELOG.md").read_text(), version)
     tag = "v" + version
     index = json.loads((root / "corpus/index.json").read_text())
     if index.get("elixir_release") != tag:
@@ -557,6 +274,7 @@ if __name__ == "__main__":
     choice.add_argument("--verify", action="store_true")
     choice.add_argument("--normalize-sbom", type=Path)
     choice.add_argument("--release-notes", action="store_true")
+    choice.add_argument("--check-destinations", action="store_true")
     parser.add_argument("--tarball", type=Path)
     parser.add_argument("--notes-file", type=Path)
     parser.add_argument("--for-version")
@@ -566,10 +284,14 @@ if __name__ == "__main__":
             if not args.tarball:
                 parser.error("--normalize-sbom requires --tarball")
             normalize_sbom(args.normalize_sbom, args.tarball)
-        elif args.release_notes:
+        elif args.release_notes or args.check_destinations:
             version = args.for_version or package_version((ROOT / "mix.exs").read_text())
             parse_version(version)
-            print(release_notes((ROOT / "CHANGELOG.md").read_text(), version), end="")
+            notes = release_notes((ROOT / "CHANGELOG.md").read_text(), version)
+            if args.check_destinations:
+                verify_published_destinations(notes, version)
+            else:
+                print(notes, end="")
         elif args.verify:
             version = verify_identity(ROOT, os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"])
             if args.notes_file:

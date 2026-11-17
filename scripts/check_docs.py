@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
-from release import install_requirement, parse_version
+from release import SEMVER, install_requirement, parse_version
 from processes import install_signal_handlers, run
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,22 +80,43 @@ def public_paths(root):
     return paths
 
 
-def public_configuration(root):
+def public_configuration(root, ref=None):
     # Read Mix's actual project configuration without compiling or starting the app.
     marker = "REQUEST_SEAL_PUBLIC_DOCUMENT\t"
     expression = (
-        'for entry <- Keyword.fetch!(Keyword.fetch!(Mix.Project.config(), :docs), :extras) do '
-        'path = case entry do {path, _options} -> path; path -> path end; '
-        'IO.puts("REQUEST_SEAL_PUBLIC_DOCUMENT\\t" <> path) end; '
-        'IO.puts("REQUEST_SEAL_VERSION\\t" <> Mix.Project.config()[:version]); '
-        'for pattern <- Mix.Project.config()[:package][:files] do '
+        "project = Mix.Project.config(); "
+        'for entry <- Keyword.fetch!(Keyword.fetch!(project, :docs), :extras) do '
+        '{path, options} = case entry do {path, options} -> {path, options}; path -> {path, []} end; '
+        'IO.puts("REQUEST_SEAL_PUBLIC_DOCUMENT\\t" <> path); '
+        'name = Keyword.get(options, :filename) || (path |> Path.basename() |> Path.rootname() '
+        '|> String.replace(~r/&#\\d+;|&[A-Za-z0-9]+;/, "") |> String.replace(~r/\\W+/u, "-") '
+        '|> String.trim("-") |> String.downcase()); '
+        'IO.puts("REQUEST_SEAL_PUBLIC_PAGE\\t" <> name <> ".html\\t" <> path) end; '
+        'IO.puts("REQUEST_SEAL_VERSION\\t" <> project[:version]); '
+        'for pattern <- project[:package][:files] do '
         'IO.puts("REQUEST_SEAL_PACKAGE_PATTERN\\t" <> pattern); '
         'for path <- Path.wildcard(pattern, match_dot: true), File.regular?(path), '
         'do: IO.puts("REQUEST_SEAL_PACKAGE_FILE\\t" <> path) end'
     )
+    extra_env = None
+    if ref is not None:
+        historical = run(
+            ["git", "show", ref + ":mix.exs"], cwd=root, capture_output=True,
+            text=True, check=True, timeout=30,
+        ).stdout
+        # Evaluate the tagged project's real configuration, without registering
+        # another Mix project, compiling the library, or checking out its tree.
+        extra_env = {"REQUEST_SEAL_HISTORICAL_MIX": historical}
+        expression = (
+            'source = System.fetch_env!("REQUEST_SEAL_HISTORICAL_MIX"); '
+            '{:defmodule, _, [_, [do: {:__block__, _, body}]]} = Code.string_to_quoted!(source); '
+            'body = Enum.reject(body, &match?({:use, _, [{:__aliases__, _, [:Mix, :Project]}]}, &1)); '
+            'Module.create(ReleaseDocumentInventory, {:__block__, [], body}, Macro.Env.location(__ENV__)); '
+            + expression.replace("project = Mix.Project.config()", "project = ReleaseDocumentInventory.project()")
+        )
     result = run(
         ["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression],
-        cwd=root, capture_output=True, text=True, check=True, timeout=120,
+        cwd=root, capture_output=True, text=True, check=True, timeout=120, extra_env=extra_env,
     )
     entries = [line[len(marker):] for line in result.stdout.splitlines() if line.startswith(marker)]
     if not entries or "README.md" not in entries or len(entries) != len(set(entries)):
@@ -109,6 +130,7 @@ def public_configuration(root):
         raise ValueError("invalid package version configuration")
     return {
         "documents": set(entries),
+        "pages": dict(value.split("\t", 1) for value in values("REQUEST_SEAL_PUBLIC_PAGE\t")),
         "version": versions[0],
         "patterns": values("REQUEST_SEAL_PACKAGE_PATTERN\t"),
         "files": set(values("REQUEST_SEAL_PACKAGE_FILE\t")),
@@ -215,10 +237,70 @@ def inventory_errors(root, approved, paths):
     return errors
 
 
-def content_errors(root, relative, source, paths, version=None, published=None):
+def first_party_link_errors(root, relative, url, version, published, references):
+    """Resolve authored first-party destinations against their real Git tree."""
+    path = unquote(url.path)
+    if url.hostname == "hexdocs.pm" and path.startswith("/request_seal/"):
+        parts = path.split("/", 3)
+        if len(parts) != 4 or not SEMVER.fullmatch(parts[2]):
+            # Unversioned package landing pages remain valid outside release notes.
+            return [] if len(parts) == 3 else ["HexDocs destination requires an explicit version"]
+        release_version, target = parts[2:]
+        ref = None if release_version == version else "refs/tags/v" + release_version
+        kind = "hexdocs"
+    elif url.hostname == "github.com" and path.startswith("/baselabs/request_seal/"):
+        parts = path.split("/", 5)
+        if len(parts) < 5 or parts[3] not in ("blob", "raw"):
+            return []  # Repository landing pages, issues and advisory permalinks.
+        if len(parts) != 6 or not parts[4] or not parts[5]:
+            return ["GitHub destination requires a ref and file path"]
+        name, target = parts[4:]
+        ref = "refs/tags/" + name
+        if not name.startswith("v"):
+            ref = "refs/heads/" + name
+            if run(["git", "show-ref", "--verify", "--quiet", ref], cwd=root, capture_output=True,
+                   check=False, timeout=30).returncode:
+                ref = "refs/remotes/origin/" + name
+        kind = "github"
+    else:
+        return []
+    if not safe_document_path(target):
+        return ["first-party link targets a private or unsafe path"]
+    key = ref or "WORKTREE"
+    try:
+        if key not in references:
+            configuration = public_configuration(root, ref)
+            if ref is None:
+                tree = {p: "100644" for p in public_paths(root)}
+            else:
+                listing = run(["git", "ls-tree", "-r", "-z", ref], cwd=root,
+                              capture_output=True, text=True, check=True, timeout=30).stdout
+                tree = {row.split("\t", 1)[1]: row.split(" ", 1)[0] for row in listing.split("\0") if row}
+            references[key] = configuration, tree
+        configuration, tree = references[key]
+    except (ValueError, subprocess.SubprocessError) as error:
+        return [f"cannot inspect first-party destination ref {key}: {error}"]
+    if kind == "hexdocs":
+        document = configuration["pages"].get(target)
+        if document is None:
+            return ["HexDocs page is outside the explicit document inventory at " + key]
+        if document not in tree or tree[document] != "100644":
+            return ["HexDocs page targets missing or nonregular published content at " + key]
+        if ref is None and (has_symlink(root, document) or not (root / document).is_file()):
+            return ["HexDocs page targets missing or symlinked published content"]
+    elif target not in tree or tree[target] not in ("100644", "100755"):
+        return ["GitHub link targets missing or nonregular content at " + key]
+    elif (published is not None and relative in published and Path(target).suffix in (".md", ".livemd")
+          and target not in configuration["documents"]):
+        return ["published document links a repository-only document at " + key]
+    return []
+
+
+def content_errors(root, relative, source, paths, version=None, published=None, references=None):
     root = root.resolve()
     errors = []
     path = root / relative
+    references = {} if references is None else references
     if MACHINE_PATH.search(source):
         errors.append(f"{relative}: machine or private file URL")
     if INTERNAL_PROCESS.search(source):
@@ -236,6 +318,8 @@ def content_errors(root, relative, source, paths, version=None, published=None):
             errors.append(f"{relative}: malformed link")
             continue
         if url.scheme in ("https", "http", "mailto"):
+            errors.extend(f"{relative}: {target}: {error}" for error in
+                          first_party_link_errors(root, relative, url, version, published, references))
             continue
         if url.scheme or url.netloc:
             errors.append(f"{relative}: unsupported or private link scheme")
@@ -382,11 +466,12 @@ def check(root=ROOT):
     paths = public_paths(root)
     errors = inventory_errors(root, approved, paths)
     errors.extend(package_errors(root, configuration))
+    references = {"WORKTREE": (configuration, {p: "100644" for p in paths})}
     for relative in sorted(approved):
         path = root / relative
         if path.is_file() and not path.is_symlink():
             source = path.read_bytes().decode("utf-8")
-            errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"]))
+            errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"], references))
             errors.extend(fence_errors(root, relative, source))
     for relative in sorted(configuration["files"] - approved):
         path = root / relative

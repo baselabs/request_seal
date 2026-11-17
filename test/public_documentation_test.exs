@@ -38,7 +38,7 @@ defmodule RequestSeal.PublicDocumentationTest do
            )
   end
 
-  test "publishing guard accepts dated nonempty release and pre-release notes" do
+  test "publishing guard accepts absolute destinations and rejects relative release links" do
     directory =
       Path.join(System.tmp_dir!(), "requestseal-publish-#{System.unique_integer([:positive])}")
 
@@ -67,9 +67,12 @@ defmodule RequestSeal.PublicDocumentationTest do
         String.replace(source, ~r/@version "[^"]+"/, "@version \"#{version}\"")
       )
 
+      notes =
+        "- Released behavior. [Guide](https://hexdocs.pm/request_seal/#{version}/web-bot-auth.html)\n"
+
       File.write!(
         Path.join(directory, "CHANGELOG.md"),
-        "## #{version} - 2026-11-17\n\n- Released behavior.\n"
+        "## #{version} - 2026-11-17\n\n" <> notes
       )
 
       try do
@@ -83,7 +86,7 @@ defmodule RequestSeal.PublicDocumentationTest do
           ])
 
         assert status == 0
-        assert output =~ "Released behavior."
+        assert output == notes
 
         File.cd!(directory, fn ->
           if Version.match?(System.version(), ">= 1.20.0") do
@@ -91,6 +94,17 @@ defmodule RequestSeal.PublicDocumentationTest do
           else
             assert_raise Mix.Error, ~r/requires Elixir 1.20 or newer/, fn -> guard.([]) end
           end
+        end)
+
+        File.write!(
+          Path.join(directory, "CHANGELOG.md"),
+          "## #{version} - 2026-11-17\n\n- [Guide](docs/guides/web-bot-auth.md)\n"
+        )
+
+        File.cd!(directory, fn ->
+          assert_raise Mix.Error,
+                       ~r/valid release notes.*CHANGELOG.md:3: destination 'docs\/guides\/web-bot-auth.md'/s,
+                       fn -> guard.([]) end
         end)
       after
         :code.purge(module)

@@ -90,7 +90,87 @@ class PublicDocsTest(unittest.TestCase):
         self.assertNotIn("HEX_API_KEY", source)
         self.assertNotIn("gh attestation verify", (ROOT / runbook).read_text())
         self.assertIn("../guides/verifying-releases.md", (ROOT / runbook).read_text())
-        self.assertIn("(docs/guides/verifying-releases.md)", (ROOT / "CHANGELOG.md").read_text())
+        self.assertIn("(https://github.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md)", (ROOT / "CHANGELOG.md").read_text())
+
+    def test_first_party_absolute_links_check_current_inventory_and_historical_trees(self):
+        configuration = docs.public_configuration(ROOT)
+        version = configuration["version"]
+        self.assertEqual("docs/guides/web-bot-auth.md", configuration["pages"]["web-bot-auth.html"])
+        self.assertEqual("livebooks/overview.md", configuration["pages"]["livebooks.html"])
+        self.assertEqual("livebooks/web-bot-auth.livemd", configuration["pages"]["livebook-web-bot-auth.html"])
+        references = {}
+
+        def errors(target):
+            return docs.content_errors(ROOT, "README.md", f"[Guide]({target})", self.paths,
+                                       version, configuration["documents"], references)
+
+        for target in (f"https://hexdocs.pm/request_seal/{version}/web-bot-auth.html",
+                       f"https://hexdocs.pm/request_seal/{version}/livebook-web-bot-auth.html",
+                       "https://hexdocs.pm/request_seal/1.0.0/compatibility.html",
+                       "https://hexdocs.pm/request_seal/1.0.0/web-bot-auth.html",
+                       "https://hexdocs.pm/request_seal/1.0.0/phoenix-and-plug.html",
+                       "https://github.com/baselabs/request_seal/blob/v1.0.0/docs/guides/web-bot-auth.md",
+                       "https://github.com/baselabs/request_seal/raw/v1.0.0/README.md",
+                       "https://github.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md"):
+            with self.subTest(target=target):
+                self.assertEqual([], errors(target))
+        for target in (f"https://hexdocs.pm/request_seal/{version}/releases.html",
+                       f"https://hexdocs.pm/request_seal/{version}/nonexistent.html",
+                       f"https://hexdocs.pm/request_seal/{version}/.private.html",
+                       "https://hexdocs.pm/request_seal/1.0.0/verifying-releases.html",
+                       "https://hexdocs.pm/request_seal/99.0.0/web-bot-auth.html",
+                       "https://github.com/baselabs/request_seal/blob/v1.0.0/docs/guides/verifying-releases.md",
+                       "https://github.com/baselabs/request_seal/raw/v1.0.0/missing.png",
+                       "https://github.com/baselabs/request_seal/blob/v1.0.0/.private/record.md",
+                       "https://github.com/baselabs/request_seal/blob/v1.0.0/docs/operations/releases.md",
+                       "https://github.com/baselabs/request_seal/blob/v99.0.0/README.md"):
+            with self.subTest(target=target):
+                self.assertTrue(errors(target))
+        # Inline/image links, references and HTML keep the same target checks.
+        for link in (f"![asset](https://github.com/baselabs/request_seal/raw/v1.0.0/missing.png)",
+                     "[guide]: https://hexdocs.pm/request_seal/1.0.0/missing.html",
+                     '<a href="https://hexdocs.pm/request_seal/1.0.0/missing.html">guide</a>'):
+            self.assertTrue(docs.content_errors(ROOT, "README.md", link, self.paths, version, configuration["documents"], references))
+
+    def test_real_hex_publishing_guard_accepts_absolute_and_rejects_relative_destinations(self):
+        expression = r'''source = File.read!("mix.exs")
+{:defmodule, _, [_, [do: {:__block__, _, body}]]} = Code.string_to_quoted!(source)
+body = Enum.reject(body, &match?({:use, _, [{:__aliases__, _, [:Mix, :Project]}]}, &1))
+changed = Macro.prewalk({:__block__, [], body}, fn
+  {:@, meta, [{:version, inner, [_]}]} -> {:@, meta, [{:version, inner, ["1.0.0"]}]}
+  node -> node
+end)
+Module.create(PublishingDestinationTest, changed, Macro.Env.location(__ENV__))
+[guard, "hex.publish"] = PublishingDestinationTest.project()[:aliases][:"hex.publish"]
+File.cd!(hd(System.argv()), fn -> guard.([]) end)
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "scripts/release.py").write_bytes((ROOT / "scripts/release.py").read_bytes())
+            for target, accepted in (("https://hexdocs.pm/request_seal/1.0.0/compatibility.html", True),
+                                     ("docs/reference/compatibility.md", False)):
+                (root / "CHANGELOG.md").write_text(f"## 1.0.0 - 2026-11-11\n\n- [Policy]({target})\n")
+                result = subprocess.run(["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression, "--", directory],
+                                        cwd=ROOT, capture_output=True, text=True, timeout=120)
+                if accepted and "requires Elixir 1.20 or newer" in result.stderr:
+                    continue  # The actual guard reached the existing toolchain check.
+                self.assertEqual(accepted, result.returncode == 0, result.stderr)
+                if not accepted:
+                    self.assertIn("Publishing RequestSeal requires valid release notes", result.stderr)
+                    self.assertIn("CHANGELOG.md:3: destination 'docs/reference/compatibility.md'", result.stderr)
+
+    def test_absolute_current_hexdocs_links_retain_generated_page_and_fragment_checks(self):
+        version = docs.public_configuration(ROOT)["version"]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            target = f"https://hexdocs.pm/request_seal/{version}/guide.html#section"
+            (output / "readme.html").write_text(f'<a href="{target}">Guide</a>')
+            self.assertTrue(gate.doc_link_errors(output))
+            (output / "guide.html").write_text('<h1 id="section">Guide</h1>')
+            self.assertEqual([], gate.doc_link_errors(output))
+            (output / "guide.html").write_text('<h1 id="renamed">Guide</h1>')
+            self.assertTrue(gate.doc_link_errors(output))
 
     def test_git_installs_are_rejected_in_public_text(self):
         for install in (

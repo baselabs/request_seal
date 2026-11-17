@@ -67,6 +67,10 @@ jobs:
           mix hex.package fetch request_seal "$VERSION" --output "$published"
           cmp "request_seal-$VERSION.tar" "$published/request_seal-$VERSION.tar"
           sha256sum "request_seal-$VERSION.tar" "$published/request_seal-$VERSION.tar"
+      - name: Verify published release destinations
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: python3 scripts/release.py --check-destinations --for-version "$VERSION"
       - name: Generate and verify package dependency SBOM
         env:
           VERSION: ${{ steps.identity.outputs.version }}

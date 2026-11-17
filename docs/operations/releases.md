@@ -21,8 +21,11 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    In this release commit, rename `## Unreleased <version>` to
    `## <version> - YYYY-MM-DD` (substitute the version and actual release date), and
    finish the release and migration guidance beneath it. This dated, nonempty
-   section becomes the GitHub release notes, with relative links pinned to the
-   released tag. Both `mix hex.publish` and the release gate reject a missing,
+   section becomes the GitHub release notes verbatim. Finalize every documentation
+   link to `https://hexdocs.pm/request_seal/<version>/<page>.html` and source or
+   asset links to `https://github.com/baselabs/request_seal/blob/v<version>/<path>`
+   or `/raw/v<version>/<path>`. Unreleased entries may use absolute GitHub `main`
+   URLs; replace them when cutting the release. Both `mix hex.publish` and the release gate reject a missing,
    undated, or empty section before publishing or tagging. Publishing requires
    `python3` for this shared validation.
    Confirm the explicit public document inventory and supported profiles.
@@ -91,7 +94,18 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    curl --fail --location --silent --show-error --output /dev/null "https://hexdocs.pm/request_seal/$VERSION/index.html"
    ```
 
-   Confirm Hex reports that version and HexDocs serves the expected guides.
+   Confirm Hex reports that version and check each versioned page linked by its
+   own release notes, not only the documentation landing page. After the tag is
+   available, verify all linked first-party pages and files with:
+
+   ```sh
+   python3 scripts/release.py --check-destinations --for-version "$VERSION"
+   ```
+
+   Each real HTTP GET must return 200; redirects, other statuses, and transport
+   errors stop publication. The prepublication guard validates authored targets
+   without requesting future URLs. The release workflow runs the HTTP check after
+   confirming the published Hex package and before creating the GitHub release.
    Inspect actual registry checksums and optional metadata. Source-link targets
    are checked after the tag push in step 8.
 6. Install from Hex in a clean consumer, without a path or Git override. Use an
@@ -137,7 +151,7 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    closure, and filesystem paths are rejected. The timestamp is removed,
    ordering is normalized, and a UUIDv5 serial binds the package identity and bytes.
    The artifact also contains `release-notes.md` for the publishing job; that file
-   is used as release notes and is not uploaded as a release asset.
+   is used verbatim as release notes and is not uploaded as a release asset.
 8. Only after the dry run passes, push the annotated release tag from that commit:
 
    ```sh
@@ -157,6 +171,54 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
 
    After release, advance `@version` to the next `-dev` version and update
    documented install requirements, the corpus release identity, and its digest pin.
+
+## CHANGELOG authoring format
+
+Release sections start in column one with `## <version> - YYYY-MM-DD` or
+`## Unreleased <version>`, preceded by a blank line. Versions are semantic versions
+and dates must exist. Exactly one dated, nonempty section must match the package
+version. Subheadings alone are empty. Section extraction normalizes CRLF to LF,
+removes surrounding blank lines, and adds one terminal newline; all other section
+bytes are published unchanged.
+
+Fences start in column one with at least three backticks or tildes. A closing fence
+uses the same character, at least as many times, with no info string. Heading-like
+lines inside fences do not create sections. Unclosed fences, backticks in fence
+info, indented or container-prefixed fences/release headings, missing blank lines
+before release headings, and malformed release headings are errors. HTML comments
+outside fences must fit on one line. This is a CHANGELOG format, not a general
+Markdown parser.
+
+Use canonical single-line inline links and images, such as
+`[guide](https://hexdocs.pm/request_seal/1.0.0/web-bot-auth.html)` or
+`![asset](https://example.com/asset.png)`.
+Self-contained reference definitions put the label and literal absolute URL on
+the same line. Destinations may be angle-enclosed; optional quoted titles remain
+on that line. HTTP(S) and `mailto` URLs are supported. Percent-encode destination
+spaces and parentheses; Markdown escapes and HTML entities in destinations are
+unsupported. Raw HTML tags, declarations, and processing instructions are
+unsupported, even when their attributes contain absolute URLs.
+
+The conservative lexical gate examines potential inline/image destinations,
+reference definitions, and every `href`/`src` attribute everywhere, including
+containers, code examples, and comments. Relative, empty, fragment-only,
+query-only, protocol-relative, unclassifiable, and ambiguous destinations fail.
+There are no code-block exemptions: rewrite an example to satisfy this contract.
+First-party documentation and repository-file URLs must use the section's own
+version; unversioned URLs, `main`, stale versions, and dot segments fail. Explicit
+public advisory permalinks and external standards retain their authored URLs.
+Errors name the source line and destination, for example
+`CHANGELOG.md:7: destination 'docs/guide.md': requires an absolute HTTP(S) or mailto URL`
+or `first-party destination must use version 2.0.0`. Raw HTML and section-format
+errors also name the line where available. These are authoring rules, with
+intentional over-rejection and no CommonMark conformance claim. Release tooling
+never selects destinations or changes Markdown syntax.
+
+The offline documentation gate checks first-party absolute guide URLs against
+the explicit ExDoc inventory and its page names. Historical guides and GitHub
+`blob`/`raw` targets use the referenced local tag/branch tree, without network
+requests; fetch the repository's tags before running the gate. Current-version
+links also retain generated-page and fragment checks during documentation builds.
 
 ## Dependency updates
 

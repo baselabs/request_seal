@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 import subprocess
 import sys
-from release import development_snapshot, package_version, release_notes, source_url
+from release import development_snapshot, package_version, release_notes
 from processes import command, install_signal_handlers, run, temporary_directory
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -138,7 +138,7 @@ def corpus_release_errors(sources):
         return [f"corpus/index.json: elixir_release must be v{version} to match mix.exs"]
     if not development_snapshot(version):
         try:
-            release_notes(sources.get("CHANGELOG.md", ""), version, source_url(sources["mix.exs"]))
+            release_notes(sources.get("CHANGELOG.md", ""), version)
         except ValueError as error:
             return [str(error)]
     return []
@@ -254,9 +254,15 @@ def doc_link_errors(output):
         collector.feed(page.read_text())
         pages[page.resolve()] = collector
     errors = []
+    current_hexdocs = "/request_seal/" + package_version((ROOT / "mix.exs").read_text()) + "/"
     for page, collector in pages.items():
         for href in collector.hrefs:
             parts = urlsplit(href)
+            if (parts.scheme == "https" and parts.netloc == "hexdocs.pm"
+                    and parts.path.startswith(current_hexdocs)):
+                # Absolute authored links to this version must retain the same
+                # generated-page and fragment checks as local ExDoc links.
+                parts = parts._replace(scheme="", netloc="", path=parts.path.split("/", 3)[3])
             if parts.scheme or parts.netloc or href.startswith("//"):
                 continue
             target = (page.parent / unquote(parts.path)).resolve() if parts.path else page
