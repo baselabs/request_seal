@@ -31,7 +31,10 @@ defmodule RequestSeal.PublicDocumentationTest do
     assert "docs/guides/verifying-releases.md" in extras
     refute "docs/operations/releases.md" in extras
     refute "docs/operations/releases.md" in files
-    assert Regex.match?(project[:docs][:groups_for_extras][:Guides], "docs/guides/verifying-releases.md")
+    assert Regex.match?(
+             project[:docs][:groups_for_extras][:Guides],
+             "docs/guides/verifying-releases.md"
+           )
   end
 
   test "publishing guard accepts dated nonempty release and pre-release notes" do
@@ -46,7 +49,8 @@ defmodule RequestSeal.PublicDocumentationTest do
     body = Enum.reject(body, &match?({:use, _, [{:__aliases__, _, [:Mix, :Project]}]}, &1))
 
     for version <- ["2.0.0", "2.0.0-rc.1", "0.6.0"] do
-      module = Module.concat(__MODULE__, "Publish#{String.replace(version, ~r/[^a-zA-Z0-9]/, "_")}")
+      module =
+        Module.concat(__MODULE__, "Publish#{String.replace(version, ~r/[^a-zA-Z0-9]/, "_")}")
 
       changed =
         Macro.prewalk({:__block__, [], body}, fn
@@ -56,8 +60,15 @@ defmodule RequestSeal.PublicDocumentationTest do
 
       Module.create(module, changed, Macro.Env.location(__ENV__))
       [guard, "hex.publish"] = module.project()[:aliases][:"hex.publish"]
-      File.write!(Path.join(directory, "mix.exs"), String.replace(source, ~r/@version "[^"]+"/, "@version \"#{version}\""))
-      File.write!(Path.join(directory, "CHANGELOG.md"), "## #{version} - 2026-11-17\n\n- Released behavior.\n")
+      File.write!(
+        Path.join(directory, "mix.exs"),
+        String.replace(source, ~r/@version "[^"]+"/, "@version \"#{version}\"")
+      )
+
+      File.write!(
+        Path.join(directory, "CHANGELOG.md"),
+        "## #{version} - 2026-11-17\n\n- Released behavior.\n"
+      )
 
       try do
         # The guard invokes the real Python validator against this isolated release tree.
