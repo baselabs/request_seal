@@ -69,8 +69,8 @@ URL_ATTRIBUTE = re.compile(r"\b(?:href|src)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\
 RAW_HTML = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)|<![A-Za-z\[]|<\?")
 AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\n]*)>")
 BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'`]*", re.I)
-REFERENCE_USE = re.compile(r"\[([^\[\]\n]+)\](?:[ \t]*(?:\n[ \t]*)?\[([^\[\]\n]*)\])?")
-FENCE = re.compile(r"([ \t>+*.0-9()-]*)(`{3,}|~{3,})(.*)$")
+REFERENCE_USE = re.compile(r"\[([^\[\]\n]*)\](?:[ \t]*(?:\n[ \t]*)?\[([^\[\]\n]*)\])?")
+FENCE = re.compile(r"([ \t>+*.0-9()-]*(?:\[[ xX]\][ \t]*)?)(`{3,}|~{3,})(.*)$")
 DESTINATION_DEADLINE = 180
 
 

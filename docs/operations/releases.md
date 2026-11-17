@@ -190,7 +190,7 @@ bytes are published unchanged.
 Fences start in column one with at least three backticks or tildes. A closing fence
 uses the same character, at least as many times, with no info string, also in
 column one. Every fence-like line must be an unambiguous opener or closer;
-indented fences (including one to three spaces) and list or other container
+indented fences (including one to three spaces) and list (including task-item) or other container
 fences fail even inside an open fence, naming the line. Heading-like
 lines inside fences do not create sections. Unclosed fences, backticks in fence
 info, indented or container-prefixed fences/release headings, missing blank lines

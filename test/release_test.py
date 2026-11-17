@@ -448,7 +448,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
                     self.assertEqual(body + "\n", release.release_notes("## 2.3.4 - 2026-11-17\n\n" + body, "2.3.4"))
 
     def test_indented_closing_fence_cannot_swallow_the_next_release(self):
-        for closing in ("   ```", " ```", "  ```", "- ```", "  1. ```", "> ```"):
+        for closing in ("   ```", " ```", "  ```", "- ```", "  1. ```", "> ```",
+                        "- [ ] ```", "- [x] ```", "  1. [X] ```"):
             source = ("## 2.3.4 - 2026-11-17\n\n- Released.\n\n```text\ncode\n" + closing
                       + "\n\n## 2.3.3 - 2026-11-16\n\n- Old.\n")
             with self.subTest(closing=closing), self.assertRaisesRegex(ValueError, "CHANGELOG.md:7:.*fence"):
@@ -494,7 +495,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
                     release.release_notes(source, "2.3.4")
                 self.assertEqual(body + "\n" + definition, release.release_notes(
                     "## 2.3.4 - 2026-11-17\n\n" + body + "\n" + definition, "2.3.4"))
-        for use in ("[Guide][missing]", "[missing][]", "[Guide]\n[missing]"):
+        for use in ("[Guide][missing]", "[missing][]", "[Guide]\n[missing]",
+                    "[][missing]", "![][missing]", "[][]", "![][]"):
             with self.assertRaisesRegex(ValueError, "CHANGELOG.md:3: reference"):
                 release.release_notes("## 2.3.4 - 2026-11-17\n\n" + use, "2.3.4")
         self.assertEqual("- Literal [brackets].\n", release.release_notes(
