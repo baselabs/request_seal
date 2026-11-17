@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import check
 import processes
 import sbom
-from test.processes_test import runtime_identity
+from processes_test import runtime_identity
 
 
 class ProcessIntegrationTest(unittest.TestCase):
