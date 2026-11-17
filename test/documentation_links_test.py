@@ -102,7 +102,7 @@ end
                              docs.first_party_link_errors(ROOT, "README.md", base + "RequestSeal.html#no-such-requestseal-id",
                                                           current, set(), references))
             self.assertEqual([], docs.first_party_link_errors(ROOT, "README.md", base, current, set(), references))
-            for link in (f"[Missing]({base}not-a-real-page.html)", f"[missing]: {base}not-a-real-page.html",
+            for link in (f"[Missing]({base}not-a-real-page.html)", f"[missing]\n\n[missing]: {base}not-a-real-page.html",
                          f'<a href="{base}not-a-real-page.html">missing</a>', f'<img src="{base}not-a-real-page.html">',
                          f"<{base}not-a-real-page.html>", f"**{base}not-a-real-page.html**"):
                 with self.subTest(version=version, link=link):
@@ -223,7 +223,7 @@ end
 
     def test_shared_extractor_and_classifier_cover_both_callers(self):
         target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
-        for source in (f"[{target}]({target})", f"[Guide]({target})—details", f"[guide]: {target}",
+        for source in (f"[{target}]({target})", f"[Guide]({target})—details", f"[guide]\n\n[guide]: {target}",
                        f'<a href="{target}">guide</a>', f'<img src="{target}">', f"<{target}>", f"~~{target}~~"):
             self.assertEqual([target], [value for _, value, _ in docs.extract_destinations(source)])
         for target, kind in ((target, "hexdocs"), ("https://github.com/baselabs/request_seal/issues/123", "github_live"),

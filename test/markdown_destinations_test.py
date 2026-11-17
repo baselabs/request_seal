@@ -8,9 +8,48 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import release
 import check_docs as docs
+import record_markdown
 
 
 class MarkdownDestinationsTest(unittest.TestCase):
+    def test_combinatorial_section_covers_every_ordered_pair_and_arrangement(self):
+        corpus = json.loads((ROOT / "test/fixtures/markdown_destinations.json").read_text())
+        samples = [sample for sample in corpus["samples"] if "pair" in sample]
+        generated = list(record_markdown.combinatorial_samples())
+        self.assertEqual(364, len(samples))
+        self.assertEqual({sample["name"]: sample["markdown"] for sample in generated},
+                         {sample["name"]: sample["markdown"] for sample in samples})
+        constructs = {name for sample in samples for name in sample["pair"]}
+        self.assertEqual(14, len(constructs))
+        self.assertEqual({(left, right, arrangement) for left in constructs for right in constructs if left != right
+                          for arrangement in ("adjacent", "overlap")},
+                         {(sample["pair"][0], sample["pair"][1], sample["arrangement"]) for sample in samples})
+        self.assertEqual({"paragraph", "list", "quote", "table", "footnote"},
+                         {sample["container"] for sample in samples})
+        # This prevents an unrelated shared rejection from making the whole
+        # pair matrix vacuous. Both arrangements must retain accepted cases.
+        for arrangement in ("adjacent", "overlap"):
+            accepted = [sample for sample in samples if sample["arrangement"] == arrangement
+                        and "destinations" in sample["expected"]]
+            self.assertGreater(len(accepted), 20)
+            self.assertTrue(all("github_hrefs" in sample for sample in accepted))
+
+    def test_recording_resumes_only_missing_renderings(self):
+        corpus = json.loads((ROOT / "test/fixtures/markdown_destinations.json").read_text())
+        self.assertEqual([], list(record_markdown.pending_recordings(corpus["samples"])))
+        sample = next(sample for sample in corpus["samples"] if sample["name"] == "label-inline-outside")
+        # Simulate an interrupted save using the actual committed reference
+        # data, without replacing the renderer or any command/API response.
+        outside_missing = {key: value for key, value in sample.items() if key != "github_document_hrefs"}
+        queued = list(record_markdown.pending_recordings([outside_missing]))
+        self.assertEqual(1, len(queued))
+        self.assertEqual("github_document_hrefs", queued[0][1])
+        self.assertIn(sample["outside_definitions"], queued[0][2])
+        section_missing = {key: value for key, value in sample.items() if key != "github_hrefs"}
+        queued = list(record_markdown.pending_recordings([section_missing]))
+        self.assertEqual(1, len(queued))
+        self.assertEqual(("github_hrefs", sample["markdown"]), queued[0][1:])
+
     def test_recorded_github_renderer_corpus(self):
         corpus = json.loads((ROOT / "test/fixtures/markdown_destinations.json").read_text())
         self.assertEqual("synthetic", corpus["source"])

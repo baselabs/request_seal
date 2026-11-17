@@ -1,5 +1,6 @@
 """Real HTTP forwarding and CONNECT tunnels for publication destination checks."""
 from contextlib import contextmanager
+import base64
 import os
 from pathlib import Path
 import selectors
@@ -10,7 +11,7 @@ import sys
 import threading
 import time
 import unittest
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -19,7 +20,7 @@ from release_test import local_http
 
 
 @contextmanager
-def local_proxy():
+def local_proxy(*, credentials=None, connect_delay=0):
     requests = []
 
     class Handler(socketserver.StreamRequestHandler):
@@ -31,10 +32,21 @@ def local_proxy():
                     break
                 headers.append(line)
             requests.append((method, target))
+            if credentials is not None:
+                authorization = b"Basic " + base64.b64encode(":".join(credentials).encode())
+                supplied = next((line.split(b":", 1)[1].strip() for line in headers
+                                 if line.lower().startswith(b"proxy-authorization:")), None)
+                if supplied != authorization:
+                    self.wfile.write(b'HTTP/1.1 407 Proxy Authentication Required\r\n'
+                                     b'Proxy-Authenticate: Basic realm="local-test"\r\n'
+                                     b'Content-Length: 0\r\nConnection: close\r\n\r\n')
+                    self.wfile.flush()
+                    return
             destination = urlsplit("//" + target if method == "CONNECT" else target)
             try:
                 with socket.create_connection((destination.hostname, destination.port or 80), timeout=5) as upstream:
                     if method == "CONNECT":
+                        time.sleep(connect_delay)
                         self.wfile.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
                         self.wfile.flush()
                     else:
@@ -88,6 +100,35 @@ except ValueError as error:
 
 
 class HttpProxyTest(unittest.TestCase):
+    def assert_credentials_private(self, result, credentials):
+        encoded = base64.b64encode(":".join(credentials).encode()).decode()
+        values = [*credentials, *(quote(value, safe="") for value in credentials), encoded]
+        for output in (result.stdout, result.stderr):
+            self.assertFalse(any(value in output for value in values), "proxy credentials appeared in output")
+
+    def test_proxy_requires_both_credentials_and_never_prints_them(self):
+        credentials = ("synthetic-user@proxy", "synthetic-password:/proxy")
+        user, password = (quote(value, safe="") for value in credentials)
+        with local_http({"/ok": [200], "/denied": [403]}) as (base, origin), local_proxy(credentials=credentials) as (proxy, forwarded):
+            endpoint = proxy.removeprefix("http://")
+            authenticated = f"http://{user}:{password}@{endpoint}"
+            result = request([base + "/ok"], proxy=authenticated)
+            self.assert_credentials_private(result, credentials)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            result = request([base + "/denied"], proxy=authenticated)
+            self.assert_credentials_private(result, credentials)
+            self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+            self.assertIn("HTTP 403", result.stdout)
+            for unauthenticated in (proxy, f"http://{user}@{endpoint}", f"http://{user}:@{endpoint}",
+                                    f"http://:{password}@{endpoint}"):
+                with self.subTest(credentials_present=unauthenticated != proxy):
+                    result = request([base + "/ok"], proxy=unauthenticated)
+                    self.assert_credentials_private(result, credentials)
+                    self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+                    self.assertIn("HTTP 407", result.stdout)
+            self.assertEqual(["/ok", "/denied"], origin)
+            self.assertEqual(6, len(forwarded))
+
     def test_http_proxy_forwards_requests_and_no_proxy_bypasses_it(self):
         with local_http({"/ok?x=1": [200]}) as (base, origin), local_proxy() as (proxy, forwarded):
             target = base + "/ok?x=1"
@@ -108,14 +149,25 @@ class HttpProxyTest(unittest.TestCase):
                  "-keyout", key, "-out", certificate], capture_output=True, timeout=30)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.load_cert_chain(certificate, key)
-            with local_http({"/ok": [200]}, tls_context=context) as (base, origin), local_proxy() as (proxy, forwarded):
-                result = request([base + "/ok"], proxy=proxy, certificate=certificate)
-                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-                self.assertEqual([("CONNECT", urlsplit(base).netloc)], forwarded)
+            credentials = ("synthetic-tunnel-user", "synthetic-tunnel-password")
+            with local_http({"/ok": [200]}, tls_context=context) as (base, origin), local_proxy(credentials=credentials) as (proxy, forwarded):
+                endpoint = proxy.removeprefix("http://")
+                for scheme in ("http", "https"):
+                    authenticated = scheme + "://" + ":".join(credentials) + "@" + endpoint
+                    result = request([base + "/ok"], proxy=authenticated, certificate=certificate)
+                    self.assert_credentials_private(result, credentials)
+                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertEqual([("CONNECT", urlsplit(base).netloc)] * 2, forwarded)
+                result = request([base + "/ok"], proxy=proxy, certificate=certificate, deadline=0.3)
+                self.assert_credentials_private(result, credentials)
+                self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+                self.assertIn("407", result.stdout)
+                unauthenticated_count = len(forwarded)
                 result = request([base + "/ok"], proxy=proxy, bypass="127.0.0.1", certificate=certificate)
+                self.assert_credentials_private(result, credentials)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-                self.assertEqual([("CONNECT", urlsplit(base).netloc)], forwarded)
-                self.assertEqual(["/ok", "/ok"], origin)
+                self.assertEqual(unauthenticated_count, len(forwarded))
+                self.assertEqual(["/ok", "/ok", "/ok"], origin)
 
     def test_proxy_preserves_retries_retry_after_and_redirect_rejection(self):
         observed = []

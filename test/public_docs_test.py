@@ -134,7 +134,7 @@ class PublicDocsTest(unittest.TestCase):
                 self.assertTrue(any(reason in error for error in errors(target)), errors(target))
         # Canonical forms reach the missing-page check through every syntax.
         target = f"https://request-seal.hexdocs.pm/{version}/missing.html"
-        for link in (f"![asset]({target})", f"[guide]: {target}", f'<a href="{target}">guide</a>', f'<img src="{target}">'):
+        for link in (f"![asset]({target})", f"[guide]\n\n[guide]: {target}", f'<a href="{target}">guide</a>', f'<img src="{target}">'):
             found = docs.content_errors(ROOT, "README.md", link, self.paths, version, configuration["documents"], references)
             self.assertEqual(1, len(found), found)
             self.assertIn("HexDocs page is missing", found[0])
@@ -269,7 +269,7 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
         self.assertTrue(any("private" in e for e in self.errors("\n[notes](%2eprivate/record.md)\n")))
 
     def test_reference_and_html_targets(self):
-        for mutation in ('\n[notes]: .private/record.md\n', '\n<a href=".private/record.md">notes</a>\n', '\n<a href=.private/record.md>notes</a>\n', '\n<img src=.private/image.png>\n'):
+        for mutation in ('\n[notes]\n\n[notes]: .private/record.md\n', '\n<a href=".private/record.md">notes</a>\n', '\n<a href=.private/record.md>notes</a>\n', '\n<img src=.private/image.png>\n'):
             with self.subTest(mutation=mutation):
                 self.assertTrue(any("private" in e for e in self.errors(mutation)))
 

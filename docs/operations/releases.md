@@ -118,10 +118,15 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    that deadline. The requests honor `http_proxy`, `https_proxy`, and `no_proxy`
    through the standard library's proxy discovery and bypass rules. An HTTP
    proxy forwards HTTP requests and uses CONNECT tunnels for HTTPS destinations;
-   proxy credentials stay in request headers. TLS connections to a proxy followed
-   by another TLS tunnel are unsupported and fail explicitly.
+   proxy credentials stay in request headers and require both a user and password.
+   As in Python's standard opener, HTTPS destinations use plaintext CONNECT then
+   TLS to the destination, even with an `https://` proxy URL. An omitted proxy
+   port uses the selected connection class's default (443 for HTTPS destinations).
    Other 4xx statuses are final. A permanent failure stops retries
    after collecting that round's results, even if another URL still returns 404.
+   A socket timeout at or after the scheduling deadline reports destination
+   deadline expiry, including connection setup, CONNECT, response headers and
+   body reads. An idle timeout before the deadline remains a transport timeout.
    The socket timeout is set to `min(15, remaining_seconds)` before each request
    and body chunk. That timeout applies per socket operation.
    Python's standard library does not bound DNS resolution. After resolution,
@@ -332,10 +337,21 @@ same released section; unresolved uses and duplicate definitions fail. A one-lin
 footnote definition may interrupt a paragraph or follow a table directly. Its
 body opens a paragraph: a following reference-shaped line is continuation text,
 not a link definition. Multiline footnote bodies, continuations, and nested
-blocks in footnote definitions are rejected. Code spans pair equal-length
+blocks in footnote definitions are rejected. Unused link and footnote definitions
+are rejected because they do not produce rendered destinations. Labels spanning
+lines are rejected as multiline reference labels. Code spans pair equal-length
 backtick runs within a paragraph, list-item paragraph, or
 heading. A backslash escapes only the first backtick in a run; remaining backticks
-can open a span. Unmatched runs remain literal text.
+can open a span. Unmatched runs remain literal text. Code spans, scheme and email
+autolinks, and inline HTML take precedence by starting position. Backtick fences
+with backticks in their info string are rejected in every Markdown scan.
+Only active, unescaped opening brackets can form links. A successful link
+deactivates earlier link openers, and brackets never cross table cells. Literal
+closers return their remaining text to the bare-URL scan. Unclosed brackets
+suppress extended autolinks until the inline context ends. A `www.` autolink
+requires a preceding space, `*`, `_`, `~`, `(`, or the start of its inline context.
+An escaped `<` is literal text. Autolink destinations requiring href encoding
+are rejected by construct name rather than shortened or rewritten.
 Top-level tables parse each cell and row separately, with equally many header
 and delimiter cells and at most three spaces before the delimiter. Four spaces
 or a tab do not form a table delimiter. Excess body cells, indented code directly
@@ -351,8 +367,14 @@ intentional over-rejection and no CommonMark conformance claim. Release tooling
 never selects destinations or changes Markdown syntax.
 
 The synthetic Markdown reference cases record GitHub's rendered destinations.
-To refresh those public reference results, run `python3 -B scripts/record_markdown.py`
-with an authenticated GitHub CLI. Only synthetic samples are submitted.
+To record missing public reference results, run
+`python3 -B scripts/record_markdown.py --combinatorial` with an authenticated GitHub
+CLI. Ordered construct pairs cover adjacency and overlap, rotating through
+paragraphs, lists, block quotes, table cells and footnote definitions. Escape
+pairs include every delimiter. Only synthetic samples are submitted. Recording
+saves each response, pauses between requests, and checks the shared core rate
+limit before starting and between batches. It stops before fewer than 1,500
+requests would remain. Rerun the command to resume; recorded samples are skipped.
 
 The documentation gate builds current-version docs once per check with the
 project's actual ExDoc into scratch output. `scripts/check.py` owns that build

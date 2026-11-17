@@ -17,7 +17,7 @@ import ssl
 import subprocess
 import time
 import uuid
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 from urllib.request import getproxies, proxy_bypass
 from processes import install_signal_handlers, run
 
@@ -71,7 +71,17 @@ REFERENCE_START = re.compile(r"\[([^\]\n]*)\][ \t]*:")
 REFERENCE = re.compile(r"[ \t]+(" + DESTINATION + r")(?:(?:[ \t]+)" + TITLE + r")?[ \t]*(?=\n|$)")
 URL_ATTRIBUTE = re.compile(r"\b(?:href|src)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s<>]*))", re.I)
 RAW_HTML = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)|<![A-Za-z\[]|<\?")
-AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\n]*)>")
+AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\x00-\x20]*)>")
+EMAIL_AUTOLINK = re.compile(r"<([A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+                            r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+                            r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>")
+# CommonMark inline HTML (inlines.c: handle_pointy_brace). Quoted attribute
+# values may contain backticks and angle brackets; they are one inline token.
+HTML_INLINE = re.compile(
+    r"</[A-Za-z][A-Za-z0-9-]*\s*>|"
+    r"<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*"
+    r"(?:\s*=\s*(?:[^\s\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*\s*/?>|"
+    r"<!--(?:[^-]|-(?!->))*-->|<\?.*?\?>|<![A-Z]+\s+[^>]*>|<!\[CDATA\[.*?\]\]>", re.S)
 BARE_URL = re.compile(r"(?:https?://|www\.)[^\x09-\x0d\x20<]*", re.I)
 # Outside Markdown, quotes delimit source/JSON strings rather than GFM autolinks.
 TEXT_URL = re.compile(r"(?:https?://|www\.)[^\x09-\x0d\x20<>\"'`]*", re.I)
@@ -143,6 +153,11 @@ def markdown_ambiguities(source):
         text = block.rstrip("\r\n")
         content, prefixed = container_content(text)
         raw_content, raw_prefix = container_content(original.rstrip("\r\n"))
+        if re.match(r" {0,3}\[(?:\\.|[^\]\\])*\Z", text):
+            yield offset, "ambiguous multiline reference label"
+        marker = re.match(r" {0,3}(`{3,})(.*)$", text)
+        if marker and "`" in marker[2]:
+            yield offset, "ambiguous backtick fence info string"
         definition = REFERENCE_START.match(content.lstrip())
         is_footnote = definition is not None and definition[1].startswith("^")
         # Container fences cannot be interpreted by the top-level code masker.
@@ -284,7 +299,7 @@ def masked_code(source, *, spans=True):
             hide(offset, offset + len(line))
             if re.fullmatch(r" {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*", text):
                 fence = None
-        elif marker:
+        elif marker and not (marker[1].startswith("`") and "`" in marker[2]):
             fence = marker[1]
             hide(offset, offset + len(line))
         elif (indented or blank) and text.strip() and indentation >= base + 4:
@@ -300,29 +315,54 @@ def masked_code(source, *, spans=True):
     if not spans:
         return visible
     for beginning, finish in inline_blocks(visible):
-        runs = list(re.finditer(r"`+", visible[beginning:finish]))
-        urls = list(BARE_URL.finditer(visible, beginning, finish))
-        cursor = 0
-        while cursor < len(runs):
-            opening = runs[cursor]
-            cursor += 1
-            absolute = beginning + opening.start()
-            # autolink.c: match/url_match runs during inline parsing, before
-            # handle_backticks can consume a later backtick in the URL. The
-            # postprocess_text pass handles email, not these HTTP autolinks.
-            if any(url.start() < absolute < url.end() and chars[url.start()] != " " for url in urls):
+        cursor = beginning
+        brackets = []
+        while cursor < finish:
+            # inlines.c: parse_inline/handle_pointy_brace/handle_backticks
+            # consume the first construct by position. autolink.c: url_match
+            # also consumes a bare URL before a later backtick can open code.
+            token = re.search(r"[<`\[\]]|https?://|www\.", visible[cursor:finish], re.I)
+            if token is None:
+                break
+            absolute = cursor + token.start()
+            if visible[absolute] in "[]" and not escaped(visible, absolute):
+                if visible[absolute] == "[":
+                    brackets.append(absolute)
+                elif brackets:
+                    brackets.pop()
+                    link = INLINE.match(visible, absolute, finish)
+                    if link:
+                        cursor = link.end()
+                        continue
+            if visible[absolute] == "<" and not escaped(visible, absolute):
+                angle = (AUTOLINK.match(visible, absolute, finish) or
+                         EMAIL_AUTOLINK.match(visible, absolute, finish) or
+                         HTML_INLINE.match(visible, absolute, finish))
+                if angle:
+                    cursor = angle.end()
+                    continue
+            url = BARE_URL.match(visible, absolute, finish)
+            # autolink.c: match returns NULL while in_bracket is true. This
+            # also changes which backticks are available to open a code span.
+            if url and not brackets:
+                cursor = url.end()
                 continue
+            if visible[absolute] != "`":
+                cursor = absolute + 1
+                continue
+            opening = re.match(r"`+", visible[absolute:finish])
             # cmark-gfm inlines.c: handle_backslash consumes one backtick;
             # handle_backticks can then open with the rest of the run.
-            opening_start = opening.start() + int(escaped(visible, beginning + opening.start()))
-            length = opening.end() - opening_start
+            opening_start = absolute + int(escaped(visible, absolute))
+            length = absolute + opening.end() - opening_start
+            cursor = absolute + opening.end()
             if not length:
                 continue
-            closing = next((index for index in range(cursor, len(runs))
-                            if len(runs[index][0]) == length), None)
+            closing = next((run for run in re.finditer(r"`+", visible[cursor:finish])
+                            if len(run[0]) == length), None)
             if closing is not None:
-                hide(beginning + opening_start, beginning + runs[closing].end())
-                cursor = closing + 1
+                cursor += closing.end()
+                hide(opening_start, cursor)
     return "".join(chars)
 
 
@@ -351,37 +391,25 @@ def extract_destinations(source, strict=False, markdown=True):
     visible = masked_code(source) if markdown else source
     contexts = list(inline_blocks(visible)) if markdown else [(0, len(visible))]
     entries, occupied = [], []
+    bracket_ranges = []
+
+    def reject(offset, reason):
+        if strict:
+            raise ValueError(f"line {1 + source.count(chr(10), 0, offset)}: {reason}")
+        entries.append((offset, reason, True))
 
     if markdown:
         for offset, reason in markdown_ambiguities(source):
-            if strict:
-                raise ValueError(f"line {1 + source.count(chr(10), 0, offset)}: {reason}")
-            entries.append((offset, reason, True))
+            reject(offset, reason)
 
     def add(start, end, target, ambiguous=False):
-        entries.append((start, target.removeprefix("<").removesuffix(">"), ambiguous))
+        entries.append((start, target[1:-1] if target.startswith("<") and target.endswith(">") else target, ambiguous))
         occupied.append((start, end))
 
     if markdown:
-        openings = {}
-        for beginning, finish in contexts:
-            stack = []
-            for bracket in re.finditer(r"[\[\]]", visible[beginning:finish]):
-                offset = beginning + bracket.start()
-                if escaped(visible, offset):
-                    continue
-                if bracket[0] == "[":
-                    stack.append(offset)
-                elif stack:
-                    openings[offset] = stack.pop()
-        for start in INLINE_START.finditer(visible):
-            if escaped(visible, start.start()):
-                continue
-            match = INLINE.match(visible, start.start())
-            candidate = visible[start.end():].split("\n", 1)[0].split(")", 1)[0]
-            add(openings.get(start.start(), start.start()), match.end() if match else start.end(),
-                match[1] if match else candidate, match is None)
         previous_definition, previous_boundary, paragraph = False, True, False
+        definitions, used_definitions = {}, set()
+        footnote_definitions, used_footnotes = {}, set()
         offset = 0
         # Code spans still count as paragraph content for a setext heading;
         # fenced/indented code does not. Keep that block view before masking spans.
@@ -402,10 +430,13 @@ def extract_destinations(source, strict=False, markdown=True):
                     # still pass through the ordinary inline/autolink scan below.
                     # The body opens a paragraph, not a link-definition boundary.
                     previous_definition = False
+                    footnote_definitions[reference_label(definition[1])] = offset + definition.start()
                 else:
                     add(offset + definition.start(), offset + len(line),
                         match[1] if match else line[definition.end():].strip(), not valid or match is None)
                     previous_definition = valid and match is not None
+                    if previous_definition:
+                        definitions[reference_label(definition[1])] = offset + definition.start()
             else:
                 previous_definition = False
             # cmark-gfm blocks.c: open_new_blocks requires an open paragraph
@@ -417,15 +448,104 @@ def extract_destinations(source, strict=False, markdown=True):
                                  re.fullmatch(r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})", block_line.rstrip("\r\n")) is not None)
             paragraph = bool(block_line.strip()) and not previous_boundary and not previous_definition
             offset += len(line)
+        for beginning, finish in contexts:
+            # inlines.c: handle_close_bracket's delimiter stack. A successful
+            # link deactivates earlier link openers; images remain eligible.
+            stack = []
+            cursor = beginning
+            while cursor < finish:
+                token = re.search(r"[\[\]<]", visible[cursor:finish])
+                if token is None:
+                    break
+                offset = cursor + token.start()
+                cursor = offset + 1
+                if escaped(visible, offset) or any(a <= offset < b for a, b in occupied):
+                    continue
+                if token[0] == "<":
+                    angle = (AUTOLINK.match(visible, offset, finish) or
+                             EMAIL_AUTOLINK.match(visible, offset, finish) or
+                             HTML_INLINE.match(visible, offset, finish))
+                    if angle:
+                        cursor = angle.end()
+                    continue
+                if token[0] == "[":
+                    image = offset > beginning and visible[offset - 1] == "!" and not escaped(visible, offset - 1)
+                    stack.append([offset, True, image])
+                    continue
+                if not stack:
+                    continue
+                opening, active, image = stack.pop()
+                bracket_ranges.append((opening, cursor))
+                if not active:
+                    continue
+                name = reference_label(visible[opening + 1:offset])
+                if name in footnote_definitions and not visible[cursor:finish].startswith(":"):
+                    used_footnotes.add(name)
+                start = INLINE_START.match(visible, offset, finish)
+                match = INLINE.match(visible, offset, finish) if start else None
+                if start:
+                    candidate = visible[start.end():finish].split("\n", 1)[0].split(")", 1)[0]
+                    add(opening, match.end() if match else start.end(), match[1] if match else candidate, match is None)
+                    cursor = match.end() if match else start.end()
+                else:
+                    label = re.match(r"\[([^\[\]\n]*)\]", visible[cursor:finish])
+                    name = label[1] if label and label[1] else visible[opening + 1:offset]
+                    if reference_label(name) not in definitions:
+                        continue
+                    used_definitions.add(reference_label(name))
+                    if label:
+                        cursor += label.end()
+                    occupied.append((opening, cursor))
+                if not image:
+                    for opener in stack:
+                        if not opener[2]:
+                            opener[1] = False
+            # Unclosed brackets still suppress the extended-autolink extension
+            # through the remainder of this inline context (autolink.c: match).
+            bracket_ranges.extend((opening, finish) for opening, _, _ in stack)
+        for label in sorted(definitions.keys() - used_definitions, key=definitions.get):
+            for index, (offset, target, ambiguous) in enumerate(entries):
+                if offset == definitions[label] and not ambiguous:
+                    entries[index] = (offset, target, f"ambiguous unused link reference definition {label!r}")
+        for label in sorted(footnote_definitions.keys() - used_footnotes, key=footnote_definitions.get):
+            reject(footnote_definitions[label], f"ambiguous unused footnote definition {label!r}")
     for match in URL_ATTRIBUTE.finditer(visible):
         add(match.start(), match.end(), unescape(next(value for value in match.groups() if value is not None)))
-    for match in (match for beginning, finish in contexts for match in AUTOLINK.finditer(visible, beginning, finish)):
-        if not any(start <= match.start() < end for start, end in occupied):
-            add(match.start(), match.end(), match[1])
     for match in (match for beginning, finish in contexts
-                  for match in (BARE_URL if markdown else TEXT_URL).finditer(visible, beginning, finish)):
+                  for pattern in (AUTOLINK, EMAIL_AUTOLINK) for match in pattern.finditer(visible, beginning, finish)):
+        if markdown and escaped(visible, match.start()):
+            continue
         if not any(start <= match.start() < end for start, end in occupied):
-            add(match.start(), match.end(), bare_destination(match[0]))
+            target = ("mailto:" if "@" in match[1] and ":" not in match[1] else "") + match[1]
+            # cmark-gfm houdini_href_escape encodes unsafe href characters.
+            # Keep literal destinations only; the gate does not silently
+            # validate a different, encoded URL on the author's behalf.
+            if markdown and quote(unescape(target), safe="/:#?@!$&'()*+,;=-._~%") != target:
+                reject(match.start(), "ambiguous autolink destination encoding")
+            add(match.start(), match.end(), target)
+    for beginning, finish in contexts:
+        cursor = beginning
+        while match := (BARE_URL if markdown else TEXT_URL).search(visible, cursor, finish):
+            containing = max((end for start, end in occupied + bracket_ranges
+                              if start <= match.start() < end), default=None)
+            if containing is not None:
+                # Restart after the consumed link rather than after a bare-URL
+                # candidate that may extend beyond it into another destination.
+                cursor = containing
+                continue
+            # autolink.c: www_match checks the preceding source character;
+            # url_match rewinds the complete alphabetic scheme before ':'.
+            if markdown and match.start() > beginning:
+                previous = source[match.start() - 1]
+                if (match[0].lower().startswith("www.") and previous not in "*_~(\t\n\r\f\v "
+                        or not match[0].lower().startswith("www.") and previous.isascii() and previous.isalpha()):
+                    cursor = match.start() + 1
+                    continue
+            target = bare_destination(match[0])
+            reason = ("ambiguous destination encoding in an extended autolink; use a canonical literal URL"
+                      if markdown and quote(target, safe="/:#?@!$&'()*+,;=-._~%") != target else False)
+            add(match.start(), match.end(), target, reason)
+            cursor = match.end()
     return sorted(entries)
 
 
@@ -553,7 +673,7 @@ def validate_destination(target, version):
         if not re.fullmatch(r"[^@/?#]+@[^@/?#]+", url.path) or url.netloc:
             raise ValueError("requires an absolute mailto URL")
     else:
-        raise ValueError("requires an absolute HTTP(S) or mailto URL")
+        raise ValueError("unsupported URL scheme; requires an absolute HTTP(S) or mailto URL")
     return classified["kind"] if classified else None
 
 
@@ -600,8 +720,11 @@ def release_destinations(body, version, first_line=1, all_reference_labels=None)
         try:
             validate_destination(target, version)
             if ambiguous:
-                raise ValueError("ambiguous destination syntax; use a canonical single-line link or reference definition")
+                raise ValueError(ambiguous if isinstance(ambiguous, str) else
+                                 "ambiguous destination syntax; use a canonical single-line link or reference definition")
         except ValueError as error:
+            if isinstance(ambiguous, str) and str(error) != ambiguous:
+                error = ValueError(ambiguous + "; " + str(error))
             raise ValueError(f"CHANGELOG.md:{line}: destination {target!r}: {error}") from error
         targets.append(target)
     definitions, footnotes = set(), set()
@@ -683,9 +806,10 @@ def release_notes(source, version):
         else:
             marker = re.match(r"(`{3,}|~{3,})(.*)$", text)
             if marker:
-                if "`" in marker[2]:
-                    raise ValueError(f"CHANGELOG.md:{number}: ambiguous fence info")
-                fence = marker[1]
+                # Invalid backtick info is literal paragraph text, rejected by
+                # the shared markdown_ambiguities check inside the section.
+                if not (marker[1].startswith("`") and "`" in marker[2]):
+                    fence = marker[1]
             elif re.match(r"[ \t>+*.0-9()-]*(?:`{3,}|~{3,}|##(?:[ \t]|$))", text):
                 if not text.startswith("## "):
                     raise ValueError(f"CHANGELOG.md:{number}: release headings and fences must start in column one")
@@ -737,7 +861,7 @@ def retry_after_seconds(value):
             return 0
 
 
-def read_response_body(response, sock, deadline, collect=False):
+def read_response_body(response, sock, deadline, collect=False, *, socket_timeout=15):
     """Check the budget between reads, including bodies arriving a byte at a time."""
     body = bytearray()
     received = 0
@@ -752,8 +876,13 @@ def read_response_body(response, sock, deadline, collect=False):
         if remaining <= 0:
             raise TimeoutError("destination deadline exceeded while reading response body")
         if not response.isclosed():
-            sock.settimeout(min(15, remaining))
-        chunk = response.read1(65536)
+            sock.settimeout(min(socket_timeout, remaining))
+        try:
+            chunk = response.read1(65536)
+        except TimeoutError as error:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("destination deadline exceeded while reading response body") from error
+            raise
         if not chunk:
             if expected is not None and received < expected:
                 raise IncompleteRead(bytes(body), expected - received)
@@ -761,6 +890,58 @@ def read_response_body(response, sock, deadline, collect=False):
         received += len(chunk)
         if collect:
             body.extend(chunk)
+
+
+def destination_connection(authored, proxy, *, timeout):
+    """Configure a real connection with urllib-compatible proxy routing."""
+    path = authored.path or "/"
+    if authored.query:
+        path += "?" + authored.query
+    headers = {"User-Agent": "RequestSeal-release", "Connection": "close"}
+    if proxy:
+        # Match urllib.request._parse_proxy's authority handling, including
+        # scheme-less values, percent-encoded host:port, and '/' in userinfo.
+        scheme = re.match(r"([^/:]+):(.*)", proxy, re.S)
+        proxy_scheme = authored.scheme
+        authority = proxy
+        if scheme and scheme[2].startswith("/"):
+            if not scheme[2].startswith("//"):
+                raise ValueError("HTTP proxy URL requires an authority")
+            proxy_scheme = scheme[1].lower()
+            authority = scheme[2][2:]
+            slash = authority.find("/", authority.find("@") if "@" in authority else 0)
+            if slash >= 0:
+                authority = authority[:slash]
+        userinfo, separator, hostport = authority.rpartition("@")
+        if not separator:
+            hostport = authority
+        user, has_password, password = userinfo.partition(":")
+        hostport = unquote(hostport)
+        if proxy_scheme not in ("http", "https") or not hostport:
+            raise ValueError("HTTP proxy requires an http:// or https:// endpoint")
+        proxy_headers = {}
+        # CPython urllib.request._parse_proxy/ProxyHandler.proxy_open
+        # send Basic auth only for a nonempty user AND password.
+        if user and has_password and password:
+            credentials = unquote(user) + ":" + unquote(password)
+            proxy_headers["Proxy-Authorization"] = "Basic " + base64.b64encode(credentials.encode()).decode("ascii")
+        if authored.scheme == "https":
+            # Request.set_proxy preserves HTTPS for either proxy
+            # scheme. AbstractHTTPHandler.do_open constructs an
+            # HTTPSConnection: plaintext CONNECT, then TLS to the
+            # origin. HTTPConnection._get_hostport/set_tunnel use
+            # that connection class's default port when omitted.
+            connection = HTTPSConnection(hostport, timeout=timeout)
+            connection.set_tunnel(authored.hostname, authored.port, headers=proxy_headers)
+        else:
+            connection_type = HTTPSConnection if proxy_scheme == "https" else HTTPConnection
+            connection = connection_type(hostport, timeout=timeout)
+            path = authored._replace(fragment="").geturl()
+            headers.update(proxy_headers)
+    else:
+        connection_type = HTTPSConnection if authored.scheme == "https" else HTTPConnection
+        connection = connection_type(authored.hostname, authored.port, timeout=timeout)
+    return connection, path, headers
 
 
 def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
@@ -784,43 +965,25 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
             redirect = ""
             status = None
             connection = None
+            phase = "connecting or sending request"
             try:
                 authored = urlsplit(target)
-                path = authored.path or "/"
-                if authored.query:
-                    path += "?" + authored.query
-                headers = {"User-Agent": "RequestSeal-release", "Connection": "close"}
                 proxy = proxies.get(authored.scheme) if not proxy_bypass(authored.netloc) else None
-                if proxy:
-                    route = urlsplit(proxy if "://" in proxy else "http://" + proxy)
-                    if route.scheme not in ("http", "https") or not route.hostname:
-                        raise ValueError("HTTP proxy requires an http:// or https:// endpoint")
-                    proxy_headers = {}
-                    if route.username is not None:
-                        credentials = unquote(route.username) + ":" + unquote(route.password or "")
-                        proxy_headers["Proxy-Authorization"] = "Basic " + base64.b64encode(credentials.encode()).decode("ascii")
-                    if authored.scheme == "https":
-                        if route.scheme != "http":
-                            raise ValueError("HTTPS destinations require an HTTP CONNECT proxy; TLS-to-proxy tunneling is unsupported")
-                        connection = HTTPSConnection(route.hostname, route.port or 80, timeout=min(15, remaining))
-                        connection.set_tunnel(authored.hostname, authored.port or 443, headers=proxy_headers)
-                    else:
-                        connection_type = HTTPSConnection if route.scheme == "https" else HTTPConnection
-                        connection = connection_type(route.hostname, route.port or (443 if route.scheme == "https" else 80),
-                                                     timeout=min(15, remaining))
-                        path = authored._replace(fragment="").geturl()
-                        headers.update(proxy_headers)
-                else:
-                    connection_type = HTTPSConnection if authored.scheme == "https" else HTTPConnection
-                    connection = connection_type(authored.hostname, authored.port, timeout=min(15, remaining))
+                connection, path, headers = destination_connection(authored, proxy, timeout=min(15, remaining))
                 connection.request("GET", path, headers=headers)
                 # getresponse may detach a closing connection's socket. Retain
                 # the public sock before that, while its response owns the fd.
                 sock = connection.sock
+                phase = "reading response headers"
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("destination deadline exceeded while " + phase)
+                sock.settimeout(min(15, remaining))
                 with connection.getresponse() as response:
                     status = response.status
                     ids = None
                     if status == 200:
+                        phase = "reading response body"
                         data = read_response_body(response, sock, deadline, collect=bool(authored.fragment))
                         ids = page_ids(data.decode("utf-8")) if authored.fragment else None
                     else:
@@ -835,6 +998,15 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
                 failures[target] = outcome + f"response decode error: {type(error).__name__}: {error}"
                 pending.remove(target)
                 final = True
+                continue
+            except TimeoutError as error:
+                # request() includes TCP connect, proxy CONNECT and TLS. Each
+                # uses the connection's remaining-budget socket timeout;
+                # getresponse() uses the refreshed timeout above. Normalize
+                # expiry in every phase, preserving an earlier idle timeout.
+                reason = "destination deadline exceeded while " + phase if time.monotonic() >= deadline else str(error)
+                failures[target] = "transport error: TimeoutError: " + reason
+                due[target] = time.monotonic() + backoff
                 continue
             except (HTTPException, ssl.SSLError, OSError) as error:
                 failures[target] = f"transport error: {type(error).__name__}: {error}"

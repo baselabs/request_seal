@@ -393,7 +393,8 @@ def content_errors(root, relative, source, paths, version=None, published=None, 
     for offset, target, ambiguous in extract_destinations(source):
         if ambiguous:
             line = 1 + source.count("\n", 0, offset)
-            errors.append(f"{relative}:{line}: {target}: ambiguous destination syntax")
+            reason = ambiguous if isinstance(ambiguous, str) else "ambiguous destination syntax"
+            errors.append(f"{relative}:{line}: {target}: {reason}")
             continue
         try:
             url = urlsplit("https://" + target if target.lower().startswith("www.") else target)
@@ -571,7 +572,8 @@ def tracked_link_errors(root, paths, version, published, references, checked=(),
         for offset, target, ambiguous in extract_destinations(source, markdown=path.suffix.lower() in MARKDOWN_SUFFIXES):
             if ambiguous:
                 line = 1 + source.count("\n", 0, offset)
-                errors.append(f"{relative}:{line}: {target}: ambiguous destination syntax")
+                reason = ambiguous if isinstance(ambiguous, str) else "ambiguous destination syntax"
+                errors.append(f"{relative}:{line}: {target}: {reason}")
                 continue
             is_first_party = False
             try:

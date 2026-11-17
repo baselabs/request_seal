@@ -555,7 +555,9 @@ class DestinationRegressionTest(unittest.TestCase):
     def test_setext_underline_requires_a_preceding_paragraph_line(self):
         for prefix in ("Para\n\n===", "===", "Para\n\n--", "### Heading\n===",
                        "[other]: https://example.com\n===", "```text\ncode\n```\n==="):
-            body = prefix + "\n[g]: https://example.com\n\nUse [g]."
+            # Keep the earlier definition used so the failure isolates the
+            # missing paragraph before the setext-shaped underline.
+            body = prefix + "\n[g]: https://example.com\n\nUse [g]. [other]"
             with self.subTest(prefix=prefix), self.assertRaisesRegex(ValueError, "ambiguous reference definition"):
                 release.release_destinations(body, "2.3.4")
         # A standalone thematic break remains a real block boundary.
@@ -614,7 +616,7 @@ class DestinationRegressionTest(unittest.TestCase):
         body = [(0.02, b"x")] * 100
         with local_http({"/drip": [(200, {}, body)]}) as (base, requests):
             started = time.monotonic()
-            with self.assertRaisesRegex(ValueError, "transport error.*[Tt]ime"):
+            with self.assertRaisesRegex(ValueError, "destination deadline exceeded while reading response body"):
                 release.verify_http_destinations([base + "/drip#missing"], deadline_seconds=0.15)
             self.assertLess(time.monotonic() - started, 1)
             self.assertEqual(["/drip"], requests)
@@ -924,7 +926,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
     def test_socket_timeout_is_limited_to_the_remaining_deadline(self):
         with local_http({"/slow": [200]}, response_delay=3) as (base, requests):
             started = time.monotonic()
-            with self.assertRaisesRegex(ValueError, "transport error.*[Tt]ime"):
+            with self.assertRaisesRegex(ValueError, "destination deadline exceeded while reading response headers"):
                 release.verify_http_destinations([base + "/slow"], deadline_seconds=0.1)
             self.assertLess(time.monotonic() - started, 2)
             self.assertEqual(["/slow"], requests)
