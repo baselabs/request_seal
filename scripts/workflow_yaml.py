@@ -115,10 +115,15 @@ def _scalar(text, line):
 
 class _Parser:
     def __init__(self, text):
-        # split on LF only: exotic YAML line breaks are outside this subset.
+        # Split on LF only. Every other line break (a lone CR, NEL, LS, PS) is refused anywhere,
+        # block scalar content included: another YAML parser would break a line there, so a
+        # block scalar could otherwise end early and carry structure this parser never sees.
         text = text.replace("\r\n", "\n")
         self.final_newline = text.endswith("\n")
         self.lines = text.split("\n")
+        for number, raw in enumerate(self.lines, 1):
+            if any(char in raw for char in ("\r", "\x85", "\u2028", "\u2029")):
+                _fail(number, "line breaks other than LF and CRLF are forbidden")
         if self.lines[-1] == "":
             self.lines.pop()
         self.i = 0

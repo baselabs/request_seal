@@ -124,7 +124,7 @@ def ci_action_errors(workflow, required_actions=None):
     if required_actions is None:
         required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
     local = re.compile(r"\./\.github/workflows/[A-Za-z0-9_.-]+\.yml")
-    pinned = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[0-9a-fA-F]{40}")
+    pinned = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[0-9a-f]{40}")
     if (not required_actions.issubset({ref.split("@", 1)[0] for ref in [*calls, *actions] if isinstance(ref, str)})
             or any(not isinstance(call, str) or not local.fullmatch(call) or ".." in call for call in calls)
             or any(not isinstance(action, str) or not pinned.fullmatch(action) for action in actions)):

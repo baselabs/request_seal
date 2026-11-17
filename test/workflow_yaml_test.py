@@ -89,6 +89,13 @@ class WorkflowYamlTest(unittest.TestCase):
         self.assertEqual({"run": "a\n\nb", "next": "x"}, load("run: |- # literal\n  a\n\n  b\n\nnext: x\n"))
         self.assertEqual({"run": "a"}, load("run: |\n  a"))
         self.assertEqual({"run": ""}, load("run: |\n\n"))
+        # Another parser breaks lines at a lone CR, NEL, LS or PS; inside block content that
+        # would end the block and expose `uses:` as a step key, so each is refused there too.
+        for brk in ("\r", "\x85", "\u2028", "\u2029"):
+            with self.subTest(line_break=repr(brk)):
+                self.refused("jobs:\n  a:\n    steps:\n      - run: |\n          echo" + brk
+                             + "      uses: other/action@v1\n", 5)
+        self.assertEqual({"run": "a\n"}, load("run: |\r\n  a\r\n"))
 
     def test_folded_blocks_preserve_paragraphs_and_more_indented_lines(self):
         self.assertEqual({"run": "a b\nc\n  indented\nd\n"}, load(
@@ -120,7 +127,7 @@ class ActionPolicyTest(unittest.TestCase):
         pinned = "owner/repo/path@" + "a" * 40
         self.assertEqual([], gate.ci_action_errors(self.workflow("      - uses: " + pinned + "\n"), set()))
         for action in ("other/action@v1", "./.github/workflows/proofs.yml", "repo@" + "a" * 40,
-                       "docker://image@" + "a" * 40, "owner/repo@" + "a" * 39):
+                       "docker://image@" + "a" * 40, "owner/repo@" + "a" * 39, "owner/repo@" + "A" * 40):
             with self.subTest(action=action):
                 self.assertTrue(gate.ci_action_errors(self.workflow(
                     "      - uses: " + pinned + "\n      - uses: " + action + "\n"), set()))
