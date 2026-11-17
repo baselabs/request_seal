@@ -461,6 +461,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
             "https://www.github.com/baselabs/request_seal/blob/main/README.md",
             "https://github.com/baselabs/./request_seal/blob/v2.3.4/README.md",
             "https://hexdocs.pm/x/../request_seal/2.3.4/readme.html",
+            "https://hexdocs.pm/request_seal/../other/2.3.4/readme.html",
+            "https://github.com/baselabs/request_seal/../other/blob/v2.3.4/README.md",
             "https://GITHUB.COM/BaseLabs/Request_Seal/blob/v2.3.4/README.md",
             "https://request-seal.hexdocs.pm/2.3.4/%72eadme.html",
             "https://github.com/baselabs/%72equest_seal/blob/v2.3.4/README.md",

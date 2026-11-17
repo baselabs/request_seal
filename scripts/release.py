@@ -77,13 +77,14 @@ DESTINATION_DEADLINE = 180
 def first_party(url):
     # Classification includes browser normalization; validation below rejects it.
     host = unquote(url.hostname or "").lower().rstrip(".").removeprefix("www.")
-    path = posixpath.normpath("/" + unquote(url.path).lstrip("/")).lower()
+    decoded = "/" + unquote(url.path).lstrip("/")
+    paths = (decoded.lower(), posixpath.normpath(decoded).lower())
     if (host == "request-seal.hexdocs.pm"
-            or host == "hexdocs.pm" and (path == "/request_seal" or path.startswith("/request_seal/"))):
+            or host == "hexdocs.pm" and any(path == "/request_seal" or path.startswith("/request_seal/") for path in paths)):
         return "hexdocs"
-    if host == "raw.githubusercontent.com" and (path == "/baselabs/request_seal" or path.startswith("/baselabs/request_seal/")):
+    if host == "raw.githubusercontent.com" and any(path == "/baselabs/request_seal" or path.startswith("/baselabs/request_seal/") for path in paths):
         return "github_raw"
-    if host == "github.com" and (path == "/baselabs/request_seal" or path.startswith("/baselabs/request_seal/")):
+    if host == "github.com" and any(path == "/baselabs/request_seal" or path.startswith("/baselabs/request_seal/") for path in paths):
         # Public advisory permalinks describe security history, not tagged files.
         if (url.netloc == "github.com" and url.scheme == "https"
                 and re.fullmatch(r"/baselabs/request_seal/security/advisories/GHSA-[a-z0-9-]+", url.path)):

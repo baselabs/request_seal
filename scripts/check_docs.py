@@ -280,10 +280,13 @@ def first_party_link_errors(root, relative, url, version, published, references)
         try:
             if key not in references:
                 references[key] = documentation_pages(root, release_version, version)
+            if isinstance(references[key], str):
+                return [references[key]]
             if target not in references[key]:
                 return ["HexDocs page is missing from real documentation output for " + release_version]
         except (OSError, ValueError, subprocess.SubprocessError) as error:
-            return [f"cannot inspect HexDocs {release_version}: {error}"]
+            references[key] = f"cannot inspect HexDocs {release_version}: {error}"
+            return [references[key]]
         return []
     source_path = path.removeprefix("/baselabs/request_seal/")
     if kind == "github":

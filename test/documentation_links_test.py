@@ -73,8 +73,15 @@ end
 
     def test_failed_published_docs_fetch_removes_scratch(self):
         scratch_before = set(Path(tempfile.gettempdir()).glob("requestseal-docs-*"))
-        with self.assertRaisesRegex(ValueError, "missing api-reference.html"):
-            docs.documentation_pages(ROOT, "99.0.0", "2.0.0-dev")
+        output = io.StringIO()
+        references = {}
+        with redirect_stdout(output):
+            for page in ("RequestSeal.html", "api-reference.html"):
+                errors = docs.first_party_link_errors(
+                    ROOT, "README.md", urlsplit(f"https://request-seal.hexdocs.pm/99.0.0/{page}"),
+                    "2.0.0-dev", {"README.md"}, references)
+                self.assertTrue(any("missing api-reference.html" in error for error in errors))
+        self.assertEqual(1, output.getvalue().count("RUN mix hex.docs fetch "))
         self.assertEqual(scratch_before, set(Path(tempfile.gettempdir()).glob("requestseal-docs-*")))
 
 
