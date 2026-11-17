@@ -2,7 +2,7 @@ defmodule RequestSeal.AshConsumerTest do
   use ExUnit.Case, async: false
 
   @tag timeout: 600_000
-  test "an offline consumer compiles and maps scopes with no Ash installed" do
+  test "a consumer compiles and maps scopes with no Ash installed" do
     root = Path.expand("..", __DIR__)
 
     scratch =
@@ -31,8 +31,8 @@ defmodule RequestSeal.AshConsumerTest do
     warning_consumer = Path.join(scratch, "warning_consumer")
     {mix, warning_env} = consumer(warning_consumer, warning_source)
 
-    # request_seal's one required Hex dependency comes from the local offline
-    # package cache; the consumer must converge it before compiling.
+    # The consumer fetches request_seal's one required Hex dependency from Hex
+    # before compiling.
     {deps_output, deps_status} =
       System.cmd(mix, ["deps.get"],
         cd: warning_consumer,
@@ -119,10 +119,11 @@ defmodule RequestSeal.AshConsumerTest do
     end
     """)
 
-    # The consumer resolves against the repository's lock. Unlocked, offline Hex
-    # resolution picks the newest release the cached registry lists, whose
-    # package need not be cached; newest-release resolution is the latest lane's
-    # claim, not this test's.
+    # The consumer resolves online, as an installing application does, against
+    # the repository's lock, so it builds with the versions this suite ran
+    # against; newest-release resolution is the latest lane's claim, not this
+    # test's. Offline resolution would depend on a registry cache that an
+    # earlier `mix deps.get` may exit before writing.
     File.cp!(Path.expand("../mix.lock", __DIR__), Path.join(scratch, "mix.lock"))
 
     elixir_bin = :code.lib_dir(:elixir) |> to_string() |> Path.join("../../bin") |> Path.expand()
@@ -133,8 +134,7 @@ defmodule RequestSeal.AshConsumerTest do
        {"PATH", Enum.join([elixir_bin, otp_bin, System.fetch_env!("PATH")], ":")},
        {"MIX_ENV", "prod"},
        {"MIX_BUILD_PATH", Path.join(scratch, "_build")},
-       {"MIX_DEPS_PATH", Path.join(scratch, "deps")},
-       {"HEX_OFFLINE", "1"}
+       {"MIX_DEPS_PATH", Path.join(scratch, "deps")}
      ]}
   end
 end

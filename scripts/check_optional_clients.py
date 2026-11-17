@@ -56,6 +56,17 @@ end)
 IO.puts(["REQUESTSEAL_DEPENDENCIES\t", :json.encode(dependencies)])
 '''
 
+LOCK_GRAPH = r'''
+{lock, _} = Code.eval_file("mix.lock")
+graph = Map.new(lock, fn
+  {name, {:hex, _package, version, _inner, _managers, dependencies, _repo, _outer}} ->
+    {name, %{version: version, dependencies: Enum.map(dependencies, &elem(&1, 0))}}
+  {name, entry} ->
+    raise "mix.lock entry #{name} is not a Hex package: #{inspect(entry)}"
+end)
+IO.puts(["REQUESTSEAL_LOCK\t", :json.encode(graph)])
+'''
+
 
 def running_toolchain():
     result = subprocess.run(
@@ -84,6 +95,39 @@ def dependency_metadata(runtime_path):
     if len(data) != 1 or not data[0]:
         raise ValueError("Mix must report a nonempty dependency inventory")
     return {dependency["name"]: dependency for dependency in data[0]}
+
+
+def lock_graph(runtime_path):
+    env = os.environ.copy()
+    env["PATH"] = runtime_path
+    result = subprocess.run(
+        ["elixir", "-e", LOCK_GRAPH], cwd=ROOT, env=env,
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    marker = "REQUESTSEAL_LOCK\t"
+    data = [json.loads(line[len(marker):]) for line in result.stdout.splitlines() if line.startswith(marker)]
+    if len(data) != 1 or not data[0]:
+        raise ValueError("Elixir must report a nonempty mix.lock graph")
+    return data[0]
+
+
+def floor_unlocks(lock, floors):
+    """Lock entries a floor consumer must re-resolve.
+
+    A published dependency whose floor differs from its locked version moves,
+    and so must every locked package that requires it, directly or through
+    another moved package: its locked release may require more than the floor.
+    Everything else keeps the version the suite was run against.
+    """
+    unlocks = {name for name, floor in floors.items() if name in lock and lock[name]["version"] != floor}
+    while True:
+        dependents = {
+            name for name, entry in lock.items()
+            if name not in unlocks and unlocks.intersection(entry["dependencies"])
+        }
+        if not dependents:
+            return sorted(unlocks)
+        unlocks |= dependents
 
 
 def floor_files(dependencies):
@@ -179,6 +223,8 @@ def check_client_floors(elixir, runtime_path):
         dependencies.append(f"{{:{name}, {json.dumps(requirement)}{runtime}}}")
     floors = {name: dependency["floor"] for name, dependency in published.items()}
     print("PUBLISHED DEPENDENCY FLOORS: " + json.dumps(floors, sort_keys=True), flush=True)
+    unlocks = floor_unlocks(lock_graph(runtime_path), floors)
+    print("FLOOR CONSUMER UNLOCKS: " + json.dumps(unlocks), flush=True)
     if not os.environ.get("REQUESTSEAL_REPLAY_PG_URL"):
         print("NOT VERIFIED: REQUESTSEAL_REPLAY_PG_URL is not set; PostgreSQL floor tests need a real database", flush=True)
 
@@ -196,9 +242,9 @@ def check_client_floors(elixir, runtime_path):
             "  def application, do: [extra_applications: [:request_seal]]\n"
             "end\n"
         )
-        # The consumer starts from the repository lock: Mix re-resolves only the
-        # published dependencies whose exact floor differs from it, so test tools
-        # and transitive packages stay at the versions the suite was run against.
+        # The consumer starts from the repository lock with the floor unlocks
+        # removed, so Mix re-resolves only those; test tools and unrelated
+        # transitive packages stay at the versions the suite was run against.
         shutil.copyfile(ROOT / "mix.lock", project / "mix.lock")
         for relative in files +["test/test_helper.exs", "test/support/multi_signature_helper.exs"]:
             target = project / relative
@@ -219,6 +265,7 @@ def check_client_floors(elixir, runtime_path):
         env["REQUESTSEAL_DEPENDENCY_FLOORS"] = json.dumps(floors)
         test_files = [relative for relative in files if relative.endswith("_test.exs")]
         commands = [
+            *([["mix", "deps.unlock", *unlocks]] if unlocks else []),
             ["mix", "deps.get"],
             ["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", """
 lock = Mix.Dep.Lock.read()

@@ -381,6 +381,32 @@ class BuildContractsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "need floor coverage"):
             clients.floor_files(["unmapped_dependency"])
 
+    def test_floor_consumer_unlocks_moved_floors_and_their_dependents(self):
+        spec = importlib.util.spec_from_file_location("optional_clients", ROOT / "scripts/check_optional_clients.py")
+        clients = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(clients)
+        lock = {
+            "ash": {"version": "3.37.6", "dependencies": ["ecto", "telemetry"]},
+            "ash_sql": {"version": "0.8.9", "dependencies": ["ash", "ecto"]},
+            "ash_postgres": {"version": "2.16.0", "dependencies": ["ash", "ash_sql", "ecto"]},
+            "migrator": {"version": "1.0.0", "dependencies": ["ash_postgres"]},
+            "ecto": {"version": "3.14.0", "dependencies": ["telemetry"]},
+            "telemetry": {"version": "1.4.2", "dependencies": []},
+            "plug": {"version": "1.20.3", "dependencies": ["telemetry"]},
+            "bandit": {"version": "1.15.0", "dependencies": ["plug", "telemetry"]},
+        }
+        floors = {"ash": "3.37.4", "plug": "1.20.3", "telemetry": "1.4.2", "ash_hooks": "3.0.0"}
+        self.assertEqual(["ash", "ash_postgres", "ash_sql", "migrator"], clients.floor_unlocks(lock, floors))
+        self.assertEqual([], clients.floor_unlocks(lock, {"plug": "1.20.3", "telemetry": "1.4.2"}))
+        self.assertEqual(
+            ["ash", "ash_postgres", "ash_sql", "bandit", "ecto", "migrator", "plug", "telemetry"],
+            clients.floor_unlocks(lock, {"telemetry": "1.4.1"}),
+        )
+        _, runtime_path = clients.running_toolchain()
+        graph = clients.lock_graph(runtime_path)
+        self.assertIn("ash", graph["ash_postgres"]["dependencies"])
+        self.assertEqual([], graph["telemetry"]["dependencies"])
+
     def test_actual_action_refs_reject_mutable_tags_and_missing_checkout(self):
         original = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertEqual([], gate.ci_action_errors(original))
