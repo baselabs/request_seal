@@ -6,12 +6,15 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import subprocess
+import time
 import uuid
 from urllib.parse import unquote, urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from processes import install_signal_handlers, run
 
 ROOT = Path(__file__).resolve().parents[1]
 SEMVER = re.compile(
@@ -64,21 +67,40 @@ REFERENCE_START = re.compile(r"\[([^\]\n]*)\][ \t]*:")
 REFERENCE = re.compile(r"[ \t]+(" + DESTINATION + r")(?:(?:[ \t]+)" + TITLE + r")?[ \t]*(?=\n|$)")
 URL_ATTRIBUTE = re.compile(r"\b(?:href|src)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s<>]*))", re.I)
 RAW_HTML = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)|<![A-Za-z\[]|<\?")
+AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\n]*)>")
+BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'`]*", re.I)
+REFERENCE_USE = re.compile(r"\[([^\[\]\n]+)\](?:[ \t]*\[([^\[\]\n]*)\])?")
+FENCE = re.compile(r"([ \t>+*.0-9()-]*)(`{3,}|~{3,})(.*)$")
+DESTINATION_DEADLINE = 180
 
 
 def first_party(url):
-    path = unquote(url.path)
-    if (url.hostname == "request-seal.hexdocs.pm"
-            or url.hostname == "hexdocs.pm" and (path == "/request_seal" or path.startswith("/request_seal/"))):
+    # Classification includes browser normalization; validation below rejects it.
+    host = unquote(url.hostname or "").lower().rstrip(".").removeprefix("www.")
+    path = posixpath.normpath("/" + unquote(url.path).lstrip("/")).lower()
+    if (host == "request-seal.hexdocs.pm"
+            or host == "hexdocs.pm" and (path == "/request_seal" or path.startswith("/request_seal/"))):
         return "hexdocs"
-    if url.hostname == "raw.githubusercontent.com" and path.lower().startswith("/baselabs/request_seal/"):
+    if host == "raw.githubusercontent.com" and (path == "/baselabs/request_seal" or path.startswith("/baselabs/request_seal/")):
         return "github_raw"
-    if url.hostname == "github.com" and (path.lower() == "/baselabs/request_seal" or path.lower().startswith("/baselabs/request_seal/")):
+    if host == "github.com" and (path == "/baselabs/request_seal" or path.startswith("/baselabs/request_seal/")):
         # Public advisory permalinks describe security history, not tagged files.
-        if re.fullmatch(r"/baselabs/request_seal/security/advisories/GHSA-[a-z0-9-]+", path):
+        if (url.netloc == "github.com" and url.scheme == "https"
+                and re.fullmatch(r"/baselabs/request_seal/security/advisories/GHSA-[a-z0-9-]+", url.path)):
             return None
         return "github"
     return None
+
+
+def first_party_syntax(url, kind):
+    host = {"hexdocs": "request-seal.hexdocs.pm", "github": "github.com",
+            "github_raw": "raw.githubusercontent.com"}[kind]
+    prefix = "/" if kind == "hexdocs" else "/baselabs/request_seal/"
+    if (url.scheme != "https" or url.netloc != host
+            or (url.path and not url.path.startswith(prefix) and url.path != prefix.rstrip("/"))
+            or "%" in url.path or any(part in (".", "..") for part in url.path.split("/"))):
+        raise ValueError(f"first-party destination requires canonical https://{host}{prefix} "
+                         "with literal path/casing, no dot segments, credentials, or port")
 
 
 def validate_destination(target, version):
@@ -87,6 +109,17 @@ def validate_destination(target, version):
             or re.search(r"&(?:#\w+|[A-Za-z][A-Za-z0-9]*);|%(?![0-9A-Fa-f]{2})", target)):
         raise ValueError("requires a literal absolute URL; ambiguous destination syntax")
     url = urlsplit(target)
+    kind = first_party(url)
+    canonical = {
+        "hexdocs": f"https://request-seal.hexdocs.pm/{version}/<page>",
+        "github": f"https://github.com/baselabs/request_seal/blob/v{version}/<path>",
+        "github_raw": f"https://raw.githubusercontent.com/baselabs/request_seal/v{version}/<path>",
+    }.get(kind)
+    if kind:
+        try:
+            first_party_syntax(url, kind)
+        except ValueError as error:
+            raise ValueError(f"{error}; canonical form: {canonical}") from error
     if url.scheme in ("http", "https"):
         if not url.hostname or url.username is not None or url.password is not None:
             raise ValueError("requires an absolute HTTP(S) URL without credentials")
@@ -99,22 +132,23 @@ def validate_destination(target, version):
             raise ValueError("requires an absolute mailto URL")
     else:
         raise ValueError("requires an absolute HTTP(S) or mailto URL")
-    kind = first_party(url)
     if kind:
         if kind == "hexdocs":
-            prefix = (f"/{version}/",) if url.hostname == "request-seal.hexdocs.pm" else (f"/request_seal/{version}/",)
+            prefix = f"/{version}/"
         elif kind == "github_raw":
-            prefix = (f"/baselabs/request_seal/v{version}/",)
+            prefix = f"/baselabs/request_seal/v{version}/"
         else:
-            prefix = (f"/baselabs/request_seal/blob/v{version}/", f"/baselabs/request_seal/raw/v{version}/")
-        if (url.scheme != "https" or url.netloc != url.hostname
-                or not url.path.startswith(prefix) or url.path.endswith("/")
-                or any(part in (".", "..") for part in unquote(url.path).split("/"))):
-            raise ValueError(f"first-party destination must use version {version}")
+            prefix = f"/baselabs/request_seal/blob/v{version}/"
+        if not url.path.startswith(prefix) or url.path.endswith("/"):
+            raise ValueError(f"first-party destination must use version {version}; canonical form: {canonical}")
     return kind
 
 
-def release_destinations(body, version, first_line=1):
+def reference_label(label):
+    return " ".join(label.split()).casefold()
+
+
+def release_destinations(body, version, first_line=1, all_reference_labels=None):
     """Validate every potential destination, without code or comment exemptions."""
     targets = []
 
@@ -132,11 +166,32 @@ def release_destinations(body, version, first_line=1):
         match = INLINE.match(body, start.start())
         candidate = body[start.end():].split("\n", 1)[0].split(")", 1)[0]
         destination(start.start(), match[1].removeprefix("<").removesuffix(">") if match else candidate, match is None)
+    definitions = set()
     for start in REFERENCE_START.finditer(body):
         match = REFERENCE.match(body, start.end())
         candidate = body[start.end():].split("\n", 1)[0].strip()
         destination(start.start(), match[1].removeprefix("<").removesuffix(">") if match else candidate,
                     match is None or not start[1] or start[1].startswith("^") or "\\" in start[1] or "[" in start[1])
+        label = reference_label(start[1])
+        if label in definitions:
+            line = first_line + body.count("\n", 0, start.start())
+            raise ValueError(f"CHANGELOG.md:{line}: duplicate reference definition {start[1]!r}")
+        definitions.add(label)
+    for match in AUTOLINK.finditer(body):
+        destination(match.start(), match[1])
+    for match in BARE_URL.finditer(body):
+        # Delimiters and sentence punctuation end bare URLs. Internal syntax is
+        # still literal and conservative, including inside code and comments.
+        destination(match.start(), match[0].rstrip(".,;:!?)]}"))
+    known_labels = definitions | (all_reference_labels or set())
+    for match in REFERENCE_USE.finditer(body):
+        rest = body[match.end():]
+        if rest.startswith(("(", ":")):
+            continue
+        label = reference_label(match[2] or match[1])
+        if (match[2] is not None or label in known_labels) and label not in definitions:
+            line = first_line + body.count("\n", 0, match.start())
+            raise ValueError(f"CHANGELOG.md:{line}: reference {label!r} requires a definition inside the released section")
     for match in URL_ATTRIBUTE.finditer(body):
         destination(match.start(), next(value for value in match.groups() if value is not None))
     raw = RAW_HTML.search(body)
@@ -158,9 +213,14 @@ def release_notes(source, version):
     previous = ""
     for number, line in enumerate(source.splitlines(keepends=True), 1):
         text = line.rstrip("\n")
+        marker = FENCE.fullmatch(text)
+        if marker and marker[1]:
+            raise ValueError(f"CHANGELOG.md:{number}: fences must start in column one, including inside fences")
         if fence:
             if re.fullmatch(re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*", text):
                 fence = None
+            elif marker:
+                raise ValueError(f"CHANGELOG.md:{number}: ambiguous closing fence")
         else:
             marker = re.match(r"(`{3,}|~{3,})(.*)$", text)
             if marker:
@@ -197,7 +257,8 @@ def release_notes(source, version):
     if not body.strip() or not re.sub(r"(?m)^#{3,6}[^\n]*$", "", body).strip():
         raise ValueError("CHANGELOG.md release section is empty for " + version)
     first_line = sections[index][3] + len(original) - len(original.lstrip("\n"))
-    release_destinations(body, version, first_line)
+    labels = {reference_label(match[1]) for match in REFERENCE_START.finditer(source)}
+    release_destinations(body, version, first_line, labels)
     raw = RAW_HTML.search(source)
     if raw:
         line = 1 + source.count("\n", 0, raw.start())
@@ -205,27 +266,78 @@ def release_notes(source, version):
     return body + "\n"
 
 
-def verify_published_destinations(body, version):
-    """GET the release's pinned URLs only after publication; any non-200 fails."""
+def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
+    """Retry propagation failures within one total deadline; never follow redirects."""
     class NoRedirect(HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             return None
 
     opener = build_opener(NoRedirect())
+    pending = set(targets)
+    failures = {target: "not requested before deadline" for target in pending}
+    deadline = time.monotonic() + deadline_seconds
+    backoff = 1
+    while pending:
+        for target in sorted(pending):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                with opener.open(Request(target, headers={"User-Agent": "RequestSeal-release"}), timeout=min(15, remaining)) as response:
+                    status = response.status
+            except HTTPError as error:
+                status = error.code
+                error.close()
+            except (OSError, URLError) as error:
+                failures[target] = f"transport error: {error}"
+                continue
+            print(f"HTTP {status} {target}", flush=True)
+            if status == 200:
+                pending.remove(target)
+                failures.pop(target, None)
+            else:
+                failures[target] = f"expected HTTP 200, got {status}"
+                if status != 404 and not 500 <= status <= 599:
+                    pending.remove(target)  # Permanent, including every 3xx.
+        remaining = deadline - time.monotonic()
+        if not pending or remaining <= 0:
+            break
+        time.sleep(min(backoff, remaining))
+        backoff = min(backoff * 2, 10)
+    if failures:
+        raise ValueError("Release destinations failed:\n" + "\n".join(
+            f"{target}: {status}" for target, status in sorted(failures.items())))
+
+
+def verify_published_destinations(body, version, event="push", root=ROOT, deadline_seconds=DESTINATION_DEADLINE):
+    """Dispatch checks future source URLs in HEAD; push checks every URL over HTTP."""
+    if event not in ("push", "workflow_dispatch"):
+        raise ValueError("destination check requires push or workflow_dispatch mode")
+    targets, failures = [], []
     for target in sorted(set(release_destinations(body, version))):
-        if not first_party(urlsplit(target)):
+        url = urlsplit(target)
+        kind = first_party(url)
+        if not kind:
             continue
-        try:
-            with opener.open(Request(target, headers={"User-Agent": "RequestSeal-release"}), timeout=60) as response:
-                status = response.status
-        except HTTPError as error:
-            status = error.code
-            error.close()
-        except (OSError, URLError) as error:
-            raise ValueError(f"release destination {target!r}: HTTP request failed: {error}") from error
-        print(f"HTTP {status} {target}")
-        if status != 200:
-            raise ValueError(f"release destination {target!r}: expected HTTP 200, got {status}")
+        if event == "workflow_dispatch" and kind in ("github", "github_raw"):
+            prefix = f"/baselabs/request_seal/{'blob/' if kind == 'github' else ''}v{version}/"
+            path = url.path.removeprefix(prefix)
+            result = run(["git", "ls-tree", "-z", "HEAD", "--", ":(literal)" + path], cwd=root,
+                         capture_output=True, text=True, check=True, timeout=30)
+            rows = [row.split("\t", 1) for row in result.stdout.split("\0") if row]
+            if not any(name == path and metadata.split()[:2] in (["100644", "blob"], ["100755", "blob"])
+                       for metadata, name in rows):
+                failures.append(f"{target}: missing or nonregular file in HEAD")
+            else:
+                print(f"HEAD regular file {path}", flush=True)
+        else:
+            targets.append(target)
+    try:
+        verify_http_destinations(targets, deadline_seconds)
+    except ValueError as error:
+        failures.append(str(error))
+    if failures:
+        raise ValueError("\n".join(failures))
 
 
 def verify_identity(root, event, ref):
@@ -243,9 +355,9 @@ def verify_identity(root, event, ref):
         raise ValueError("release tag must equal " + tag)
 
     def git(*args):
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+        return run(["git", *args], cwd=root, capture_output=True, text=True, check=True, timeout=30).stdout.strip()
 
-    exists = subprocess.run(["git", "show-ref", "--verify", "--quiet", "refs/tags/" + tag], cwd=root)
+    exists = run(["git", "show-ref", "--verify", "--quiet", "refs/tags/" + tag], cwd=root, check=False, timeout=30)
     if exists.returncode not in (0, 1):
         raise ValueError("cannot inspect release tag")
     if exists.returncode == 0:
@@ -280,6 +392,7 @@ def _normalize_sbom(path, tarball):
 
 
 if __name__ == "__main__":
+    install_signal_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     choice = parser.add_mutually_exclusive_group(required=True)
     choice.add_argument("--version", action="store_true")
@@ -291,6 +404,8 @@ if __name__ == "__main__":
     parser.add_argument("--tarball", type=Path)
     parser.add_argument("--notes-file", type=Path)
     parser.add_argument("--for-version")
+    parser.add_argument("--destination-event", choices=("push", "workflow_dispatch"), default="push",
+                        help="push: HTTP for every destination; workflow_dispatch: HEAD tree for source, HTTP for docs")
     args = parser.parse_args()
     try:
         if args.normalize_sbom:
@@ -302,7 +417,7 @@ if __name__ == "__main__":
             parse_version(version)
             notes = release_notes((ROOT / "CHANGELOG.md").read_text(), version)
             if args.check_destinations:
-                verify_published_destinations(notes, version)
+                verify_published_destinations(notes, version, args.destination_event)
             else:
                 print(notes, end="")
         elif args.verify:

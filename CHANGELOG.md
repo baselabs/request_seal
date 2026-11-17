@@ -11,6 +11,10 @@
   Verify them using the commands in the [release verification guide](https://github.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md).
 - Pre-release tags create GitHub pre-releases. Release notes are the CHANGELOG section
   verbatim, and documentation links are versioned.
+- Release checks reject redirecting and ambiguous links, require section-local
+  references, and retry temporary publication failures without following redirects.
+  Pre-tag verification checks source files in the release commit; tag verification
+  checks their published URLs. Documentation links use actual generated or published pages.
 - SBOM generation verifies upstream binaries on Linux and macOS, on x86-64 and ARM64.
 - The check and SBOM scripts bound each command's run time and remove their child
   processes and scratch files on termination.

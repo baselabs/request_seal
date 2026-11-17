@@ -71,7 +71,7 @@ defmodule RequestSeal.MixProject do
         files: ["lib/**/*.ex", "mix.exs" | @public_documents],
         links: %{
           "GitHub" => "https://github.com/baselabs/request_seal",
-          "Changelog" => "https://hexdocs.pm/request_seal/changelog.html"
+          "Changelog" => "https://request-seal.hexdocs.pm/changelog.html"
         }
       ],
       docs: [

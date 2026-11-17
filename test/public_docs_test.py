@@ -95,45 +95,35 @@ class PublicDocsTest(unittest.TestCase):
     def test_first_party_absolute_links_check_current_inventory_and_historical_trees(self):
         configuration = docs.public_configuration(ROOT)
         version = configuration["version"]
-        self.assertEqual("docs/guides/web-bot-auth.md", configuration["pages"]["web-bot-auth.html"])
-        self.assertEqual("livebooks/overview.md", configuration["pages"]["livebooks.html"])
-        self.assertEqual("livebooks/web-bot-auth.livemd", configuration["pages"]["livebook-web-bot-auth.html"])
         references = {}
 
         def errors(target):
             return docs.content_errors(ROOT, "README.md", f"[Guide]({target})", self.paths,
                                        version, configuration["documents"], references)
 
-        for target in (f"https://hexdocs.pm/request_seal/{version}/web-bot-auth.html",
-                       f"https://request-seal.hexdocs.pm/{version}/web-bot-auth.html",
+        for target in (f"https://request-seal.hexdocs.pm/{version}/web-bot-auth.html",
+                       f"https://request-seal.hexdocs.pm/{version}/livebooks.html",
+                       f"https://request-seal.hexdocs.pm/{version}/livebook-web-bot-auth.html",
                        "https://request-seal.hexdocs.pm",
                        "https://request-seal.hexdocs.pm/",
-                       "https://hexdocs.pm/request_seal/web-bot-auth.html",
-                       f"https://hexdocs.pm/request_seal/{version}/livebook-web-bot-auth.html",
                        f"https://github.com/baselabs/request_seal/blob/v{version}/README.md",
-                       "https://hexdocs.pm/request_seal/1.0.0/compatibility.html",
                        "https://request-seal.hexdocs.pm/1.0.0/compatibility.html",
                        "https://raw.githubusercontent.com/baselabs/request_seal/v1.0.0/README.md",
-                       "https://hexdocs.pm/request_seal/1.0.0/web-bot-auth.html",
-                       "https://hexdocs.pm/request_seal/1.0.0/phoenix-and-plug.html",
+                       "https://request-seal.hexdocs.pm/1.0.0/web-bot-auth.html",
+                       "https://request-seal.hexdocs.pm/1.0.0/phoenix-and-plug.html",
                        "https://github.com/baselabs/request_seal/blob/v1.0.0/docs/guides/web-bot-auth.md",
-                       "https://github.com/baselabs/request_seal/raw/v1.0.0/README.md",
                        "https://github.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md"):
             with self.subTest(target=target):
                 self.assertEqual([], errors(target))
-        for target in (f"https://hexdocs.pm/request_seal/{version}/releases.html",
+        for target in (f"https://request-seal.hexdocs.pm/{version}/releases.html",
                        f"https://request-seal.hexdocs.pm/{version}/nonexistent.html",
                        "https://request-seal.hexdocs.pm/nonexistent.html",
-                       "https://hexdocs.pm/request_seal/nonexistent.html",
-                       f"https://github.com/baselabs/request_seal/raw/v{version}/missing.png",
-                       f"https://hexdocs.pm/request_seal/{version}/nonexistent.html",
-                       f"https://hexdocs.pm/request_seal/{version}/.private.html",
-                       "https://hexdocs.pm/request_seal/1.0.0/verifying-releases.html",
+                       "https://hexdocs.pm/request_seal/1.0.0/compatibility.html",
+                       "https://github.com/baselabs/request_seal/raw/v1.0.0/README.md",
+                       f"https://request-seal.hexdocs.pm/{version}/.private.html",
                        "https://request-seal.hexdocs.pm/1.0.0/verifying-releases.html",
                        "https://raw.githubusercontent.com/baselabs/request_seal/v1.0.0/missing.png",
-                       "https://hexdocs.pm/request_seal/99.0.0/web-bot-auth.html",
                        "https://github.com/baselabs/request_seal/blob/v1.0.0/docs/guides/verifying-releases.md",
-                       "https://github.com/baselabs/request_seal/raw/v1.0.0/missing.png",
                        "https://github.com/baselabs/request_seal/blob/v1.0.0/.private/record.md",
                        "https://github.com/baselabs/request_seal/blob/v1.0.0/docs/operations/releases.md",
                        "https://github.com/baselabs/request_seal/blob/v99.0.0/README.md"):
@@ -161,11 +151,12 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
             root = Path(directory)
             (root / "scripts").mkdir()
             (root / "scripts/release.py").write_bytes((ROOT / "scripts/release.py").read_bytes())
+            (root / "scripts/processes.py").write_bytes((ROOT / "scripts/processes.py").read_bytes())
             for target, accepted in (("https://request-seal.hexdocs.pm/1.0.0/compatibility.html", True),
                                      ("docs/reference/compatibility.md", False)):
                 (root / "CHANGELOG.md").write_text(f"## 1.0.0 - 2026-11-11\n\n- [Policy]({target})\n")
-                result = subprocess.run(["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression, "--", directory],
-                                        cwd=ROOT, capture_output=True, text=True, timeout=120)
+                result = processes.run(["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression, "--", directory],
+                                        cwd=ROOT, capture_output=True, text=True, check=False, timeout=120)
                 if accepted and "requires Elixir 1.20 or newer" in result.stderr:
                     continue  # The actual guard reached the existing toolchain check.
                 self.assertEqual(accepted, result.returncode == 0, result.stderr)
@@ -328,7 +319,7 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
     def test_unapproved_file_and_symlink_use_real_git_inventory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
+            processes.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
             (root / "README.md").write_text(self.source)
             (root / "Notes.md").write_text(self.source)
             approved = {"README.md"}
@@ -419,7 +410,7 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
     def test_unapproved_library_text_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
+            processes.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True)
             (root / "README.md").write_text(self.source)
             (root / "lib").mkdir()
             (root / "lib/internal-plan.txt").write_text(self.source)

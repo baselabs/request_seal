@@ -24,7 +24,7 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    section becomes the GitHub release notes verbatim. Finalize every documentation
    link to `https://request-seal.hexdocs.pm/<version>/<page>.html` and source or
    asset links to `https://github.com/baselabs/request_seal/blob/v<version>/<path>`
-   or `/raw/v<version>/<path>`. Unreleased entries may use absolute GitHub `main`
+   or `https://raw.githubusercontent.com/baselabs/request_seal/v<version>/<path>`. Unreleased entries may use absolute GitHub `main`
    URLs; replace them when cutting the release. Both `mix hex.publish` and the release gate reject a missing,
    undated, or empty section before publishing or tagging. Publishing requires
    `python3` for this shared validation.
@@ -91,23 +91,27 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    export VERSION=$(python3 scripts/release.py --version)
    mix hex.publish --yes
    mix hex.info request_seal "$VERSION"
-   curl --fail --location --silent --show-error --output /dev/null "https://request-seal.hexdocs.pm/$VERSION/index.html"
    ```
 
    Confirm Hex reports that version and check each versioned page linked by its
-   own release notes, not only the documentation landing page. After the tag is
-   available, verify all linked first-party pages and files with:
+   own release notes, not only the documentation landing page:
 
    ```sh
-   python3 scripts/release.py --check-destinations --for-version "$VERSION"
+   python3 scripts/release.py --check-destinations --for-version "$VERSION" --destination-event workflow_dispatch
    ```
 
-   Each real HTTP GET must return 200; redirects, other statuses, and transport
-   errors stop publication. The prepublication guard validates authored targets
-   without requesting future URLs. The release workflow runs the HTTP check after
-   confirming the published Hex package and before creating the GitHub release.
-   Inspect actual registry checksums and optional metadata. Source-link targets
-   are checked after the tag push in step 8.
+   Before the tag exists, this mode checks HexDocs by real HTTP GET and tagged
+   source and raw-asset paths as regular files in the checked-out commit's HEAD
+   tree. Step 7 checks that same commit, which step 8 will tag. No future GitHub
+   tag URL is requested. The prepublication guard validates authored targets
+   without requesting future URLs. Inspect registry checksums and optional metadata.
+   After the tag push, use `--destination-event push` to GET every first-party
+   destination. Each real HTTP GET must return 200; redirects fail immediately
+   without following them. HTTP 404, 5xx and transport errors retry with 1, 2, 4,
+   8, then at most 10 seconds of backoff, within one 180-second total deadline
+   for the check, including request time (at most 15 seconds per request).
+   Other statuses do not retry. Failure lists every failing destination and its
+   last status or transport error. The workflow selects its mode explicitly by event.
 6. Install from Hex in a clean consumer, without a path or Git override. Use an
    empty Mix install directory and verify the installed application version and
    an actual public entry point:
@@ -138,7 +142,8 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    read-only repository permissions and produces a workflow artifact for inspection;
    it creates no attestations or release assets. It refuses development snapshots,
    invalid release notes, mismatched corpus identity, or an existing version tag
-   pointing at another commit.
+   pointing at another commit. HexDocs URLs are checked over HTTP; tagged source
+   and raw assets are checked as regular files in that commit's HEAD tree.
    It rebuilds the package and compares it byte for byte with the published Hex
    tarball before attestation or publication of release assets. Inspect the
    SBOM using the scope definitions in the
@@ -163,7 +168,8 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    tag (`source_ref` in `mix.exs`). Confirm the tag's `Release` run passed and its
    title and notes match the version and dated CHANGELOG section.
    Its read-only verification job repeats the dry run, including the Hex byte
-   comparison. Only the tag publishing job receives release and attestation write
+   comparison, then checks all first-party destinations by real HTTP, including
+   tagged GitHub source and raw assets. Only the tag publishing job receives release and attestation write
    permissions. On re-runs it checks existing assets before attestation; only an
    HTTP 404 means the release is absent. Other API failures stop publication.
    Follow the [consumer verification guide](../guides/verifying-releases.md)
@@ -182,7 +188,10 @@ removes surrounding blank lines, and adds one terminal newline; all other sectio
 bytes are published unchanged.
 
 Fences start in column one with at least three backticks or tildes. A closing fence
-uses the same character, at least as many times, with no info string. Heading-like
+uses the same character, at least as many times, with no info string, also in
+column one. Every fence-like line must be an unambiguous opener or closer;
+indented fences (including one to three spaces) and list or other container
+fences fail even inside an open fence, naming the line. Heading-like
 lines inside fences do not create sections. Unclosed fences, backticks in fence
 info, indented or container-prefixed fences/release headings, missing blank lines
 before release headings, and malformed release headings are errors. HTML comments
@@ -201,19 +210,26 @@ unsupported. Raw HTML tags, declarations, and processing instructions are
 unsupported, even when their attributes contain absolute URLs.
 
 The conservative lexical gate examines potential inline/image destinations,
-reference definitions, and every `href`/`src` attribute everywhere, including
+reference definitions, autolinks `<scheme:…>`, bare `http://`, `https://` and
+`www.` occurrences, and every `href`/`src` attribute everywhere, including
 containers, code examples, and comments. Relative, empty, fragment-only,
 query-only, protocol-relative, unclassifiable, and ambiguous destinations fail.
 There are no code-block exemptions: rewrite an example to satisfy this contract.
 First-party documentation and repository-file URLs must use the section's own
 version; unversioned URLs, `main`, stale versions, and dot segments fail. Explicit
 public advisory permalinks and external standards retain their authored URLs.
-Both `request-seal.hexdocs.pm/<version>/` and
-`hexdocs.pm/request_seal/<version>/` identify this package's documentation. Use
-the directly served canonical host for publication: a redirect from the older
-host fails the HTTP-200 gate. Tagged raw GitHub content may use
-`https://raw.githubusercontent.com/baselabs/request_seal/v<version>/<path>`;
-it has the same version and offline tree checks as GitHub `blob`/`raw` URLs.
+The only canonical forms are
+`https://request-seal.hexdocs.pm/<version>/<page>`,
+`https://github.com/baselabs/request_seal/blob/v<version>/<path>`, and
+`https://raw.githubusercontent.com/baselabs/request_seal/v<version>/<path>`.
+Redirecting HexDocs hosts and GitHub raw routes fail the offline gate before Hex
+publication. Host, owner and repository classification is case-insensitive and
+includes `www.` hosts and normalized paths; first-party links then reject
+noncanonical hosts/casing, percent-encoded paths, dot segments, userinfo and ports.
+Full and collapsed references must have a definition inside the released section.
+A shortcut reference counts when its label has a definition anywhere in the
+CHANGELOG, and also requires that definition inside this section. Labels compare
+case-insensitively with whitespace collapsed. Unresolved references name their line.
 Errors name the source line and destination, for example
 `CHANGELOG.md:7: destination 'docs/guide.md': requires an absolute HTTP(S) or mailto URL`
 or `first-party destination must use version 2.0.0`. Raw HTML and section-format
@@ -221,12 +237,18 @@ errors also name the line where available. These are authoring rules, with
 intentional over-rejection and no CommonMark conformance claim. Release tooling
 never selects destinations or changes Markdown syntax.
 
-The offline documentation gate checks first-party absolute guide URLs against
-the explicit ExDoc inventory and its page names. Historical guides and GitHub
-`blob`/`raw` targets use the referenced local tag/branch tree, without network
-requests; fetch the repository's tags before running the gate. Current-version
-source links use the release working tree until its tag exists. Current-version
-documentation links also retain generated-page and fragment checks during builds.
+The documentation gate builds current-version docs once per check with the
+project's actual ExDoc into scratch output. A page exists exactly when it is a
+file there, including module pages, `api-reference.html` and extras. Published
+versions use the version's documentation tarball fetched and unpacked by the
+real Hex client into scratch. Historical source document inventory comes from
+the shipped Hex package, without evaluating historical project code. Scratch is
+removed on success, failure and handled termination. GitHub tagged source paths
+use the referenced local tag tree; fetch tags before running the gate. A `main`
+URL uses the working tree being checked and current `mix.exs` inventory, even
+without a local or remote `main` ref. A current-version source URL uses the
+working tree until its tag exists. Current-version documentation links also
+retain generated-page and fragment checks during builds.
 
 ## Dependency updates
 

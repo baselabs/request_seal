@@ -45,6 +45,7 @@ defmodule RequestSeal.PublicDocumentationTest do
     File.mkdir_p!(Path.join(directory, "scripts"))
     on_exit(fn -> File.rm_rf!(directory) end)
     File.cp!("scripts/release.py", Path.join(directory, "scripts/release.py"))
+    File.cp!("scripts/processes.py", Path.join(directory, "scripts/processes.py"))
     source = File.read!("mix.exs")
     {:defmodule, _, [_, [do: {:__block__, _, body}]]} = Code.string_to_quoted!(source)
     body = Enum.reject(body, &match?({:use, _, [{:__aliases__, _, [:Mix, :Project]}]}, &1))

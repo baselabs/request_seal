@@ -7,8 +7,8 @@ import re
 import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
-from release import SEMVER, install_requirement, parse_version
-from processes import install_signal_handlers, run
+from release import SEMVER, first_party, first_party_syntax, install_requirement, parse_version
+from processes import install_signal_handlers, run, temporary_directory
 
 ROOT = Path(__file__).resolve().parents[1]
 MACHINE_PATH = re.compile(r"(?:/Users/[^/\s]+/|/home/[^/\s]+/|file://)")
@@ -88,43 +88,23 @@ def ref_exists(root, ref):
     return result.returncode == 0
 
 
-def public_configuration(root, ref=None):
+def public_configuration(root):
     # Read Mix's actual project configuration without compiling or starting the app.
     marker = "REQUEST_SEAL_PUBLIC_DOCUMENT\t"
     expression = (
         "project = Mix.Project.config(); "
         'for entry <- Keyword.fetch!(Keyword.fetch!(project, :docs), :extras) do '
-        '{path, options} = case entry do {path, options} -> {path, options}; path -> {path, []} end; '
-        'IO.puts("REQUEST_SEAL_PUBLIC_DOCUMENT\\t" <> path); '
-        'name = Keyword.get(options, :filename) || (path |> Path.basename() |> Path.rootname() '
-        '|> String.replace(~r/&#\\d+;|&[A-Za-z0-9]+;/, "") |> String.replace(~r/\\W+/u, "-") '
-        '|> String.trim("-") |> String.downcase()); '
-        'IO.puts("REQUEST_SEAL_PUBLIC_PAGE\\t" <> name <> ".html\\t" <> path) end; '
+        'path = case entry do {path, _options} -> path; path -> path end; '
+        'IO.puts("REQUEST_SEAL_PUBLIC_DOCUMENT\\t" <> path) end; '
         'IO.puts("REQUEST_SEAL_VERSION\\t" <> project[:version]); '
         'for pattern <- project[:package][:files] do '
         'IO.puts("REQUEST_SEAL_PACKAGE_PATTERN\\t" <> pattern); '
         'for path <- Path.wildcard(pattern, match_dot: true), File.regular?(path), '
         'do: IO.puts("REQUEST_SEAL_PACKAGE_FILE\\t" <> path) end'
     )
-    extra_env = None
-    if ref is not None:
-        historical = run(
-            ["git", "show", ref + ":mix.exs"], cwd=root, capture_output=True,
-            text=True, check=True, timeout=30,
-        ).stdout
-        # Evaluate the tagged project's real configuration, without registering
-        # another Mix project, compiling the library, or checking out its tree.
-        extra_env = {"REQUEST_SEAL_HISTORICAL_MIX": historical}
-        expression = (
-            'source = System.fetch_env!("REQUEST_SEAL_HISTORICAL_MIX"); '
-            '{:defmodule, _, [_, [do: {:__block__, _, body}]]} = Code.string_to_quoted!(source); '
-            'body = Enum.reject(body, &match?({:use, _, [{:__aliases__, _, [:Mix, :Project]}]}, &1)); '
-            'Module.create(ReleaseDocumentInventory, {:__block__, [], body}, Macro.Env.location(__ENV__)); '
-            + expression.replace("project = Mix.Project.config()", "project = ReleaseDocumentInventory.project()")
-        )
     result = run(
         ["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression],
-        cwd=root, capture_output=True, text=True, check=True, timeout=120, extra_env=extra_env,
+        cwd=root, capture_output=True, text=True, check=True, timeout=120,
     )
     entries = [line[len(marker):] for line in result.stdout.splitlines() if line.startswith(marker)]
     if not entries or "README.md" not in entries or len(entries) != len(set(entries)):
@@ -138,7 +118,6 @@ def public_configuration(root, ref=None):
         raise ValueError("invalid package version configuration")
     return {
         "documents": set(entries),
-        "pages": dict(value.split("\t", 1) for value in values("REQUEST_SEAL_PUBLIC_PAGE\t")),
         "version": versions[0],
         "patterns": values("REQUEST_SEAL_PACKAGE_PATTERN\t"),
         "files": set(values("REQUEST_SEAL_PACKAGE_FILE\t")),
@@ -245,76 +224,116 @@ def inventory_errors(root, approved, paths):
     return errors
 
 
-def first_party_link_errors(root, relative, url, version, published, references):
-    """Resolve authored first-party destinations against their real Git tree."""
-    path = unquote(url.path)
-    if (url.hostname == "request-seal.hexdocs.pm"
-            or url.hostname == "hexdocs.pm" and path.startswith("/request_seal/")):
-        if url.hostname == "request-seal.hexdocs.pm" and path in ("", "/"):
-            return []  # Package landing page outside dated release notes.
-        docs_path = "/request_seal" + path if url.hostname == "request-seal.hexdocs.pm" else path
-        parts = docs_path.split("/", 3)
-        if len(parts) == 3:
-            if not parts[2]:
-                return []  # Package landing page outside dated release notes.
-            target, ref = parts[2], None
-        elif SEMVER.fullmatch(parts[2]):
-            release_version, target = parts[2:]
-            ref = None if release_version == version else "refs/tags/v" + release_version
+def documentation_pages(root, requested_version, current_version):
+    """Read real ExDoc output or Hex's published documentation, never derive names."""
+    parse_version(requested_version)
+    with temporary_directory(prefix="requestseal-docs-") as directory:
+        scratch = Path(directory)
+        if requested_version == current_version:
+            output = scratch / "current"
+            run(["mix", "docs", "--warnings-as-errors", "--formatter", "html", "--output", output],
+                cwd=root, extra_env={"MIX_ENV": "dev"}, timeout=900)
         else:
-            return ["HexDocs destination requires an explicit version"]
-        kind = "hexdocs"
-    elif url.hostname in ("github.com", "raw.githubusercontent.com") and path.startswith("/baselabs/request_seal/"):
-        source_path = path.replace("/baselabs/request_seal/", "/baselabs/request_seal/raw/", 1) if url.hostname == "raw.githubusercontent.com" else path
-        parts = source_path.split("/", 5)
-        if len(parts) < 5 or parts[3] not in ("blob", "raw"):
-            return []  # Repository landing pages, issues and advisory permalinks.
-        if len(parts) != 6 or not parts[4] or not parts[5]:
-            return ["GitHub destination requires a ref and file path"]
-        name, target = parts[4:]
-        ref = "refs/tags/" + name
-        if name == "v" + str(version) and not ref_exists(root, ref):
-            ref = None  # The release commit is checked before its tag exists.
-        elif not name.startswith("v"):
-            ref = "refs/heads/" + name
-            if not ref_exists(root, ref):
-                ref = "refs/remotes/origin/" + name
-        kind = "github"
-    else:
+            hex_home = scratch / "hex"
+            run(["mix", "hex.docs", "fetch", "request_seal", requested_version],
+                cwd=root, extra_env={"HEX_HOME": str(hex_home)}, timeout=180)
+            output = hex_home / "docs/hexpm/request_seal" / requested_version
+        if not (output / "api-reference.html").is_file():
+            raise ValueError("documentation output is missing api-reference.html for " + requested_version)
+        return {path.relative_to(output).as_posix() for path in output.rglob("*")
+                if path.is_file() and not has_symlink(output, path.relative_to(output))}
+
+
+def published_documents(root, version):
+    """Use the shipped inventory for historical source links, without evaluating old code."""
+    parse_version(version)
+    with temporary_directory(prefix="requestseal-package-") as directory:
+        output = Path(directory) / "package"
+        run(["mix", "hex.package", "fetch", "request_seal", version, "--unpack", "--output", output],
+            cwd=root, extra_env={"HEX_HOME": str(Path(directory) / "hex")}, timeout=180)
+        if not (output / "README.md").is_file():
+            raise ValueError("published package is missing README.md for " + version)
+        return {path.relative_to(output).as_posix() for path in output.rglob("*")
+                if path.is_file() and not has_symlink(output, path.relative_to(output))}
+
+
+def first_party_link_errors(root, relative, url, version, published, references):
+    """Use the checked working tree for main, tags for source, and real docs output."""
+    kind = first_party(url)
+    if kind is None:
         return []
+    try:
+        first_party_syntax(url, kind)
+    except ValueError as error:
+        return [str(error)]
+    path = url.path
+    if kind == "hexdocs":
+        if path in ("", "/"):
+            return []  # Package landing page outside dated release notes.
+        parts = path.lstrip("/").split("/", 1)
+        if len(parts) != 2 or not SEMVER.fullmatch(parts[0]):
+            return ["HexDocs destination requires an explicit version"]
+        release_version, target = parts
+        if not safe_document_path(target):
+            return ["first-party link targets a private or unsafe path"]
+        key = ("hexdocs", release_version)
+        try:
+            if key not in references:
+                references[key] = documentation_pages(root, release_version, version)
+            if target not in references[key]:
+                return ["HexDocs page is missing from real documentation output for " + release_version]
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            return [f"cannot inspect HexDocs {release_version}: {error}"]
+        return []
+    source_path = path.removeprefix("/baselabs/request_seal/")
+    if kind == "github":
+        parts = source_path.split("/", 2)
+        if parts[0] not in ("blob", "raw"):
+            return []  # Repository landing pages, issues and advisory permalinks.
+        if parts[0] != "blob":
+            return ["canonical source form: https://github.com/baselabs/request_seal/blob/<ref>/<path>; "
+                    "raw assets use https://raw.githubusercontent.com/baselabs/request_seal/<ref>/<path>"]
+        parts = parts[1:]
+    else:
+        parts = source_path.split("/", 1)
+    if len(parts) != 2 or not all(parts):
+        return ["GitHub destination requires a ref and file path"]
+    name, target = parts
     if not safe_document_path(target):
         return ["first-party link targets a private or unsafe path"]
+    # A main URL names what this change makes main, even without any main ref.
+    ref = None if name == "main" else "refs/tags/" + name
+    if name == "v" + str(version) and not ref_exists(root, ref):
+        ref = None  # Release working tree before its tag exists.
     key = ref or "WORKTREE"
     try:
         if key not in references:
-            if ref is not None and not ref_exists(root, ref):
-                return ["first-party destination ref is missing: " + ref]
-            configuration = public_configuration(root, ref)
             if ref is None:
-                tree = {p: "100644" for p in public_paths(root)}
+                references[key] = public_configuration(root), {p: "100644" for p in public_paths(root)}
             else:
+                if not ref_exists(root, ref):
+                    return ["first-party destination ref is missing: " + ref]
                 listing = run(["git", "ls-tree", "-r", "-z", ref], cwd=root,
                               capture_output=True, text=True, check=True, timeout=30).stdout
                 tree = {row.split("\t", 1)[1]: row.split(" ", 1)[0] for row in listing.split("\0") if row}
-            references[key] = configuration, tree
+                references[key] = None, tree
         configuration, tree = references[key]
-    except (ValueError, subprocess.SubprocessError) as error:
+        if target not in tree or tree[target] not in ("100644", "100755"):
+            return ["GitHub link targets missing or nonregular content at " + key]
+        if ref is None and (has_symlink(root, target) or not (root / target).is_file()):
+            return ["GitHub link targets missing or symlinked content"]
+        if published is not None and relative in published and Path(target).suffix in (".md", ".livemd"):
+            if ref is None:
+                documents = configuration["documents"]
+            else:
+                inventory_key = ("package", name)
+                if inventory_key not in references:
+                    references[inventory_key] = published_documents(root, name.removeprefix("v"))
+                documents = references[inventory_key]
+            if target not in documents:
+                return ["published document links a repository-only document at " + key]
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
         return [f"cannot inspect first-party destination ref {key}: {error}"]
-    if kind == "hexdocs":
-        document = configuration["pages"].get(target)
-        if document is None:
-            return ["HexDocs page is outside the explicit document inventory at " + key]
-        if document not in tree or tree[document] != "100644":
-            return ["HexDocs page targets missing or nonregular published content at " + key]
-        if ref is None and (has_symlink(root, document) or not (root / document).is_file()):
-            return ["HexDocs page targets missing or symlinked published content"]
-    elif target not in tree or tree[target] not in ("100644", "100755"):
-        return ["GitHub link targets missing or nonregular content at " + key]
-    elif ref is None and (has_symlink(root, target) or not (root / target).is_file()):
-        return ["GitHub link targets missing or symlinked content"]
-    elif (published is not None and relative in published and Path(target).suffix in (".md", ".livemd")
-          and target not in configuration["documents"]):
-        return ["published document links a repository-only document at " + key]
     return []
 
 
