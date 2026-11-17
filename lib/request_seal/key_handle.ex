@@ -4,7 +4,7 @@ defmodule RequestSeal.KeyHandle do
 
   Construct handles through a custodian such as `RequestSeal.Custody.Local` or
   `RequestSeal.Custody.SSHAgent`. Only that custodian interprets `ref`, which is
-  implementation state outside the 1.x compatibility promise: use the
+  implementation state outside the major-version compatibility promise: use the
   `RequestSeal.Custody` functions, never the field. Local
   references contain only a holder PID and token, never key material. The holder
   is sensitive and lives until `RequestSeal.Custody.Local.release/1` or creator exit,

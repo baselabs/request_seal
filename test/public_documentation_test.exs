@@ -30,15 +30,69 @@ defmodule RequestSeal.PublicDocumentationTest do
     assert "README.md" in extras, "the public inventory must include the entry guide"
   end
 
-  test "publishing runtime guard refuses older toolchains" do
+  test "development identity links source to main and refuses publishing" do
+    project = Mix.Project.config()
+    version = Version.parse!(project[:version])
+    expected = if version.pre == [], do: "v#{project[:version]}", else: "main"
+    assert project[:docs][:source_ref] == expected
     [guard, "hex.publish"] = Mix.Project.config()[:aliases][:"hex.publish"]
 
-    if Version.match?(System.version(), ">= 1.20.0") do
-      assert guard.([]) == nil
-    else
-      assert_raise Mix.Error, ~r/Publishing RequestSeal requires Elixir 1.20 or newer/, fn ->
-        guard.([])
+    cond do
+      "dev" in version.pre ->
+        assert_raise Mix.Error, ~r/development versions cannot publish/, fn -> guard.([]) end
+
+      Version.match?(System.version(), ">= 1.20.0") ->
+        assert guard.([]) == nil
+
+      true ->
+        assert_raise Mix.Error, ~r/Publishing RequestSeal requires Elixir 1.20 or newer/, fn ->
+          guard.([])
+        end
+    end
+  end
+
+  test "release and pre-release versions derive source refs and enforce the publishing guard" do
+    source = File.read!("mix.exs")
+    quoted = Code.string_to_quoted!(source)
+    # Evaluate the actual project functions without registering another Mix project.
+    {:defmodule, _, [_, [do: {:__block__, _, body}]]} = quoted
+    body = Enum.reject(body, &match?({:use, _, [{:__aliases__, _, [:Mix, :Project]}]}, &1))
+
+    for {version, expected, development?} <- [
+          {"2.3.4", "v2.3.4", false},
+          {"2.3.4-rc.1", "main", false},
+          {"2.3.4-dev", "main", true},
+          {"2.3.4-dev.2", "main", true}
+        ] do
+      module =
+        Module.concat(__MODULE__, "Version#{String.replace(version, ~r/[^a-zA-Z0-9]/, "_")}")
+
+      changed =
+        Macro.prewalk({:__block__, [], body}, fn
+          {:@, meta, [{:version, inner, [_]}]} -> {:@, meta, [{:version, inner, [version]}]}
+          node -> node
+        end)
+
+      Module.create(module, changed, Macro.Env.location(__ENV__))
+      project = module.project()
+      assert project[:version] == version
+      assert project[:docs][:source_ref] == expected
+      [guard, "hex.publish"] = project[:aliases][:"hex.publish"]
+
+      if development? do
+        assert_raise Mix.Error, ~r/development versions cannot publish/, fn -> guard.([]) end
+      else
+        if Version.match?(System.version(), ">= 1.20.0") do
+          assert guard.([]) == nil
+        else
+          assert_raise Mix.Error, ~r/Publishing RequestSeal requires Elixir 1.20 or newer/, fn ->
+            guard.([])
+          end
+        end
       end
+
+      :code.purge(module)
+      :code.delete(module)
     end
   end
 

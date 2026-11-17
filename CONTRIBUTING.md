@@ -5,7 +5,7 @@ Contributions are licensed under Apache-2.0, as section 5 of the [license](LICEN
 Report vulnerabilities as [SECURITY.md](SECURITY.md) describes, never in a public issue.
 
 Setup commands are in [Develop RequestSeal](docs/guides/getting-started.md).
-Applications install from Hex with `{:request_seal, "~> 1.0"}` in their
+Applications install from Hex with `{:request_seal, "~> 2.0"}` in their
 `mix.exs` dependency list.
 
 Public profiles, corpus cases, notebooks, and integration examples must derive from a

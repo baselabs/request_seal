@@ -167,7 +167,7 @@ There is no permissive fallback from one profile to another. Source revision
 selection is explicit in configuration and result data. Web Bot Auth accepts
 only the selected draft's field representation and predicates. Source-bound
 acceptance is an accepted architectural decision. The `RequestSeal.Profile`
-extension surface, covered by the 1.x compatibility policy, consists of package-namespaced
+extension surface, covered by the major-version compatibility policy, consists of package-namespaced
 names, bounded metadata, explicit verification predicates, and consumer
 allowlists. A profile stamp records selection, not proof that an extension's
 rules ran.

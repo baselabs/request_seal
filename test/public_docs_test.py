@@ -5,8 +5,10 @@ import re
 import subprocess
 import tempfile
 import unittest
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("check_docs", ROOT / "scripts/check_docs.py")
 docs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(docs)
@@ -79,7 +81,7 @@ class PublicDocsTest(unittest.TestCase):
                 with self.subTest(version=version, requirement=requirement):
                     source = install.replace("~> " + version, requirement)
                     self.assertTrue(any("install requirement" in e for e in docs.release_errors("README.md", source, version)))
-        for version, documented in (("1.0.0", "~> 1.0"), ("1.2.3", "~> 1.2"), ("2.0.1", "~> 2.0")):
+        for version, documented in (("1.2.3", "~> 1.2"), ("2.0.1", "~> 2.0"), ("2.0.0-dev", "~> 2.0")):
             install = '{:request_seal, "' + documented + '"}'
             self.assertEqual([], docs.release_errors("README.md", install, version))
             for requirement in ("~> " + version, "~> 1", "== " + version, ">= " + version):
@@ -101,7 +103,7 @@ class PublicDocsTest(unittest.TestCase):
 
     def test_actual_package_configuration_and_file_mutations(self):
         configuration = docs.public_configuration(ROOT)
-        self.assertRegex(configuration["version"], r"^\d+\.\d+\.\d+$")
+        self.assertRegex(configuration["version"], r"^\d+\.\d+\.\d+(?:-[\w.-]+)?$")
         self.assertEqual([], docs.package_errors(ROOT, configuration))
         for path in ("test/fixtures/web_bot_auth/PROVENANCE.md", ".env", ".kimosabe/release-files.txt", "scripts/check.py"):
             with self.subTest(path=path):
@@ -456,7 +458,7 @@ class CorpusReleasePinTest(unittest.TestCase):
         self.assertEqual([], gate.corpus_release_errors(sources))
 
     def test_stale_or_missing_corpus_release_is_rejected(self):
-        mix = 'version: "0.5.0",'
+        mix = '@version "0.5.0"\nversion: @version,'
         for index in ['{"elixir_release":"v0.4.1"}', '{"elixir_release":"0.5.0"}', '{}', "not json"]:
             with self.subTest(index=index):
                 errors = gate.corpus_release_errors({"mix.exs": mix, "corpus/index.json": index})

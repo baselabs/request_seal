@@ -194,7 +194,7 @@ defmodule RequestSeal.AESKWTest do
 
     for alg <- ~w(A128GCMKW A256GCMKW dir) do
       kek = hex(if alg == "A128GCMKW", do: @k128, else: @k256)
-      # This is a real 1.x recipient callback, with actual cryptography. It
+      # This is a real recipient callback, with actual cryptography. It
       # must never be invoked after admission removes its algorithm.
       valid_recipient = fn selected, generated_cek ->
         send(observer, :recipient_invoked)

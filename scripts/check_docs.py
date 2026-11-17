@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
+from release import install_requirement, parse_version
 
 ROOT = Path(__file__).resolve().parents[1]
 MACHINE_PATH = re.compile(r"(?:/Users/[^/\s]+/|/home/[^/\s]+/|file://)")
@@ -139,8 +140,10 @@ def package_errors(root, configuration):
     for path in sorted(files):
         if not safe_document_path(path) or has_symlink(root, path):
             errors.append(f"{path}: package file must have a safe path and no symlink")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", configuration["version"]):
-        errors.append("package version must be a published MAJOR.MINOR.PATCH release")
+    try:
+        parse_version(configuration["version"])
+    except ValueError as error:
+        errors.append(str(error))
     return errors
 
 
@@ -150,19 +153,19 @@ def release_errors(relative, source, version=None):
         errors.append(f"{relative}: RequestSeal requires a Hex install, not a Git dependency")
     if UNPUBLISHED.search(source):
         errors.append(f"{relative}: outdated release wording")
-    for install in INSTALL.finditer(source):
+    # Released changelog entries describe the dependency requirements at that time.
+    install_source = re.split(r"^## (?!Unreleased\b)", source, maxsplit=1, flags=re.MULTILINE)[0] if relative == "CHANGELOG.md" else source
+    for install in INSTALL.finditer(install_source):
+        if (relative == "docs/operations/releases.md"
+                and install[1].strip() == 'System.fetch_env!("REQUIREMENT")'
+                and 'export REQUIREMENT=$(python3 scripts/release.py --install-requirement)' in source):
+            continue
         requirement = re.match(r'[\"\']([^\"\']+)[\"\']\s*(?:,|$)', install[1].strip())
         if not requirement:
             errors.append(f"{relative}: RequestSeal requires a versioned Hex install")
         elif version is not None and requirement[1] != install_requirement(version):
             errors.append(f"{relative}: RequestSeal install requirement must be {install_requirement(version)}")
     return errors
-
-
-def install_requirement(version):
-    """0.x pins the exact patch line; from 1.0 the documented minor admits every later 1.x."""
-    major, minor, _patch = version.split(".")
-    return f"~> {version}" if major == "0" else f"~> {major}.{minor}"
 
 
 def safe_document_path(path):

@@ -1,6 +1,6 @@
 # Verify webhook signatures in Phoenix and Plug
 
-**What you will build:** A Phoenix webhook pipeline that captures request bytes, verifies a signature before the controller, and signs the buffered response. Install Phoenix (tested with 1.8.15), Plug (`~> 1.20.3`), and Jason (`~> 1.0`) for JSON parsing. Your sender must implement [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html). This is not a verifier for every vendor-specific webhook format.
+**What you will build:** A Phoenix webhook pipeline that captures request bytes, verifies a signature before the controller, and signs the buffered response. Install Phoenix (tested with 1.8.15), Plug (`~> 1.20.3`), and Jason (`~> 1.4`) for JSON parsing. Your sender must implement [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html). This is not a verifier for every vendor-specific webhook format.
 
 ## 1. Configure the trusted policy
 

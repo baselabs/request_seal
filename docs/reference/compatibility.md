@@ -1,13 +1,13 @@
 # Compatibility and deprecation
 
-RequestSeal follows [Semantic Versioning](https://semver.org/) for every 1.x release. This page
-says what a 1.x release keeps stable, what may change in a minor release, and how a
-public API is deprecated. Security support for released versions is in
+RequestSeal follows [Semantic Versioning](https://semver.org/) for every stable
+major release line. This page says what each line keeps stable, what may change
+in a minor release, and how a public API is deprecated. Security support is in
 [SECURITY.md](../../SECURITY.md).
 
-## What 1.x keeps stable
+## What a major release line keeps stable
 
-Within 1.x, a release never removes or incompatibly changes:
+Within a major release line, a release never removes or incompatibly changes:
 
 - **Functions:** every documented public function, its arities, and its required and
   optional option names, defaults and accepted values.
@@ -35,16 +35,16 @@ other named profile lives in its own extension package.
 - New functions, modules, and optional options whose defaults keep existing behavior.
 - New algorithms, standard revisions, and component support, each selected explicitly.
 - New error reasons and `detail` values. Match the reasons you handle and keep a
-  catch-all clause: a 1.x release may return a reason your code has not seen, always as
-  an error, never as success.
+  catch-all clause: a minor or patch release may return a reason your code has not
+  seen, always as an error, never as success.
 - New telemetry events, measurement keys, and metadata keys.
 - New fields in result structs. Pattern-match the fields you use, not whole structs.
 
 ## Security fixes
 
-A security fix may reject input that an earlier 1.x release accepted, in a minor or
-patch release. Its changelog entry says what is rejected and why, and names the
-standard or advisory behind it.
+A security fix may reject input that an earlier release in the same major line
+accepted, in a minor or patch release. Its changelog entry says what is rejected
+and why, and names the standard or advisory behind it.
 
 ## What is not part of the contract
 
@@ -60,7 +60,8 @@ standard or advisory behind it.
 
 A public API is deprecated in a minor release: its documentation says what replaces
 it, and a compile-time or runtime warning names the replacement where Elixir supports
-one. It keeps working for the rest of 1.x and is removed only in 2.0.
+one. It keeps working for the rest of that major release line and is removed only
+in a subsequent major release.
 
 ## Supported runtimes
 

@@ -1,6 +1,8 @@
 defmodule RequestSeal.MixProject do
   use Mix.Project
 
+  @version "2.0.0-dev"
+
   # Reviewed public guides: one inventory for Hex and ExDoc. No directory exports.
   @public_documents [
     "README.md",
@@ -47,7 +49,7 @@ defmodule RequestSeal.MixProject do
 
     [
       app: :request_seal,
-      version: "1.0.0",
+      version: @version,
       # Libraries declare a consumer range; development and notebook tools stay pinned.
       # OTP 27 supplies :json; CI tests the floor, a middle and the latest toolchain.
       elixir: "~> 1.18",
@@ -73,7 +75,7 @@ defmodule RequestSeal.MixProject do
       ],
       docs: [
         main: "readme",
-        source_ref: "v1.0.0",
+        source_ref: source_ref(),
         # Historical entries retain references to removed APIs.
         skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
         extras:
@@ -128,7 +130,20 @@ defmodule RequestSeal.MixProject do
     ]
   end
 
+  defp source_ref do
+    case Version.parse!(@version).pre do
+      [] -> "v#{@version}"
+      _ -> "main"
+    end
+  end
+
   defp release_runtime_check!(_args) do
+    if "dev" in Version.parse!(@version).pre do
+      Mix.raise(
+        "Publishing RequestSeal requires a release version; development versions cannot publish."
+      )
+    end
+
     unless Version.match?(System.version(), ">= 1.20.0") do
       Mix.raise(
         "Publishing RequestSeal requires Elixir 1.20 or newer so optional integrations remain in Hex metadata."

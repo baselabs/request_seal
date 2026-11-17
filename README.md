@@ -26,10 +26,10 @@ Use it to:
 Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 
 ```elixir
-{:request_seal, "~> 1.0"}
+{:request_seal, "~> 2.0"}
 ```
 
-Install RequestSeal 1.0.0 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds. RequestSeal needs Elixir 1.18 or newer (below 2.0) on Erlang/OTP 27 or newer; the optional ash_onetime and ash_hooks integrations need Elixir 1.20.
+Install RequestSeal 2.0 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds. RequestSeal needs Elixir 1.18 or newer (below 2.0) on Erlang/OTP 27 or newer; the optional ash_onetime and ash_hooks integrations need Elixir 1.20.
 
 Add optional dependencies for the integrations you use. The table is a reference; the complete webhook dependency list follows.
 
@@ -49,12 +49,12 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 
 ```elixir
 [
-  {:request_seal, "~> 1.0"},
+  {:request_seal, "~> 2.0"},
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.24.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},
   {:bandit, "~> 1.15"},
-  {:jason, "~> 1.0"}
+  {:jason, "~> 1.4"}
 ]
 ```
 
@@ -523,7 +523,7 @@ HTTP signature algorithms (`RequestSeal.Crypto.algorithms/0`): `ed25519`, `ecdsa
 
 ## Compatibility
 
-Elixir 1.18 or newer, below 2.0 (`elixir: "~> 1.18"`), on OTP 27 or newer. CI tests Elixir 1.18, 1.19 and 1.20, each with the OTP release paired with it in `.tool-versions`. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Development instructions work on macOS and Linux; Windows developers use WSL2. What 1.x keeps stable, what a minor release may add, and how APIs are deprecated is in [compatibility and deprecation](docs/reference/compatibility.md); supported versions for security fixes are in [SECURITY.md](SECURITY.md).
+Elixir 1.18 or newer, below 2.0 (`elixir: "~> 1.18"`), on OTP 27 or newer. CI tests Elixir 1.18, 1.19 and 1.20, each with the OTP release paired with it in `.tool-versions`. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Development instructions work on macOS and Linux; Windows developers use WSL2. What each major release line keeps stable, what a minor release may add, and how APIs are deprecated is in [compatibility and deprecation](docs/reference/compatibility.md); supported versions for security fixes are in [SECURITY.md](SECURITY.md).
 
 ## Security model
 

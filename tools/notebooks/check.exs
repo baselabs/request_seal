@@ -51,19 +51,19 @@ defmodule RequestSeal.NotebookCheck do
     {source, length(cells)}
   end
 
-  # 0.x pins the exact patch line; from 1.0 the documented minor admits every later 1.x.
-  def install_requirement(version) do
-    case String.split(version, ".") do
-      ["0" | _] -> "~> " <> version
-      [major, minor | _] -> "~> " <> major <> "." <> minor
+  def install_requirement(root) do
+    python = System.get_env("REQUESTSEAL_PYTHON") || System.find_executable("python3")
+
+    case System.cmd(python, [Path.join(root, "scripts/release.py"), "--install-requirement"]) do
+      {requirement, 0} -> String.trim(requirement)
+      _ -> raise "Cannot derive the notebook install requirement"
     end
   end
 
   def local_source!(source, root) do
     if String.contains?(source, "Mix.install") and String.contains?(source, ":request_seal") do
-      [_, version] = Regex.run(~r/\bversion: "([^"]+)"/, File.read!(Path.join(root, "mix.exs")))
       # RequestSeal is the first dependency; optional integrations may follow it.
-      install = "Mix.install([" <> inspect({:request_seal, install_requirement(version)})
+      install = "Mix.install([" <> inspect({:request_seal, install_requirement(root)})
 
       unless length(String.split(source, install)) == 2 do
         raise "Notebook must contain exactly one matching Hex install cell"
@@ -182,8 +182,7 @@ if "--self-test" in System.argv() do
     end)
   end
 
-  [_, version] = Regex.run(~r/\bversion: "([^"]+)"/, File.read!(Path.join(root, "mix.exs")))
-  hex_install = inspect({:request_seal, RequestSeal.NotebookCheck.install_requirement(version)})
+  hex_install = inspect({:request_seal, RequestSeal.NotebookCheck.install_requirement(root)})
 
   with_integration =
     String.replace(source, hex_install <> "])", hex_install <> ", {:plug, \"~> 1.20.3\"}])")

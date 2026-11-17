@@ -76,7 +76,7 @@ defmodule RequestSeal.JOSE.JWE do
         `{:jwe, "A256KW"}` and granting `:wrap`. Custody wraps a copy of the
         generated CEK and returns no header additions.
       * an arity-two function receiving `(wire_algorithm, generated_cek_bytes)`
-        and returning `{:ok, %{encrypted_key: bytes, header: %{}}}`. This 1.x
+        and returning `{:ok, %{encrypted_key: bytes, header: %{}}}`. This
         callback form is refused for ECDH-ES before key work and never
         receives an agreed CEK.
     * `opts` - keyword list.
@@ -271,7 +271,7 @@ defmodule RequestSeal.JOSE.JWE do
         before resolution; held-key mismatch/all-zero X25519 use the fallback
         CEK and end `:decryption_failed`. Callback entries continue to receive the full header; callers
         using `KeyManagement.unwrap/4` must translate it to that primitive's
-        closed params. The existing 1.x policy, parse order, and whole-operation
+        closed params. The existing policy, parse order, and whole-operation
         deadline remain in force.
 
 

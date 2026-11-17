@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 import subprocess
 import sys
+from release import package_version
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -148,11 +149,12 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
             process.stdout.close()
 
 
-def ci_action_errors(workflow):
+def ci_action_errors(workflow, required_actions=None):
     """Require the build's essential actions and immutable commit identities."""
     errors = []
     actions = re.findall(r"uses:\s*(\S+)", workflow)
-    required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
+    if required_actions is None:
+        required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
     if not required_actions.issubset({action.split("@", 1)[0] for action in actions}) or any(not re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) for action in actions):
         errors.append("CI actions must use immutable commit identities")
     return errors
@@ -160,6 +162,10 @@ def ci_action_errors(workflow):
 
 def check_ci_actions():
     errors = ci_action_errors((ROOT / ".github/workflows/ci.yml").read_text())
+    errors += ci_action_errors((ROOT / ".github/workflows/release.yml").read_text(), {
+        "actions/checkout", "erlef/setup-beam", "actions/setup-python",
+        "actions/upload-artifact", "actions/download-artifact", "actions/attest",
+    })
     if errors:
         raise ValueError("\n".join(errors))
     print("PASS: CI actions use immutable commits")
@@ -168,15 +174,16 @@ def check_ci_actions():
 def corpus_release_errors(sources):
     """The corpus release workflow refuses a tag unless these agree; fail before tagging."""
     import json
-    match = re.search(r'\bversion: "([^"]+)"', sources["mix.exs"])
+    try:
+        version = package_version(sources["mix.exs"])
+    except ValueError as error:
+        return [str(error)]
     try:
         release = json.loads(sources["corpus/index.json"]).get("elixir_release")
     except (ValueError, AttributeError):
         release = None
-    if not match:
-        return ["mix.exs: package version not found"]
-    if release != "v" + match.group(1):
-        return [f"corpus/index.json: elixir_release must be v{match.group(1)} to match mix.exs"]
+    if release != "v" + version:
+        return [f"corpus/index.json: elixir_release must be v{version} to match mix.exs"]
     return []
 
 
@@ -187,7 +194,23 @@ def check_corpus_release():
     print("PASS: corpus/index.json elixir_release matches the package version")
 
 
-RELEASE_RUNTIME_CHECK = 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])'
+RELEASE_RUNTIME_CHECK = r'''
+check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd()
+if "dev" in Version.parse!(Mix.Project.config()[:version]).pre do
+  try do
+    check.([])
+  rescue
+    error in Mix.Error ->
+      unless String.contains?(Exception.message(error), "development versions cannot publish"),
+        do: reraise(error, __STACKTRACE__)
+      IO.puts("PASS: development version refuses to publish")
+  else
+    _ -> Mix.raise("development version must refuse to publish")
+  end
+else
+  check.([])
+end
+'''
 
 
 def check_package_metadata(path):

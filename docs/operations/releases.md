@@ -7,9 +7,11 @@ documentation, and required counterparts. Named provider profiles use extension 
 The native TypeScript counterpart is `@request-seal/core` from `baselabs/request-seal-typescript`;
 both repositories use the [conformance corpus](../reference/corpus-format.md).
 
-1. Set the package version and docs `source_ref` (`v<version>`) in `mix.exs`.
+1. Set `@version` in `mix.exs` to the release version, removing `-dev`.
+   Docs derive `source_ref` as `v<version>` for releases and `main` for pre-releases.
    Install requirements use `~> X.Y.Z` before 1.0 and `~> MAJOR.MINOR` thereafter.
-   Match `corpus/index.json`'s `elixir_release` to the package version; the tag workflow enforces it.
+   Match `corpus/index.json`'s `elixir_release` to `v<version>`, including `-dev`
+   between releases; the gate and release workflow enforce this identity.
    Update `test/support/conformance_pin.ex` whenever the index digest changes.
    Maintain release and migration guidance in CHANGELOG.md.
    Confirm the explicit public document inventory and supported profiles.
@@ -72,7 +74,7 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
 
    ```sh
    : "${HEX_API_KEY:?Export HEX_API_KEY from your secret store for this command}"
-   : "${VERSION:?Set VERSION to the version being published}"
+   export VERSION=$(python3 scripts/release.py --version)
    mix hex.publish --yes
    mix hex.info request_seal "$VERSION"
    curl --fail --location --silent --show-error --output /dev/null "https://hexdocs.pm/request_seal/$VERSION/index.html"
@@ -87,16 +89,66 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    an actual public entry point:
 
    ```sh
+   export VERSION=$(python3 scripts/release.py --version)
+   export REQUIREMENT=$(python3 scripts/release.py --install-requirement)
    consumer_dir=$(mktemp -d)
    trap 'rm -rf "$consumer_dir"' EXIT
    MIX_INSTALL_DIR="$consumer_dir" elixir -e '
-   Mix.install([{:request_seal, "~> 1.0"}])
-   "1.0.0" = Application.spec(:request_seal, :vsn) |> to_string()
+   version = System.fetch_env!("VERSION")
+   Mix.install([{:request_seal, System.fetch_env!("REQUIREMENT")}])
+   ^version = Application.spec(:request_seal, :vsn) |> to_string()
    {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
    "GET" = message.method
-   IO.puts("PASS: RequestSeal 1.0.0 clean-consumer install and request construction")
+   IO.puts("PASS: RequestSeal #{version} clean-consumer install and request construction")
    '
    ```
+7. Push the release commit to its branch, then dispatch the `Release` workflow
+   (`.github/workflows/release.yml`) on that branch, after the Hex publication above:
+
+   ```sh
+   : "${RELEASE_BRANCH:?Set the branch holding the release commit}"
+   gh workflow run release.yml --ref "$RELEASE_BRANCH"
+   ```
+
+   Confirm the completed run is for that exact commit and passed. Dispatch uses
+   read-only repository permissions and produces a workflow artifact for inspection;
+   it creates no attestations or release assets. It refuses every pre-release,
+   mismatched corpus identity, or existing version tag pointing at another commit.
+   It rebuilds the package and compares it byte for byte with the published Hex
+   tarball before attestation or publication of release assets. Inspect the
+   CycloneDX 1.6 SBOM: telemetry and optional integrations are included, development
+   and test tools are excluded. The pinned EEF `sbom` 0.12.1 escript reads the
+   unpacked package with Mix's locked production dependency closure, including
+   all optional integrations. The workflow checks every component and version
+   against that closure. Optional serial and generation-time fields are removed
+   and ordering normalized for repeatable bytes.
+8. Only after the dry run passes, push the annotated release tag from that commit:
+
+   ```sh
+   git tag -a "v$VERSION" -m "RequestSeal $VERSION"
+   git push origin "v$VERSION"
+   ```
+
+   Confirm the tag's `Release` run passed. Its read-only verification job repeats
+   the dry run, including the Hex byte comparison. Only its tag-only publishing
+   job receives release and attestation write permissions. It attests build
+   provenance for the package tarball, corpus archive, and SBOM, and binds a
+   CycloneDX SBOM attestation to the package tarball before uploading assets.
+   Verify the downloaded artifacts and both predicate types:
+
+   ```sh
+   assets_dir=$(mktemp -d)
+   trap 'rm -rf "$assets_dir"' EXIT
+   gh release download "v$VERSION" --dir "$assets_dir"
+   (cd "$assets_dir" && sha256sum --check corpus.sha256)
+   for file in "request_seal-$VERSION.tar" corpus.tar.gz sbom.cdx.json; do
+     gh attestation verify "$assets_dir/$file" --repo baselabs/request_seal --predicate-type https://slsa.dev/provenance/v1
+   done
+   gh attestation verify "$assets_dir/request_seal-$VERSION.tar" --repo baselabs/request_seal --predicate-type https://cyclonedx.org/bom
+   ```
+
+   After release, advance `@version` to the next `-dev` version and update
+   documented install requirements, the corpus release identity, and its digest pin.
 
 ## Dependency updates
 
@@ -116,10 +168,12 @@ automatic rollback semantics. Changing an installed application's dependency is 
 
 ## Conformance release assets
 
-Tag the verified release commit as `v<version>` after package checks. A tag must
-identify the same contents as the Hex release. The tag workflow verifies
-`corpus/index.json` file digests and publishes deterministic `corpus.tar.gz` and
-`corpus.sha256` assets. Confirm the workflow succeeded and that
-`gh release view v<version>` lists both assets, then verify them against those
-digests before vendoring. The TypeScript repository pins tag, commit and index SHA-256 together;
+Publish the release commit to Hex, complete the `Release` dispatch dry run on that
+commit, then push `v<version>`. The tag must identify the same bytes as the Hex
+release. The workflow verifies `corpus/index.json` file digests, compares the
+rebuilt package with Hex, and publishes `request_seal-<version>.tar`, deterministic
+`corpus.tar.gz`, `corpus.sha256`, and `sbom.cdx.json`. Existing assets must be
+byte-identical; missing ones are uploaded without replacing others. Confirm
+`gh release view v<version>` lists all four assets and verify the checksums and
+attestations above before vendoring. The TypeScript repository pins tag, commit and index SHA-256 together;
 its corpus is repository tooling and excluded from the npm package.
