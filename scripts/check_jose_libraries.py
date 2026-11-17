@@ -31,17 +31,20 @@ def main():
         run(["npm", "ci", "--prefix", temp, "--ignore-scripts", "--no-audit", "--no-fund"], env=env, timeout=300)
         env["REQUESTSEAL_NPM_JOSE"] = str(temp / "node_modules/jose/dist/webapi/index.js")
         node = ["node", ROOT / "scripts/jose_libraries/npm.mjs"]
-        erlang = ["elixir", ROOT / "scripts/jose_libraries/erlang.exs"]
+        # Select the project's runtime before Mix.install leaves project scope.
+        bootstrap = ("[directory, script | args] = System.argv(); System.argv(args); "
+                     "File.cd!(directory); Code.require_file(script)")
+        erlang = ["elixir", "-e", bootstrap, "--", temp, ROOT / "scripts/jose_libraries/erlang.exs"]
         if options.generate:
             npm, erl = temp / "npm.json", temp / "erlang.json"
             run(node + ["make", "-", npm], env=env, timeout=300)
-            run(erlang + ["make", "-", erl], env=env, cwd=temp, timeout=300)
+            run(erlang + ["make", "-", erl], env=env, cwd=ROOT, timeout=300)
             SOURCE.parent.mkdir(parents=True, exist_ok=True)
             SOURCE.write_text(json.dumps(json.loads(npm.read_text()) + json.loads(erl.read_text()), indent=2) + "\n")
         produced = temp / "request-seal.json"
         run(["mix", "run", "--no-start", ROOT / "scripts/jose_libraries/request_seal.exs", SOURCE, produced], env=env, timeout=300)
         run(node + ["verify", produced, "-"], env=env, timeout=300)
-        run(erlang + ["verify", produced, "-"], env=env, cwd=temp, timeout=300)
+        run(erlang + ["verify", produced, "-"], env=env, cwd=ROOT, timeout=300)
         print("PASS both directions: npm jose 6.2.17 and Erlang jose 1.11.13; isolated tools removed", flush=True)
 
 
