@@ -3,7 +3,7 @@ defmodule RequestSeal.DiscoveryDNSIsolationTest do
 
   test "real DNS rebinding exercises the discovery entry point in an isolated resolver" do
     {output, status} =
-      System.cmd(
+      RequestSeal.SystemCommand.run(
         "elixir",
         [
           "-pa",

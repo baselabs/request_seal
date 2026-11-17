@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import signal
+import select
 import sys
 import tempfile
 import time
@@ -17,11 +18,44 @@ import processes
 import sbom
 
 
+def linux_process(pid):
+    # comm may contain spaces and parentheses; the final ')' ends that field.
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    return fields[0], int(fields[1]), int(fields[2]), int(fields[3])
+
+
+def runtime_identity(pid, owner):
+    pidfd = os.pidfd_open(pid) if hasattr(os, "pidfd_open") else None
+    try:
+        if sys.platform.startswith("linux"):
+            ancestor = pid
+            while ancestor != owner and ancestor > 1:
+                ancestor = linux_process(ancestor)[1]
+            _, _, group, session = linux_process(pid)
+            if select.select([pidfd], [], [], 0)[0]:
+                raise AssertionError("ready-file process exited during ancestry verification")
+        else:
+            # /proc and pidfds are Linux facilities; only BSD/macOS need ps.
+            listing = subprocess.run(["ps", "-axo", "pid=,ppid="],
+                                     capture_output=True, text=True, check=True, timeout=10).stdout
+            parents = dict(map(int, row.split()) for row in listing.splitlines())
+            ancestor = pid
+            while ancestor in parents and ancestor != owner:
+                ancestor = parents[ancestor]
+            group, session = os.getpgid(pid), os.getsid(pid)
+        if ancestor != owner:
+            raise AssertionError("ready-file PID does not belong to the test's process tree")
+        return group, session, pidfd
+    except BaseException:
+        if pidfd is not None:
+            os.close(pidfd)
+        raise
+
+
 class ProcessGroupTest(unittest.TestCase):
     def test_both_entry_points_share_the_runner_and_handle_timeout_errors(self):
         self.assertIs(processes.run, check.run)
         self.assertIs(processes.run, sbom.run)
-        self.assertIs(processes.stop_group, check.stop_group)
         for script in ("check.py", "sbom.py"):
             tree = ast.parse((ROOT / "scripts" / script).read_text())
             handlers = [node for node in ast.walk(tree.body[-1]) if isinstance(node, ast.ExceptHandler)
@@ -46,18 +80,7 @@ class ProcessGroupTest(unittest.TestCase):
         self.assertEqual(7, error.exception.returncode)
 
     def runtime_identity(self, pid, owner):
-        # Confirm ancestry before binding a PID from a file. The test's
-        # unreaped parent anchors the tree even if the runtime setsid().
-        listing = subprocess.run(["ps", "-axo", "pid=,ppid="],
-                                 capture_output=True, text=True, check=True).stdout
-        parents = dict(map(int, row.split()) for row in listing.splitlines())
-        ancestor = pid
-        while ancestor in parents and ancestor != owner:
-            ancestor = parents[ancestor]
-        self.assertEqual(owner, ancestor, "ready-file PID does not belong to the test's process tree")
-        group, session = os.getpgid(pid), os.getsid(pid)
-        pidfd = os.pidfd_open(pid) if hasattr(os, "pidfd_open") else None
-        return group, session, pidfd
+        return runtime_identity(pid, owner)
 
     def test_closed_inherited_cleanup_descriptor_does_not_break_a_new_runner(self):
         # Popen closes descriptors by default, while environment variables pass
@@ -106,7 +129,7 @@ class ProcessGroupTest(unittest.TestCase):
                 'install_signal_handlers(); '
                 'run([sys.executable, "-B", "-c", *sys.argv[1:]], timeout=8)'
             )
-            arguments = [runner, runtime] if nested else [launcher, runtime]
+            arguments = [runner] * int(nested) + [runtime] if nested else [launcher, runtime]
             log = (Path(directory) / "output").open("w+b")
             parent = subprocess.Popen([sys.executable, "-B", "-c", runner, *arguments, str(lock), str(ready)],
                                       cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
@@ -198,6 +221,221 @@ class ProcessGroupTest(unittest.TestCase):
 
     def test_nested_runner_finishes_its_cleanup_before_outer_kill(self):
         self.assert_tree_stopped(signal.SIGINT, nested=True)
+
+    def test_deeper_nested_runners_finish_before_outer_deadline(self):
+        self.assert_tree_stopped(signal.SIGINT, nested=3)
+
+    def test_signal_permission_denial_names_the_live_process_group(self):
+        # A real Python audit policy denies this signal. Keep it in a disposable
+        # interpreter because installed audit hooks cannot be removed.
+        source = '''import signal, sys
+sys.path.insert(0, "scripts")
+from processes import command, signal_group
+denied = True
+def policy(event, args):
+    if denied and event == "os.killpg" and args[1] == signal.SIGKILL:
+        raise PermissionError("signal denied by audit policy")
+sys.addaudithook(policy)
+with command(["sleep", "10"]) as child:
+    try:
+        try:
+            signal_group(child, signal.SIGKILL)
+        except PermissionError as error:
+            assert str(child.pid) in str(error) and "permission denied" in str(error)
+        else:
+            raise AssertionError("signal denial was discarded")
+    finally:
+        denied = False
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=15)
+
+    def test_exit_event_does_not_reap_the_owned_child(self):
+        with processes.command([sys.executable, "-B", "-c", "pass"]) as child:
+            self.assertTrue(processes.exited(child, timeout=10))
+            self.assertIsNone(child.returncode)
+            if hasattr(os, "waitid"):
+                status = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+                self.assertEqual(child.pid, status.si_pid)
+            self.assertEqual(0, child.wait(timeout=1))
+
+    def test_wait_uses_negligible_cpu_for_a_real_sleep(self):
+        started = time.process_time()
+        wall = time.monotonic()
+        sleeps = []
+        def observe(frame, event, function):
+            if event == "c_call" and getattr(function, "__name__", None) == "sleep":
+                sleeps.append(function)
+        sys.setprofile(observe)
+        try:
+            processes.run(["sleep", "2"], timeout=10)
+        finally:
+            sys.setprofile(None)
+        self.assertEqual([], sleeps, "command wait sleep-polled")
+        self.assertGreater(time.monotonic() - wall, 1.9)
+        self.assertLess(time.process_time() - started, 0.08)
+
+    def test_dead_nested_runner_cannot_hold_cleanup_open(self):
+        # Keep a pidfd on the inner session: SIGKILL makes that runner unable to
+        # clean its own sleep, so the test must discharge that unavoidable orphan.
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "orphan"
+            inner = ('import os,sys,time; from pathlib import Path; sys.path.insert(0,"scripts"); '
+                     'from processes import command; '
+                     '\nwith command(["sleep","1017"]) as child:\n'
+                     ' Path(sys.argv[1]).write_text(str(child.pid))\n'
+                     ' while not Path(sys.argv[2]).exists(): time.sleep(0.01)\n'
+                     ' os.kill(os.getpid(),9)')
+            shell = 'trap "" TERM; python3 -B -c "$1" "$2" "$3"; sleep 30'
+            with processes.command(["bash", "-c", shell, "bash", inner, str(ready), str(ready.with_suffix(".release"))], cwd=ROOT) as outer:
+                deadline = time.monotonic() + 10
+                while not ready.exists():
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.01)
+                pid = int(ready.read_text())
+                group, session, pidfd = self.runtime_identity(pid, outer.pid)
+                try:
+                    ready.with_suffix(".release").write_text("exit")
+                    time.sleep(0.1)
+                    started = time.monotonic()
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        # Exercise run(), including the stale '+' registration.
+                        processes.run(["bash", "-c", 'trap "" TERM; '
+                                       'python3 -B -c "$1"; sleep 30', "bash",
+                                       'import os; os.write(int(os.environ["REQUESTSEAL_CLEANUP_FD"]), b"+"); '
+                                       'os.kill(os.getpid(),9)'], timeout=2)
+                    self.assertLess(time.monotonic() - started, 9)
+                    started = time.monotonic()
+                    processes.stop_group(outer)
+                    self.assertLess(time.monotonic() - started, 7)
+                finally:
+                    try:
+                        if pidfd is not None:
+                            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                        elif (os.getpgid(pid), os.getsid(pid)) == (group, session):
+                            os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    finally:
+                        if pidfd is not None:
+                            os.close(pidfd)
+
+    def test_cleanup_pipe_is_drained_during_normal_run_and_notebook_read(self):
+        writer = ('import os; fd=int(os.environ["REQUESTSEAL_CLEANUP_FD"]); '
+                  '[os.write(fd,b"+-") for _ in range(70000)]; print("DONE")')
+        processes.run([sys.executable, "-B", "-c", writer], timeout=10)
+        with processes.command([sys.executable, "-B", "-c", writer], stdout=subprocess.PIPE) as child:
+            try:
+                self.assertEqual("DONE\n", check.read_notebook(child, 10, 1024))
+            finally:
+                child.stdout.close()
+
+    def test_broken_acknowledgment_does_not_replace_original_error(self):
+        reader, writer = os.pipe()
+        identity = os.fstat(writer)
+        source = '''import os, sys
+sys.path.insert(0, "scripts")
+from processes import command
+try:
+    with command(["sleep", "0.1"]):
+        os.read(int(sys.argv[1]), 1)
+        raise ValueError("original error")
+except ValueError as error:
+    assert str(error) == "original error"
+else:
+    raise AssertionError("original exception lost")
+'''
+        release_reader, release_writer = os.pipe()
+        environment = dict(os.environ, REQUESTSEAL_CLEANUP_FD=str(writer),
+                           REQUESTSEAL_CLEANUP_ID=f"{identity.st_dev}:{identity.st_ino}")
+        child = subprocess.Popen([sys.executable, "-B", "-c", source, str(release_reader)],
+                                 cwd=ROOT, env=environment, pass_fds=(writer, release_reader))
+        try:
+            os.close(writer)
+            writer = None
+            self.assertTrue(select.select([reader], [], [], 10)[0])
+            self.assertEqual(b"+", os.read(reader, 1))
+            os.close(reader)
+            reader = None
+            os.write(release_writer, b"x")
+            self.assertEqual(0, child.wait(timeout=10))
+        finally:
+            for fd in (reader, writer, release_reader, release_writer):
+                if fd is not None:
+                    os.close(fd)
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=10)
+
+    def test_signal_in_registration_window_still_acknowledges_cleanup(self):
+        reader, writer = os.pipe()
+        identity = os.fstat(writer)
+        source = '''import os, signal, sys
+from pathlib import Path
+sys.path.insert(0, "scripts")
+from processes import command
+line = next(i for i, text in enumerate(Path("scripts/processes.py").read_text().splitlines(), 1)
+            if text.strip() == "registered = True")
+def interrupt(frame, event, arg):
+    if event == "line" and frame.f_code.co_name == "command" and frame.f_lineno == line:
+        sys.settrace(None)
+        os.kill(os.getpid(), signal.SIGINT)
+    return interrupt
+signal.signal(signal.SIGINT, signal.default_int_handler)
+sys.settrace(interrupt)
+try:
+    with command(["sleep", "1"]):
+        raise AssertionError("pending interrupt was not delivered")
+except KeyboardInterrupt:
+    pass
+'''
+        child = subprocess.Popen([sys.executable, "-B", "-c", source], cwd=ROOT, pass_fds=(writer,),
+                                 env=dict(os.environ, REQUESTSEAL_CLEANUP_FD=str(writer),
+                                          REQUESTSEAL_CLEANUP_ID=f"{identity.st_dev}:{identity.st_ino}"))
+        os.close(writer)
+        try:
+            self.assertEqual(0, child.wait(timeout=10))
+            self.assertEqual(b"+-", os.read(reader, 4096))
+        finally:
+            os.close(reader)
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=10)
+
+    def test_port_owner_eof_kills_a_separate_command_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "ready"
+            source = ('import os,signal,time; from pathlib import Path; '
+                      'signal.signal(signal.SIGTERM,signal.SIG_IGN); '
+                      'Path(__import__("sys").argv[1]).write_text(str(os.getpid())); time.sleep(120)')
+            parent = subprocess.Popen([sys.executable, "-B", "scripts/processes.py", "--timeout", "30", "--",
+                                       sys.executable, "-B", "-c", source, str(ready)], cwd=ROOT,
+                                      stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            pidfd = None
+            try:
+                deadline = time.monotonic() + 10
+                while not ready.exists():
+                    self.assertIsNone(parent.poll())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.01)
+                pid = int(ready.read_text())
+                _, _, pidfd = self.runtime_identity(pid, parent.pid)
+                parent.stdin.close()
+                parent.wait(timeout=10)
+                self.assertNotEqual(0, parent.returncode)
+                if pidfd is not None:
+                    self.assertTrue(select.select([pidfd], [], [], 2)[0])
+            finally:
+                if parent.poll() is None:
+                    parent.terminate()
+                    parent.wait(timeout=10)
+                if not parent.stdin.closed:
+                    parent.stdin.close()
+                if pidfd is not None:
+                    try:
+                        signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    os.close(pidfd)
 
     def test_inherited_ignored_hangup_remains_ignored(self):
         with tempfile.TemporaryDirectory() as directory:

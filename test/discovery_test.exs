@@ -207,7 +207,7 @@ defmodule RequestSeal.DiscoveryTest do
       "Application.ensure_all_started(:request_seal); {:ok,s}=RequestSeal.Discovery.Source.new(%{type: :directory,location: \"https://example.com\"}); IO.inspect(RequestSeal.Discovery.fetch(s,[]))"
 
     {output, status} =
-      System.cmd(
+      RequestSeal.SystemCommand.run(
         "elixir",
         ["-pa", Application.app_dir(:request_seal, "ebin"), "-e", script],
         stderr_to_stdout: true

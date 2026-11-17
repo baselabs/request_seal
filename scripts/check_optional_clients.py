@@ -4,8 +4,7 @@ import os
 import json
 import shutil
 from pathlib import Path
-import subprocess
-import tempfile
+from processes import install_signal_handlers, run, temporary_directory
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,7 +68,7 @@ IO.puts(["REQUESTSEAL_LOCK\t", :json.encode(graph)])
 
 
 def running_toolchain():
-    result = subprocess.run(
+    result = run(
         ["elixir", "-e", """
 IO.puts(System.version())
 IO.puts(System.otp_release())
@@ -86,7 +85,7 @@ IO.puts(Path.join(to_string(:code.root_dir()), "bin"))
 def dependency_metadata(runtime_path):
     env = os.environ.copy()
     env["PATH"] = runtime_path
-    result = subprocess.run(
+    result = run(
         ["elixir", "-e", DEPENDENCY_METADATA], cwd=ROOT, env=env,
         check=True, capture_output=True, text=True, timeout=30,
     )
@@ -100,7 +99,7 @@ def dependency_metadata(runtime_path):
 def lock_graph(runtime_path):
     env = os.environ.copy()
     env["PATH"] = runtime_path
-    result = subprocess.run(
+    result = run(
         ["elixir", "-e", LOCK_GRAPH], cwd=ROOT, env=env,
         check=True, capture_output=True, text=True, timeout=30,
     )
@@ -138,7 +137,7 @@ def floor_files(dependencies):
 
 
 def check(elixir, runtime_path):
-    with tempfile.TemporaryDirectory(prefix="requestseal-consumer-") as name:
+    with temporary_directory(prefix="requestseal-consumer-") as name:
         project = Path(name)
         (project / "config").mkdir()
         (project / "config/config.exs").write_text((ROOT / "config/config.exs").read_text())
@@ -207,7 +206,7 @@ IO.puts("PASS: fresh consumer builds, signs, and verifies core without Req/Finch
 """],
         ]
         for command in commands:
-            subprocess.run(command, cwd=project, env=env, check=True, timeout=180)
+            run(command, cwd=project, env=env, check=True, timeout=180)
 
 
 def check_client_floors(elixir, runtime_path):
@@ -228,7 +227,7 @@ def check_client_floors(elixir, runtime_path):
     if not os.environ.get("REQUESTSEAL_REPLAY_PG_URL"):
         print("NOT VERIFIED: REQUESTSEAL_REPLAY_PG_URL is not set; PostgreSQL floor tests need a real database", flush=True)
 
-    with tempfile.TemporaryDirectory(prefix="requestseal-floor-consumer-") as name:
+    with temporary_directory(prefix="requestseal-floor-consumer-") as name:
         project = Path(name)
         (project / "config").mkdir()
         shutil.copyfile(ROOT / "config/config.exs", project / "config/config.exs")
@@ -246,7 +245,8 @@ def check_client_floors(elixir, runtime_path):
         # removed, so Mix re-resolves only those; test tools and unrelated
         # transitive packages stay at the versions the suite was run against.
         shutil.copyfile(ROOT / "mix.lock", project / "mix.lock")
-        for relative in files +["test/test_helper.exs", "test/support/multi_signature_helper.exs"]:
+        for relative in files + ["test/test_helper.exs", "test/support/multi_signature_helper.exs",
+                                 "test/support/system_command.ex", "scripts/processes.py"]:
             target = project / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             if (ROOT / relative).is_dir():
@@ -280,13 +280,14 @@ end
         for command in commands:
             print("RUN " + " ".join(command[:3]), flush=True)
             # A cold floor consumer compiles the whole Ash, Phoenix and Bandit graph.
-            subprocess.run(command, cwd=project, env=env, check=True, timeout=1200)
+            run(command, cwd=project, env=env, check=True, timeout=1200)
         if not env.get("REQUESTSEAL_REPLAY_PG_URL"):
             raise ValueError("REQUESTSEAL_REPLAY_PG_URL is not set; PostgreSQL dependency floors were not verified")
         print("PASS: fresh consumer compiles and passes covering tests at every published dependency floor", flush=True)
 
 
 if __name__ == "__main__":
+    install_signal_handlers()
     elixir, runtime_path = running_toolchain()
     check(elixir, runtime_path)
     check_client_floors(elixir, runtime_path)

@@ -7,10 +7,9 @@ import os
 from pathlib import Path
 import subprocess
 import tarfile
-import tempfile
 
 from release import normalize_sbom, package_version
-from processes import install_signal_handlers, run
+from processes import install_signal_handlers, run, temporary_directory
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL_VERSION = "0.12.1"
@@ -44,7 +43,7 @@ def generate(output, tarball=None):
     asset, digest = tool_platform()
     url = f"https://github.com/erlef/mix_sbom/releases/download/v{TOOL_VERSION}/{asset}"
 
-    with tempfile.TemporaryDirectory(prefix="requestseal-sbom-") as directory:
+    with temporary_directory(prefix="requestseal-sbom-") as directory:
         scratch = Path(directory)
         # Burrito's extracted runtime belongs to this invocation, like the binary.
         environment["MIX_SBOM_INSTALL_DIR"] = str(scratch / "runtime")

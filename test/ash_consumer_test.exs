@@ -34,7 +34,7 @@ defmodule RequestSeal.AshConsumerTest do
     # The consumer fetches request_seal's one required Hex dependency from Hex
     # before compiling.
     {deps_output, deps_status} =
-      System.cmd(mix, ["deps.get"],
+      RequestSeal.SystemCommand.run(mix, ["deps.get"],
         cd: warning_consumer,
         env: warning_env,
         stderr_to_stdout: true
@@ -43,7 +43,7 @@ defmodule RequestSeal.AshConsumerTest do
     assert deps_status == 0, deps_output
 
     {warning_output, _status} =
-      System.cmd(mix, ["compile", "--warnings-as-errors"],
+      RequestSeal.SystemCommand.run(mix, ["compile", "--warnings-as-errors"],
         cd: warning_consumer,
         env: warning_env,
         stderr_to_stdout: true
@@ -62,12 +62,12 @@ defmodule RequestSeal.AshConsumerTest do
     {mix, env} = consumer(scratch, root)
 
     {deps_output, deps_status} =
-      System.cmd(mix, ["deps.get"], cd: scratch, env: env, stderr_to_stdout: true)
+      RequestSeal.SystemCommand.run(mix, ["deps.get"], cd: scratch, env: env, stderr_to_stdout: true)
 
     assert deps_status == 0, deps_output
 
     {output, status} =
-      System.cmd(mix, ["compile", "--warnings-as-errors"],
+      RequestSeal.SystemCommand.run(mix, ["compile", "--warnings-as-errors"],
         cd: scratch,
         env: env,
         stderr_to_stdout: true
@@ -101,7 +101,7 @@ defmodule RequestSeal.AshConsumerTest do
     """
 
     {output, status} =
-      System.cmd(mix, ["run", "-e", probe], cd: scratch, env: env, stderr_to_stdout: true)
+      RequestSeal.SystemCommand.run(mix, ["run", "-e", probe], cd: scratch, env: env, stderr_to_stdout: true)
 
     assert status == 0, output
     assert output =~ "PASS: framework-free consumer"

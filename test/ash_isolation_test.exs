@@ -21,7 +21,7 @@ defmodule RequestSeal.AshIsolationTest do
     assert Enum.all?(hits, &String.contains?(&1, "/lib/request_seal/ash/"))
 
     {xref, status} =
-      System.cmd("mix", ["xref", "graph", "--format", "plain"],
+      RequestSeal.SystemCommand.run("mix", ["xref", "graph", "--format", "plain"],
         stderr_to_stdout: true,
         env: [{"MIX_ENV", "test"}]
       )

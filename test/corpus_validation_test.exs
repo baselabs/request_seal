@@ -52,7 +52,7 @@ defmodule RequestSeal.CorpusValidationTest do
                  File.write!(Path.join(root, path), "unlisted")
 
                  {output, status} =
-                   System.cmd("python3", ["scripts/verify_corpus.py", root],
+                   RequestSeal.SystemCommand.run("python3", ["scripts/verify_corpus.py", root],
                      stderr_to_stdout: true
                    )
 
@@ -115,7 +115,7 @@ defmodule RequestSeal.CorpusValidationTest do
                  end
 
                  {output, status} =
-                   System.cmd("python3", ["scripts/verify_corpus.py", root],
+                   RequestSeal.SystemCommand.run("python3", ["scripts/verify_corpus.py", root],
                      stderr_to_stdout: true
                    )
 
@@ -128,7 +128,7 @@ defmodule RequestSeal.CorpusValidationTest do
 
   defp assert_python_rejects(root, reason) do
     {output, status} =
-      System.cmd("python3", ["scripts/verify_corpus.py", root], stderr_to_stdout: true)
+      RequestSeal.SystemCommand.run("python3", ["scripts/verify_corpus.py", root], stderr_to_stdout: true)
 
     assert status != 0, output
     assert output =~ reason

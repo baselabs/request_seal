@@ -3,6 +3,7 @@ from pathlib import Path
 import importlib.util
 import os
 import signal
+import shutil
 import time
 import re
 import subprocess
@@ -18,6 +19,9 @@ spec.loader.exec_module(docs)
 gate_spec = importlib.util.spec_from_file_location("check_gate", ROOT / "scripts/check.py")
 gate = importlib.util.module_from_spec(gate_spec)
 gate_spec.loader.exec_module(gate)
+
+import processes
+from processes_test import runtime_identity, linux_process
 
 
 class PublicDocsTest(unittest.TestCase):
@@ -51,6 +55,14 @@ class PublicDocsTest(unittest.TestCase):
 
     def test_current_readme_is_public(self):
         self.assertEqual([], self.errors())
+
+    def test_cleanup_notes_describe_maintainer_guarantees_and_notebook_checks(self):
+        notes = (ROOT / "CHANGELOG.md").read_text().split("## Unreleased 2.0.0\n", 1)[1].split("\n## ", 1)[0]
+        for internal in ("manifest", "Python-owned", "Nested command runners", "ignored\n  hangups"):
+            self.assertNotIn(internal, notes)
+        overview = (ROOT / "livebooks/overview.md").read_text()
+        self.assertNotIn("Python", overview)
+        self.assertIn("time and output limits", overview)
 
     def test_consumer_verification_guide_ships_and_maintainer_runbook_stays_source_only(self):
         guide = "docs/guides/verifying-releases.md"
@@ -340,74 +352,98 @@ class NotebookProcessTest(unittest.TestCase):
             script.write_text(source)
             return gate.execute_notebook(script, "COMPLETED_TEST", **options)
 
-    def test_interrupt_cleans_manifest_notebook_and_scratch_directory(self):
+    def test_repeated_interrupts_clean_notebooks_own_scratch_and_runtimes(self):
         with tempfile.TemporaryDirectory() as directory:
-            ready = Path(directory) / "ready"
-            scratch_name = Path(directory) / "scratch"
-            log = (Path(directory) / "output").open("w+b")
-            runner = """
-import json, signal, sys, tempfile
+            directory = Path(directory)
+            ready = directory / "ready"
+            cleaning = directory / "cleaning"
+            release = directory / "release"
+            os.mkfifo(release)
+            fixtures = directory / "livebooks"
+            shutil.copytree(ROOT / "livebooks", fixtures)
+            (fixtures / "environment.livemd").write_text(
+                '# Cleanup probe\n\n```elixir\n'
+                'File.write!(System.fetch_env!("NOTEBOOK_READY"), System.pid())\n'
+                'Process.sleep(:infinity)\n```\n')
+            runner = r"""
+import os, signal, sys
 from pathlib import Path
 sys.path.insert(0, "scripts")
-from check import execute_notebooks
+from check import notebooks
 from processes import install_signal_handlers
 signal.signal(signal.SIGINT, signal.default_int_handler)
 install_signal_handlers()
-with tempfile.TemporaryDirectory(prefix="requestseal-notebooks-", dir=sys.argv[1]) as temporary:
-    scratch = Path(temporary)
-    Path(sys.argv[2]).write_text(temporary)
-    script = scratch / "notebook.exs"
-    script.write_text('File.mkdir_p!(System.fetch_env!("MIX_INSTALL_DIR")); '
-                      'File.write!(System.fetch_env!("NOTEBOOK_READY"), System.pid()); '
-                      'Process.sleep(:infinity)')
-    (scratch / "manifest.json").write_text(json.dumps([
-        {"script": "notebook.exs", "completion": "DONE", "notebook": "interrupt.livemd", "cells": 1}]))
-    execute_notebooks(scratch)
+def cleanup_gate(event, args):
+    if event == "shutil.rmtree" and Path(args[0]).name.startswith("requestseal-notebooks-"):
+        Path(sys.argv[1]).write_text(str(args[0]))
+        with open(sys.argv[2], "rb", buffering=0) as release:
+            release.read(1)
+sys.addaudithook(cleanup_gate)
+notebooks()
 """
-            parent = subprocess.Popen([sys.executable, "-B", "-c", runner, directory, str(scratch_name)],
-                                      cwd=ROOT, env=dict(os.environ, NOTEBOOK_READY=str(ready)),
+            log = (directory / "output").open("w+b")
+            parent = subprocess.Popen([sys.executable, "-B", "-c", runner, str(cleaning), str(release)],
+                                      cwd=ROOT, env=dict(os.environ, NOTEBOOK_READY=str(ready),
+                                                        REQUESTSEAL_NOTEBOOK_DIR=str(fixtures), TMPDIR=str(directory)),
                                       stdout=log, stderr=log, start_new_session=True)
             beam = group = session = pidfd = None
+            released = False
             try:
-                deadline = time.monotonic() + 30
+                deadline = time.monotonic() + 180
                 while not ready.exists() or not ready.read_text():
-                    self.assertIsNone(parent.poll(), "notebook runner exited before BEAM readiness")
-                    self.assertLess(time.monotonic(), deadline, "notebook BEAM never became ready")
-                    time.sleep(0.01)
+                    self.assertIsNone(parent.poll(), (directory / "output").read_text())
+                    self.assertLess(time.monotonic(), deadline, "notebooks() never reached execution")
+                    time.sleep(0.02)
                 beam = int(ready.read_text())
-                group, session = os.getpgid(beam), os.getsid(beam)
-                self.assertEqual((beam, beam), (group, session), "notebook PID does not lead its owned session")
-                ancestry = subprocess.run(["ps", "-o", "ppid=", "-p", str(beam)],
-                                          capture_output=True, text=True, check=True).stdout
-                self.assertEqual(parent.pid, int(ancestry), "notebook PID is not the test runner's child")
-                if hasattr(os, "pidfd_open"):
-                    pidfd = os.pidfd_open(beam)
+                group, session, pidfd = runtime_identity(beam, parent.pid)
+                self.assertEqual((beam, beam), (group, session))
                 os.kill(parent.pid, signal.SIGINT)
-                try:
-                    parent.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self.fail("interrupted notebook runner did not finish cleanup within 10 seconds")
+                deadline = time.monotonic() + 15
+                while not cleaning.exists():
+                    self.assertIsNone(parent.poll(), (directory / "output").read_text())
+                    self.assertLess(time.monotonic(), deadline, "notebooks() never reached scratch cleanup")
+                    time.sleep(0.01)
+                scratch = Path(cleaning.read_text())
+                self.assertTrue(scratch.is_dir(), "cleanup hook did not observe notebooks()'s scratch")
+                os.kill(parent.pid, signal.SIGINT)
+                # The audit hook pauses the actual rmtree while the second signal
+                # arrives; no replacement cleaner or synthetic scratch is used.
+                with release.open("wb", buffering=0) as handle:
+                    handle.write(b"x")
+                released = True
+                parent.wait(timeout=15)
                 self.assertNotEqual(0, parent.returncode)
-                self.assertFalse(Path(scratch_name.read_text()).exists(), "notebook scratch directory survived interrupt")
-                listing = subprocess.run(["ps", "-axo", "pid=,pgid=,stat="], capture_output=True, text=True, check=True)
-                survivors = [row for row in listing.stdout.splitlines()
-                             if len(row.split()) == 3 and int(row.split()[1]) == group and not row.split()[2].startswith("Z")]
-                self.assertEqual([], survivors, "notebook BEAM or its descendants survived interrupt")
+                self.assertFalse(scratch.exists(), "notebooks() scratch survived a repeated interrupt")
+                if sys.platform.startswith("linux"):
+                    survivors = []
+                    for path in Path("/proc").iterdir():
+                        if not path.name.isdecimal():
+                            continue
+                        try:
+                            state, _, pgroup, _ = linux_process(int(path.name))
+                            if pgroup == group and state != "Z":
+                                survivors.append(path.name)
+                        except (FileNotFoundError, ProcessLookupError):
+                            pass
+                    self.assertEqual([], survivors, "notebook runtimes survived cleanup")
+                else:
+                    listing = subprocess.run(["ps", "-axo", "pid=,pgid=,stat="], capture_output=True,
+                                             text=True, check=True, timeout=10)
+                    self.assertFalse(any(int(row.split()[1]) == group and not row.split()[2].startswith("Z")
+                                         for row in listing.stdout.splitlines()))
             finally:
+                if not released and cleaning.exists() and parent.poll() is None:
+                    with release.open("wb", buffering=0) as handle:
+                        handle.write(b"x")
                 if parent.poll() is None:
                     parent.terminate()
-                if beam is not None:
+                if pidfd is not None:
                     try:
-                        if pidfd is not None:
-                            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
-                        elif (os.getpgid(beam), os.getsid(beam)) == (group, session):
-                            os.kill(beam, signal.SIGKILL)
+                        signal.pidfd_send_signal(pidfd, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
-                    finally:
-                        if pidfd is not None:
-                            os.close(pidfd)
-                parent.wait(timeout=10)
+                    os.close(pidfd)
+                parent.wait(timeout=15)
                 log.close()
 
     def test_actual_child_completes_and_rejects_early_success(self):
@@ -446,7 +482,7 @@ with tempfile.TemporaryDirectory(prefix="requestseal-notebooks-", dir=sys.argv[1
         try:
             self.assertEqual(b"COMPLETED_TEST\n", process.stdout.read())
             self.assertIsNone(process.returncode, "the exited child is still unreaped")
-            gate.stop_group(process)
+            processes.stop_group(process)
             self.assertEqual(0, process.returncode)
         finally:
             process.wait(timeout=10)

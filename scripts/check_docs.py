@@ -8,6 +8,7 @@ import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
 from release import install_requirement, parse_version
+from processes import install_signal_handlers, run
 
 ROOT = Path(__file__).resolve().parents[1]
 MACHINE_PATH = re.compile(r"(?:/Users/[^/\s]+/|/home/[^/\s]+/|file://)")
@@ -69,7 +70,7 @@ HTML_ATTRIBUTES = re.compile(
 
 
 def public_paths(root):
-    result = subprocess.run(
+    result = run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=root, capture_output=True, text=True, check=True, timeout=30,
     )
@@ -92,7 +93,7 @@ def public_configuration(root):
         'for path <- Path.wildcard(pattern, match_dot: true), File.regular?(path), '
         'do: IO.puts("REQUEST_SEAL_PACKAGE_FILE\\t" <> path) end'
     )
-    result = subprocess.run(
+    result = run(
         ["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression],
         cwd=root, capture_output=True, text=True, check=True, timeout=120,
     )
@@ -395,6 +396,7 @@ def check(root=ROOT):
 
 
 if __name__ == "__main__":
+    install_signal_handlers()
     try:
         approved, errors = check()
     except (OSError, ValueError, subprocess.SubprocessError) as error:

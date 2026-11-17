@@ -838,8 +838,7 @@ defmodule RequestSeal.ClientAdaptersTest do
     File.mkdir!(dir)
     File.chmod!(dir, 0o700)
     socket = Path.join(dir, "agent")
-    {output, 0} = System.cmd("ssh-agent", ["-a", socket, "-s"], stderr_to_stdout: true)
-    [_, pid] = Regex.run(~r/SSH_AGENT_PID=(\d+);/, output)
+    {_agent_port, pid} = RequestSeal.SystemCommand.agent(socket)
 
     on_exit(fn ->
       System.cmd("kill", ["-CONT", pid], stderr_to_stdout: true)
@@ -849,7 +848,7 @@ defmodule RequestSeal.ClientAdaptersTest do
 
     env = [{"SSH_AUTH_SOCK", socket}, {"SSH_AGENT_PID", pid}]
     file = write_agent_key(dir)
-    assert {_, 0} = System.cmd("ssh-add", [file], env: env, stderr_to_stdout: true)
+    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", [file], env: env, stderr_to_stdout: true)
 
     assert {:ok, public} =
              RequestSeal.PublicKey.import(

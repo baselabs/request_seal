@@ -247,7 +247,7 @@ defmodule RequestSeal.JOSESafetyTest do
 
     try do
       {out, status} =
-        System.cmd(
+        RequestSeal.SystemCommand.run(
           "elixir",
           [
             "-pa",

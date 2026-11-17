@@ -5,14 +5,12 @@ import json
 import os
 import math
 import re
-import selectors
 import time
-import tempfile
 from pathlib import Path
 import subprocess
 import sys
 from release import development_snapshot, package_version, release_notes, source_url
-from processes import command, exited, install_signal_handlers, run, stop_group
+from processes import command, install_signal_handlers, run, temporary_directory
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -82,20 +80,24 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
 def read_notebook(process, timeout, maximum_output):
     deadline = time.monotonic() + timeout
     output = bytearray()
-    with selectors.DefaultSelector() as selector:
-        selector.register(process.stdout, selectors.EVENT_READ)
-        while selector.get_map() or not exited(process):
+    events = process.events
+    events.register(process.stdout, "output")
+    try:
+        while process.stdout.fileno() in events.files or not events.exited:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("Notebook execution deadline exceeded:\n" + output.decode("utf-8", errors="replace"))
-            for key, _ in selector.select(min(remaining, 0.1)):
-                chunk = os.read(key.fileobj.fileno(), 65536)
+            for fd, _ in events.select(remaining):
+                chunk = os.read(fd, 65536)
                 if not chunk:
-                    selector.unregister(key.fileobj)
+                    events.unregister(fd)
                     continue
                 if len(output) + len(chunk) > maximum_output:
                     raise ValueError("Notebook output limit exceeded:\n" + output.decode("utf-8", errors="replace"))
                 output.extend(chunk)
+    finally:
+        if process.stdout.fileno() in events.files:
+            events.unregister(process.stdout)
     return output.decode("utf-8")
 
 
@@ -191,7 +193,7 @@ IO.puts("PASS: built Hex metadata lists ash_onetime and ash_hooks as optional re
 def check_package():
     run(["mix", "run", "--no-start", "-e", RELEASE_RUNTIME_CHECK])
     (ROOT / "_build").mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="package-check-", dir=ROOT / "_build") as temporary:
+    with temporary_directory(prefix="package-check-", dir=ROOT / "_build") as temporary:
         artifact = Path(temporary) / "unpacked"
         run(["mix", "hex.build", "--unpack", "--output", str(artifact)])
         check_package_metadata(artifact / "hex_metadata.config")
@@ -200,7 +202,7 @@ def check_package():
 
 def check_sbom():
     from sbom import generate
-    with tempfile.TemporaryDirectory(prefix="sbom-check-") as directory:
+    with temporary_directory(prefix="sbom-check-") as directory:
         generate(Path(directory) / "sbom.cdx.json")
 
 
@@ -278,7 +280,7 @@ def notebooks():
     run(["mix", "hex.audit"], tooling)
     run(["mix", "format", "--check-formatted"], tooling)
     run(["mix", "run", "--no-start", "check.exs", "--self-test"], tooling)
-    with tempfile.TemporaryDirectory(prefix="requestseal-notebooks-") as temporary:
+    with temporary_directory(prefix="requestseal-notebooks-") as temporary:
         scratch = Path(temporary)
         run(["mix", "run", "--no-start", "check.exs", str(scratch)], tooling,
             extra_env={"REQUESTSEAL_PYTHON": sys.executable})

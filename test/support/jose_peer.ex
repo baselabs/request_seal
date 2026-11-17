@@ -29,7 +29,7 @@ defmodule RequestSeal.JOSEPeer do
   end
 
   def run(path) do
-    System.cmd(
+    RequestSeal.SystemCommand.run(
       "node",
       [
         "--input-type=module",

@@ -38,9 +38,9 @@ class DialyzerGateTest(unittest.TestCase):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content)
-            return subprocess.run(command, cwd=root, text=True,
+            return gate.run(command, cwd=root, text=True,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  timeout=60)
+                                  timeout=60, check=False)
 
     def test_unsuppressed_configuration_passes(self):
         result = self.check(files={"lib/example.ex": """

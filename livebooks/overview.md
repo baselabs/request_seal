@@ -17,7 +17,6 @@ Each notebook installs RequestSeal from Hex, generates its own keys, and asserts
 | [Sign and verify a Web Bot Auth agent](web-bot-auth.livemd) | Web Bot Auth protocol-00 signing with path coverage, held-key verification, and changed-page, unknown-key, and unsigned rejections. |
 | [JWS inside JWE in Livebook](jose.livemd) | Compact JWS signing and verification, a JWS nested in a JWE, an RSA-OAEP recipient key handle, and the bounded JOSE errors. |
 
-The gate validates and exports notebooks with Livebook, then Python executes each
-export with bounded time and output against the checkout. Python owns the scratch
-directory and child runtimes, removing both on failure, interrupt, or terminal loss.
+The gate checks notebook imports, exported code coverage, assertions, and completion
+against the checkout within time and output limits.
 Local assertions establish neither interactive UI behavior nor deployed-peer acceptance; see [testing and evidence](../docs/guides/testing.md).

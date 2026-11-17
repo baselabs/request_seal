@@ -335,7 +335,7 @@ defmodule RequestSeal.ReplayPostgresTest do
     assert :claimed = Replay.claim(ctx.store, original, timeout: 2000)
 
     cmd = System.fetch_env!("REQUESTSEAL_REPLAY_PG_RESTART_CMD")
-    {_output, exit_code} = System.cmd("sh", ["-c", cmd])
+    {_output, exit_code} = RequestSeal.SystemCommand.run("sh", ["-c", cmd], timeout: 30)
     assert exit_code == 0
 
     stores = [ctx.store, Postgres.store(ctx.b, table: ctx.table)]
