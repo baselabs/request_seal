@@ -1,0 +1,12 @@
+--- a/lib/request_seal/jose/jwe/coordinator.ex
++++ b/lib/request_seal/jose/jwe/coordinator.ex
+@@ -398,8 +398,8 @@
+       settled_messages(0, s.n, s)
+       group_messages(:maps.to_list(s.groups), s)
+     end
++    send(s.address, {s.tag, :reply, outcome, s.n, s.next_group})
+     :ets.insert(s.registry, {:outcome, :replied})
+-    send(s.address, {s.tag, :reply, outcome, s.n, s.next_group})
+     :replied
+   end
+   defp settled_messages(n, n, _), do: :ok

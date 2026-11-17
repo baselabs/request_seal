@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/codec.ex
++++ b/lib/request_seal/jose/jwe/codec.ex
+@@ -124,7 +124,7 @@
+   end
+
+   def unit(flag, deadline) do
+-    if RequestSeal.JOSE.JWE.Bounds.now() >= deadline do
++    if RequestSeal.JOSE.JWE.Bounds.now() >= deadline and :atomics.get(flag, 1) == -1 do
+       :atomics.put(flag, 1, 1)
+       throw(:preflight_deadline)
+     end

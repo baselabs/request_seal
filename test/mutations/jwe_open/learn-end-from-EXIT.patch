@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/guard.ex
++++ b/lib/request_seal/jose/jwe/guard.ex
+@@ -60,7 +60,7 @@
+   defp check(%{ended_at: nil} = s) do
+     now = Bounds.now()
+
+-    if :ets.info(s.registry, :owner) == self() do
++    if s.exit_seen do
+       anchor = if s.anchor == nil, do: min(now, s.d), else: s.anchor
+       stop_at = stop_at(anchor, :atomics.get(s.flag, 2))
+       awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, s.registry)

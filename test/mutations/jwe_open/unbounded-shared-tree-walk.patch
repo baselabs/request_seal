@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/bounds.ex
++++ b/lib/request_seal/jose/jwe/bounds.ex
+@@ -35,7 +35,6 @@
+     end
+   end
+
+-  defp walk(_, words, _) when words < 0, do: :over
+   defp walk(_, _, bytes) when is_integer(bytes) and bytes < 0, do: :over
+   defp walk([], words, bytes), do: {:ok, words, bytes}
+   defp walk([[] | rest], words, bytes), do: walk(rest, words, bytes)

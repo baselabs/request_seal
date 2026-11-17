@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/bounds.ex
++++ b/lib/request_seal/jose/jwe/bounds.ex
+@@ -31,6 +31,6 @@
+   def within?(term, words, bytes \\ :infinity) do
+     case walk([term], words, bytes) do
+-      {:ok, _, _} -> :erts_debug.flat_size(term) <= words
++      {:ok, _, _} -> true
+       :over -> false
+     end
+   end

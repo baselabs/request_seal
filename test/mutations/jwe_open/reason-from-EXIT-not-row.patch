@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/guard.ex
++++ b/lib/request_seal/jose/jwe/guard.ex
+@@ -150,6 +150,6 @@
+   defp reason(s) do
+     case :ets.lookup(s.registry, :outcome) do
+-      [{:outcome, :replied}] -> :replied
++      [{:outcome, :not_replied}] -> :replied
+       _ -> case s.cause do
+         :caller_gone -> :normal
+         :deadline -> :deadline

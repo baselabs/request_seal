@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/open.ex
++++ b/lib/request_seal/jose/jwe/open.ex
+@@ -118,6 +118,6 @@
+       Bounds.within?(expected, Bounds.item_words(), Bounds.binary_bytes()) -> expected
+       true -> :oversized
+     end
+-    {kind, token, expected}
++    {kind, if(kind != :exact or expected == :oversized, do: nil, else: token), expected}
+   end
+   defp shape(_), do: {:not_item, nil, nil}

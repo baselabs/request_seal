@@ -1,0 +1,14 @@
+--- a/lib/request_seal/jose/jwe/guard.ex
++++ b/lib/request_seal/jose/jwe/guard.ex
+@@ -63,7 +63,10 @@
+     if :ets.info(s.registry, :owner) == self() do
+       anchor = if s.anchor == nil, do: min(now, s.d), else: s.anchor
+       stop_at = stop_at(anchor, :atomics.get(s.flag, 2))
+-      awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, s.registry)
++      awaiting = case :ets.lookup(s.registry, :outcome) do
++        [{:outcome, :replied}] -> 0
++        _ -> :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, s.registry)
++      end
+       %{s | ended_at: now, anchor: anchor, stop_at: stop_at, awaiting: awaiting}
+     else
+       cause(s, now)

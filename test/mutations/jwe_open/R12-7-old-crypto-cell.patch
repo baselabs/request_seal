@@ -1,0 +1,9 @@
+--- a/lib/request_seal/jose/jwe/coordinator.ex
++++ b/lib/request_seal/jose/jwe/coordinator.ex
+@@ -247,5 +247,5 @@
+   def resolution_end(now, r), do: min(now, r)
+
+-  def expiry(:r, :unadmitted), do: {:deadline_exceeded, :input, nil}
++  def expiry(:r, :unadmitted), do: {:deadline_exceeded, :crypto, nil}
+   def expiry(:r, :ready), do: {:key_resolver_failed, :key, nil}
+   def expiry(:d, _phase), do: {:deadline_exceeded, :crypto, nil}

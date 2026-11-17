@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/bounds.ex
++++ b/lib/request_seal/jose/jwe/bounds.ex
+@@ -20,7 +20,7 @@
+   def teardown(n), do: @base_teardown_us + @per_item_teardown_us * n
+   def preflight, do: @preflight_us
+   def finalization, do: @finalization_us
+-  def before?(now, deadline), do: now < deadline
++  def before?(now, deadline), do: now <= deadline
+   def now, do: :erlang.monotonic_time(:microsecond)
+
+   # Monotonic time may be negative. Integer ceil must work on both sides of zero.

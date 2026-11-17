@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/bounds.ex
++++ b/lib/request_seal/jose/jwe/bounds.ex
+@@ -29,7 +29,7 @@
+   def remaining(at), do: max(0, milliseconds(at - now()))
+
+   def within?(term, words, bytes \\ :infinity) do
+-    case walk([term], words, bytes) do
++    case walk([term], words, if(bytes == :infinity, do: bytes, else: :infinity)) do
+       {:ok, _, _} -> :erts_debug.flat_size(term) <= words
+       :over -> false
+     end

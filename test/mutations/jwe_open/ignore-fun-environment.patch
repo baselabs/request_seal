@@ -1,0 +1,20 @@
+--- a/lib/request_seal/jose/jwe/bounds.ex
++++ b/lib/request_seal/jose/jwe/bounds.ex
+@@ -31,6 +31,6 @@
+   def within?(term, words, bytes \\ :infinity) do
+     case walk([term], words, bytes) do
+-      {:ok, _, _} -> :erts_debug.flat_size(term) <= words
++      {:ok, _, _} -> true
+       :over -> false
+     end
+   end
+@@ -65,8 +65,7 @@
+   end
+
+   defp walk([v | rest], words, bytes) when is_function(v) do
+-    {:env, env} = :erlang.fun_info(v, :env)
+-    fun_walk(env, rest, words, bytes)
++    walk(rest, words, bytes)
+   end
+
+   defp walk([v | rest], words, bytes) when is_integer(v),

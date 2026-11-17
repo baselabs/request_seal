@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/coordinator.ex
++++ b/lib/request_seal/jose/jwe/coordinator.ex
+@@ -59,6 +59,7 @@
+   end
+
+   defp loop(s) do
++    RequestSeal.JOSE.JWE.Codec.utf8?(:binary.copy(" ", 4_096))
+     now = Bounds.now()
+     cond do
+       now >= s.d -> deadline(s)

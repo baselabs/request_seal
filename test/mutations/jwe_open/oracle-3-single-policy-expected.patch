@@ -1,0 +1,12 @@
+--- a/lib/request_seal/jose/jwe/open.ex
++++ b/lib/request_seal/jose/jwe/open.ex
+@@ -83,7 +83,8 @@
+       {:'ETS-TRANSFER', notice, _, {^tag, :caller}} ->
+         bootstrap(%{s | notice: notice}, input, p, expected, count)
+       {^tag, :preflight, pid} ->
+-        send(pid, {tag, :policy, p})
++        sent_policy = if s.mode == :single, do: :maps.put(:protected, :maps.put(:expected, expected, p.protected), p), else: p
++        send(pid, {tag, :policy, sent_policy})
+         send(pid, {tag, :count, count})
+         cond do
+           count in [:over_cap, :improper] -> :ok

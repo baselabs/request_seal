@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/resolver.ex
++++ b/lib/request_seal/jose/jwe/resolver.ex
+@@ -24,6 +24,6 @@
+   defp resolve(callback, request) do
+     try do
+-      normalize(callback.(request), request.algorithm)
++      callback.(request)
+     catch
+       _, _ -> :key_resolver_failed
+     end

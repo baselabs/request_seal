@@ -1,0 +1,16 @@
+--- a/lib/request_seal/jose/jwe/guard.ex
++++ b/lib/request_seal/jose/jwe/guard.ex
+@@ -121,11 +121,12 @@
+     receive do
+       {:'ETS-TRANSFER', tid, from, {^tag, :slot, slot}} ->
+         :ets.insert(s.ended, {slot, from})
++        if s.ended_at == nil and s.cause == nil, do: send(coordinator, {tag, :ended, slot})
+         :ets.delete(tid)
+
+         s =
+           if s.ended_at == nil do
+-            if s.cause == nil, do: send(coordinator, {tag, :ended, slot})
++            :ok
+             s
+           else
+             case :ets.lookup(s.registry, slot) do

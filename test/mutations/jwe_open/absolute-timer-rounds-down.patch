@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/bounds.ex
++++ b/lib/request_seal/jose/jwe/bounds.ex
+@@ -24,6 +24,6 @@
+   def now, do: :erlang.monotonic_time(:microsecond)
+
+   # Monotonic time may be negative. Integer ceil must work on both sides of zero.
+-  def milliseconds(us) when us > 0, do: div(us + 999, 1_000)
++  def milliseconds(us) when us > 0, do: div(us, 1_000)
+   def milliseconds(us), do: div(us, 1_000)
+   def remaining(at), do: max(0, milliseconds(at - now()))

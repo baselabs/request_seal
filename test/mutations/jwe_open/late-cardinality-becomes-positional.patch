@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/coordinator.ex
++++ b/lib/request_seal/jose/jwe/coordinator.ex
+@@ -366,7 +366,7 @@
+     s = drain_preflight(s, s.d + Bounds.preflight())
+     case s do
+       :overrun -> :internal_failure
+-      %{n: nil} -> reply(s, {:outer, :deadline_exceeded, :crypto})
++      %{n: nil} -> reply(fill_deadline(0, 1, %{s | n: 1, admissions_left: 1}), :ok)
+       _ -> reply(fill_deadline(0, s.n, s), :ok)
+     end
+   end

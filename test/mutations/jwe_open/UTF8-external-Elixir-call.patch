@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/codec.ex
++++ b/lib/request_seal/jose/jwe/codec.ex
+@@ -160,6 +160,6 @@
+     unit(flag, deadline)
+     ensure(byte_size(x) <= Bounds.permitted_name_bytes(), :invalid_policy)
+     ensure(
+-      utf8?(x) and not :lists.member(x, seen) and not :lists.member(x, @reserved),
++      String.valid?(x) and not :lists.member(x, seen) and not :lists.member(x, @reserved),
+       :invalid_policy
+     )

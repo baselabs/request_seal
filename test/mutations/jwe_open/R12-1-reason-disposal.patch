@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/coordinator.ex
++++ b/lib/request_seal/jose/jwe/coordinator.ex
+@@ -54,6 +54,7 @@
+     if role == :caller do
+       :ets.give_away(notice, pid, {s.tag, :slot, slot})
+       :erlang.unlink(pid)
++      :erlang.monitor(:process, pid)
+     end
+     pid
+   end

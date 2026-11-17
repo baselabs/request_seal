@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/open.ex
++++ b/lib/request_seal/jose/jwe/open.ex
+@@ -100,7 +100,7 @@
+     end
+   end
+
+-  defp continue?(s), do: Bounds.now() < s.d and :atomics.get(s.flag, 1) == 0
++  defp continue?(s), do: Bounds.now() < s.d
+   defp stream([], _, pid, s), do: send(pid, {s.tag, :input_end})
+   defp stream([item | rest], i, pid, s) do
+     if continue?(s) do

@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/unwrap.ex
++++ b/lib/request_seal/jose/jwe/unwrap.ex
+@@ -14,7 +14,7 @@
+     context = %Context{owner: caller, deadline: Bounds.milliseconds(u)}
+     {items, routes, contributors} = combine(:maps.to_list(contributions), [], %{}, [])
+     sink = Sink.routed(routes, context)
+-    if :ets.info(notice, :owner) == caller and Bounds.now() < u do
++    if Bounds.now() < u do
+       kind =
+         if valid and handle != nil do
+           case Custody.unwrap(handle, items, sink, context) do

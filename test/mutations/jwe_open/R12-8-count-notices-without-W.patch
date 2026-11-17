@@ -1,0 +1,13 @@
+--- a/lib/request_seal/jose/jwe/unwrap.ex
++++ b/lib/request_seal/jose/jwe/unwrap.ex
+@@ -45,8 +45,8 @@
+           collect(tag, g, count, :maps.put(w, {items, worker}, entries), candidate, valid)
+         end
+       {^tag, :contributor_down, w} ->
+-        if is_map_key(entries, w),
++        if is_map_key(entries, {:down, w}),
+           do: collect(tag, g, count, entries, handle, valid),
+-          else: collect(tag, g, count, :maps.put(w, {[], nil}, entries), handle, valid)
++          else: collect(tag, g, count, :maps.put({:down, w}, {[], nil}, entries), handle, valid)
+     end
+   end

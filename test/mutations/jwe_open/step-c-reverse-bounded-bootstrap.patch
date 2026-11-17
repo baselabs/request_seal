@@ -1,0 +1,10 @@
+--- a/lib/request_seal/jose/jwe/open.ex
++++ b/lib/request_seal/jose/jwe/open.ex
+@@ -83,6 +83,7 @@
+       {:'ETS-TRANSFER', notice, _, {^tag, :caller}} ->
+         bootstrap(%{s | notice: notice}, input, p, expected, count)
+       {^tag, :preflight, pid} ->
++        send(pid, {tag, :input, input, p})
+         send(pid, {tag, :policy, p})
+         send(pid, {tag, :count, count})
+         cond do

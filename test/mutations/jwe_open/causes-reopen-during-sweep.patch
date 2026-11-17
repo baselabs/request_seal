@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/guard.ex
++++ b/lib/request_seal/jose/jwe/guard.ex
+@@ -70,7 +70,7 @@
+     end
+   end
+
+-  defp check(s), do: s
++  defp check(s), do: cause(s, Bounds.now())
+
+   defp cause(%{cause: nil} = s, now) do
+     cond do
