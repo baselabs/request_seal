@@ -6,10 +6,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import subprocess
 import uuid
-from urllib.parse import urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 SEMVER = re.compile(
@@ -74,6 +75,113 @@ def markdown_lines(source):
         yield line, fenced
 
 
+def pin_markdown_links(body, version, repository_url):
+    """Pin Markdown destinations, preserving code and destination delimiters."""
+    # Mask block code first; offsets still refer to the original Markdown bytes.
+    visible = "".join(
+        re.sub(r"[^\n]", " ", line) if fenced or re.match(r"^(?: {4}|\t)", line) else line
+        for line, fenced in markdown_lines(body)
+    )
+    # A code span closes with exactly the same number of backticks, even across lines.
+    spans = list(re.finditer(r"`+", visible))
+    cursor = 0
+    while cursor < len(spans):
+        opening = spans[cursor]
+        closing = next((index for index in range(cursor + 1, len(spans))
+                        if spans[index][0] == opening[0]), None)
+        if closing is None:
+            cursor += 1
+        else:
+            end = spans[closing].end()
+            visible = visible[:opening.start()] + re.sub(r"[^\n]", " ", visible[opening.start():end]) + visible[end:]
+            cursor = closing + 1
+
+    def destination(start):
+        if start >= len(visible):
+            return None
+        if visible[start] == "<":
+            end = visible.find(">", start + 1)
+            if end >= 0 and "\n" not in visible[start:end]:
+                return start + 1, end, end + 1
+            return None
+        end, depth = start, 0
+        while end < len(visible):
+            char = visible[end]
+            if char == "\\" and end + 1 < len(visible):
+                end += 2
+                continue
+            if char.isspace() or (char == ")" and depth == 0):
+                break
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            end += 1
+        return (start, end, end) if end > start and depth == 0 else None
+
+    def pinned(target, image):
+        if target.startswith(("#", "//")) or urlsplit(target).scheme:
+            return target
+        if target.startswith("?"):
+            raise ValueError("CHANGELOG.md has an invalid relative link: " + target)
+        parts = urlsplit(target)
+        path = posixpath.normpath(unquote(parts.path).lstrip("/"))
+        if path == ".." or path.startswith("../"):
+            raise ValueError("CHANGELOG.md link escapes the repository: " + target)
+        path = quote(path, safe="/!$&'()*+,;=:@-._~")
+        suffix = ("?" + parts.query if parts.query else "") + ("#" + parts.fragment if parts.fragment else "")
+        return repository_url.rstrip("/") + ("/raw/v" if image else "/blob/v") + version + "/" + path + suffix
+
+    replacements = []
+    # Footnotes have prose after the colon, not a reference-link destination.
+    for match in re.finditer(r"^ {0,3}\[(?!\^)(?:\\.|[^\]\\])+\]:[ \t]*", visible, re.MULTILINE):
+        found = destination(match.end())
+        if found:
+            start, end, _ = found
+            replacements.append((start, end, pinned(body[start:end], False)))
+
+    cursor = 0
+    while cursor < len(visible):
+        if visible[cursor] == "\\":
+            cursor += 2
+            continue
+        image = visible.startswith("![", cursor)
+        opening = cursor + 1 if image else cursor
+        if visible[opening:opening + 1] != "[":
+            cursor += 1
+            continue
+        end, depth = opening + 1, 1
+        while end < len(visible) and depth:
+            if visible[end] == "\\":
+                end += 2
+                continue
+            if visible[end] == "[":
+                depth += 1
+            elif visible[end] == "]":
+                depth -= 1
+            end += 1
+        if depth or visible[end:end + 1] != "(":
+            cursor += 1
+            continue
+        start = end + 1
+        while start < len(visible) and visible[start].isspace():
+            start += 1
+        found = destination(start)
+        if found:
+            start, finish, after = found
+            # Only a valid closing delimiter (with optional title) makes a link.
+            closing = re.match(r'''(?:\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\([^()]*\)))?\s*\)''', visible[after:])
+            if closing:
+                replacements.append((start, finish, pinned(body[start:finish], image)))
+                cursor = after + closing.end()
+                continue
+        cursor = end
+
+    for start, end, replacement in sorted(replacements, reverse=True):
+        body = body[:start] + replacement + body[end:]
+    return body
+
+
 def release_notes(source, version, repository_url=None):
     """Return only the body of one dated release section, never Unreleased."""
     source = source.replace("\r\n", "\n")
@@ -91,25 +199,14 @@ def release_notes(source, version, repository_url=None):
     index, match = matches[0]
     datetime.date.fromisoformat(match[1])
     end = sections[index + 1][0] if index + 1 < len(sections) else len(source)
-    body = source[sections[index][1]:end].strip()
-    if not body or not re.sub(r"(?m)^#{3,6}[^\n]*$", "", body).strip():
+    body = source[sections[index][1]:end].strip("\n")
+    if not body.strip() or not re.sub(r"(?m)^#{3,6}[^\n]*$", "", body).strip():
         raise ValueError("CHANGELOG.md release section is empty for " + version)
 
     if repository_url is None:
         repository_url = source_url((ROOT / "mix.exs").read_text())
 
-    def pin(match):
-        target = match["target"]
-        if target.startswith(("#", "//")) or urlsplit(target).scheme:
-            return match[0]
-        return match["prefix"] + repository_url.rstrip("/") + "/blob/v" + version + "/" + target.removeprefix("./")
-
-    # Inline destinations (with optional titles) and reference-link definitions.
-    links = r"(?P<prefix>\]\(<?)(?P<target>[^\s<>]+?)(?=>?(?:\s+[\"'].*?[\"'])?\))"
-    references = r"^(?P<prefix> {0,3}\[[^\]]+\]:\s*<?)(?P<target>[^\s<>]+)"
-    body = "".join(line if fenced else re.sub(references, pin, re.sub(links, pin, line))
-                   for line, fenced in markdown_lines(body))
-    return body + "\n"
+    return pin_markdown_links(body, version, repository_url) + "\n"
 
 
 def verify_identity(root, event, ref):
@@ -192,6 +289,7 @@ if __name__ == "__main__":
             if os.environ.get("GITHUB_OUTPUT"):
                 with open(os.environ["GITHUB_OUTPUT"], "a") as output:
                     output.write("version=" + version + "\n")
+                    output.write("prerelease=" + str(bool(parse_version(version)[4])).lower() + "\n")
         else:
             version = args.for_version or package_version((ROOT / "mix.exs").read_text())
             parse_version(version)

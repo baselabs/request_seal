@@ -13,6 +13,7 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.identity.outputs.version }}
+      prerelease: ${{ steps.identity.outputs.prerelease }}
     defaults:
       run:
         shell: bash
@@ -98,24 +99,45 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-assets
+      - name: Detect existing release
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          response=$(mktemp)
+          trap 'rm -f "$response"' EXIT
+          if gh api --include "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME" > "$response"; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+            echo 'names<<RELEASE_ASSET_NAMES' >> "$GITHUB_OUTPUT"
+            sed '1,/^\r\{0,1\}$/d' "$response" | jq -r '.assets[].name' >> "$GITHUB_OUTPUT"
+            echo 'RELEASE_ASSET_NAMES' >> "$GITHUB_OUTPUT"
+          else
+            status=$(awk '/^HTTP\// { code=$2 } END { print code }' "$response")
+            if [ "$status" = 404 ]; then
+              echo 'exists=false' >> "$GITHUB_OUTPUT"
+            else
+              echo "Cannot determine existing release (HTTP ${status:-unavailable})" >&2
+              exit 1
+            fi
+          fi
       - name: Compare existing release assets before attestation
+        if: steps.existing.outputs.exists == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.verify.outputs.version }}
+          NAMES: ${{ steps.existing.outputs.names }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            existing=$(mktemp -d)
-            trap 'rm -rf "$existing"' EXIT
-            names=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
-            for asset in "request_seal-$VERSION.tar" corpus.tar.gz corpus.sha256 sbom.cdx.json; do
-              if grep -Fxq "$asset" <<< "$names"; then
-                gh release download "$GITHUB_REF_NAME" --pattern "$asset" --dir "$existing"
-                cmp "$asset" "$existing/$asset" || { echo "Existing asset differs: $asset" >&2; exit 1; }
-                sha256sum "$asset" "$existing/$asset"
-              fi
-            done
-          fi
+          existing=$(mktemp -d)
+          trap 'rm -rf "$existing"' EXIT
+          for asset in "request_seal-$VERSION.tar" corpus.tar.gz corpus.sha256 sbom.cdx.json; do
+            if grep -Fxq "$asset" <<< "$NAMES"; then
+              gh release download "$GITHUB_REF_NAME" --pattern "$asset" --dir "$existing"
+              cmp "$asset" "$existing/$asset" || { echo "Existing asset differs: $asset" >&2; exit 1; }
+              sha256sum "$asset" "$existing/$asset"
+            fi
+          done
       - name: Attest build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -133,15 +155,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.verify.outputs.version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+          EXISTS: ${{ steps.existing.outputs.exists }}
+          NAMES: ${{ steps.existing.outputs.names }}
         run: |
           assets=("request_seal-$VERSION.tar" corpus.tar.gz corpus.sha256 sbom.cdx.json)
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            names=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+          if [ "$EXISTS" = true ]; then
             for asset in "${assets[@]}"; do
-              if ! grep -Fxq "$asset" <<< "$names"; then
+              if ! grep -Fxq "$asset" <<< "$NAMES"; then
                 gh release upload "$GITHUB_REF_NAME" "$asset"
               fi
             done
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "RequestSeal $VERSION" --notes-file release-notes.md "${assets[@]}"
+            flags=()
+            if [ "$PRERELEASE" = true ]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "RequestSeal $VERSION" --notes-file release-notes.md "${flags[@]}" "${assets[@]}"
           fi

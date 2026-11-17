@@ -11,6 +11,7 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    identifier starts with `dev` is a development snapshot: its source links use
    `main`, and publishing and release verification refuse it. Other pre-releases
    and stable releases use `v<version>` source links and can be published.
+   Pre-release tags create GitHub pre-releases; stable tags create regular releases.
    Snapshot installs select the coming stable line. Stable installs use `~> X.Y.Z`
    before 1.0 and `~> MAJOR.MINOR` thereafter; other pre-releases use
    `~> MAJOR.MINOR.PATCH-<pre-release>` so Elixir matches that pre-release.
@@ -126,20 +127,15 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    pointing at another commit.
    It rebuilds the package and compares it byte for byte with the published Hex
    tarball before attestation or publication of release assets. Inspect the
-   CycloneDX 1.6 SBOM: telemetry has scope `required`; optional integrations and
-   dependencies reached only through them have scope `optional`. A dependency
-   reachable through any required dependency path has scope `required`.
-   Development and test tools are excluded. Every scope is derived from the
-   package's prod dependencies and non-optional lock edges and verified before
-   publication. `python3 scripts/sbom.py` downloads upstream's
-   prebuilt binary, verifies its checksum before execution, and reads the unpacked
-   package with Mix's locked production dependency closure, including all optional
-   integrations. The binary version and digest live in `scripts/sbom.py`.
-   CI's latest lane calls the same entry point for every development tarball;
-   only releases compare against Hex. Every component and version is checked
-   against the production closure, and filesystem paths are rejected.
-   The timestamp is removed, ordering is normalized, and a UUIDv5 serial binds
-   the package name, version, and tarball SHA-256 for repeatable bytes.
+   SBOM using the scope definitions in the
+   [consumer verification guide](../guides/verifying-releases.md).
+   `python3 scripts/sbom.py` downloads upstream's prebuilt binary and verifies
+   its platform-specific checksum before execution. The version, asset names,
+   and digests live in `scripts/sbom.py`. CI's latest lane uses the same entry
+   point for development tarballs; only releases compare against Hex.
+   Every component, version, and scope is checked against the locked production
+   closure, and filesystem paths are rejected. The timestamp is removed,
+   ordering is normalized, and a UUIDv5 serial binds the package identity and bytes.
    The artifact also contains `release-notes.md` for the publishing job; that file
    is used as release notes and is not uploaded as a release asset.
 8. Only after the dry run passes, push the annotated release tag from that commit:
@@ -152,24 +148,12 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    After the tag push, confirm HexDocs source links resolve to the `v<version>`
    tag (`source_ref` in `mix.exs`). Confirm the tag's `Release` run passed and its
    title and notes match the version and dated CHANGELOG section.
-   Its read-only verification job repeats
-   the dry run, including the Hex byte comparison. Only its tag-only publishing
-   job receives release and attestation write permissions. It compares every
-   existing release asset before creating any attestations. It attests build
-   provenance for the package tarball, corpus archive, and SBOM, and binds a
-   CycloneDX SBOM attestation to the package tarball before uploading assets.
-   Verify the downloaded artifacts and both predicate types:
-
-   ```sh
-   assets_dir=$(mktemp -d)
-   trap 'rm -rf "$assets_dir"' EXIT
-   gh release download "v$VERSION" --dir "$assets_dir"
-   (cd "$assets_dir" && sha256sum --check corpus.sha256)
-   for file in "request_seal-$VERSION.tar" corpus.tar.gz sbom.cdx.json; do
-     gh attestation verify "$assets_dir/$file" --repo baselabs/request_seal --predicate-type https://slsa.dev/provenance/v1
-   done
-   gh attestation verify "$assets_dir/request_seal-$VERSION.tar" --repo baselabs/request_seal --predicate-type https://cyclonedx.org/bom
-   ```
+   Its read-only verification job repeats the dry run, including the Hex byte
+   comparison. Only the tag publishing job receives release and attestation write
+   permissions. On re-runs it checks existing assets before attestation; only an
+   HTTP 404 means the release is absent. Other API failures stop publication.
+   Follow the [consumer verification guide](../guides/verifying-releases.md)
+   to check the downloaded assets, both attestations, and the Hex package bytes.
 
    After release, advance `@version` to the next `-dev` version and update
    documented install requirements, the corpus release identity, and its digest pin.
@@ -192,12 +176,9 @@ automatic rollback semantics. Changing an installed application's dependency is 
 
 ## Conformance release assets
 
-Publish the release commit to Hex, complete the `Release` dispatch dry run on that
-commit, then push `v<version>`. The tag must identify the same bytes as the Hex
-release. The workflow verifies `corpus/index.json` file digests, compares the
-rebuilt package with Hex, and publishes `request_seal-<version>.tar`, deterministic
-`corpus.tar.gz`, `corpus.sha256`, and `sbom.cdx.json`. Existing assets must be
-byte-identical; missing ones are uploaded without replacing others. Confirm
-`gh release view v<version>` lists all four assets and verify the checksums and
-attestations above before vendoring. The TypeScript repository pins tag, commit and index SHA-256 together;
-its corpus is repository tooling and excluded from the npm package.
+Confirm `gh release view v<version>` lists the assets described in the
+[consumer verification guide](../guides/verifying-releases.md), and execute its
+checks before accepting a release. Existing assets must be byte-identical;
+missing ones are uploaded without replacing others. The TypeScript repository
+pins tag, commit and index SHA-256 together; its corpus is repository tooling
+and excluded from the npm package.

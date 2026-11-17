@@ -14,6 +14,29 @@ defmodule RequestSeal.ReleaseSBOMTest do
   end
 
   test "public package identifiers and URLs are allowed" do
+    for value <- [
+          "A fast, parallel test runner\n",
+          "Client / server toolkit",
+          "Writes caches under tmp/ by default",
+          "Parse a .env file: KEY=value",
+          "ratio 3 / 4",
+          "about ~2x/day",
+          "Lightweight HTTP/2 client",
+          "Erlang/OTP 27",
+          "https://example.com/home/source",
+          "http://example.com/tmp/package",
+          "ssh://example.com/home/source",
+          "git://example.com/home/source",
+          "mailto:team@example.com",
+          "urn:example:/tmp/package",
+          "data:text/plain,/tmp/package"
+        ] do
+      assert :ok ==
+               RequestSeal.ReleaseSBOM.reject_paths!(%{
+                 "components" => [%{"properties" => [%{"value" => value}]}]
+               })
+    end
+
     assert :ok ==
              RequestSeal.ReleaseSBOM.reject_paths!(%{
                "metadata" => %{"name" => "request_seal", "version" => "2.0.0-dev"},
@@ -38,6 +61,26 @@ defmodule RequestSeal.ReleaseSBOMTest do
 
   test "filesystem paths are rejected in every nested string value" do
     for path <- [
+          "/" <> "home/rp/project",
+          "path:/" <> "home/rp/project",
+          "dir:/" <> "Users/rp/x",
+          "/tmp/x",
+          "/var/folders/x",
+          "/private/var/x",
+          "/root/x",
+          "/opt/x",
+          "/github/workspace",
+          "/__w/x",
+          "/runner/work",
+          "/mnt/data/x",
+          "C:\\Users\\x",
+          "\\\\server\\share",
+          "file:///etc/x",
+          "~/x",
+          "$HOME/x",
+          "${HOME}/x",
+          "$TMPDIR/x",
+          "%USERPROFILE%\\x",
           Path.join(["/", "var", "cache", "package"]),
           Path.join(["/", "tmp", "package"]),
           "C:" <> "\\" <> "build" <> "\\" <> "package",
@@ -51,7 +94,8 @@ defmodule RequestSeal.ReleaseSBOMTest do
           "${HOME}/package",
           "%USERPROFILE%/package",
           "source=" <> Path.join(["/", "opt", "package"])
-        ] do
+        ],
+        path <- [path, "Source location: #{path} (unavailable)"] do
       error =
         assert_raise Mix.Error, ~r/filesystem path/, fn ->
           RequestSeal.ReleaseSBOM.reject_paths!(%{
@@ -61,6 +105,23 @@ defmodule RequestSeal.ReleaseSBOMTest do
 
       assert Exception.message(error) =~ "components[0].properties[0].value"
       assert Exception.message(error) =~ inspect(path)
+    end
+  end
+
+  test "unsupported lock shapes name the dependency and entry" do
+    for entry <- [
+          {:hex, :dependency, "1.0.0", "checksum", [:mix], [], "hexpm"},
+          {:hex, :dependency, "1.0.0", "checksum", [:mix], :invalid, "hexpm", "outer"},
+          {:git, "https://example.com/library.git", "revision", []},
+          :invalid
+        ] do
+      error =
+        assert_raise Mix.Error, ~r/unsupported lock shape for dependency/, fn ->
+          RequestSeal.ReleaseSBOM.scopes([{:dependency, "~> 1.0"}], %{dependency: entry})
+        end
+
+      assert Exception.message(error) =~ inspect(entry)
+      assert Exception.message(error) =~ "8-tuple :hex"
     end
   end
 

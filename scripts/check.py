@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 from release import development_snapshot, package_version, release_notes, source_url
+from processes import run
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,30 +48,6 @@ def check_dialyzer():
     run(["mix", "run", "--no-start", "-e", DIALYZER_SUPPRESSION_CHECK])
     run(["mix", "dialyzer"])
 
-
-def run(argv, cwd=ROOT, timeout=900, extra_env=None):
-    print("RUN " + " ".join(argv), flush=True)
-    env = os.environ.copy()
-    if extra_env:
-        env.update(extra_env)
-    try:
-        process = subprocess.Popen(argv, cwd=cwd, env=env, start_new_session=True)
-        status = process.wait(timeout=timeout)
-        if status:
-            raise subprocess.CalledProcessError(status, argv)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGTERM)
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-        # Kill any descendants still in the group even if the direct child exited.
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
-        raise SystemExit(f"Deadline exceeded after {timeout}s: {argv}")
 
 def stop_group(process):
     # Keep an unreaped leader until all signals finish; never target a reused pgid.
@@ -338,13 +315,15 @@ if __name__ == "__main__":
             setattr(namespace, self.dest, [*selected, option_string])
 
     parser = argparse.ArgumentParser(description=__doc__)
-    choice = parser.add_mutually_exclusive_group()
-    choice.add_argument("--notebooks-only", action="store_true")
-    choice.add_argument("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only",
-                        dest="focused_checks", action=SelectCheck, nargs=0)
+    parser.add_argument("--notebooks-only", action="store_true")
+    for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only"):
+        parser.add_argument(flag, dest="focused_checks", action=SelectCheck, nargs=0,
+                            help="Run only this check (may combine focused checks)")
     parser.add_argument("--execute-notebook", nargs=2, metavar=("SCRIPT", "COMPLETION"))
     parser.add_argument("--notebook-timeout", type=float, default=300)
     args = parser.parse_args()
+    if args.notebooks_only and args.focused_checks:
+        parser.error("argument --notebooks-only: not allowed with argument " + args.focused_checks[0])
     try:
         if args.execute_notebook:
             output, _ = execute_notebook(*args.execute_notebook, timeout=args.notebook_timeout)
@@ -380,6 +359,8 @@ if __name__ == "__main__":
             check_package()
             check_sbom()
         notebooks()
+    except subprocess.TimeoutExpired as error:
+        raise SystemExit(f"Command deadline exceeded after {error.timeout}s: {error.cmd}")
     except subprocess.CalledProcessError as error:
         raise SystemExit(error.returncode)
     except (ValueError, TimeoutError) as error:

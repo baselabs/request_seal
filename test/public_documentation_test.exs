@@ -1,5 +1,5 @@
 defmodule RequestSeal.PublicDocumentationTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   test "package attribution names the licenses of shipped code components" do
     licenses = Mix.Project.config() |> Keyword.fetch!(:package) |> Keyword.fetch!(:licenses)
@@ -28,6 +28,62 @@ defmodule RequestSeal.PublicDocumentationTest do
 
     assert Enum.uniq(extras) == extras
     assert "README.md" in extras, "the public inventory must include the entry guide"
+    assert "docs/guides/verifying-releases.md" in extras
+    refute "docs/operations/releases.md" in extras
+    refute "docs/operations/releases.md" in files
+    assert Regex.match?(project[:docs][:groups_for_extras][:Guides], "docs/guides/verifying-releases.md")
+  end
+
+  test "publishing guard accepts dated nonempty release and pre-release notes" do
+    directory =
+      Path.join(System.tmp_dir!(), "requestseal-publish-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(Path.join(directory, "scripts"))
+    on_exit(fn -> File.rm_rf!(directory) end)
+    File.cp!("scripts/release.py", Path.join(directory, "scripts/release.py"))
+    source = File.read!("mix.exs")
+    {:defmodule, _, [_, [do: {:__block__, _, body}]]} = Code.string_to_quoted!(source)
+    body = Enum.reject(body, &match?({:use, _, [{:__aliases__, _, [:Mix, :Project]}]}, &1))
+
+    for version <- ["2.0.0", "2.0.0-rc.1", "0.6.0"] do
+      module = Module.concat(__MODULE__, "Publish#{String.replace(version, ~r/[^a-zA-Z0-9]/, "_")}")
+
+      changed =
+        Macro.prewalk({:__block__, [], body}, fn
+          {:@, meta, [{:version, inner, [_]}]} -> {:@, meta, [{:version, inner, [version]}]}
+          node -> node
+        end)
+
+      Module.create(module, changed, Macro.Env.location(__ENV__))
+      [guard, "hex.publish"] = module.project()[:aliases][:"hex.publish"]
+      File.write!(Path.join(directory, "mix.exs"), String.replace(source, ~r/@version "[^"]+"/, "@version \"#{version}\""))
+      File.write!(Path.join(directory, "CHANGELOG.md"), "## #{version} - 2026-11-17\n\n- Released behavior.\n")
+
+      try do
+        # The guard invokes the real Python validator against this isolated release tree.
+        {output, status} =
+          System.cmd(System.find_executable("python3"), [
+            Path.join(directory, "scripts/release.py"),
+            "--release-notes",
+            "--for-version",
+            version
+          ])
+
+        assert status == 0
+        assert output =~ "Released behavior."
+
+        File.cd!(directory, fn ->
+          if Version.match?(System.version(), ">= 1.20.0") do
+            assert guard.([]) == nil
+          else
+            assert_raise Mix.Error, ~r/requires Elixir 1.20 or newer/, fn -> guard.([]) end
+          end
+        end)
+      after
+        :code.purge(module)
+        :code.delete(module)
+      end
+    end
   end
 
   test "development identity links source to main and refuses publishing" do

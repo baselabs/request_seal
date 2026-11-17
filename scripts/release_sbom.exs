@@ -40,7 +40,18 @@ defmodule RequestSeal.ReleaseSBOM do
     if MapSet.member?(visited, app) do
       closure(rest, lock, visited)
     else
-      {:hex, _name, _version, _checksum, _managers, edges, _repo, _outer} = Map.fetch!(lock, app)
+      edges =
+        case Map.fetch!(lock, app) do
+          {:hex, _name, _version, _checksum, _managers, edges, _repo, _outer}
+          when is_list(edges) ->
+            edges
+
+          entry ->
+            Mix.raise(
+              "Release SBOM unsupported lock shape for #{app}: expected an 8-tuple :hex entry " <>
+                "with a dependency list, got #{inspect(entry)}"
+            )
+        end
 
       children =
         for {child, _requirement, options} <- edges,
@@ -106,13 +117,13 @@ defmodule RequestSeal.ReleaseSBOM do
     # A URI's path is public protocol data unless it uses the file scheme.
     candidate =
       Regex.replace(
-        ~r{\b(?!file:|[a-z]:[\\/])[a-z][a-z0-9+.-]*:[^\s<>"']+}i,
+        ~r{\b(?:(?!file:)[a-z][a-z0-9+.-]*://|(?:mailto|urn|data):)[^\s<>"']+}i,
         value,
         ""
       )
 
     if Regex.match?(
-         ~r{(?:^|[^A-Za-z0-9_.~/-])(?:/|[A-Za-z]:[\\/]|\\\\|~[^/\\\s]*[/\\])|\bfile:|\$(?:HOME|TMPDIR)\b|\$\{(?:HOME|TMPDIR)\}|%USERPROFILE%}i,
+         ~r{(?:^|[^A-Za-z0-9_.~/-])(?:/[^/\\\s<>"']+/|[A-Za-z]:[\\/]|\\\\|~(?:[A-Za-z_][A-Za-z0-9_.-]*)?[/\\])|\bfile://|\$(?:HOME|TMPDIR)\b|\$\{(?:HOME|TMPDIR)\}|%USERPROFILE%}i,
          candidate
        ) do
       Mix.raise("Release SBOM contains a filesystem path at #{path}: #{inspect(value)}")

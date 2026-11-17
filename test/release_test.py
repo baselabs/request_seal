@@ -1,6 +1,9 @@
 """Release safety checks against real Git repositories and artifact metadata."""
 import json
+import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -48,6 +51,24 @@ class ReleaseIdentityTest(unittest.TestCase):
     def test_lightweight_tag_identity(self):
         self.git("tag", "v2.3.4")
         self.assertEqual("2.3.4", self.verify("push", "refs/tags/v2.3.4"))
+
+    def test_verify_cli_emits_version_and_semantic_prerelease_outputs(self):
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        shutil.copyfile(ROOT / "scripts/release.py", scripts / "release.py")
+        for version, prerelease in (("2.0.0", "false"), ("2.0.0-rc.1", "true"), ("0.6.0", "false")):
+            with self.subTest(version=version):
+                self.identity(version)
+                output = self.root / "github-output"
+                output.write_text("")
+                result = subprocess.run(
+                    [sys.executable, "-B", str(scripts / "release.py"), "--verify"],
+                    env=dict(os.environ, GITHUB_EVENT_NAME="workflow_dispatch",
+                             GITHUB_REF="refs/heads/main", GITHUB_OUTPUT=str(output)),
+                    capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(f"version={version}\nprerelease={prerelease}\n", output.read_text())
 
     def test_tag_at_another_commit_refuses_dispatch_and_push(self):
         self.git("tag", "v2.3.4")
@@ -139,6 +160,49 @@ class ReleaseIdentityTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "workflow_dispatch"):
             self.verify("pull_request")
 
+    def test_release_notes_markdown_destinations_and_code(self):
+        base = "https://github.com/example/library"
+        blob = base + "/blob/v2.3.4/"
+        raw = base + "/raw/v2.3.4/"
+        cases = (
+            ("[t](docs/x.md)", "[t](" + blob + "docs/x.md)"),
+            ("[t](/docs/x.md)", "[t](" + blob + "docs/x.md)"),
+            ("[t](./docs/../README.md#part)", "[t](" + blob + "README.md#part)"),
+            ('[t](docs/x.md "Title")', '[t](' + blob + 'docs/x.md "Title")'),
+            ("[t](<docs/a b.md>)", "[t](<" + blob + "docs/a%20b.md>)"),
+            ("[id]: <docs/a b.md#part> 'Title'", "[id]: <" + blob + "docs/a%20b.md#part> 'Title'"),
+            ("[id]: /docs/x.md", "[id]: " + blob + "docs/x.md"),
+            ("![a](docs/x.png)", "![a](" + raw + "docs/x.png)"),
+            ("![a](<docs/a b.png>)", "![a](<" + raw + "docs/a%20b.png>)"),
+            ("[t](docs/a(b).md)", "[t](" + blob + "docs/a(b).md)"),
+            ("[t](https://example.com/a) [t](#part)", None),
+            ("[t](ssh://example.com/a) [t](mailto:team@example.com)", None),
+            ("[t](custom:opaque) [t](//example.com/a)", None),
+            ("[^1]: docs/x.md is footnote prose", None),
+            ("`[t](docs/x.md)` and ``[t](docs/y.md) `tick` ``", None),
+            ("`multiline\n[t](docs/x.md)\ncode`", None),
+            ("```markdown\n[t](docs/x.md)\n[id]: docs/x.md\n```", None),
+            ("~~~~markdown\n![a](docs/x.png)\n~~~~", None),
+            ("    [t](docs/x.md)\n    [id]: docs/x.md", None),
+            ("\t![a](docs/x.png)", None),
+            (r"\[t](docs/x.md)", None),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual((source if expected is None else expected) + "\n",
+                                 release.release_notes("## 2.3.4 - 2026-11-17\n\n" + source + "\n", "2.3.4", base))
+
+    def test_release_notes_reject_escaping_and_query_only_destinations(self):
+        for target in ("../x.md", "docs/../../x.md", "%2e%2e/x.md", "?raw=1"):
+            for link in (f"[t]({target})", f"![a]({target})", f"[id]: {target}"):
+                with self.subTest(link=link), self.assertRaisesRegex(ValueError, re.escape(target)):
+                    release.release_notes("## 2.3.4 - 2026-11-17\n\n" + link, "2.3.4")
+
+    def test_release_notes_pin_links_adjacent_to_code_only_outside_code(self):
+        source = '`[code](docs/a.md)` [live](docs/a.md)\n\n    [code](../escape.md)\n\n[live](docs/b.md)\n'
+        expected = source.replace('[live](docs/', '[live](https://github.com/example/library/blob/v2.3.4/docs/')
+        self.assertEqual(expected, release.release_notes("## 2.3.4 - 2026-11-17\n\n" + source, "2.3.4", "https://github.com/example/library"))
+
     def test_version_requires_one_semantic_attribute_and_no_inline_literal(self):
         for source in ('version: "2.3.4"', '@version "2.3.4"\n@version "2.3.5"\nversion: @version', '@version "2.3"\nversion: @version'):
             with self.subTest(source=source), self.assertRaises(ValueError):
@@ -169,6 +233,51 @@ class ReleaseIdentityTest(unittest.TestCase):
 
 
 class ReleaseWorkflowTest(unittest.TestCase):
+    def test_each_focused_check_has_its_own_help_option(self):
+        result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/check.py"), "--help"], capture_output=True, text=True, check=True, timeout=30)
+        for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only"):
+            self.assertRegex(result.stdout, r"(?m)^  " + flag + r"\s+")
+
+    def test_prerelease_flag_uses_the_verified_job_output(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        verify, publish = workflow.split("\n  publish:\n")
+        self.assertIn("prerelease: ${{ steps.identity.outputs.prerelease }}", verify)
+        self.assertIn("PRERELEASE: ${{ needs.verify.outputs.prerelease }}", publish)
+        self.assertIn('if [ "$PRERELEASE" = true ]; then\n              flags+=(--prerelease)', publish)
+        self.assertIn('"${flags[@]}" "${assets[@]}"', publish)
+        self.assertNotRegex(publish, r"\$\{?VERSION[^\n]*(?:rc|alpha|beta)")
+
+    def test_existing_release_http_status_is_fail_closed_and_reused(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        publish = workflow.split("\n  publish:\n")[1]
+        self.assertEqual(1, publish.count('gh api --include "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME"'))
+        self.assertNotIn("gh release view", publish)
+        self.assertIn('if [ "$status" = 404 ]; then\n              echo \'exists=false\'', publish)
+        self.assertIn('HTTP ${status:-unavailable}', publish)
+        self.assertRegex(publish, r'HTTP \$\{status:-unavailable\}[^\n]*\n\s+exit 1')
+        self.assertIn("if: steps.existing.outputs.exists == 'true'", publish)
+        self.assertIn("EXISTS: ${{ steps.existing.outputs.exists }}", publish)
+        self.assertIn('if [ "$EXISTS" = true ]; then', publish)
+        self.assertEqual(2, publish.count("NAMES: ${{ steps.existing.outputs.names }}"))
+
+    def test_sbom_platform_assets_and_aliases(self):
+        platforms = (
+            ("Linux", "x86_64", "mix_sbom_Linux_X64", "b490502890f692672f14619bd12798462a613ecfbab2652bd26f8c909a050fd1"),
+            ("Linux", "aarch64", "mix_sbom_Linux_ARM64", "1366218a3a99cf9d1775513819808d0590b565ee18a307b48b141c8a1337e2ed"),
+            ("Darwin", "x86_64", "mix_sbom_macOS_X64", "ff4cfdf710c2e2e1c9f1c57dfe2667f3a9e52b1bd2054b655e576654b9a04294"),
+            ("Darwin", "arm64", "mix_sbom_macOS_ARM64", "7930b9e35dce94e16072ab75a12d4faf2c26b1664d5d2b6c040ccff6a1242f46"),
+        )
+        self.assertEqual(4, len(sbom.TOOL_PLATFORMS))
+        for system, machine, asset, digest in platforms:
+            aliases = (machine,) if machine == "x86_64" else ("arm64", "aarch64")
+            for alias in aliases:
+                with self.subTest(system=system, machine=alias):
+                    self.assertEqual((asset, digest), sbom.tool_platform(os.uname_result((system, "", "", "", alias))))
+        with self.assertRaisesRegex(ValueError, "Unsupported SBOM platform FreeBSD riscv64") as error:
+            sbom.tool_platform(os.uname_result(("FreeBSD", "", "", "", "riscv64")))
+        for system, machine, _, _ in platforms:
+            self.assertIn(system + " " + machine, str(error.exception))
+
     def test_notebook_and_focused_modes_are_mutually_exclusive(self):
         for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only"):
             for flags in (("--notebooks-only", flag), (flag, "--notebooks-only")):

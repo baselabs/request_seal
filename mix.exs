@@ -28,11 +28,11 @@ defmodule RequestSeal.MixProject do
     "docs/guides/key-rotation.md",
     "docs/guides/testing-your-integration.md",
     "docs/guides/testing.md",
+    "docs/guides/verifying-releases.md",
     "docs/reference/compatibility.md",
     "docs/reference/corpus-format.md",
     "docs/reference/glossary.md",
     "docs/reference/standards.md",
-    "docs/operations/releases.md",
     "livebooks/overview.md",
     "livebooks/environment.livemd",
     "livebooks/rfc-ed25519.livemd",
@@ -95,8 +95,7 @@ defmodule RequestSeal.MixProject do
             "CONTRIBUTING.md",
             "SECURITY.md",
             "docs/guides/getting-started.md",
-            "docs/guides/testing.md",
-            "docs/operations/releases.md"
+            "docs/guides/testing.md"
           ]
         ],
         groups_for_modules: [

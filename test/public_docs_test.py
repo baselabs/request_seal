@@ -49,6 +49,26 @@ class PublicDocsTest(unittest.TestCase):
     def test_current_readme_is_public(self):
         self.assertEqual([], self.errors())
 
+    def test_consumer_verification_guide_ships_and_maintainer_runbook_stays_source_only(self):
+        guide = "docs/guides/verifying-releases.md"
+        runbook = "docs/operations/releases.md"
+        configuration = docs.public_configuration(ROOT)
+        self.assertIn(runbook, docs.SOURCE_DOCUMENTS)
+        self.assertNotIn(guide, docs.SOURCE_DOCUMENTS)
+        for inventory in ("documents", "files"):
+            self.assertIn(guide, configuration[inventory])
+            self.assertNotIn(runbook, configuration[inventory])
+        source = (ROOT / guide).read_text()
+        for command in ("sha256sum --check corpus.sha256", "gh attestation verify",
+                        "--predicate-type https://slsa.dev/provenance/v1",
+                        "--predicate-type https://cyclonedx.org/bom",
+                        'mix hex.package fetch request_seal "$VERSION"', 'cmp "$assets_dir/request_seal-$VERSION.tar"'):
+            self.assertIn(command, source)
+        self.assertNotIn("HEX_API_KEY", source)
+        self.assertNotIn("gh attestation verify", (ROOT / runbook).read_text())
+        self.assertIn("../guides/verifying-releases.md", (ROOT / runbook).read_text())
+        self.assertIn("(docs/guides/verifying-releases.md)", (ROOT / "CHANGELOG.md").read_text())
+
     def test_git_installs_are_rejected_in_public_text(self):
         for install in (
             '{:request_seal, git: "https://github.com/baselabs/request_seal.git"}',
