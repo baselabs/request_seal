@@ -142,11 +142,28 @@ defmodule RequestSeal.SystemCommand do
       {:DOWN, ^monitor, :process, _, _} ->
         finish_stop(port)
 
-      {^port, {:exit_status, _}} ->
-        :ok
+      {^port, {:exit_status, status}} ->
+        agent_exited(monitor, status)
 
       {^port, {:data, _}} ->
         agent_loop(port, monitor)
+    end
+  end
+
+  defp agent_exited(monitor, status) do
+    receive do
+      {:stop, from, ref} ->
+        send(from, {ref, stop_result(status)})
+
+      {{:signal, :terminate}, from, ref} ->
+        send(from, {ref, status})
+
+      {{:signal, _}, from, ref} ->
+        send(from, {ref, {:error, "agent owner exited: #{status}"}})
+        agent_exited(monitor, status)
+
+      {:DOWN, ^monitor, :process, _, _} ->
+        :ok
     end
   end
 
@@ -171,11 +188,13 @@ defmodule RequestSeal.SystemCommand do
 
   defp stop_port(port) do
     case command_exit(port, "stop\n") do
-      {:ok, 0} -> :ok
-      {:ok, status} -> {:error, "agent owner shutdown failed: #{status}"}
+      {:ok, status} -> stop_result(status)
       {:error, message} -> {:error, message}
     end
   end
+
+  defp stop_result(0), do: :ok
+  defp stop_result(status), do: {:error, "agent owner shutdown failed: #{status}"}
 
   defp command_exit(port, command) do
     # A caller's DOWN may precede an already queued port status. Consume that

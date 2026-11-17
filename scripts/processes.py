@@ -3,10 +3,15 @@
 Entry points must call install_signal_handlers() before acquiring resources.
 Importing this module does not change signal handlers.
 Protected calls also wrap current handlers on entry from the main thread.
+Signals arriving before that installation run the previous handler; entry
+points avoid that window by calling install_signal_handlers() first.
 For standalone cleanup, a KeyboardInterrupt or SystemExit visible through
 sys.exc_info() keeps precedence, including in a finally block. An ordinary
 handled exception does not suppress signals; Python supplies implicit chaining.
 Context managers use their own __exit__ exception arguments instead.
+If an enclosing except KeyboardInterrupt or SystemExit block swallows its
+exception, signals pending during a protected call there have already been
+dropped under that precedence rule.
 
 CLI outcome                              Status
 Child exit                               The child's status
@@ -20,7 +25,11 @@ Exception interrupted by owner signal    128 + N, plus original-exception report
 
 Every owner outcome emits one stderr line beginning ``requestseal-owner:``.
 An interrupted ordinary exception adds one prefixed type-and-message report.
+Exceptions from later pending handlers also get type-and-message reports while
+the first handler's exception keeps precedence.
 Child outcomes emit no such line. Signals name the signal, without a traceback.
+Once main() chooses an outcome, further owner signals cannot change its status
+or interrupt its report before it returns.
 As with shell commands, a child can itself choose a reserved status; the prefix
 distinguishes an owner outcome in merged output. Child stdin is /dev/null;
 owner stdin carries only owner commands.
@@ -80,6 +89,8 @@ def _deliver_pending(pending, original, delivery):
                 error.__context__ = original
             if delivery["failure"] is None:
                 delivery["failure"] = error
+            else:
+                _report(f"{type(error).__name__}: {error}")
         delivery["active"] = False
     failure = delivery["failure"]
     if failure is not None:
@@ -141,6 +152,14 @@ def _install_cleanup_handlers():
             terminating = False
             current = frame
             while current is not None:
+                # The owner has already finished resource cleanup. Protect its
+                # selected outcome through reporting and main's final return,
+                # including signals already scheduled before a mask could act.
+                # An except binding selects failure before its first statement.
+                if (current.f_code is main.__code__
+                        and (current.f_locals.get("outcome", {}).get("chosen", False)
+                             or "error" in current.f_locals)):
+                    return
                 if current.f_code is _CleanupContext.__exit__.__code__:
                     delivery = current.f_locals.get("delivery", {})
                     terminating |= isinstance(current.f_locals.get("original"),
@@ -267,11 +286,15 @@ class ProcessEvents:
     def register(self, fileobj, data):
         fd = fileobj if isinstance(fileobj, int) else fileobj.fileno()
         self.files[fd] = data
-        if self.selector is not None:
-            self.selector.register(fd, selectors.EVENT_READ, data)
-        else:
-            self.queue.control([select.kevent(fd, filter=select.KQ_FILTER_READ,
-                                              flags=select.KQ_EV_ADD)], 0, 0)
+        try:
+            if self.selector is not None:
+                self.selector.register(fd, selectors.EVENT_READ, data)
+            else:
+                self.queue.control([select.kevent(fd, filter=select.KQ_FILTER_READ,
+                                                  flags=select.KQ_EV_ADD)], 0, 0)
+        except OSError:
+            del self.files[fd]
+            raise
 
     def unregister(self, fileobj):
         fd = fileobj if isinstance(fileobj, int) else fileobj.fileno()
@@ -582,11 +605,13 @@ def command_timeout(value):
 
 class _OwnerParser(argparse.ArgumentParser):
     def error(self, message):
+        self.outcome["chosen"] = True
         self.print_usage(sys.stderr)
         _report(message)
         self.exit(2)
 
     def exit(self, status=0, message=None):
+        self.outcome["chosen"] = True
         if status == 0:
             _report("help requested")
         super().exit(status, message)
@@ -594,10 +619,13 @@ class _OwnerParser(argparse.ArgumentParser):
 
 def main():
     global _report_prefix
-    _report_prefix = "requestseal-owner: "
+    previous_prefix = _report_prefix
+    outcome = {"chosen": False}
     try:
+        _report_prefix = "requestseal-owner: "
         install_signal_handlers()
         parser = _OwnerParser(description=__doc__)
+        parser.outcome = outcome
         parser.add_argument("--timeout", type=command_timeout, default=900)
         parser.add_argument("--pid-file", type=Path)
         parser.add_argument("argv", nargs=argparse.REMAINDER)
@@ -609,7 +637,10 @@ def main():
         with command(argv, stdin=subprocess.DEVNULL) as process:
             if args.pid_file:
                 write_pid_file(args.pid_file, process.pid)
-            process.events.register(sys.stdin, "owner")
+            try:
+                process.events.register(sys.stdin, "owner")
+            except (OSError, ValueError):
+                raise EOFError("command owner closed stdin") from None
             deadline = time.monotonic() + args.timeout
             incoming = bytearray()
             stopping = False
@@ -643,16 +674,21 @@ def main():
                     if len(incoming) > 128:
                         raise ValueError("owner command too long")
         if stopping:
+            outcome["chosen"] = True
             _report("command stopped")
             return 0
+        outcome["chosen"] = True
         return 128 - process.returncode if process.returncode < 0 else process.returncode
     except subprocess.TimeoutExpired as error:
+        outcome["chosen"] = True
         _report(f"command deadline exceeded after {error.timeout}s")
         return 124
     except Exception as error:
+        outcome["chosen"] = True
         _report(error)
         return 125
     except (KeyboardInterrupt, SystemExit) as error:
+        outcome["chosen"] = True
         if isinstance(error, KeyboardInterrupt):
             signum = signal.SIGINT
         else:
@@ -661,6 +697,8 @@ def main():
             raise
         _report(f"received {signal.Signals(signum).name}")
         return 128 + signum
+    finally:
+        _report_prefix = previous_prefix
 
 
 if __name__ == "__main__":

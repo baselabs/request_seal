@@ -127,7 +127,7 @@ defmodule RequestSeal.SystemCommandTest do
                  Enum.any?(messages, &match?({^port, {:exit_status, 2}}, &1))
                end)
 
-        assert Port.info(port) == nil
+        assert eventually(fn -> Port.info(port) == nil end)
       after
         :erlang.resume_process(owner)
       end
@@ -187,6 +187,109 @@ defmodule RequestSeal.SystemCommandTest do
       assert_receive {^ref, {:error, "agent owner shutdown failed: 137"}}, 1_000
       assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}, 1_000
     after
+      SystemCommand.stop_agent(owner)
+      File.rm_rf!(dir)
+    end
+  end
+
+  test "an idle agent crash is retained for stop and terminate requests" do
+    for request <- [:stop, :terminate] do
+      dir = agent_directory()
+      socket = Path.join(dir, "agent")
+      {owner, pid} = SystemCommand.agent(socket)
+      monitor = Process.monitor(owner)
+
+      try do
+        assert {_, 0} = System.cmd("kill", ["-KILL", pid])
+        assert eventually(fn -> terminal_agent?(owner) end)
+        assert Process.alive?(owner)
+
+        case request do
+          :stop ->
+            assert {:error, "agent owner shutdown failed: 137"} = SystemCommand.stop_agent(owner)
+
+          :terminate ->
+            assert 137 = SystemCommand.signal_agent(owner, :terminate)
+        end
+
+        assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+      after
+        SystemCommand.stop_agent(owner)
+        File.rm_rf!(dir)
+      end
+    end
+  end
+
+  test "other signals report an idle agent crash without consuming its terminal status" do
+    dir = agent_directory()
+    socket = Path.join(dir, "agent")
+    {owner, pid} = SystemCommand.agent(socket)
+    monitor = Process.monitor(owner)
+
+    try do
+      assert {_, 0} = System.cmd("kill", ["-KILL", pid])
+      assert eventually(fn -> terminal_agent?(owner) end)
+
+      for signal <- [:stop, :continue] do
+        assert {:error, "agent owner exited: 137"} = SystemCommand.signal_agent(owner, signal)
+        assert Process.alive?(owner)
+      end
+
+      assert 137 = SystemCommand.signal_agent(owner, :terminate)
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+    after
+      SystemCommand.stop_agent(owner)
+      File.rm_rf!(dir)
+    end
+  end
+
+  test "an idle successful exit can be stopped twice" do
+    dir = agent_directory()
+    socket = Path.join(dir, "agent")
+    {owner, _pid} = SystemCommand.agent(socket)
+    monitor = Process.monitor(owner)
+    [port] = Enum.filter(Port.list(), &(Port.info(&1, :connected) == {:connected, owner}))
+
+    try do
+      # End the real command channel before sending the owner an agent request.
+      assert Port.command(port, "stop\n")
+      assert eventually(fn -> terminal_agent?(owner) end)
+      assert :ok = SystemCommand.stop_agent(owner)
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+      assert :ok = SystemCommand.stop_agent(owner)
+      refute File.exists?(socket)
+    after
+      SystemCommand.stop_agent(owner)
+      File.rm_rf!(dir)
+    end
+  end
+
+  test "an owner retaining an idle agent crash exits when its caller dies" do
+    dir = agent_directory()
+    socket = Path.join(dir, "agent")
+    parent = self()
+
+    {caller, caller_monitor} =
+      spawn_monitor(fn ->
+        {owner, pid} = SystemCommand.agent(socket)
+        send(parent, {:idle_agent, owner, pid})
+
+        receive do
+          :finish -> :ok
+        end
+      end)
+
+    assert_receive {:idle_agent, owner, pid}
+    monitor = Process.monitor(owner)
+
+    try do
+      assert {_, 0} = System.cmd("kill", ["-KILL", pid])
+      assert eventually(fn -> terminal_agent?(owner) end)
+      send(caller, :finish)
+      assert_receive {:DOWN, ^caller_monitor, :process, ^caller, :normal}
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+    after
+      if Process.alive?(caller), do: Process.exit(caller, :kill)
       SystemCommand.stop_agent(owner)
       File.rm_rf!(dir)
     end
@@ -270,6 +373,11 @@ defmodule RequestSeal.SystemCommandTest do
       {state, 0} -> String.starts_with?(String.trim(state), "T")
       _ -> false
     end
+  end
+
+  defp terminal_agent?(owner) do
+    Process.info(owner, :current_function) ==
+      {:current_function, {SystemCommand, :agent_exited, 2}}
   end
 
   defp eventually(condition) do

@@ -846,7 +846,7 @@ with cleanup_on_exit(cleanup):
         result = processes.run([sys.executable, "-B", "-c", source], timeout=10,
                                capture_output=True, check=False)
         self.assertEqual(143, result.returncode, result.stderr)
-        self.assertEqual(b"", result.stderr)
+        self.assertEqual(b"KeyboardInterrupt: \n", result.stderr)
 
     def test_interrupt_during_termination_delivery_keeps_exit_143(self):
         source = '''import os, signal, sys
@@ -885,7 +885,7 @@ except SystemExit:
                 result = processes.run([sys.executable, "-B", "-c", source, window], timeout=10,
                                        capture_output=True, check=False)
                 self.assertEqual(143, result.returncode, result.stderr)
-                self.assertEqual(b"", result.stderr)
+                self.assertEqual(b"KeyboardInterrupt: \n" if window == "handler" else b"", result.stderr)
 
     def test_distinct_pending_signals_use_class_then_arrival_order(self):
         source = '''import os, signal, sys
@@ -914,7 +914,7 @@ received = []
 def handler(signum, frame):
     received.append(signum)
     if signum == signal.SIGINT:
-        raise KeyboardInterrupt
+        raise KeyboardInterrupt("interrupt handler failed")
     raise SystemExit(128 + signum)
 for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
     signal.signal(number, handler)
@@ -930,7 +930,9 @@ else:
     raise AssertionError("pending handlers did not raise")
 assert received == [signal.SIGHUP, signal.SIGTERM, signal.SIGINT], received
 '''
-        processes.run([sys.executable, "-B", "-c", source], timeout=10)
+        result = processes.run([sys.executable, "-B", "-c", source], timeout=10,
+                               capture_output=True)
+        self.assertEqual(b"SystemExit: 143\nKeyboardInterrupt: interrupt handler failed\n", result.stderr)
 
     def test_pending_interrupt_chains_the_exception_crossing_cleanup(self):
         source = '''import os, signal, sys
@@ -1230,6 +1232,99 @@ else:
                     cwd=ROOT, input=request, capture_output=True, timeout=10)
                 self.assertEqual(status, result.returncode, result.stderr)
                 self.assertEqual(b"requestseal-owner: " + message + b"\n", result.stderr)
+
+    def test_owner_chosen_outcome_survives_signals_during_classification_and_reporting(self):
+        source = '''import inspect, os, signal, sys
+sys.path.insert(0, "scripts")
+import processes
+outcome, window = sys.argv[1:]
+lines, start = inspect.getsourcelines(processes.main)
+classification = next(start + index for index, line in enumerate(lines)
+                      if line.strip() == "if isinstance(error, KeyboardInterrupt):")
+catching = next(start + index + 1 for index, line in enumerate(lines)
+                if line.strip() == ("except (KeyboardInterrupt, SystemExit) as error:"
+                                    if outcome == "signal" else "except Exception as error:"))
+first = False
+second = False
+def observe(frame, event, arg):
+    global first, second
+    if (outcome == "signal" and not first and event == "call"
+            and frame.f_code is processes.ProcessEvents.select.__code__):
+        first = True
+        os.kill(os.getpid(), signal.SIGTERM)
+    if not second and (
+            (window == "classify" and event == "line"
+             and frame.f_code is processes.main.__code__ and frame.f_lineno == classification)
+            or (window == "catch" and event == "line"
+                and frame.f_code is processes.main.__code__ and frame.f_lineno == catching)
+            or (window == "report" and event == "call" and frame.f_code is processes._report.__code__)):
+        second = True
+        os.kill(os.getpid(), signal.SIGINT if outcome == "signal" else signal.SIGTERM)
+    return observe
+sys.argv = ["processes.py", "--", "sleep", "60"]
+sys.settrace(observe)
+try:
+    status = processes.main()
+finally:
+    sys.settrace(None)
+assert second, "second signal was not injected in the chosen outcome path"
+if outcome == "signal":
+    assert first, "first signal was not injected"
+raise SystemExit(status)
+'''
+        for outcome, window, status, message in (
+                ("signal", "catch", 143, b"received SIGTERM"),
+                ("signal", "classify", 143, b"received SIGTERM"),
+                ("signal", "report", 143, b"received SIGTERM"),
+                ("error", "catch", 125, b"command owner closed stdin"),
+                ("error", "report", 125, b"command owner closed stdin")):
+            with self.subTest(outcome=outcome, window=window):
+                result = subprocess.run([sys.executable, "-B", "-c", source, outcome, window],
+                                        cwd=ROOT, input=b"", capture_output=True, timeout=10)
+                self.assertEqual(status, result.returncode, result.stderr)
+                self.assertEqual(b"", result.stdout)
+                self.assertEqual(b"requestseal-owner: " + message + b"\n", result.stderr)
+
+    def test_owner_unwatchable_stdin_is_eof_and_stops_its_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            regular = Path(directory) / "stdin"
+            regular.touch()
+            for channel in (Path(os.devnull), regular):
+                with self.subTest(channel=channel.name), channel.open("rb") as incoming:
+                    pid_file = Path(directory) / "pid"
+                    result = subprocess.run(
+                        [sys.executable, "-B", "scripts/processes.py", "--pid-file", str(pid_file),
+                         "--", "sleep", "60"], cwd=ROOT,
+                        stdin=incoming, capture_output=True, timeout=10)
+                    self.assertEqual(125, result.returncode, result.stderr)
+                    self.assertEqual(b"", result.stdout)
+                    self.assertEqual(b"requestseal-owner: command owner closed stdin\n", result.stderr)
+                    pid = int(pid_file.read_text())
+                    status = subprocess.run(["ps", "-p", str(pid), "-o", "pid="],
+                                            capture_output=True, timeout=5)
+                    self.assertEqual(1, status.returncode, "owner left its child running")
+                    pid_file.unlink()
+
+    def test_in_process_owner_restores_the_neutral_reporter_on_return_and_raise(self):
+        source = '''import sys
+sys.path.insert(0, "scripts")
+import processes
+mode = sys.argv[1]
+sys.argv = ["processes.py"] if mode == "raise" else ["processes.py", "--", "sleep", "60"]
+try:
+    assert processes.main() == 0
+    assert mode == "return"
+except SystemExit as error:
+    assert mode == "raise" and error.code == 2
+processes._report("neutral reporter")
+'''
+        for mode in ("return", "raise"):
+            with self.subTest(mode=mode):
+                result = subprocess.run([sys.executable, "-B", "-c", source, mode],
+                                        cwd=ROOT, input=b"stop\n", capture_output=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(b"neutral reporter", result.stderr.splitlines()[-1])
+                self.assertEqual(1, result.stderr.count(b"requestseal-owner:"))
 
     def test_child_stdin_is_eof_while_the_owner_command_channel_still_works(self):
         source = 'import sys,time; assert sys.stdin.buffer.read() == b""; print("EOF",flush=True); time.sleep(60)'
