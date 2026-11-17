@@ -45,7 +45,7 @@ class ProcessGroupTest(unittest.TestCase):
             processes.run([sys.executable, "-B", "-c", "raise SystemExit(7)"], timeout=10)
         self.assertEqual(7, error.exception.returncode)
 
-    def assert_tree_stopped(self, signum=None, startup_delay=0):
+    def assert_tree_stopped(self, signum=None, startup_delay=0, repeated=False, nested=False, fast=False):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "runtime.lock"
             ready = Path(directory) / "ready"
@@ -57,30 +57,59 @@ class ProcessGroupTest(unittest.TestCase):
                 'pathlib.Path(sys.argv[2]).write_text(str(__import__("os").getpid())); time.sleep(120)'
             )
             launcher = (
-                'import subprocess, sys; '
-                'child = subprocess.Popen([sys.executable, "-B", "-c", sys.argv[1], sys.argv[2], sys.argv[3]]); '
+                'import subprocess, sys, signal; '
+                + ('signal.signal(signal.SIGTERM, signal.SIG_IGN); ' if repeated else '') +
+                'child = subprocess.Popen([sys.executable, "-B", "-c", sys.argv[1], sys.argv[2], sys.argv[3]], '
+                'stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); '
                 'child.wait()'
             )
             runner = (
-                'import sys; sys.path.insert(0, "scripts"); '
+                'import sys, signal; sys.path.insert(0, "scripts"); '
+                'signal.signal(signal.SIGINT, signal.default_int_handler); '
                 'from processes import install_signal_handlers, run; '
                 'install_signal_handlers(); '
-                'run([sys.executable, "-B", "-c", *sys.argv[1:]], timeout=35)'
+                'run([sys.executable, "-B", "-c", *sys.argv[1:]], timeout=8)'
             )
-            parent = subprocess.Popen([sys.executable, "-B", "-c", runner, launcher, runtime, str(lock), str(ready)],
-                                      cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            arguments = [runner, runtime] if nested else [launcher, runtime]
+            log = (Path(directory) / "output").open("w+b")
+            parent = subprocess.Popen([sys.executable, "-B", "-c", runner, *arguments, str(lock), str(ready)],
+                                      cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
+            runtime_pid = runtime_group = runtime_session = pidfd = None
             try:
                 deadline = time.monotonic() + 30
                 while not ready.exists() or not ready.read_text().strip():
                     if parent.poll() is not None:
-                        output, errors = parent.communicate()
-                        self.fail(f"runner exited before its descendant was ready: {output!r} {errors!r}")
+                        self.fail("runner exited before its descendant was ready: " + (Path(directory) / "output").read_text())
                     if time.monotonic() >= deadline:
                         self.fail("real descendant did not create its ready file within 30 seconds")
                     time.sleep(0.01)
+                runtime_pid = int(ready.read_text())
+                # Confirm ancestry before binding a PID from a file. The test's
+                # unreaped parent anchors the tree even if the runtime setsid().
+                listing = subprocess.run(["ps", "-axo", "pid=,ppid="],
+                                         capture_output=True, text=True, check=True).stdout
+                parents = dict(map(int, row.split()) for row in listing.splitlines())
+                ancestor = runtime_pid
+                while ancestor in parents and ancestor != parent.pid:
+                    ancestor = parents[ancestor]
+                self.assertEqual(parent.pid, ancestor, "ready-file PID does not belong to the test's process tree")
+                runtime_group = os.getpgid(runtime_pid)
+                runtime_session = os.getsid(runtime_pid)
+                if hasattr(os, "pidfd_open"):
+                    pidfd = os.pidfd_open(runtime_pid)
+                started = time.monotonic()
                 if signum is not None:
                     os.kill(parent.pid, signum)
-                _, errors = parent.communicate(timeout=45)
+                    if repeated:
+                        time.sleep(1)
+                        os.kill(parent.pid, signal.SIGINT)
+                try:
+                    parent.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    self.fail("runner did not finish descendant cleanup within 15 seconds")
+                errors = (Path(directory) / "output").read_bytes()
+                if fast:
+                    self.assertLess(time.monotonic() - started, 2, "TERM-responsive leader incurred the full grace period")
                 if signum is None:
                     self.assertNotEqual(0, parent.returncode)
                     self.assertIn(b"TimeoutExpired", errors)
@@ -105,22 +134,31 @@ class ProcessGroupTest(unittest.TestCase):
             finally:
                 if parent.poll() is None:
                     parent.terminate()  # Let the real runner clean up its group.
-                if ready.exists() and ready.read_text().strip():
+                # pidfds bind the exact runtime on Linux. On macOS verify the
+                # test-owned group and session before signaling a ready-file PID.
+                if runtime_pid is not None:
                     try:
-                        os.kill(int(ready.read_text()), signal.SIGKILL)
+                        if pidfd is not None:
+                            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                        elif (os.getpgid(runtime_pid), os.getsid(runtime_pid)) == (runtime_group, runtime_session):
+                            os.kill(runtime_pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+                    finally:
+                        if pidfd is not None:
+                            os.close(pidfd)
                 try:
-                    parent.communicate(timeout=10)
+                    parent.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     parent.kill()
-                    parent.communicate(timeout=10)
+                    parent.wait(timeout=10)
+                log.close()
 
     def test_timeout_kills_runtime_even_after_its_launcher_exits_on_term(self):
         self.assert_tree_stopped()
 
     def test_keyboard_interrupt_kills_the_grandchild(self):
-        self.assert_tree_stopped(signal.SIGINT)
+        self.assert_tree_stopped(signal.SIGINT, fast=True)
 
     def test_hangup_to_cli_parent_kills_the_grandchild(self):
         self.assert_tree_stopped(signal.SIGHUP)
@@ -130,6 +168,38 @@ class ProcessGroupTest(unittest.TestCase):
 
     def test_termination_to_cli_parent_kills_the_grandchild(self):
         self.assert_tree_stopped(signal.SIGTERM)
+
+    def test_two_interrupts_cannot_abort_cleanup(self):
+        self.assert_tree_stopped(signal.SIGINT, repeated=True)
+
+    def test_nested_runner_finishes_its_cleanup_before_outer_kill(self):
+        self.assert_tree_stopped(signal.SIGINT, nested=True)
+
+    def test_inherited_ignored_hangup_remains_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "ready"
+            source = (
+                'import signal, sys, time; from pathlib import Path; '
+                'sys.path.insert(0, "scripts"); '
+                'signal.signal(signal.SIGINT, signal.default_int_handler); '
+                'from processes import install_signal_handlers; install_signal_handlers(); '
+                'Path(sys.argv[1]).write_text("ready"); time.sleep(60)'
+            )
+            parent = subprocess.Popen([sys.executable, "-B", "-c", source, str(ready)], cwd=ROOT,
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                      preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN))
+            try:
+                deadline = time.monotonic() + 10
+                while not ready.exists():
+                    self.assertIsNone(parent.poll(), "ignored-hangup runner exited before readiness")
+                    self.assertLess(time.monotonic(), deadline, "ignored-hangup runner never became ready")
+                    time.sleep(0.01)
+                os.kill(parent.pid, signal.SIGHUP)
+                time.sleep(0.2)
+                self.assertIsNone(parent.poll(), "install_signal_handlers overrode inherited SIG_IGN")
+            finally:
+                parent.terminate()
+                parent.wait(timeout=10)
 
 
 if __name__ == "__main__":

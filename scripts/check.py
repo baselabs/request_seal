@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the checked-in scaffold contract on macOS and Linux; no service startup."""
 import argparse
+import json
 import os
 import math
 import re
@@ -11,7 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 from release import development_snapshot, package_version, release_notes, source_url
-from processes import install_signal_handlers, run, stop_group
+from processes import command, exited, install_signal_handlers, run, stop_group
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -65,40 +66,37 @@ def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
     # Notebook code still runs outside the project, with the usual empty argv.
     bootstrap = ("[script] = System.argv(); System.argv([]); "
                  "File.cd!(Path.dirname(script)); Code.require_file(script)")
-    process = subprocess.Popen(["elixir", "-e", bootstrap, "--", str(script)], cwd=ROOT, env=environment,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
-    deadline = time.monotonic() + timeout
-    output = bytearray()
-    try:
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
-            while selector.get_map():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("Notebook execution deadline exceeded:\n" + output.decode("utf-8", errors="replace"))
-                for key, _ in selector.select(min(remaining, 1)):
-                    chunk = os.read(key.fileobj.fileno(), 65536)
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                        continue
-                    if len(output) + len(chunk) > maximum_output:
-                        raise ValueError("Notebook output limit exceeded:\n" + output.decode("utf-8", errors="replace"))
-                    output.extend(chunk)
+    with command(["elixir", "-e", bootstrap, "--", str(script)], cwd=ROOT, env=environment,
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
         try:
-            status = process.wait(timeout=max(0, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired as error:
-            raise TimeoutError("Notebook execution deadline exceeded:\n" + output.decode("utf-8", errors="replace")) from error
-        text = output.decode("utf-8")
-        if status:
-            raise ValueError(f"Notebook failed ({status}):\n{text}")
-        if text.splitlines().count(completion) != 1:
-            raise ValueError(f"Notebook did not complete exactly once:\n{text}")
-        return text, status
-    finally:
-        try:
-            stop_group(process)
+            output = read_notebook(process, timeout, maximum_output)
         finally:
             process.stdout.close()
+    if process.returncode:
+        raise ValueError(f"Notebook failed ({process.returncode}):\n{output}")
+    if output.splitlines().count(completion) != 1:
+        raise ValueError(f"Notebook did not complete exactly once:\n{output}")
+    return output, process.returncode
+
+
+def read_notebook(process, timeout, maximum_output):
+    deadline = time.monotonic() + timeout
+    output = bytearray()
+    with selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        while selector.get_map() or not exited(process):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Notebook execution deadline exceeded:\n" + output.decode("utf-8", errors="replace"))
+            for key, _ in selector.select(min(remaining, 0.1)):
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                if len(output) + len(chunk) > maximum_output:
+                    raise ValueError("Notebook output limit exceeded:\n" + output.decode("utf-8", errors="replace"))
+                output.extend(chunk)
+    return output.decode("utf-8")
 
 
 def ci_action_errors(workflow, required_actions=None):
@@ -280,8 +278,20 @@ def notebooks():
     run(["mix", "hex.audit"], tooling)
     run(["mix", "format", "--check-formatted"], tooling)
     run(["mix", "run", "--no-start", "check.exs", "--self-test"], tooling)
-    run(["mix", "run", "--no-start", "check.exs"], tooling,
-        extra_env={"REQUESTSEAL_PYTHON": sys.executable})
+    with tempfile.TemporaryDirectory(prefix="requestseal-notebooks-") as temporary:
+        scratch = Path(temporary)
+        run(["mix", "run", "--no-start", "check.exs", str(scratch)], tooling,
+            extra_env={"REQUESTSEAL_PYTHON": sys.executable})
+        execute_notebooks(scratch)
+
+
+def execute_notebooks(scratch):
+    manifest = json.loads((scratch / "manifest.json").read_text())
+    for entry in manifest:
+        output, _ = execute_notebook(scratch / entry["script"], entry["completion"])
+        print("\n".join(line for line in output.splitlines() if line != entry["completion"]))
+        print(f'PASS {entry["notebook"]}: {entry["cells"]} nonempty Elixir cells exported; completion receipt verified')
+    print(f"PASS {len(manifest)} notebooks; no external peer or UI acceptance claimed")
 
 if __name__ == "__main__":
     install_signal_handlers()
@@ -296,16 +306,10 @@ if __name__ == "__main__":
     for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only"):
         parser.add_argument(flag, dest="focused_checks", action=SelectCheck, nargs=0,
                             help="Run only this check; can combine with other focused checks, but not with --notebooks-only")
-    parser.add_argument("--execute-notebook", nargs=2, metavar=("SCRIPT", "COMPLETION"))
-    parser.add_argument("--notebook-timeout", type=float, default=300)
     args = parser.parse_args()
     if args.notebooks_only and args.focused_checks:
         parser.error("argument --notebooks-only: not allowed with argument " + args.focused_checks[0])
     try:
-        if args.execute_notebook:
-            output, _ = execute_notebook(*args.execute_notebook, timeout=args.notebook_timeout)
-            print(output, end="")
-            raise SystemExit(0)
         focused = [
             ("--ci-actions-only", check_ci_actions),
             ("--corpus-release-only", check_corpus_release),

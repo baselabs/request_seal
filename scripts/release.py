@@ -3,10 +3,10 @@
 import argparse
 import datetime
 import hashlib
+from html import unescape
 import json
 import os
 from pathlib import Path
-import posixpath
 import re
 import string
 import subprocess
@@ -61,11 +61,47 @@ def source_url(source):
     return matches[0].rstrip("/")
 
 
+# CommonMark 0.31.2 §§4.6 and 6.6. Keep token boundaries and source offsets:
+# HTMLParser normalizes attributes, which would lose the original delimiters.
+HTML_SPACE = r"[ \t\n\r]"
+HTML_NAME = r"[A-Za-z_:][A-Za-z0-9_.:-]*"
+HTML_VALUE = r'''(?:"[^"]*"|'[^']*'|[^ \t\n\r"'=<>`]+)'''
+HTML_ATTRIBUTE = HTML_NAME + r"(?:" + HTML_SPACE + r"*=" + HTML_SPACE + "*" + HTML_VALUE + r")?"
+HTML_OPEN = r"<[A-Za-z][A-Za-z0-9-]*(?:" + HTML_SPACE + "+" + HTML_ATTRIBUTE + r")*" + HTML_SPACE + r"*/?>"
+HTML_CLOSE = r"</[A-Za-z][A-Za-z0-9-]*" + HTML_SPACE + r"*>"
+HTML_TOKEN = re.compile(
+    r"<!--(?:>|->|[\s\S]*?-->)|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<![A-Za-z][^>]*>|"
+    + HTML_OPEN + "|" + HTML_CLOSE)
+HTML_BLOCK_TAGS = (
+    "address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt "
+    "fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li "
+    "link main menu menuitem nav noframes ol optgroup option p param search section summary table tbody td tfoot th "
+    "thead title tr track ul"
+).split()
+THEMATIC = re.compile(r"(?:\*[ \t]*){3,}$|(?:-[ \t]*){3,}$|(?:_[ \t]*){3,}$")
+SETEXT = re.compile(r"(?:=+|-+)[ \t]*$")
+
+
+def html_block(text, paragraph):
+    if re.match(r"<(?:script|pre|style|textarea)(?:[ \t\n>]|$)", text, re.I):
+        return re.compile(r"</(?:script|pre|style|textarea)>", re.I)
+    for opening, closing in (("<!--", "-->"), ("<?", "?>"), ("<![CDATA[", "]]>")):
+        if text.startswith(opening):
+            return re.compile(re.escape(closing))
+    if re.match(r"<![A-Za-z]", text):
+        return re.compile(">")
+    if re.match(r"</?(?:" + "|".join(HTML_BLOCK_TAGS) + r")(?:[ \t\n>]|/?>|$)", text, re.I):
+        return "blank"
+    if not paragraph and re.fullmatch(r"(?:" + HTML_OPEN + "|" + HTML_CLOSE + r")[ \t]*\n?", text):
+        return "blank"
+    return None
+
+
 def markdown_blocks(source):
-    """Yield code visibility, content offsets and container identity for each line."""
-    root = {"paragraph": False}
+    """Yield code visibility, content offset and leaf-block identity per line."""
+    root = {"paragraph": False, "block": None}
     containers = []
-    fence = None
+    fence = raw = None
 
     def indent(line, offset, column, limit=None):
         while offset < len(line) and line[offset] in " \t" and (limit is None or column < limit):
@@ -74,11 +110,11 @@ def markdown_blocks(source):
         return offset, column
 
     def interrupts(text):
-        return re.match(r"(?:>|[-+*][ \t]|\d{1,9}[.)][ \t]|`{3,}|~{3,}|#{1,6}(?:\s|$))", text)
+        return (THEMATIC.fullmatch(text.rstrip("\r\n")) or
+                re.match(r"(?:>|[-+*][ \t]+\S|1[.)][ \t]+\S|`{3,}|~{3,}|#{1,6}(?:[ \t\n]|$))", text) or
+                html_block(text, True))
 
     for original in source.splitlines(keepends=True):
-        # Parse expanded columns, then map content offsets back to source bytes.
-        # A container boundary can fall in the middle of a tab expansion.
         line = original.expandtabs(4)
         offsets = [0]
         for index, char in enumerate(original):
@@ -94,9 +130,9 @@ def markdown_blocks(source):
                 offset, column = start + 1, col + 1
                 if line[offset:offset + 1] in (" ", "\t"):
                     offset, column = indent(line, offset, column, column + 1)
-            elif not line.strip():
-                break  # Blank lines keep list items open.
-            elif containers[-1]["paragraph"] and not interrupts(line[start:]) and fence is None:
+            elif not line.strip(" \t\r\n") and container["kind"] == "list":
+                break
+            elif containers[-1]["paragraph"] and not interrupts(line[start:]) and fence is None and raw is None:
                 lazy = True
                 break
             else:
@@ -106,20 +142,22 @@ def markdown_blocks(source):
         context = containers[-1] if containers else root
         if fence and fence[0] is not context:
             fence = None
+        if raw and raw[0] is not context:
+            raw = None
         starts_container = False
-        if not lazy and fence is None:
+        if not lazy and fence is None and raw is None:
             while True:
                 start, col = indent(line, offset, column)
-                if col - column > 3:
+                if col - column > 3 or THEMATIC.fullmatch(line[start:].rstrip("\r\n")):
                     break
                 if line[start:start + 1] == ">":
                     offset, column = start + 1, col + 1
                     if line[offset:offset + 1] in (" ", "\t"):
                         offset, column = indent(line, offset, column, column + 1)
-                    container = {"kind": "quote", "paragraph": False}
+                    container = {"kind": "quote", "paragraph": False, "block": None}
                 else:
                     marker = re.match(r"(?:[-+*]|\d{1,9}[.)])(?=[ \t])", line[start:])
-                    if marker is None:
+                    if marker is None or (context["paragraph"] and not interrupts(line[start:])):
                         break
                     offset, column = start + marker.end(), col + marker.end()
                     end, end_column = indent(line, offset, column)
@@ -127,7 +165,7 @@ def markdown_blocks(source):
                         offset, column = end, end_column
                     else:
                         offset, column = indent(line, offset, column, column + 1)
-                    container = {"kind": "list", "column": column, "paragraph": False}
+                    container = {"kind": "list", "column": column, "paragraph": False, "block": None}
                 context["paragraph"] = False
                 containers.append(container)
                 context = container
@@ -135,190 +173,288 @@ def markdown_blocks(source):
 
         start, col = indent(line, offset, column)
         text = line[start:]
+        blank = not text.strip(" \t\r\n")
         code = False
+        kind = "paragraph"
+        block = context["block"]
+        if raw and raw[1] == "blank" and blank:
+            raw = None
         if fence:
             code = True
             marker = re.match(r"(`{3,}|~{3,})(.*)$", text)
             if col - column <= 3 and marker:
                 run, rest = marker.groups()
-                if run[0] == fence[1][0] and len(run) >= len(fence[1]) and not rest.strip():
+                if run[0] == fence[1][0] and len(run) >= len(fence[1]) and not rest.strip(" \t\r\n"):
                     fence = None
+        elif raw:
+            kind = "html"
+            if raw[1] != "blank" and raw[1].search(text):
+                raw = None
         elif not lazy and col - column >= 4 and (starts_container or not context["paragraph"]):
-            code = bool(text.strip())
+            code = not blank
         elif col - column <= 3:
             marker = re.match(r"(`{3,}|~{3,})(.*)$", text)
+            ending = html_block(text, context["paragraph"])
             if marker and (marker[1][0] == "~" or "`" not in marker[2]):
                 fence = context, marker[1]
                 code = True
-        context["paragraph"] = bool(text.strip()) and not code and not re.match(r"#{1,6}(?:\s|$)", text)
-        yield original, code, offsets[offset], context
+            elif ending:
+                kind = "html"
+                block = {"kind": kind}
+                if ending == "blank" or not ending.search(text):
+                    raw = context, ending
+            elif not lazy and context["paragraph"] and SETEXT.fullmatch(text.rstrip("\r\n")):
+                kind = "underline"
+            elif THEMATIC.fullmatch(text.rstrip("\r\n")):
+                kind = "break"
+            elif re.match(r"#{1,6}(?:[ \t\n]|$)", text):
+                kind = "heading"
+        if blank and kind != "html":
+            kind = "blank"
+        if code:
+            kind = "code"
+        if kind == "paragraph":
+            if not context["paragraph"] or block is None:
+                block = {"kind": kind}
+        elif kind != "html":
+            block = {"kind": kind}
+        context["paragraph"] = kind == "paragraph"
+        context["block"] = block
+        yield original, code, offsets[offset], block
 
 
 def markdown_lines(source):
-    """Yield lines with container-aware code blocks marked, including fences."""
-    for line, code, _, _ in markdown_blocks(source):
-        yield line, code
+    """Yield lines with code and raw HTML blocks marked as opaque."""
+    for line, code, _, block in markdown_blocks(source):
+        yield line, code or block["kind"] == "html"
 
 
 def pin_markdown_links(body, version, repository_url):
-    """Pin Markdown destinations, preserving code and destination delimiters."""
-    # Mask block code first; offsets still refer to the original Markdown bytes.
-    lines = []
+    """Pin CommonMark destinations while preserving all other source bytes."""
+    def mask(text):
+        return re.sub(r"[^\n]", " ", text)
+
+    pieces, lines, blocks = [], [], []
     offset = 0
-    pieces = []
-    for line, code, content, context in markdown_blocks(body):
-        lines.append((offset, offset + content, offset + len(line), context))
-        pieces.append(re.sub(r"[^\n]", " ", line) if code else " " * content + line[content:])
+    for line, code, content, block in markdown_blocks(body):
+        lines.append((offset, offset + content, offset + len(line), block))
+        pieces.append(mask(line) if code else " " * content + line[content:])
+        if blocks and blocks[-1][2] is block:
+            blocks[-1] = blocks[-1][0], offset + len(line), block
+        else:
+            blocks.append((offset, offset + len(line), block))
         offset += len(line)
     visible = "".join(pieces)
-    # Exact backtick runs may span lines, but never a blank line.
-    spans = list(re.finditer(r"`+", visible))
-    cursor = 0
-    while cursor < len(spans):
-        opening = spans[cursor]
-        if len(re.search(r"\\*$", visible[:opening.start()])[0]) % 2:
-            cursor += 1
-            continue
-        closing = next((index for index in range(cursor + 1, len(spans))
-                        if spans[index][0] == opening[0]
-                        and not re.search(r"\n[ \t]*\n", visible[opening.end():spans[index].start()])), None)
-        if closing is None:
-            cursor += 1
-        else:
-            end = spans[closing].end()
-            visible = visible[:opening.start()] + re.sub(r"[^\n]", " ", visible[opening.start():end]) + visible[end:]
-            cursor = closing + 1
+    replacements = []
 
-    def destination(start):
-        if start >= len(visible):
-            return None
-        if visible[start] == "<":
-            end = visible.find(">", start + 1)
-            if end >= 0 and "\n" not in visible[start:end]:
-                return start + 1, end, end + 1
-            return None
-        end, depth = start, 0
-        while end < len(visible):
-            char = visible[end]
-            if char == "\\" and end + 1 < len(visible):
-                end += 2
-                continue
-            if char.isspace() or (char == ")" and depth == 0):
-                break
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-            end += 1
-        return (start, end, end) if end > start and depth == 0 else None
-
-    def pinned(target, image):
+    def pinned(target, image, html=False):
         original = target
-        target = re.sub(r"\\([" + re.escape(string.punctuation) + r"])", r"\1", target)
+        target = unescape(target)
+        if not html:
+            target = re.sub(r"\\([" + re.escape(string.punctuation) + r"])", r"\1", target)
         if target.startswith(("#", "//")) or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", target):
             return original
         if target.startswith("?"):
             raise ValueError("CHANGELOG.md has an invalid relative link: " + target)
         path, fragment_mark, fragment = target.partition("#")
         path, query_mark, query = path.partition("?")
-        path = posixpath.normpath(path.lstrip("/"))
-        if path == ".." or path.startswith("../"):
-            raise ValueError("CHANGELOG.md link escapes the repository: " + target)
+        segments = []
+        for part in path.lstrip("/").split("/"):
+            dots = re.sub("%2e", ".", part, flags=re.I)
+            if dots == "..":
+                if not segments:
+                    raise ValueError("CHANGELOG.md link escapes the repository: " + target)
+                segments.pop()
+            elif dots != "." and part:
+                segments.append(part)
+        path = "/".join(segments) or "."
         target = path + query_mark + query + fragment_mark + fragment
-        target = "".join(quote(char, safe="") if ord(char) <= 32 or ord(char) == 127 or char in "<>()\\" else char
+        target = "".join(quote(char, safe="") if ord(char) <= 32 or ord(char) == 127 or char in "<>()\\\"'`" else char
                          for char in target)
+        if html:
+            target = target.replace("&", "&amp;")
         return repository_url.rstrip("/") + ("/raw/v" if image else "/blob/v") + version + "/" + target
 
-    replacements = []
+    def pin_html(start, end):
+        attributes = re.compile(r"[ \t\r\n]+(" + HTML_NAME + r")[ \t\r\n]*=[ \t\r\n]*(" + HTML_VALUE + ")")
+        rawtext = None
+        for token in HTML_TOKEN.finditer(visible, start, end):
+            text = token[0]
+            if rawtext:
+                if re.fullmatch(r"</" + rawtext + r"[ \t\r\n]*>", text, re.I):
+                    rawtext = None
+                continue
+            if not re.match(r"<[A-Za-z]", text):
+                continue
+            for attr in attributes.finditer(text):
+                if attr[1].lower() not in ("href", "src"):
+                    continue
+                a, b = token.start() + attr.start(2), token.start() + attr.end(2)
+                if body[a] in "\"'":
+                    a, b = a + 1, b - 1
+                replacements.append((a, b, pinned(body[a:b], attr[1].lower() == "src", html=True)))
+            tag = re.match(r"<(script|style|textarea)\b", text, re.I)
+            if tag:
+                rawtext = tag[1]
+
+    # Block HTML has no Markdown inlines, even when it contains Markdown fences.
+    for start, end, block in blocks:
+        if block["kind"] == "html":
+            pin_html(start, end)
+            visible = visible[:start] + mask(visible[start:end]) + visible[end:]
+
     title = r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))'''
 
     def label(value):
         return " ".join(value.split()).casefold()
 
+    def destination(start, limit):
+        if start >= limit:
+            return None
+        if visible[start] == "<":
+            end = start + 1
+            while end < limit:
+                if visible[end] == "\\" and end + 1 < limit and visible[end + 1] in string.punctuation:
+                    end += 2
+                    continue
+                if visible[end] == ">":
+                    return start + 1, end, end + 1
+                if visible[end] in "\r\n<":
+                    return None
+                end += 1
+            return None
+        end, depth = start, 0
+        while end < limit:
+            char = visible[end]
+            if char == "\\" and end + 1 < limit and visible[end + 1] in string.punctuation:
+                end += 2
+                continue
+            if char in " \t\n\r\f\v" or (char == ")" and depth == 0):
+                break
+            if ord(char) < 32 or char == "<":
+                return None
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            end += 1
+        return (start, end, end) if depth == 0 else None
+
     definitions = {}
-    for line_start, content, line_end, context in lines:
+    allowed = {start for start, _, block in blocks if block["kind"] == "paragraph"}
+    for line_start, content, line_end, block in lines:
+        if line_start not in allowed:
+            continue  # CommonMark §4.7: definitions cannot interrupt paragraphs.
         match = re.match(r" {0,3}\[((?!\^)(?:\\.|[^\]\\])+)\]:[ \t]*", visible[content:line_end])
         if not match:
             continue
         start = content + match.end()
+        limit = next(end for begin, end, other in blocks if other is block)
         if visible[start:start + 1] == "\n":
             start += 1
-            while start < len(visible) and visible[start] in " \t":
+            while start < limit and visible[start] in " \t":
                 start += 1
-        found = destination(start)
-        if not found:
+        found = destination(start, limit)
+        if not found or found[0] == found[1]:
             continue
         start, finish, after = found
-        ending = re.match(r"[ \t]*(?:\n[ \t]*)?" + title + r"[ \t]*(?:\n|$)", visible[after:])
+        ending = re.match(r"[ \t]*(?:\n[ \t]*)?" + title + r"[ \t]*(?:\n|$)", visible[after:limit])
         if ending is None:
-            ending = re.match(r"[ \t]*(?:\n|$)", visible[after:])
+            ending = re.match(r"[ \t]*(?:\n|$)", visible[after:limit])
         if ending is None:
             continue
         end = after + ending.end()
         if re.search(r"\n[ \t]*\n", visible[line_start:end].rstrip("\n")):
             continue
-        if any(other is not context for begin, _, _, other in lines if line_start < begin < end):
-            continue
-        key = label(match[1])
+        key = label(body[content + match.start(1):content + match.end(1)])
         definitions.setdefault(key, []).append((start, finish))
-        visible = visible[:line_start] + re.sub(r"[^\n]", " ", visible[line_start:end]) + visible[end:]
+        visible = visible[:line_start] + mask(visible[line_start:end]) + visible[end:]
+        allowed.add(end)
 
     uses = {}
-
-    def scan(cursor, limit):
+    for begin, limit, block in blocks:
+        # CommonMark §§3.1, 6.1, 6.6: code spans and raw HTML are recognized in
+        # source order, within their leaf block, before brackets are considered.
+        cursor = begin
         while cursor < limit:
-            if visible[cursor] == "\\":
+            if visible[cursor] == "\\" and cursor + 1 < limit and visible[cursor + 1] in string.punctuation:
                 cursor += 2
                 continue
-            image = visible.startswith("![", cursor)
-            opening = cursor + 1 if image else cursor
-            if visible[opening:opening + 1] != "[":
-                cursor += 1
-                continue
-            end, depth = opening + 1, 1
-            while end < limit and depth:
-                if visible[end] == "\\":
-                    end += 2
+            if visible[cursor] == "<":
+                token = HTML_TOKEN.match(visible, cursor, limit)
+                if token:
+                    pin_html(cursor, token.end())
+                    end = token.end()
+                    visible = visible[:cursor] + mask(visible[cursor:end]) + visible[end:]
+                    cursor = end
                     continue
-                if visible[end] == "[":
-                    depth += 1
-                elif visible[end] == "]":
-                    depth -= 1
-                end += 1
-            if depth:
+            if visible[cursor] == "`":
+                opening = re.match(r"`+", visible[cursor:limit])
+                end = cursor + opening.end()
+                closing = next((run for run in re.finditer(r"`+", visible[end:limit]) if len(run[0]) == len(opening[0])), None)
+                if closing:
+                    end += closing.end()
+                    visible = visible[:cursor] + mask(visible[cursor:end]) + visible[end:]
+                cursor = end
+                continue
+            cursor += 1
+
+        # CommonMark §6.3 / Appendix: an iterative bracket stack lets an inner
+        # link deactivate earlier link openers without disabling image openers.
+        stack = []
+        generation = 0
+        cursor = begin
+        while cursor < limit:
+            char = visible[cursor]
+            if char == "\\" and cursor + 1 < limit and visible[cursor + 1] in string.punctuation:
+                cursor += 2
+                continue
+            if visible.startswith("![", cursor):
+                stack.append((cursor + 1, True, generation))
+                cursor += 2
+                continue
+            if char == "[":
+                stack.append((cursor, False, generation))
                 cursor += 1
                 continue
-            scan(opening + 1, end - 1)  # Link text can itself contain an image.
-            after_link = end
-            inline = False
+            if char != "]" or not stack:
+                cursor += 1
+                continue
+            opening, image, opened = stack.pop()
+            end = cursor + 1
+            cursor = end
+            if not image and opened != generation:
+                continue
+            matched = False
             if visible[end:end + 1] == "(":
                 start = end + 1
-                while start < limit and visible[start].isspace():
+                while start < limit and visible[start] in " \t\n\r\f\v":
                     start += 1
-                found = destination(start)
+                found = destination(start, limit)
                 if found:
                     start, finish, after = found
-                    closing = re.match(r"(?:\s+" + title + r")?\s*\)", visible[after:limit])
+                    closing = re.match(r"(?:[ \t\n\r\f\v]+" + title + r")?[ \t\n\r\f\v]*\)", visible[after:limit])
                     if closing:
                         replacements.append((start, finish, pinned(body[start:finish], image)))
-                        after_link, inline = after + closing.end(), True
-            if not inline:
+                        cursor, matched = after + closing.end(), True
+            if not matched:
                 reference = re.match(r"\[((?:\\.|[^\[\]\\])*)\]", visible[end:limit])
-                key = label((reference[1] if reference and reference[1] else visible[opening + 1:end - 1]))
+                key = label(body[end + 1:end + reference.end() - 1] if reference and reference[1]
+                            else body[opening + 1:end - 1])
                 if key in definitions:
                     uses.setdefault(key, set()).add(image)
+                    matched = True
                     if reference:
-                        after_link = end + reference.end()
-            cursor = after_link
+                        cursor = end + reference.end()
+            if matched and not image:
+                generation += 1
 
-    scan(0, len(visible))
     for key, destinations in definitions.items():
         kinds = uses.get(key, {False})
         if len(kinds) > 1:
             raise ValueError("CHANGELOG.md reference label used by both image and link: " + key)
         for start, finish in destinations:
             replacements.append((start, finish, pinned(body[start:finish], True in kinds)))
-
     for start, end, replacement in sorted(replacements, reverse=True):
         body = body[:start] + replacement + body[end:]
     return body

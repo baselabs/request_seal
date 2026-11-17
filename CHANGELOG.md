@@ -10,9 +10,15 @@
   dependency paths carry scope `required`.
   Verify them using the commands in the [release verification guide](docs/guides/verifying-releases.md).
 - Pre-release tags create GitHub pre-releases. Release notes preserve Markdown code
-  and pin documentation links and images to their release tag. SBOM generation
+  and pin documentation links and images, including raw HTML attributes, to their
+  release tag using CommonMark block and inline boundaries. Encoded path traversal
+  is rejected. SBOM generation
   verifies upstream binaries on Linux and macOS, on x86-64 and ARM64, and terminates
   child runtimes on timeout, interrupt, or terminal loss.
+- Notebook validation exports a manifest for Python-owned execution and scratch
+  cleanup. Nested command runners finish descendant cleanup before exiting;
+  repeated termination signals cannot interrupt cleanup, and inherited ignored
+  hangups remain ignored.
 - Hex publishing and the release gate require a dated, nonempty CHANGELOG section.
 - Security fixes cover the latest minor of the latest stable major and, for
   6 months after its first stable release, the latest minor of the previous major.

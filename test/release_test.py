@@ -143,7 +143,7 @@ class ReleaseIdentityTest(unittest.TestCase):
     def test_release_notes_pin_relative_inline_and_reference_links(self):
         body = ('[Guide](docs/guide.md) [Title](./docs/title.md "Title")\n'
                 '[Angle](<docs/angle.md>) [Reference][guide]\n'
-                '[guide]: docs/guide.md#section "Guide"\n'
+                '\n[guide]: docs/guide.md#section "Guide"\n'
                 '[Web](https://example.com/docs) [Mail](mailto:team@example.com)\n'
                 '[Anchor](#section) [Network](//example.com/docs)\n'
                 '```markdown\n[Example](docs/example.md)\n```\n')
@@ -292,7 +292,6 @@ class ReleaseIdentityTest(unittest.TestCase):
             ("[t](docs/a%29.md)", "docs/a%29.md"),
             (r"[t](docs/a\)b.md)", "docs/a%29b.md"),
             ("[t](<docs/a b.md>)", "docs/a%20b.md"),
-            ("[t](%2e%2e/x.md)", "%2e%2e/x.md"),
             ("[t](docs/a%2f%2F.md)", "docs/a%2f%2F.md"),
             ("[t](<docs/a\\b.md>)", "docs/a%5Cb.md"),
         ):
@@ -311,6 +310,112 @@ class ReleaseIdentityTest(unittest.TestCase):
         self.assertEqual(source, self.pin(source))
         self.assertFalse(next(release.markdown_lines("```a`b```\n"))[1])
         self.assertTrue(next(release.markdown_lines("~~~a`b\n"))[1])
+
+    def test_commonmark_brief_differential_cases_have_exact_output(self):
+        # CommonMark 0.31.2 §§2.4, 4.1, 4.3, 4.7, 6.1, 6.3, 6.4, 6.6:
+        # https://spec.commonmark.org/0.31.2/ . Expected destinations reflect
+        # parsed links/images, never Markdown-looking literal text.
+        blob = "https://github.com/example/library/blob/v2.3.4/"
+        raw = "https://github.com/example/library/raw/v2.3.4/"
+        cases = [
+            ("Title\n---\n    code [n](docs/x.md)", "Title\n---\n    code [n](docs/x.md)"),
+            ("para\n\n---\n    code [n](docs/x.md)", "para\n\n---\n    code [n](docs/x.md)"),
+            ("para\n\n* * *\n\n    code [n](docs/x.md)", "para\n\n* * *\n\n    code [n](docs/x.md)"),
+            ("para\n\n- - -\n\n    code [n](docs/x.md)", "para\n\n- - -\n\n    code [n](docs/x.md)"),
+            (r"\``a [t](docs/x.md)`", r"\``a [t](docs/x.md)`"),
+            ("`` [L](docs/a.md)\n- x ``", "`` [L](" + blob + "docs/a.md)\n- x ``"),
+            ("[`A`] ![`B`]\n\n[`A`]: docs/a.md\n[`B`]: docs/b.png",
+             "[`A`] ![`B`]\n\n[`A`]: " + blob + "docs/a.md\n[`B`]: " + raw + "docs/b.png"),
+            ("para\n[id]: docs/x.md", "para\n[id]: docs/x.md"),
+            ("[t](docs/a\N{NO-BREAK SPACE}b.md)", "[t](" + blob + "docs/a\N{NO-BREAK SPACE}b.md)"),
+            (r"[t](<docs/a\>b.md>)", "[t](<" + blob + "docs/a%3Eb.md>)"),
+            ("[a [b](x)](y)", "[a [b](" + blob + "x)](y)"),
+            ("<div>\n[t](docs/a.md)\n</div>", "<div>\n[t](docs/a.md)\n</div>"),
+            ('text <!-- [t](docs/a.md) <img src="ignored.png"> --> end',
+             'text <!-- [t](docs/a.md) <img src="ignored.png"> --> end'),
+            ('text <a href="docs/a.md">[t](docs/b.md)</a>',
+             'text <a href="' + blob + 'docs/a.md">[t](' + blob + 'docs/b.md)</a>'),
+            ("<img src='docs/b.png'>", "<img src='" + raw + "docs/b.png'>"),
+            ("[" * 5000 + "t" + "]" * 5000 + "(docs/x.md)",
+             "[" * 5000 + "t" + "]" * 5000 + "(" + blob + "docs/x.md)"),
+        ]
+        for source, expected in cases:
+            with self.subTest(source=source[:100]):
+                self.assertEqual(expected, self.pin(source))
+
+    def test_whatwg_4_1_encoded_dot_segments_reject_escapes_and_normalize(self):
+        # https://url.spec.whatwg.org/#url-path-segment: dot segments include
+        # case-insensitive %2e, .%2e, %2e. and %2e%2e before normalization.
+        for path in ("%2e%2e/x.md", "%2e%2e/%2e%2e/x.md", "a/.%2E/../x.md"):
+            for source in (f"[t]({path})", f"![t]({path})", f"[t]: {path}",
+                           f'<a href="{path}">', f"<img src='{path}'>"):
+                with self.subTest(source=source), self.assertRaisesRegex(ValueError, "escapes the repository"):
+                    self.pin(source)
+        for path in ("a/%2e%2e/x.md", "%2E/docs/x.md", "a/.%2E/x.md", "a/%2e./x.md"):
+            expected = "docs/x.md" if path.startswith("%2E/") else "x.md"
+            self.assertEqual("[t](https://github.com/example/library/blob/v2.3.4/" + expected + ")", self.pin(f"[t]({path})"))
+
+    def test_commonmark_4_1_and_4_3_breaks_end_paragraphs_and_lazy_continuations(self):
+        for marker in ("---", "***", "___", "* * *", "- - -", "   * * *"):
+            source = "- para\n" + marker + "\n\n    code [n](docs/x.md)"
+            self.assertEqual(source, self.pin(source))
+        for marker in ("===", "---"):
+            source = "Title\n" + marker + "\n    code [n](docs/x.md)"
+            self.assertEqual(source, self.pin(source))
+
+    def test_commonmark_4_6_all_seven_html_block_kinds_and_6_6_tokens(self):
+        # §4.6 types 1–7, their different endings, and §6.6 inline raw HTML.
+        opaque = (
+            "<script>\n[t](docs/a.md)\n\n<img src='literal.png'>\n</script>",
+            "<!--\n[t](docs/a.md)\n-->", "<?\n[t](docs/a.md)\n?>",
+            "<!DOCTYPE\n[t](docs/a.md)\n>", "<![CDATA[\n[t](docs/a.md)\n]]>",
+            "<div>\n[t](docs/a.md)\n</div>", "<custom>\n[t](docs/a.md)\n</custom>",
+            "text <!-- [t](docs/a.md) --> end", "text <? [t](docs/a.md) ?> end",
+            "text <![CDATA[ [t](docs/a.md) ]]> end", "text <!A [t](docs/a.md)> end",
+            '`<a href="docs/a.md">`', '    <img src="docs/b.png">',
+            'text <span title="[t](docs/a.md)"> end',
+        )
+        for source in opaque:
+            with self.subTest(source=source):
+                self.assertEqual(source, self.pin(source))
+        blob = "https://github.com/example/library/blob/v2.3.4/"
+        raw = "https://github.com/example/library/raw/v2.3.4/"
+        for source, expected in (
+            ('<div>\n<a href="docs/a.md"><img src=docs/b.png>\n</div>',
+             '<div>\n<a href="' + blob + 'docs/a.md"><img src=' + raw + 'docs/b.png>\n</div>'),
+            ('text <a\n href="docs/a.md?a=1&amp;b=2"> end',
+             'text <a\n href="' + blob + 'docs/a.md?a=1&amp;b=2"> end'),
+            ('<a href="docs/a.md" title="[t](literal.md)">',
+             '<a href="' + blob + 'docs/a.md" title="[t](literal.md)">'),
+            ('<pre src="docs/b.png">\n[t](literal.md)\n</pre>',
+             '<pre src="' + raw + 'docs/b.png">\n[t](literal.md)\n</pre>'),
+            ('para\n<custom>\n[t](docs/a.md)', 'para\n<custom>\n[t](' + blob + 'docs/a.md)'),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(expected, self.pin(source))
+        for source in ('<a href="?raw=1">', '<img src="?raw=1">'):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "invalid relative link"):
+                self.pin(source)
+
+    def test_commonmark_6_3_and_6_4_nested_links_and_images(self):
+        blob = "https://github.com/example/library/blob/v2.3.4/"
+        raw = "https://github.com/example/library/raw/v2.3.4/"
+        for source, expected in (
+            ("[a [b](x)](y)", "[a [b](" + blob + "x)](y)"),
+            ("![a [b](x)](y)", "![a [b](" + blob + "x)](" + raw + "y)"),
+            ("[a ![b](x)](y)", "[a ![b](" + raw + "x)](" + blob + "y)"),
+            ("[a [b][id]](y)\n\n[id]: x", "[a [b][id]](y)\n\n[id]: " + blob + "x"),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(expected, self.pin(source))
+
+    def test_real_changelog_pins_exact_public_destinations(self):
+        source = (ROOT / "CHANGELOG.md").read_text()
+        expected = source
+        for path in ("docs/guides/verifying-releases.md", "docs/reference/compatibility.md",
+                     "docs/guides/web-bot-auth.md", "docs/guides/phoenix-and-plug.md"):
+            expected = expected.replace("](" + path + ")", "](https://github.com/example/library/blob/v2.3.4/" + path + ")")
+        self.assertEqual(expected, self.pin(source))
 
     def test_version_requires_one_semantic_attribute_and_no_inline_literal(self):
         for source in ('version: "2.3.4"', '@version "2.3.4"\n@version "2.3.5"\nversion: @version', '@version "2.3"\nversion: @version'):
@@ -386,6 +491,26 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("EXISTS: ${{ steps.existing.outputs.exists }}", publish)
         self.assertIn('if [ "$EXISTS" = true ]; then', publish)
         self.assertEqual(2, publish.count("NAMES: ${{ steps.existing.outputs.names }}"))
+
+    def test_draft_filter_executes_real_jq_on_paginated_release_lists(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        detection = workflow.split("- name: Detect existing release", 1)[1].split("- name: Compare existing", 1)[0]
+        program = re.search(r"draft=\$\(jq -sr --arg tag \"\$GITHUB_REF_NAME\" '([^']+)'", detection)[1]
+        # gh api --paginate emits consecutive JSON arrays, one per page.
+        cases = (
+            ([[{"draft": False, "tag_name": "v1.0.0", "id": 1}],
+              [{"draft": True, "tag_name": "v2.0.0", "id": 2}], []], "v2.0.0\n"),
+            ([[]], ""),
+            ([[{"draft": False, "tag_name": "v2.0.0", "id": 3}]], ""),
+            ([[{"draft": True, "tag_name": "v2.0.0", "id": 4}]], "v2.0.0\n"),
+            ([[{"draft": True, "tag_name": "v2.1.0", "id": 5}]], ""),
+        )
+        for pages, expected in cases:
+            with self.subTest(pages=pages):
+                result = subprocess.run(["jq", "-sr", "--arg", "tag", "v2.0.0", program],
+                                        input="\n".join(json.dumps(page) for page in pages),
+                                        capture_output=True, text=True, check=True, timeout=10)
+                self.assertEqual(expected, result.stdout)
 
     def test_sbom_platform_assets_and_aliases(self):
         platforms = (

@@ -240,46 +240,26 @@ if "--self-test" in System.argv() do
 
   IO.puts("PASS: Hex install cell validation and explicit local execution selection")
 else
-  for file <- files do
-    {source, count} = RequestSeal.NotebookCheck.export!(File.read!(file))
+  [scratch] = System.argv()
 
-    temporary =
-      Path.join(
-        System.tmp_dir!(),
-        "requestseal-notebook-" <>
-          Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
-      )
-
-    File.mkdir!(temporary)
-
-    try do
-      script = Path.join(temporary, "notebook.exs")
+  manifest =
+    for {file, index} <- Enum.with_index(files) do
+      {source, count} = RequestSeal.NotebookCheck.export!(File.read!(file))
+      directory = Path.join(scratch, Integer.to_string(index))
+      File.mkdir!(directory)
+      script = Path.join(directory, "notebook.exs")
       completion = "REQUESTSEAL_COMPLETED_" <> Base.encode16(:crypto.strong_rand_bytes(24))
       local_source = RequestSeal.NotebookCheck.local_source!(source, root)
       File.write!(script, local_source <> "\nIO.puts(" <> inspect("\n" <> completion) <> ")\n")
 
-      {output, status} =
-        System.cmd(
-          System.get_env("REQUESTSEAL_PYTHON") || System.find_executable("python3") ||
-            raise("Python interpreter unavailable"),
-          [Path.join(root, "scripts/check.py"), "--execute-notebook", script, completion],
-          stderr_to_stdout: true
-        )
-
-      lines = String.split(output, "\n")
-      IO.write(Enum.reject(lines, &(&1 == completion)) |> Enum.join("\n"))
-      if status != 0, do: raise("Notebook failed: #{Path.basename(file)} (#{status})")
-
-      unless Enum.count(lines, &(&1 == completion)) == 1,
-        do: raise("Notebook did not complete: #{Path.basename(file)}")
-
-      IO.puts(
-        "PASS #{Path.basename(file)}: #{count} nonempty Elixir cells exported; completion receipt verified"
-      )
-    after
-      File.rm_rf!(temporary)
+      %{
+        "script" => Path.relative_to(script, scratch),
+        "completion" => completion,
+        "notebook" => Path.basename(file),
+        "cells" => count
+      }
     end
-  end
 
-  IO.puts("PASS #{length(files)} notebooks; no external peer or UI acceptance claimed")
+  File.write!(Path.join(scratch, "manifest.json"), Jason.encode!(manifest))
+  IO.puts("PASS #{length(files)} notebooks validated and exported for execution")
 end

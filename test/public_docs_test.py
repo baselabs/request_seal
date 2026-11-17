@@ -1,6 +1,9 @@
 """Disclosure checks against actual repository content and real filesystem/Git inputs."""
 from pathlib import Path
 import importlib.util
+import os
+import signal
+import time
 import re
 import subprocess
 import tempfile
@@ -336,6 +339,76 @@ class NotebookProcessTest(unittest.TestCase):
             script = Path(directory) / "notebook.exs"
             script.write_text(source)
             return gate.execute_notebook(script, "COMPLETED_TEST", **options)
+
+    def test_interrupt_cleans_manifest_notebook_and_scratch_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "ready"
+            scratch_name = Path(directory) / "scratch"
+            log = (Path(directory) / "output").open("w+b")
+            runner = """
+import json, signal, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "scripts")
+from check import execute_notebooks
+from processes import install_signal_handlers
+signal.signal(signal.SIGINT, signal.default_int_handler)
+install_signal_handlers()
+with tempfile.TemporaryDirectory(prefix="requestseal-notebooks-", dir=sys.argv[1]) as temporary:
+    scratch = Path(temporary)
+    Path(sys.argv[2]).write_text(temporary)
+    script = scratch / "notebook.exs"
+    script.write_text('File.mkdir_p!(System.fetch_env!("MIX_INSTALL_DIR")); '
+                      'File.write!(System.fetch_env!("NOTEBOOK_READY"), System.pid()); '
+                      'Process.sleep(:infinity)')
+    (scratch / "manifest.json").write_text(json.dumps([
+        {"script": "notebook.exs", "completion": "DONE", "notebook": "interrupt.livemd", "cells": 1}]))
+    execute_notebooks(scratch)
+"""
+            parent = subprocess.Popen([sys.executable, "-B", "-c", runner, directory, str(scratch_name)],
+                                      cwd=ROOT, env=dict(os.environ, NOTEBOOK_READY=str(ready)),
+                                      stdout=log, stderr=log, start_new_session=True)
+            beam = group = session = pidfd = None
+            try:
+                deadline = time.monotonic() + 30
+                while not ready.exists() or not ready.read_text():
+                    self.assertIsNone(parent.poll(), "notebook runner exited before BEAM readiness")
+                    self.assertLess(time.monotonic(), deadline, "notebook BEAM never became ready")
+                    time.sleep(0.01)
+                beam = int(ready.read_text())
+                group, session = os.getpgid(beam), os.getsid(beam)
+                self.assertEqual((beam, beam), (group, session), "notebook PID does not lead its owned session")
+                ancestry = subprocess.run(["ps", "-o", "ppid=", "-p", str(beam)],
+                                          capture_output=True, text=True, check=True).stdout
+                self.assertEqual(parent.pid, int(ancestry), "notebook PID is not the test runner's child")
+                if hasattr(os, "pidfd_open"):
+                    pidfd = os.pidfd_open(beam)
+                os.kill(parent.pid, signal.SIGINT)
+                try:
+                    parent.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.fail("interrupted notebook runner did not finish cleanup within 10 seconds")
+                self.assertNotEqual(0, parent.returncode)
+                self.assertFalse(Path(scratch_name.read_text()).exists(), "notebook scratch directory survived interrupt")
+                listing = subprocess.run(["ps", "-axo", "pid=,pgid=,stat="], capture_output=True, text=True, check=True)
+                survivors = [row for row in listing.stdout.splitlines()
+                             if len(row.split()) == 3 and int(row.split()[1]) == group and not row.split()[2].startswith("Z")]
+                self.assertEqual([], survivors, "notebook BEAM or its descendants survived interrupt")
+            finally:
+                if parent.poll() is None:
+                    parent.terminate()
+                if beam is not None:
+                    try:
+                        if pidfd is not None:
+                            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                        elif (os.getpgid(beam), os.getsid(beam)) == (group, session):
+                            os.kill(beam, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    finally:
+                        if pidfd is not None:
+                            os.close(pidfd)
+                parent.wait(timeout=10)
+                log.close()
 
     def test_actual_child_completes_and_rejects_early_success(self):
         self.assertIn("COMPLETED_TEST", self.execute('IO.puts("COMPLETED_TEST")')[0])
