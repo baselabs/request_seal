@@ -59,6 +59,15 @@ class ProcessGroupTest(unittest.TestCase):
         pidfd = os.pidfd_open(pid) if hasattr(os, "pidfd_open") else None
         return group, session, pidfd
 
+    def test_closed_inherited_cleanup_descriptor_does_not_break_a_new_runner(self):
+        # Popen closes descriptors by default, while environment variables pass
+        # through. Exercise that actual exec boundary, as a test runner does.
+        leaf = ('import sys; sys.path.insert(0, "scripts"); from processes import run; '
+                'run([sys.executable, "-B", "-c", "pass"], timeout=10)')
+        intermediary = ('import subprocess, sys; '
+                        'subprocess.run([sys.executable, "-B", "-c", sys.argv[1]], check=True, timeout=15)')
+        processes.run([sys.executable, "-B", "-c", intermediary, leaf], timeout=20)
+
     def test_ready_file_pid_cannot_authorize_signaling_an_unrelated_process(self):
         children = [subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(60)"],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

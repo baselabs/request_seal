@@ -3,6 +3,7 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import time
 
@@ -35,6 +36,14 @@ def command(argv, **options):
     """Own a command's session and the cleanup of cooperating nested runners."""
     parent = os.environ.get("REQUESTSEAL_CLEANUP_FD")
     parent = int(parent) if parent else None
+    if parent is not None:
+        try:
+            identity = os.fstat(parent)
+            if (not stat.S_ISFIFO(identity.st_mode) or
+                    os.environ.get("REQUESTSEAL_CLEANUP_ID") != f"{identity.st_dev}:{identity.st_ino}"):
+                parent = None
+        except OSError:
+            parent = None  # An intermediate exec may close inherited descriptors.
     reader, writer = os.pipe()
     os.set_blocking(reader, False)
     process = None
@@ -43,7 +52,9 @@ def command(argv, **options):
         if parent is not None:
             os.write(parent, b"+")
             registered = True
-        environment = dict(options.pop("env", os.environ), REQUESTSEAL_CLEANUP_FD=str(writer))
+        identity = os.fstat(writer)
+        environment = dict(options.pop("env", os.environ), REQUESTSEAL_CLEANUP_FD=str(writer),
+                           REQUESTSEAL_CLEANUP_ID=f"{identity.st_dev}:{identity.st_ino}")
         process = subprocess.Popen(argv, env=environment, start_new_session=True,
                                    pass_fds=(writer,), **options)
         process.cleanup_reader = reader
