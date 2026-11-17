@@ -250,53 +250,70 @@ defmodule RequestSeal.JOSE.JWE.Open do
   defp shape(_), do: {:not_item, nil, nil}
 
   defp wait(s) do
-    # Receive timeouts round up to milliseconds. Reserve that rounding quantum
-    # inside the caller's upper bound so wait-end itself is stamped by F + B.
+    # An absolute wakeup avoids adding a new relative timer tick after the
+    # remaining duration was computed. Reserve its rounding quantum inside B.
     at = s.f + Bounds.teardown(:atomics.get(s.flag, 2)) - 1_000
+    timer = :erlang.send_after(Bounds.milliseconds(at), self(), {s.tag, :wait_bound}, abs: true)
+
+    try do
+      wait(s, at)
+    after
+      :erlang.cancel_timer(timer)
+    end
+  end
+
+  defp wait(s, at) do
+    # Cardinality is published once. An early zero-cardinality timer can wake
+    # us, but it cannot shorten the accepted batch's own wait.
+    current = s.f + Bounds.teardown(:atomics.get(s.flag, 2)) - 1_000
 
     cond do
+      current != at -> wait(s)
       Bounds.now() >= at -> {Codec.error(:deadline_exceeded, :crypto), s}
-      s.down != nil and s.reply != nil -> finish_reply(s)
+      s.down != nil and s.reply != nil -> finish_reply(s, at)
       s.down == :deadline -> {Codec.error(:deadline_exceeded, :crypto), s}
       s.down != nil and s.down != :replied -> {Codec.error(:internal_failure, :internal), s}
       true -> receive_one(s, at)
     end
   end
 
-  defp receive_one(s, at) do
+  defp receive_one(s, at, target \\ nil) do
     tag = s.tag
     monitor = s.monitor
     guard = s.guard
 
     receive do
       {:"ETS-TRANSFER", notice, _, {^tag, :caller}} ->
-        wait(%{s | notice: notice})
+        wait(%{s | notice: notice}, at)
 
       {^tag, :payload, i, payload} ->
-        wait(%{s | payloads: :maps.put(i, payload, s.payloads)})
+        wait(%{s | payloads: :maps.put(i, payload, s.payloads)}, at)
 
       {^tag, :settled, i, reason, layer, auth} ->
-        wait(%{s | settled: :maps.put(i, {reason, layer}, s.settled), auth: [auth | s.auth]})
+        wait(%{s | settled: :maps.put(i, {reason, layer}, s.settled), auth: [auth | s.auth]}, at)
 
       {^tag, :group, duration, items} ->
-        wait(%{s | groups: [{duration, items} | s.groups]})
+        wait(%{s | groups: [{duration, items} | s.groups]}, at)
 
       {^tag, :reply, outcome, n, groups} ->
-        wait(%{s | reply: {outcome, n, groups}})
+        wait(%{s | reply: {outcome, n, groups}}, at)
 
       {:DOWN, ^monitor, :process, ^guard, reason} ->
-        wait(%{s | down: reason})
+        wait(%{s | down: reason}, at)
+
+      {^tag, :wait_bound} ->
+        wait(s, at)
     after
-      Bounds.remaining(at) -> wait(s)
+      Bounds.remaining(target || at) -> wait(s, at)
     end
   end
 
-  defp finish_reply(%{reply: {{:outer, reason, layer}, _, _}} = s),
+  defp finish_reply(%{reply: {{:outer, reason, layer}, _, _}} = s, _),
     do: {Codec.error(reason, layer), s}
 
-  defp finish_reply(%{reply: {:ok, n, _}} = s) do
+  defp finish_reply(%{reply: {:ok, n, _}} = s, at) do
     if missing?(0, n, s) and Bounds.now() < s.f do
-      receive_one(s, s.f)
+      receive_one(s, at, s.f)
     else
       {{:results, n}, s}
     end

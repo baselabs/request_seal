@@ -3,9 +3,23 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   import :erlang, only: [map_get: 2]
   alias RequestSeal.JOSE.JWE.{Bounds, Preflight, Resolver, Unwrap, Worker}
 
+  @spec run(
+          reference(),
+          pid(),
+          pid(),
+          :ets.tid(),
+          reference(),
+          reference(),
+          :single | :batch,
+          integer(),
+          integer(),
+          pos_integer()
+        ) :: no_return()
   def run(tag, guard, caller, notice, address, flag, mode, r, d, unwrap) do
     :erlang.process_flag(:trap_exit, true)
     :erlang.process_flag(:message_queue_data, :off_heap)
+    wake(tag, r)
+    wake(tag, d)
 
     reason =
       try do
@@ -59,6 +73,11 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   end
 
   defp finish(reason), do: exit(reason)
+
+  # A relative receive timeout computed before descheduling can be installed
+  # after its deadline. Absolute wakeups remain queued across that interval.
+  defp wake(tag, at),
+    do: :erlang.send_after(Bounds.milliseconds(at), self(), {tag, :wake}, abs: true)
 
   # All process creation is in this closed role dispatch. Every spawn argument is
   # an atom, bounded integer, pid, reference or table id, never input or a handle.
@@ -434,12 +453,11 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp ended(s, _), do: s
 
   defp barrier(%{rprime: nil, admissions_left: 0, resolutions_left: 0, n: n} = s, now)
-       when n != nil,
-       do: %{
-         s
-         | rprime: resolution_end(now, map_get(:r, s)),
-           u: min(now, map_get(:r, s)) + map_get(:unwrap, s)
-       }
+       when n != nil do
+    u = min(now, map_get(:r, s)) + map_get(:unwrap, s)
+    wake(map_get(:tag, s), u)
+    %{s | rprime: resolution_end(now, map_get(:r, s)), u: u}
+  end
 
   defp barrier(s, _), do: s
 
@@ -451,7 +469,9 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
 
   defp expire_r(s) do
     s = expire_positions(:maps.to_list(map_get(:positions, s)), s)
-    %{s | expired_r: true, rprime: map_get(:r, s), u: map_get(:r, s) + map_get(:unwrap, s)}
+    u = map_get(:r, s) + map_get(:unwrap, s)
+    wake(map_get(:tag, s), u)
+    %{s | expired_r: true, rprime: map_get(:r, s), u: u}
   end
 
   defp expire_positions([], s), do: s
@@ -613,6 +633,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   end
 
   defp deadline(s) do
+    wake(map_get(:tag, s), map_get(:d, s) + Bounds.preflight())
     s = drain_preflight(s, map_get(:d, s) + Bounds.preflight())
 
     case s do

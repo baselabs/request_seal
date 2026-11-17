@@ -41,6 +41,12 @@ that flip it uses B(10,000). Absolute timers and receive waits round upward to
 milliseconds from internal monotonic microseconds. The caller reserves one
 millisecond of receive rounding inside F + B(n), so its wait-end stamp remains
 inside that upper bound.
+The caller arms that wakeup as an absolute timer and cancels it when its wait
+ends. The coordinator also arms R, U and D wakeups, and the guard arms its stop
+deadline: descheduling between a clock read and a receive cannot start a fresh
+relative wait beyond the absolute deadline.
+The guard arms the temporary cancellation limit once as well, so it need not
+convert the remaining timeout again for every child notice.
 
 The caller walks input without bulk copying and sends one bounded item per
 message, checking D and the stop flag first. Preflight checks each bounded unit
@@ -52,6 +58,8 @@ violations are `:invalid_policy`. Resolvers validate and digest their answer
 before forwarding it, with the same word and binary-byte bounds for handles;
 oversized answers are `:key_resolver_failed`. Sink delivery normalizes in its
 sender. RequestSeal owns UTF-8 traversal on every library path.
+Serialization detection uses bounded native binary scans, including mixed JSON
+whitespace at the token byte cap, rather than a recursive walk over every byte.
 
 Validation catches only explicit input failures. Unexpected library exceptions
 and exits become `:internal_failure`, including a preflight exit without a final
@@ -84,12 +92,17 @@ and finish reduction dumps after placement, so setup does not trace every queued
 end notice.
 Placement collectors match each new event once. A second trigger during a sweep
 requires both a verified registry owner flip and a guard still paused in the sweep.
+OTP fold helpers may have different arities; a helper frame must retain the
+enclosing guard check. Native byte-scan placements likewise require the codec
+unit on the suspended process's stack.
 A release gate measures the absolute bound and derives K_pf from byte units,
 report send and preflight exit. Constants come from Bounds; no baseline ratio replaces them.
 Final report measurements send the production row, count and control envelopes
 from a sensitive process with an off-heap mailbox to an off-heap observer.
 The report records the observer's actual queue flag. The consumer independently
 recomputes the longest unit + maximum report send + maximum preflight exit.
+Token units cover both compact input and a JSON candidate with mixed whitespace;
+each sample retains the slower scan.
 Timed topology samples keep the observer mailbox off heap and omit caller input
 send traces, whose copies would make the observer retain the entire batch.
 Coordinator control traces and a monitor for every observed birth remain active.

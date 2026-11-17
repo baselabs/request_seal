@@ -1,16 +1,16 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -75,6 +75,7 @@
+@@ -86,6 +86,7 @@
    end
 
    defp loop(s) do
 +    s = take_queued(s)
      s = check(s)
 
-     cond do
-@@ -90,5 +91,13 @@
+     case s do
+@@ -102,5 +103,13 @@
 
-       true ->
+       _ ->
          receive_one(s)
 +    end
 +  end

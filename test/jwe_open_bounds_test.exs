@@ -291,6 +291,37 @@ defmodule RequestSeal.JWEOpenBoundsTest do
     end
   end
 
+  test "serialization scan preserves JSON whitespace and compact refusals at the byte cap" do
+    prefixes =
+      for unit <- [" ", "\t", "\r", "\n", " \t\r\n"],
+          size <- [0, 1, 7, 8, 31, 32, 33, 1_048_568],
+          do: binary_part(:binary.copy(unit, div(size, byte_size(unit)) + 1), 0, size)
+
+    for prefix <- prefixes do
+      for opener <- ["{}", "[]"] do
+        assert {:error, %{reason: :unsupported_serialization}} = Codec.split(prefix <> opener)
+      end
+
+      assert {:ok, [^prefix, "b", "c", "d", "e"]} = Codec.split(prefix <> ".b.c.d.e")
+    end
+
+    for byte <- 0..255, byte not in [32, 9, 10, 13] do
+      first = <<byte>> <> "{}"
+
+      case byte do
+        46 ->
+          assert {:error, %{reason: :invalid_serialization}} = Codec.split(first <> ".b.c.d.e")
+
+        opener when opener in [123, 91] ->
+          assert {:error, %{reason: :unsupported_serialization}} =
+                   Codec.split(first <> ".b.c.d.e")
+
+        _ ->
+          assert {:ok, [^first, "b", "c", "d", "e"]} = Codec.split(first <> ".b.c.d.e")
+      end
+    end
+  end
+
   test "codec regression preserves admission order and content objects", %{handle: handle, p: p} do
     {:ok, token} = JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], "{\"x\":1}", handle)
 

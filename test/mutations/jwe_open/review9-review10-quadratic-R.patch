@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -452,6 +452,14 @@
+@@ -468,6 +468,14 @@
    def expiry(:d, _phase), do: {:deadline_exceeded, :crypto, nil}
 
    defp expire_r(s) do
@@ -13,5 +13,5 @@
 +    )
 +
      s = expire_positions(:maps.to_list(map_get(:positions, s)), s)
-     %{s | expired_r: true, rprime: map_get(:r, s), u: map_get(:r, s) + map_get(:unwrap, s)}
-   end
+     u = map_get(:r, s) + map_get(:unwrap, s)
+     wake(map_get(:tag, s), u)

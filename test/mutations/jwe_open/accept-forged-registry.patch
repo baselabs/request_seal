@@ -1,12 +1,12 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -163,6 +163,9 @@
-       end
-
+@@ -185,6 +185,9 @@
+     # F, cancellation and the owner flip each arm an absolute wakeup once.
+     # Per-notice timeout conversion adds work without changing that deadline.
      receive do
 +      {:"ETS-TRANSFER", tid, _, {^tag, :registry}} ->
 +        loop(%{s | registry: tid})
 +
        {:"ETS-TRANSFER", tid, from, {^tag, :slot, slot}} ->
-         :ets.insert(map_get(:ended, s), {slot, from})
+         :ets.insert(ended, {slot, from})
          :ets.delete(tid)

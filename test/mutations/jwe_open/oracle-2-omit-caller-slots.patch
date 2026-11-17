@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -136,7 +136,9 @@
+@@ -149,7 +149,9 @@
      n + 1
    end
 
@@ -8,6 +8,6 @@
 +  defp sweep({_slot, _pid, :caller}, _s, n), do: n
 +
 +  defp omitted_sweep({slot, pid, :caller}, s, n) do
-     case :ets.lookup(map_get(:ended, s), slot) do
-       [{^slot, ^pid}] ->
-         n
+     %{ended: ended} = s
+
+     case :ets.lookup(ended, slot) do

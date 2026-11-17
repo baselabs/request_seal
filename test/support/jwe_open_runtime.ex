@@ -1,7 +1,7 @@
 defmodule RequestSeal.Test.JWEOpenRuntime do
   @moduledoc false
   alias RequestSeal.{Custody, JOSE.JWE}
-  alias RequestSeal.JOSE.JWE.Bounds
+  alias RequestSeal.JOSE.JWE.{Bounds, Codec}
 
   def policy(handle, extra \\ %{}) do
     Map.merge(
@@ -528,6 +528,24 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       event -> drain_observations(observe(s, event))
     after
       0 -> s
+    end
+  end
+
+  # A native scan may yield in the BIF. Its suspended stack must still name
+  # the production codec unit; a call event alone cannot prove placement.
+  def in_codec_unit?(pid, functions) do
+    case info(pid, :current_function) do
+      {Codec, function, _} ->
+        function in functions
+
+      {:binary, :match, _} ->
+        Enum.any?(info(pid, :current_stacktrace) || [], fn
+          {Codec, function, _, _} -> function in functions
+          _ -> false
+        end)
+
+      _ ->
+        false
     end
   end
 

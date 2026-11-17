@@ -58,6 +58,8 @@ defmodule RequestSeal.Custody.Sink do
   end
 
   @doc false
+  @spec routed(%{non_neg_integer() => {reference(), reference(), 128 | 256}}, Context.t()) ::
+          t()
   def routed(routes, %Context{deadline: deadline, owner: owner}) do
     widths = :maps.map(fn _, {_, _, bits} -> bits end, routes)
     addresses = :maps.map(fn _, {address, tag, _} -> {address, tag} end, routes)

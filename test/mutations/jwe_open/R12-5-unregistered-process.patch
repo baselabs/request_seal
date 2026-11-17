@@ -1,9 +1,10 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -4,5 +4,6 @@
-   alias RequestSeal.JOSE.JWE.{Bounds, Preflight, Resolver, Unwrap, Worker}
-
+@@ -16,6 +16,7 @@
+           pos_integer()
+         ) :: no_return()
    def run(tag, guard, caller, notice, address, flag, mode, r, d, unwrap) do
 +    :erlang.spawn_opt(:erlang, :hibernate, [__MODULE__, :run, []], [])
      :erlang.process_flag(:trap_exit, true)
      :erlang.process_flag(:message_queue_data, :off_heap)
+     wake(tag, r)

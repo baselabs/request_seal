@@ -2,6 +2,10 @@
 
 ## Unreleased 2.0.0
 
+- Arm absolute JWE phase, guard and caller wakeups across descheduling. Reduce
+  per-notice guard work and use native token scans, including mixed JSON
+  whitespace, within the existing teardown and preflight limits. Keep routed
+  custody sinks opaque through their typed constructor.
 - Keep the JWE library process tree on native map operations and preserve
   algorithm-mismatch and malformed-capability refusals at resolver ingress.
   Count every shared-list occurrence against the traversal budget and build

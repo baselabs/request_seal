@@ -45,6 +45,7 @@ SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/w
         "0027-key-handles-replace-closures", "0028-strict-json-object-decoding",
         "0029-ash-onetime-2-custody-and-install-bound-replay", "0030-bounded-non-sending-capture",
         "0032-json-serializations-and-jwt-line",
+        "0033-jwe-guard-and-heir-notices",
     )
 }
 GIT_INSTALL = re.compile(

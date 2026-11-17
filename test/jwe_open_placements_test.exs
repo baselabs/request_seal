@@ -174,11 +174,12 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
 
     if pause(s.guard) do
       # A queued call trace alone does not prove the guard is still sweeping.
-      # OTP can be in a fold helper rather than the callback at suspension.
+      # OTP can be in a fold helper or BIF rather than the callback, and its
+      # helper arities vary. The enclosing check proves this is still the sweep.
       stack = Runtime.info(s.guard, :current_stacktrace) || []
 
       if Enum.any?(stack, &match?({Guard, :sweep, 3, _}, &1)) or
-           (Enum.any?(stack, &match?({:ets, :foldl, 3, _}, &1)) and
+           (Enum.any?(stack, &match?({:ets, _, _, _}, &1)) and
               Enum.any?(stack, &match?({Guard, :check, 1, _}, &1))) do
         {:ok, Runtime.delivered(s)}
       else
@@ -603,28 +604,15 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
   end
 
   defp pause_codec(targets, functions, until) do
-    candidate =
-      Enum.find(targets, fn pid ->
-        case Runtime.info(pid, :current_function) do
-          {Codec, f, _} -> f in functions
-          _ -> false
-        end
-      end)
+    candidate = Enum.find(targets, &Runtime.in_codec_unit?(&1, functions))
 
     cond do
       candidate != nil and pause(candidate) ->
-        case Runtime.info(candidate, :current_function) do
-          {Codec, f, _} ->
-            if f in functions do
-              true
-            else
-              :erlang.resume_process(candidate)
-              pause_codec(targets, functions, until)
-            end
-
-          _ ->
-            :erlang.resume_process(candidate)
-            pause_codec(targets, functions, until)
+        if Runtime.in_codec_unit?(candidate, functions) do
+          true
+        else
+          :erlang.resume_process(candidate)
+          pause_codec(targets, functions, until)
         end
 
       Bounds.now() >= until ->

@@ -397,7 +397,8 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
       {RequestSeal.Discovery.Support, :watch, 3, :spawn_link},
       {RequestSeal.Discovery.Support, :stop, 1, :exit},
       {RequestSeal.Discovery.Cache, :pending, 6, :spawn_opt},
-      {RequestSeal.Discovery.Cache, :stop_flight, 1, :exit}
+      {RequestSeal.Discovery.Cache, :stop_flight, 1, :exit},
+      {RequestSeal.SystemCommand, :agent, 2, :spawn_monitor}
     ]
 
     unless Enum.sort(outside) == Enum.sort(expected),

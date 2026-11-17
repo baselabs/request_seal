@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -99,7 +99,7 @@
+@@ -111,7 +111,7 @@
 
      if :ets.info(map_get(:registry, s), :owner) == self() do
        anchor =
@@ -8,4 +8,4 @@
 +        if map_get(:anchor, s) == nil, do: now, else: map_get(:anchor, s)
 
        stop_at = stop_at(anchor, :atomics.get(map_get(:flag, s), 2))
-       awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, map_get(:registry, s))
+       :erlang.send_after(Bounds.milliseconds(stop_at), self(), {map_get(:tag, s), :stop}, abs: true)

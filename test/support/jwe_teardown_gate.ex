@@ -295,7 +295,11 @@ defmodule RequestSeal.Test.JWETeardownGate do
                 {at, s, "P2: coordinator held across R through U; resolvers blocked"}
 
               :queued ->
-                s = Runtime.collect_until(s, fn current -> resolution_stamp(current) != nil end)
+                s =
+                  Runtime.collect_event(s, fn
+                    {:trace_ts, _, :return_from, {Coordinator, :resolution_end, 2}, _, _} -> true
+                    _ -> false
+                  end)
                 at = resolution_stamp(s) + unwrap
                 wait_until(at)
                 {at, s, "P2 end: resolver notices queued at guard through U"}
@@ -577,37 +581,27 @@ defmodule RequestSeal.Test.JWETeardownGate do
   end
 
   defp suspend_in_unit(pid, functions, d) do
-    if Bounds.now() >= d do
-      false
-    else
-      case Runtime.info(pid, :current_function) do
-        {Codec, function, _}
-        when function in [:utf8?, :depth, :tree, :json_serialization?, :separators] ->
-          if function in functions and catch_suspend(pid) do
-            case Runtime.info(pid, :current_function) do
-              {Codec, ^function, _} ->
-                true
+    cond do
+      Bounds.now() >= d or Runtime.info(pid, :current_function) == nil ->
+        false
 
-              _ ->
-                :erlang.resume_process(pid)
-                suspend_in_unit(pid, functions, d)
-            end
-          else
-            suspend_in_unit(pid, functions, d)
-          end
-
-        nil ->
-          false
-
-        _ ->
+      Runtime.in_codec_unit?(pid, functions) and catch_suspend(pid) ->
+        if Runtime.in_codec_unit?(pid, functions) do
+          true
+        else
+          :erlang.resume_process(pid)
           suspend_in_unit(pid, functions, d)
-      end
+        end
+
+      true ->
+        suspend_in_unit(pid, functions, d)
     end
   end
 
   def units do
     flag = :atomics.new(2, [])
     token = :binary.copy(" ", 1_048_568) <> ".b.c.d.e"
+    json = :binary.copy(" \t\r\n", 262_143) <> "  {}"
     expected = %{"" => :binary.copy("x", 16_384)}
     names = [:binary.copy("x", 16_384)]
     {handle, _} = Runtime.real_key()
@@ -627,7 +621,17 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
     try do
       samples = %{
-        separator_and_accounting: measure(fn -> Codec.split(token) end),
+        separator_and_accounting:
+          measure(fn ->
+            # Both the compact refusal and a JSON candidate can occupy the
+            # whole byte unit. Keep the slower production path in each sample.
+            compact_at = Bounds.now()
+            Codec.split(token)
+            compact = Bounds.now() - compact_at
+            json_at = Bounds.now()
+            Codec.split(json)
+            {:measured, max(compact, Bounds.now() - json_at)}
+          end),
         expected_validation_and_serialization: measure(fn -> Codec.expected(expected, []) end),
         permitted_name_validation:
           measure(fn ->

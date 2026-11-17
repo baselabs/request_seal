@@ -1,9 +1,9 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -102,7 +102,11 @@
-         if map_get(:anchor, s) == nil, do: min(now, map_get(:d, s)), else: map_get(:anchor, s)
+@@ -115,7 +115,11 @@
 
        stop_at = stop_at(anchor, :atomics.get(map_get(:flag, s), 2))
+       :erlang.send_after(Bounds.milliseconds(stop_at), self(), {map_get(:tag, s), :stop}, abs: true)
 -      awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, map_get(:registry, s))
 +      awaiting =
 +        case :ets.lookup(map_get(:registry, s), :outcome) do

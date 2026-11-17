@@ -1,18 +1,18 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -165,11 +165,14 @@
+@@ -187,11 +187,14 @@
      receive do
        {:"ETS-TRANSFER", tid, from, {^tag, :slot, slot}} ->
-         :ets.insert(map_get(:ended, s), {slot, from})
+         :ets.insert(ended, {slot, from})
 +        if map_get(:ended_at, s) == nil and map_get(:cause, s) == nil,
 +          do: send(coordinator, {tag, :ended, slot})
 +
          :ets.delete(tid)
 
          s =
-           if map_get(:ended_at, s) == nil do
+           if ended_at == nil do
 -            if map_get(:cause, s) == nil, do: send(coordinator, {tag, :ended, slot})
 +            :ok
              s
            else
-             case :ets.lookup(map_get(:registry, s), slot) do
+             case :ets.lookup(registry, slot) do

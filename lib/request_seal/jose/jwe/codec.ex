@@ -5,6 +5,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
   @algorithms ~w(RSA-OAEP RSA-OAEP-256 A128KW A256KW A128GCMKW A256GCMKW dir ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW)
   @reserved ~w(alg enc iv tag epk apu apv)
+  @non_whitespace for byte <- 0..255, byte not in [32, 9, 10, 13], do: <<byte>>
 
   @spec fail(atom()) :: no_return()
   @spec fail(atom(), atom()) :: no_return()
@@ -268,9 +269,11 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
   defp tree_list(_, _), do: fail(:invalid_header)
 
+  # This includes mixed whitespace runs at the token byte cap. A recursive
+  # byte walk is too much cooperative work for the fixed preflight budget.
   defp whitespace?(<<>>), do: true
-  defp whitespace?(<<b, rest::binary>>) when b in [32, 9, 10, 13], do: whitespace?(rest)
-  defp whitespace?(_), do: false
+  defp whitespace?(bytes), do: :binary.match(bytes, @non_whitespace) == :nomatch
+
   defp depth(<<>>, d, string, _), do: ensure(d == 0 and not string, :invalid_header)
   defp depth(<<_, r::binary>>, d, true, true), do: depth(r, d, true, false)
   defp depth(<<92, r::binary>>, d, true, false), do: depth(r, d, true, true)
@@ -299,16 +302,16 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     end
   end
 
-  defp json_serialization?(<<a, b, c, d, e, f, g, h, rest::binary>>)
-       when a in [32, 9, 10, 13] and b in [32, 9, 10, 13] and c in [32, 9, 10, 13] and
-              d in [32, 9, 10, 13] and e in [32, 9, 10, 13] and f in [32, 9, 10, 13] and
-              g in [32, 9, 10, 13] and h in [32, 9, 10, 13],
-       do: json_serialization?(rest)
+  defp json_serialization?(<<b, rest::binary>>) when b in [32, 9, 10, 13] do
+    # Find the first non-whitespace byte in one bounded native scan. Ordinary
+    # compact tokens take the constant-time clause below.
+    case :binary.match(rest, @non_whitespace) do
+      {at, 1} -> :binary.part(rest, at, 1) in ["{", "["]
+      :nomatch -> false
+    end
+  end
 
-  defp json_serialization?(<<b, rest::binary>>) when b in [32, 9, 10, 13],
-    do: json_serialization?(rest)
-
-  defp json_serialization?(<<b, _::binary>>) when b in [123, 91], do: true
+  defp json_serialization?(<<b, _::binary>>), do: b in [123, 91]
   defp json_serialization?(_), do: false
 
   defp separators(token, offset, n, acc) do

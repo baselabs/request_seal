@@ -160,7 +160,8 @@ defmodule RequestSeal.JWEOpenOraclesTest do
 
         for {n, work, guard_work} <- tl(samples) do
           assert work - base <= 256 * (n - 1), "VM teardown must fit a + 256n"
-          assert guard_work - guard_base <= 32 * (n - 1), "guard teardown must fit a + 32n"
+          assert guard_work - guard_base <= 32 * (n - 1),
+                 "guard teardown must fit a + 32n: #{inspect({topology, samples})}"
         end
       end
     end)
@@ -325,7 +326,7 @@ defmodule RequestSeal.JWEOpenOraclesTest do
                "wait end must be stamped before cleanup"
 
         assert at <= f + Bounds.teardown(1),
-               "wait end must be stamped before cleanup: #{inspect({at, f + Bounds.teardown(1)})}"
+               "wait end must fit F plus B: #{inspect({at, f + Bounds.teardown(1)})}"
       after
         :erlang.trace_pattern({Open, :wait_end, 1}, false, [:local])
         :erlang.trace_pattern({Open, :cleanup, 1}, false, [:local])

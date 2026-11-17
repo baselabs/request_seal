@@ -1,11 +1,11 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -165,7 +165,7 @@
+@@ -187,7 +187,7 @@
      receive do
        {:"ETS-TRANSFER", tid, from, {^tag, :slot, slot}} ->
-         :ets.insert(map_get(:ended, s), {slot, from})
+         :ets.insert(ended, {slot, from})
 -        :ets.delete(tid)
 +        _ = tid
 
          s =
-           if map_get(:ended_at, s) == nil do
+           if ended_at == nil do
