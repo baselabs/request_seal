@@ -176,6 +176,7 @@ class ReleaseIdentityTest(unittest.TestCase):
             ("![a](<docs/a b.png>)", "![a](<" + raw + "docs/a%20b.png>)"),
             ("[t](docs/a(b).md)", "[t](" + blob + "docs/a%28b%29.md)"),
             ("[t](https://example.com/a) [t](#part)", None),
+            (r"[t](https://example.com/a\)b) [t](#part\))", None),
             ("[t](ssh://example.com/a) [t](mailto:team@example.com)", None),
             ("[t](custom:opaque) [t](//example.com/a)", None),
             ("[^1]: docs/x.md is footnote prose", None),

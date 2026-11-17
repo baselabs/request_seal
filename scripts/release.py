@@ -213,9 +213,10 @@ def pin_markdown_links(body, version, repository_url):
         return (start, end, end) if end > start and depth == 0 else None
 
     def pinned(target, image):
+        original = target
         target = re.sub(r"\\([" + re.escape(string.punctuation) + r"])", r"\1", target)
         if target.startswith(("#", "//")) or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", target):
-            return target
+            return original
         if target.startswith("?"):
             raise ValueError("CHANGELOG.md has an invalid relative link: " + target)
         path, fragment_mark, fragment = target.partition("#")
