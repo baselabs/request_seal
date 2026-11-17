@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/preflight.ex
++++ b/lib/request_seal/jose/jwe/preflight.ex
+@@ -28,7 +28,7 @@
+           handoff(tag, parent, flag, d, p, :lists.reverse(rows), %{})
+         catch
+           :throw, :preflight_deadline -> deadline(tag, parent, flag)
+-          _, _ -> exit(:internal_failure)
++          kind, reason -> :erlang.raise(kind, reason, __STACKTRACE__)
+         end
+       :done -> :ok
+     end

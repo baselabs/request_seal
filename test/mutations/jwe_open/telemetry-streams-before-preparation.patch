@@ -1,0 +1,13 @@
+--- a/lib/request_seal/jose/jwe/open.ex
++++ b/lib/request_seal/jose/jwe/open.ex
+@@ -275,6 +275,10 @@
+   defp emit(s, answer) do
+     # Prepare every measurement before publishing any event. Telemetry itself
+     # isolates and detaches raising handlers, as on the other library paths.
++    Enum.each(s.auth, fn auth ->
++      if auth != nil,
++        do: :telemetry.execute([:request_seal, :jose, :content_authentication], %{}, %{outcome: auth})
++    end)
+     events = events(s, answer)
+     Enum.each(events, fn {event, measurements, metadata} ->
+       :telemetry.execute(event, measurements, metadata)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure absolute trigger-to-last-end-marker monotonic microseconds against
 Bounds B(10,000), and derived K_pf against Bounds K_pf. Samples are admitted only
-when /proc/loadavg is at most online schedulers and /proc/stat CPU steal is at
+when /proc/loadavg is at most the host logical CPU admission count and /proc/stat CPU steal is at
 most 5% over the sample window. Exhausted host-condition or placement budgets
 fail, never skip. Retain host identity, observations and absolute headroom.
 CPU counter windows span at least 20 ms; that observation delay is outside all
@@ -63,7 +63,7 @@ def steal_percent(before, after):
     return 100 * stolen / elapsed
 
 
-def admit(observations, online, attempts):
+def admit(observations, cpus, attempts):
     """Replay the shared load/steal retry budget from retained /proc samples."""
     seen = []
     for observation in observations[:attempts]:
@@ -72,14 +72,41 @@ def admit(observations, online, attempts):
         seen.append({"load": load, "steal": steal})
         if observation["load"] != load or observation["steal"] != steal:
             raise ValueError("host observation disagrees with /proc counters")
-        if load <= online and steal is not None and 0 <= steal <= 5:
+        if load <= cpus and load <= os.cpu_count() and steal is not None and 0 <= steal <= 5:
             return observation
     raise ValueError("host condition exhausted: " + json.dumps(seen))
 
 
-def host_samples(conditions, loads, steals, online, attempts):
+def cpu_counters(text):
+    cpu_times(text)
+    return tuple(int(value) for value in text.splitlines()[0].split()[1:9])
+
+
+def monotonic(before, after):
+    return all(a <= b for a, b in zip(cpu_counters(before), cpu_counters(after)))
+
+
+def host_snapshot():
+    """Read on the runner, independently of the Elixir report producer."""
+    return {"stat": Path("/proc/stat").read_text().splitlines()[0],
+            "loadavg": Path("/proc/loadavg").read_text().strip()}
+
+
+def bracketed(history, brackets):
+    previous = brackets["before"]["stat"]
+    for row in history:
+        if not (monotonic(previous, row["cpu_before"]) and
+                monotonic(row["cpu_before"], row["cpu_after"]) and
+                monotonic(row["cpu_after"], brackets["after"]["stat"])):
+            return False
+        previous = row["cpu_after"]
+    return True
+
+
+def host_samples(conditions, loads, steals, online, attempts, cpus, brackets, *, ordered=True):
     if not (len(conditions) == len(loads) == len(steals) == 5):
         return False
+    previous = brackets["before"]["stat"]
     for history, load, steal in zip(conditions, loads, steals):
         if not history or len(history) > attempts:
             return False
@@ -88,7 +115,12 @@ def host_samples(conditions, loads, steals, online, attempts):
         if selected_online not in online or any(
                 row["schedulers_online"] != selected_online for row in history):
             return False
-        accepted = admit(history, selected_online, attempts)
+        if any(row["admission_cpus"] != cpus for row in history) or not bracketed(history, brackets):
+            return False
+        if ordered and not monotonic(previous, history[0]["cpu_before"]):
+            return False
+        previous = history[-1]["cpu_after"]
+        accepted = admit(history, cpus, attempts)
         if accepted is not history[-1] or accepted["load"] != load or accepted["steal"] != steal:
             return False
     return True
@@ -100,7 +132,8 @@ def markdown(report):
                 json.dumps(report.get("host", {})) + "\n" + report.get("output", ""))
     host, constants = report["host"], report["constants"]
     rows = [f"Host: {host['cpu_model']}; logical CPUs: {host['logical_cpus']}; "
-            f"online schedulers: {host['schedulers_online']}; OTP: {host['otp']}.",
+            f"online schedulers: {host['schedulers_online']}; admission CPUs: {host['admission_cpus']}; "
+            f"OTP: {host['otp']}.",
             f"Absolute limits from Bounds: B({constants['n']}) = {constants['b_us']} us; "
             f"K_pf = {constants['k_pf_us']} us.", "",
             "| Scenario | Five trigger-to-last-end times (us) | Max / B | Load | CPU steal (%) |",
@@ -123,7 +156,8 @@ def markdown(report):
              "Host observations (including rejected attempts):", "```json",
              json.dumps({"scenarios": {row["scenario"]: row["host_conditions"]
                                       for row in report["scenarios"]},
-                         "units": report["units_host_conditions"]}, indent=2), "```"]
+                         "units": report["units_host_conditions"],
+                         "runner_brackets": report["host_brackets"]}, indent=2), "```"]
     return "\n".join(rows) + "\n"
 
 
@@ -147,6 +181,19 @@ def _passes(report):
             and host["schedulers_online"] > 0 and host["logical_cpus"] > 0
             and host["cpu_model"].strip() and host["otp"].strip()):
         return False
+    cpus = host["admission_cpus"]
+    if (not isinstance(cpus, int) or not 0 < cpus <= host["logical_cpus"] or
+            not os.cpu_count() or cpus > os.cpu_count() or
+            report["final_report_observer_queue"] != "off_heap" or
+            attempts != 30 or constants["placement_attempts"] != 20):
+        return False
+    brackets = report["host_brackets"]
+    for snapshot in brackets.values():
+        cpu_times(snapshot["stat"])
+        load_average(snapshot["loadavg"])
+    if set(brackets) != {"before", "after"} or not monotonic(
+            brackets["before"]["stat"], brackets["after"]["stat"]):
+        return False
     rows = report["scenarios"]
     if len(rows) != len(expected) or {row["scenario"] for row in rows} != expected:
         return False
@@ -157,7 +204,7 @@ def _passes(report):
                 not math.isfinite(value) or not 0 <= value <= bound for value in row["times_us"]):
             return False
         if row["headroom"] != max(row["times_us"]) / bound or not host_samples(
-                row["host_conditions"], row["loads"], row["steals"], {online}, attempts):
+                row["host_conditions"], row["loads"], row["steals"], {online}, attempts, cpus, brackets):
             return False
     units = report["units_us"]
     if set(units) != {"separator_and_accounting", "expected_validation_and_serialization",
@@ -174,7 +221,8 @@ def _passes(report):
         if name == "preflight_exit":
             online |= {1, 2}
         if not host_samples(report["units_host_conditions"][name], report["units_loads"][name],
-                            report["units_steals"][name], online, attempts):
+                            report["units_steals"][name], online, attempts, cpus, brackets,
+                            ordered=name != "preflight_exit"):
             return False
     longest = max(value for name, values in units.items()
                   if name not in {"final_report", "preflight_exit", "aead"} for value in values)
@@ -205,16 +253,21 @@ def main():
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.unlink(missing_ok=True)
+    before = host_snapshot()
     result = processes.run(["mix", "run", "scripts/jwe_teardown_gate.exs", str(args.output)],
         cwd=ROOT, extra_env={"MIX_ENV": "test"}, check=False, timeout=3600,
         capture_output=True, text=True)
+    after = host_snapshot()
+    brackets = {"before": before, "after": after}
     if not args.output.is_file():
-        failure = {"error": "gate did not produce measurements", "exit_code": result.returncode,
+        failure = {"host_brackets": brackets, "error": "gate did not produce measurements", "exit_code": result.returncode,
                    "output": (result.stdout or "") + (result.stderr or "")}
         args.output.write_text(json.dumps(failure, indent=2) + "\n")
         append_summary("Teardown gate failed before measurements: " + failure["error"] + "\n")
         return result.returncode or 1
     report = json.loads(args.output.read_text())
+    report["host_brackets"] = brackets
+    args.output.write_text(json.dumps(report, indent=2) + "\n")
     summary = markdown(report)
     append_summary(summary)
     if result.returncode:

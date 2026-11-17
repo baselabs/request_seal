@@ -13,16 +13,51 @@ import processes
 import mutations
 
 
+def enclosing_function(source, position):
+    """Identify an Elixir function by name and declared arity, never line number."""
+    prefix = "\n".join(source[:position])
+    definitions = list(re.finditer(r"^\s*defp?\s+([\w?!]+)\s*", prefix, re.MULTILINE))
+    if not definitions:
+        return None
+    definition = definitions[-1]
+    tail = "\n".join(source)[definition.end():]
+    if not tail.startswith("("):
+        return definition[1], 0
+    depth, commas, quote, escaped = 0, 0, None, False
+    for index, char in enumerate(tail):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return definition[1], 0 if not tail[1:index].strip() else commas + 1
+        elif char == "," and depth == 1:
+            commas += 1
+    raise ValueError("unterminated function signature: " + definition[1])
+
+
 def changed_lines(patch, root=None):
-    """Ignore hunk context and headers; retain file, position and actual edits."""
+    """Ignore location/context/whitespace; retain edits and their function scope."""
     changes = []
     path = None
     position = None
+    source = []
+    edit_position = None
     lines = patch.splitlines()
     for index, line in enumerate(lines):
         if line.startswith("--- a/"):
             path = line[6:]
         elif line.startswith("@@"):
+            edit_position = None
             position = int(re.match(r"@@ -(\d+)", line)[1])
             if root is not None:
                 # git apply accepts stale line numbers when context moved. Locate
@@ -46,11 +81,16 @@ def changed_lines(patch, root=None):
             continue
         elif position is not None:
             if line.startswith("-"):
-                changes.append((path, position, "-", line[1:]))
+                if edit_position is None:
+                    edit_position = position
+                scope = enclosing_function(source, position) if root is not None else None
+                changes.append((path, scope, "-", re.sub(r"\s+", "", line[1:])))
                 position += 1
             elif line.startswith("+"):
-                changes.append((path, position, "+", line[1:]))
+                scope = enclosing_function(source, edit_position or position) if root is not None else None
+                changes.append((path, scope, "+", re.sub(r"\s+", "", line[1:])))
             elif not line or line.startswith(" "):
+                edit_position = None
                 position += 1
     return tuple(changes)
 
@@ -173,6 +213,29 @@ class MutationRunnerTest(unittest.TestCase):
         self.assertNotEqual(changed_lines(a), changed_lines(b.replace("+new", "+other")))
         (self.root / "x").write_text("prefix\nbefore\nold\nafter\n")
         self.assertEqual(changed_lines(a, self.root), changed_lines(b, self.root))
+
+    def test_fingerprint_normalizes_whitespace_and_repeated_lines_in_one_function(self):
+        baseline = ("defmodule Sample do\n"
+                    "  defp run(x, {a, b}) do\n    send(x, a)\n    send(x, a)\n  end\n"
+                    "  defp other(x, {a, b}) do\n    send(x, a)\n  end\nend\n")
+        (self.root / "sample.ex").write_text(baseline)
+
+        def patch(line, value):
+            lines = baseline.splitlines(True)
+            lines[line - 1] = value + "\n"
+            return "".join(difflib.unified_diff(baseline.splitlines(True), lines,
+                           fromfile="a/sample.ex", tofile="b/sample.ex", n=0))
+
+        first = changed_lines(patch(3, "    send(x, b)"), self.root)
+        whitespace = changed_lines(patch(3, "  send( x,  b )  "), self.root)
+        duplicate_line = changed_lines(patch(4, "    send(x, b)"), self.root)
+        other_function = changed_lines(patch(7, "    send(x, b)"), self.root)
+        self.assertEqual(first, whitespace)
+        self.assertEqual(first, duplicate_line)
+        self.assertNotEqual(first, other_function)
+        self.assertEqual(first[0][1], ("run", 2))
+        self.assertEqual(enclosing_function(["def run(a, b)", "def run(a)"], 2), ("run", 1))
+        self.assertEqual(enclosing_function(["def run(a, b)"], 1), ("run", 2))
 
 
 if __name__ == "__main__":

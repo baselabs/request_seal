@@ -5,18 +5,22 @@ defmodule RequestSeal.JOSE.JWE.Resolver do
 
   def run(tag, i, worker, r, _coordinator, slot, caller, notice) do
     :erlang.process_flag(:sensitive, true)
-    receive do
-      {:'ETS-TRANSFER', _, _, {^tag, :slot, ^slot}} -> :ok
-    end
-    receive do
-      {^tag, :request, request, callback} ->
-        if :ets.info(notice, :owner) == caller and Bounds.now() < r do
-          answer = resolve(callback, request)
-          send(worker, {tag, :answer, i, answer})
-          receive do
-            :stop -> :ok
+    try do
+      receive do
+        {:'ETS-TRANSFER', _, _, {^tag, :slot, ^slot}} -> :ok
+      end
+      receive do
+        {^tag, :request, request, callback} ->
+          if :ets.info(notice, :owner) == caller and Bounds.now() < r do
+            answer = resolve(callback, request)
+            send(worker, {tag, :answer, i, answer})
+            receive do
+              :stop -> :ok
+            end
           end
-        end
+      end
+    catch
+      _, _ -> exit(:internal_failure)
     end
     exit(:normal)
   end
@@ -31,14 +35,14 @@ defmodule RequestSeal.JOSE.JWE.Resolver do
   end
 
   defp normalize(:error, _), do: :unknown_key
-  defp normalize({:ok, %{algorithm: algorithm, key: %KeyHandle{} = handle} = entry}, expected)
+  defp normalize({:ok, %{algorithm: algorithm, key: %KeyHandle{algorithm: a, capabilities: c} = handle} = entry}, expected)
        when map_size(entry) == 2 do
     cond do
       algorithm != expected -> :algorithm_mismatch
       not Bounds.within?(handle, Bounds.handle_words(), Bounds.binary_bytes()) -> :key_resolver_failed
-      handle.algorithm != {:jwe, expected} -> :refused
-      not is_list(handle.capabilities) -> :refused
-      not :lists.member(:unwrap, handle.capabilities) -> :refused
+      a != {:jwe, expected} -> :refused
+      not is_list(c) -> :refused
+      not :lists.member(:unwrap, c) -> :refused
       true ->
         digest = :crypto.hash(:sha256, :erlang.term_to_binary(handle, [:deterministic]))
         {:ok, algorithm, handle, digest}

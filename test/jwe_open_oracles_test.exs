@@ -239,7 +239,7 @@ defmodule RequestSeal.JWEOpenOraclesTest do
     Runtime.with_peer(fn ->
       for {function, topology} <- [{:expire_r, :resolvers}, {:expire_u, :custody},
                                    {:deadline, :resolvers}, {:worker_down, :resolvers}] do
-        arity = if function == :worker_down, do: 2, else: 1
+        arity = if function == :worker_down, do: 3, else: 1
         :erlang.trace_pattern({Coordinator, function, arity},
           [{:_, [], [{:message, {:process_dump}}]}], [:local])
         :erlang.trace_pattern({Coordinator, :loop, 1},

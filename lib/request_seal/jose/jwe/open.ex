@@ -52,8 +52,21 @@ defmodule RequestSeal.JOSE.JWE.Open do
     after
       Bounds.remaining(at) ->
         if Bounds.now() < at, do: take_notice(s, input, p, expected),
-          else: Codec.error(:deadline_exceeded, :crypto)
+          else: expire_notice(s.guard, s.tag)
     end
+  end
+
+  # Join before draining: a guard preempted after its F check can still have
+  # transferred the table while the caller's receive timeout was expiring.
+  @doc false
+  def expire_notice(guard, tag) do
+    ref = :erlang.monitor(:process, guard)
+    :erlang.exit(guard, :kill)
+    receive do
+      {:DOWN, ^ref, :process, ^guard, _} -> :ok
+    end
+    drain(tag, nil)
+    Codec.error(:deadline_exceeded, :crypto)
   end
 
   defp run(s, input, p, expected) do
@@ -260,15 +273,22 @@ defmodule RequestSeal.JOSE.JWE.Open do
   end
 
   defp emit(s, answer) do
-    Enum.each(Enum.reverse(s.auth), fn auth ->
-      if auth != nil,
-        do: :telemetry.execute([:request_seal, :jose, :content_authentication], %{}, %{outcome: auth})
+    # Prepare every measurement before publishing any event. Telemetry itself
+    # isolates and detaches raising handlers, as on the other library paths.
+    events = events(s, answer)
+    Enum.each(events, fn {event, measurements, metadata} ->
+      :telemetry.execute(event, measurements, metadata)
     end)
-    Enum.each(s.groups, fn {us, items} ->
-      :telemetry.execute([:request_seal, :custody, :unwrap],
-        %{duration: System.convert_time_unit(us, :microsecond, :native), items: items}, %{})
+  end
+
+  defp events(s, answer) do
+    auth = for auth <- Enum.reverse(s.auth), auth != nil,
+      do: {[:request_seal, :jose, :content_authentication], %{}, %{outcome: auth}}
+    groups = Enum.map(s.groups, fn {us, items} ->
+      {[:request_seal, :custody, :unwrap],
+        %{duration: System.convert_time_unit(us, :microsecond, :native), items: items}, %{}}
     end)
-    if s.mode == :batch do
+    batch = if s.mode == :batch do
       results = case answer do
         {:ok, results} -> results
         _ -> []
@@ -278,9 +298,12 @@ defmodule RequestSeal.JOSE.JWE.Open do
         {_, _, groups} -> groups
         _ -> 0
       end
-      :telemetry.execute([:request_seal, :jose, :decrypt_many],
+      [{[:request_seal, :jose, :decrypt_many],
         %{count: count, groups: groups, failed: Enum.count(results, &match?({:error, _}, &1)),
-          deadline_exceeded: Enum.count(results, &match?({:error, %{reason: :deadline_exceeded}}, &1))}, %{})
+          deadline_exceeded: Enum.count(results, &match?({:error, %{reason: :deadline_exceeded}}, &1))}, %{}}]
+    else
+      []
     end
+    auth ++ groups ++ batch
   end
 end

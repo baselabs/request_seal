@@ -101,12 +101,12 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
       {:EXIT, ^guard, _} ->
         :ets.foldl(fn row, acc -> kill_registered(row); acc end, :ok, s.registry)
         :internal_failure
-      {:EXIT, pid, _atom} ->
+      {:EXIT, pid, reason} ->
         if pid == s.preflight do
           if s.preflight_final, do: loop(%{s | preflight: nil}),
             else: reply(s, {:outer, :internal_failure, :internal})
         else
-          loop(worker_down(s, pid))
+          loop(worker_down(s, pid, reason))
         end
       _ -> loop(s)
     after
@@ -337,23 +337,25 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp expire_groups([], s), do: s
   defp expire_groups([{g, _} | rest], s), do: expire_groups(rest, summary(s, g, :timeout))
 
-  defp worker_down(s, pid) do
+  defp worker_down(s, pid, reason) do
     case :maps.find(pid, s.pids) do
       {:ok, w} ->
         {^pid, lo, hi, _} = :maps.get(w, s.workers)
         s = %{s | workers: :maps.put(w, {pid, lo, hi, false}, s.workers)}
-        s = dead_positions(lo, hi, s)
+        s = dead_positions(lo, hi, s, reason)
         dead_groups(:maps.to_list(s.groups), w, s)
       :error -> s
     end
   end
-  defp dead_positions(i, hi, s) when i > hi, do: s
-  defp dead_positions(i, hi, s) do
+  defp dead_positions(i, hi, s, _) when i > hi, do: s
+  defp dead_positions(i, hi, s, reason) do
     p = :maps.get(i, s.positions)
     if p.resolver != nil, do: :erlang.exit(p.resolver, :kill)
-    s = if p.result == nil and p.phase in [:resolved, :refused, :width],
-      do: put(s, i, %{p | result: {:decryption_failed, :crypto, nil}}, 0), else: s
-    dead_positions(i + 1, hi, s)
+    failure = if reason == :normal, do: {:decryption_failed, :crypto, nil},
+      else: {:internal_failure, :internal, nil}
+    s = if p.result == nil and (reason != :normal or p.phase in [:resolved, :refused, :width]),
+      do: put(s, i, %{p | phase: :refused, result: failure}, 0), else: s
+    dead_positions(i + 1, hi, s, reason)
   end
   defp dead_groups([], _, s), do: s
   defp dead_groups([{_, group} | rest], w, s) do

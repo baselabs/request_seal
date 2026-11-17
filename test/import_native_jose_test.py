@@ -10,6 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import processes
+import import_native_jose as native
 
 
 class ImportNativeJOSETest(unittest.TestCase):
@@ -51,3 +52,37 @@ class ImportNativeJOSETest(unittest.TestCase):
                     digest, name = line.split("  ", 1)
                     self.assertEqual(hashlib.sha256((sums.parent / name).read_bytes()).hexdigest(), digest)
             self.assertEqual(list(root.rglob("__pycache__")), [])
+
+    def test_cleanup_follows_every_surface_written_by_case(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "scripts").mkdir()
+            (root / "test/support").mkdir(parents=True)
+            for name in ("import_native_jose.py", "import_ecdh_vectors.py", "corpus_json.py"):
+                shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
+            shutil.copytree(ROOT / "corpus", root / "corpus")
+            shutil.copy2(ROOT / ".gitleaks.toml", root / ".gitleaks.toml")
+            # Extend a real generator to a third surface in this isolated copy.
+            script = root / "scripts/import_native_jose.py"
+            script.write_text(script.read_text().replace('"jws.verify"', '"signatures.verify"'))
+            folder = root / "corpus/cases/signatures"
+            folder.mkdir()
+            stale = folder / "native-obsolete.json"
+            stale.write_bytes((root / "corpus/cases/jws/native-embedded-require.json").read_bytes())
+            retained = folder / "public-retained.json"
+            retained.write_bytes(stale.read_bytes())
+            processes.run([sys.executable, script], cwd=root, capture_output=True, text=True)
+            self.assertFalse(stale.exists())
+            self.assertTrue(retained.exists())
+            self.assertTrue((folder / "native-embedded-require.json").is_file())
+            self.assertNotIn("native-obsolete", (root / "corpus/index.json").read_text())
+            self.assertEqual(list(root.rglob("__pycache__")), [])
+
+    def test_unterminated_native_allowlist_has_a_named_error(self):
+        text = "prefix\n" + native.NATIVE_MARKER + "\n[[allowlists]]\npaths = [\n"
+        with self.assertRaisesRegex(ValueError, "malformed native JOSE allowlist block: missing closing"):
+            native.split_native_allowlist(text)
+        self.assertEqual(native.split_native_allowlist("unrelated\n"), ("unrelated\n", ""))
+        before, after = native.split_native_allowlist(text + "]\nretained\n")
+        self.assertEqual(before, "prefix\n")
+        self.assertEqual(after, "\nretained\n")

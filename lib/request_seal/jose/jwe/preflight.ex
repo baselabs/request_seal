@@ -18,6 +18,7 @@ defmodule RequestSeal.JOSE.JWE.Preflight do
         :atomics.put(flag, 1, 1)
         send(parent, {tag, :preflight, {:outer, reason, layer}})
         :done
+      _, _ -> exit(:internal_failure)
     end
 
     case validated do
@@ -27,6 +28,7 @@ defmodule RequestSeal.JOSE.JWE.Preflight do
           handoff(tag, parent, flag, d, p, :lists.reverse(rows), %{})
         catch
           :throw, :preflight_deadline -> deadline(tag, parent, flag)
+          _, _ -> exit(:internal_failure)
         end
       :done -> :ok
     end

@@ -89,7 +89,7 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
     expected_exits = [{Guard, :kill, 3}, {Guard, :sweep, 3},
       {Coordinator, :receive_one, 1}, {Coordinator, :resolved, 3},
       {Coordinator, :expire_positions, 2}, {Coordinator, :summary, 3},
-      {Coordinator, :dead_positions, 3}, {Coordinator, :drain_preflight, 2},
+      {Coordinator, :dead_positions, 4}, {Coordinator, :drain_preflight, 2},
       {Coordinator, :kill_registered, 1}]
     unless Enum.sort(exits) == Enum.sort(expected_exits),
       do: raise("JWE kill site inventory differs: #{inspect(exits)}")

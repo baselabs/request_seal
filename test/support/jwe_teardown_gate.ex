@@ -35,7 +35,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         placements: Enum.map(samples, & &1.placement),
         preflight_exit_us: Enum.map(samples, & &1.exit)}
     end
-    measured_units = units()
+    {measured_units, observer_queue} = units()
     # Preserve five exit upper bounds, including every cooperative placement.
     exits = for i <- 0..(@samples - 1) do
       candidates = [Enum.at(measured_units.preflight_exit, i), Enum.at(handoffs, i)] ++
@@ -77,14 +77,34 @@ defmodule RequestSeal.Test.JWETeardownGate do
       constants: %{n: @cap, b_us: Bounds.teardown(@cap), k_pf_us: Bounds.preflight(),
         load_attempts: @load_attempts, placement_attempts: @placement_attempts,
         cpu_window_min_us: @cpu_window_us},
-      host: host()}
+      host: host(), final_report_observer_queue: observer_queue}
   end
 
   def host do
+    logical = case :erlang.system_info(:logical_processors) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> host_cpus()
+    end
     %{schedulers_online: System.schedulers_online(),
-      logical_cpus: :erlang.system_info(:logical_processors),
+      logical_cpus: logical, admission_cpus: host_cpus(),
       cpu_model: cpu_model(File.read!("/proc/cpuinfo")),
       otp: List.to_string(:erlang.system_info(:otp_release)), elixir: System.version()}
+  end
+
+  def host_cpus do
+    case :erlang.system_info(:logical_processors_available) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> System.schedulers_online()
+    end
+  end
+
+  def steal_percent(before, after_cpu) do
+    start = cpu_times(before)
+    stop = cpu_times(after_cpu)
+    elapsed = stop.total - start.total
+    stolen = stop.steal - start.steal
+    if elapsed > 0 and stolen >= 0 and stolen <= elapsed,
+      do: 100 * stolen / elapsed, else: nil
   end
 
   def cpu_times(text) do
@@ -105,29 +125,31 @@ defmodule RequestSeal.Test.JWETeardownGate do
     end)
   end
 
+  def host_admitted?(result, steal),
+    do: result != nil and is_number(steal) and steal >= 0 and steal <= 5
+
   def host_sample(fun, online \\ System.schedulers_online(),
         attempts \\ @load_attempts, seen \\ [])
   def host_sample(_, _, 0, seen),
     do: raise("host condition exhausted: #{inspect(Enum.reverse(seen), limit: :infinity)}")
   def host_sample(fun, online, attempts, seen) do
+    cpus = host_cpus()
     loadavg = File.read!("/proc/loadavg") |> String.trim()
     [first | _] = String.split(loadavg)
     load = String.to_float(first)
     before = File.read!("/proc/stat") |> String.split("\n") |> hd()
     window = Bounds.now()
-    result = if load <= online, do: fun.(), else: nil
+    result = if load <= cpus, do: fun.(), else: nil
     # CPU accounting uses ticks. Extend only the observation window, outside
     # every timed unit, so a sub-tick unit still has a measurable denominator.
     wait_until(window + @cpu_window_us)
     after_cpu = File.read!("/proc/stat") |> String.split("\n") |> hd()
-    start = cpu_times(before)
-    stop = cpu_times(after_cpu)
-    elapsed = stop.total - start.total
-    steal = if elapsed > 0, do: 100 * (stop.steal - start.steal) / elapsed, else: nil
-    observation = %{load: load, steal: steal, loadavg: loadavg, cpu_before: before,
-      cpu_after: after_cpu, schedulers_online: online}
+    steal = steal_percent(before, after_cpu)
+    observation = %{load: load, steal: if(steal == nil, do: :null, else: steal),
+      loadavg: loadavg, cpu_before: before,
+      cpu_after: after_cpu, schedulers_online: online, admission_cpus: cpus}
     seen = [observation | seen]
-    if result != nil and steal != nil and steal >= 0 and steal <= 5 do
+    if host_admitted?(result, steal) do
       Map.merge(result, %{load: load, steal: steal, host_conditions: Enum.reverse(seen)})
     else
       Process.sleep(1_000)
@@ -385,9 +407,11 @@ defmodule RequestSeal.Test.JWETeardownGate do
     names = [:binary.copy("x", 16_384)]
     {handle, _} = Runtime.real_key()
     p = Runtime.policy(handle, %{protected: %{permitted: names}})
-    observer = self()
+    {observer, ref} = :erlang.spawn_opt(fn -> receive do :stop -> :ok end end,
+      [:monitor, {:message_queue_data, :off_heap}])
+    {:message_queue_data, observer_queue} = Process.info(observer, :message_queue_data)
     try do
-      %{separator_and_accounting: measure(fn -> Codec.split(token) end),
+      samples = %{separator_and_accounting: measure(fn -> Codec.split(token) end),
         expected_validation_and_serialization: measure(fn -> Codec.expected(expected, []) end),
         permitted_name_validation: measure(fn ->
           Codec.policy(p, true, flag, Bounds.now() + 1_000_000)
@@ -395,7 +419,9 @@ defmodule RequestSeal.Test.JWETeardownGate do
         final_report: measure(fn -> final_report(observer, token, p) end),
         preflight_exit: for(_ <- 1..@samples, do: host_sample(fn -> exit_unit() end)),
         aead: for(_ <- 1..@samples, do: host_sample(fn -> aead_unit() end))}
+      {samples, observer_queue}
     after
+      stop_unit(observer, ref)
       RequestSeal.Custody.release(handle)
     end
   end

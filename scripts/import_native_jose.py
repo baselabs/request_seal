@@ -174,25 +174,36 @@ def embedded():
 
 
 
+NATIVE_MARKER = "# Native policy cases derived from public JOSE vectors."
+
+
+def split_native_allowlist(text):
+    if NATIVE_MARKER not in text:
+        return text, ""
+    start = text.index(NATIVE_MARKER)
+    end = text.find("\n]", start)
+    if end < 0:
+        raise ValueError("malformed native JOSE allowlist block: missing closing ]")
+    end += len("\n]")
+    return text[:start].rstrip() + "\n", text[end:]
+
+
 def main():
+    config = ROOT / ".gitleaks.toml"
+    text, suffix = split_native_allowlist(config.read_text())
     PATHS.clear()
-    for folder in (CORPUS / "cases/jwe", CORPUS / "cases/jws"):
-        for path in folder.glob("native-*"):
-            if path.is_file():
-                path.unlink()
     protected()
     batch()
     embedded()
+    # case() defines the surface directories. Retain exactly the files written
+    # this run, so adding a surface also extends stale-native cleanup.
+    generated = {ROOT / path for path in PATHS}
+    for folder in {path.parent for path in generated}:
+        for path in folder.glob("native-*"):
+            if path.is_file() and path not in generated:
+                path.unlink()
     refresh()
-    config = ROOT / ".gitleaks.toml"
-    text = config.read_text()
-    marker = "# Native policy cases derived from public JOSE vectors."
-    suffix = ""
-    if marker in text:
-        start = text.index(marker)
-        end = text.index("\n]", start) + len("\n]")
-        suffix = text[end:]
-        text = text[:start].rstrip() + "\n"
+    marker = NATIVE_MARKER
     text += "\n" + marker + "\n[[allowlists]]\ndescription = \"Native JOSE policy and isolation cases carrying published or pinned peer compact vectors and explicit rejection mutations\"\npaths = [\n"
     text += "".join("  '''^" + p.replace(".", r"\.") + "$''',\n" for p in sorted(PATHS))
     config.write_text(text + "]\n" + suffix.lstrip("\n"))

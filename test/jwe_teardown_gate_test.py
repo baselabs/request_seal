@@ -2,6 +2,7 @@
 import ast
 import copy
 import importlib.util
+import os
 import sys
 from pathlib import Path
 import unittest
@@ -14,12 +15,14 @@ SPEC.loader.exec_module(GATE)
 
 
 class JWETeardownGateTest(unittest.TestCase):
-    def observation(self, load=0.5, steal=0, online=2):
+    def observation(self, load=0.5, steal=0, online=2, offset=0):
         # Real /proc/stat layout, including guest counters (already in user).
         return {"loadavg": f"{load} 0.25 0.10 1/100 42", "load": load, "steal": steal,
-                "cpu_before": "cpu  100 0 0 900 0 0 0 0 20 0\ncpu0 1 0 0 9 0 0 0 0 0 0\n",
-                "cpu_after": f"cpu  {200 - steal} 0 0 900 0 0 0 {steal} 20 0\n",
-                "schedulers_online": online}
+                "cpu_before": "cpu " + " ".join(str(value + offset) for value in
+                    (100, 0, 0, 900, 0, 0, 0, 0)) + " 20 0\n",
+                "cpu_after": "cpu " + " ".join(str(value + offset) for value in
+                    (200 - steal, 0, 0, 900, 0, 0, 0, steal)) + " 20 0\n",
+                "schedulers_online": online, "admission_cpus": os.cpu_count()}
 
     def report(self):
         names = [f"{s}/{t}" for s in ("S1", "S4", "S5", "S7")
@@ -33,15 +36,20 @@ class JWETeardownGateTest(unittest.TestCase):
             scenarios.append({"scenario": name, "times_us": [170_000] * 5,
                               "loads": [0.5] * 5, "steals": [0] * 5,
                               "preflight_exit_us": [200] * 5, "headroom": 1,
-                              "host_conditions": [[self.observation(online=online)] for _ in range(5)]})
-        return {"scenarios": scenarios,
+                              "host_conditions": [[self.observation(online=online, offset=i * 1000)] for i in range(5)]})
+        return {"scenarios": scenarios, "final_report_observer_queue": "off_heap",
+                "host_brackets": {
+                    "before": {"stat": "cpu 0 0 0 0 0 0 0 0", "loadavg": "0.0 0.0 0.0 1/10 1"},
+                    "after": {"stat": "cpu 100000 100000 100000 100000 100000 100000 100000 100000",
+                              "loadavg": "0.5 0.5 0.5 1/10 1"}},
                 "constants": {"n": 10_000, "b_us": 170_000, "k_pf_us": 5_000,
                               "load_attempts": 30, "placement_attempts": 20},
-                "host": {"schedulers_online": 2, "logical_cpus": 4, "cpu_model": "Test CPU", "otp": "28"},
+                "host": {"schedulers_online": 2, "logical_cpus": os.cpu_count(),
+                         "admission_cpus": os.cpu_count(), "cpu_model": "Test CPU", "otp": "28"},
                 "units_us": {key: [200 if key == "preflight_exit" else 100] * 5 for key in units},
                 "units_loads": {key: [0.5] * 5 for key in units},
                 "units_steals": {key: [0] * 5 for key in units},
-                "units_host_conditions": {key: [[self.observation()] for _ in range(5)] for key in units},
+                "units_host_conditions": {key: [[self.observation(offset=i * 1000)] for i in range(5)] for key in units},
                 "s5c_exit_us": [200] * 5, "derived_k_pf_us": 400,
                 "headroom": {"derived_k_pf": 400 / 5_000},
                 "derivation": {"longest_unit_us": 100, "final_report_us": 100, "exit_upper_bound_us": 200}}
@@ -97,9 +105,9 @@ class JWETeardownGateTest(unittest.TestCase):
             GATE.cpu_times("cpu0 1 2 3 4 5 6 7 8\n")
 
     def test_steal_rejection_retries_and_never_admits_rejected_measurement(self):
-        rejected, accepted = self.observation(steal=6), self.observation(steal=5)
+        rejected, accepted = self.observation(steal=6), self.observation(steal=5, offset=100)
         history = [rejected, accepted]
-        self.assertIs(GATE.admit(history, 2, 30), accepted)
+        self.assertIs(GATE.admit(history, os.cpu_count(), 30), accepted)
         report = self.report()
         row = report["scenarios"][0]
         row["host_conditions"][0] = history
@@ -109,12 +117,93 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertFalse(GATE.passes(report))
 
     def test_shared_host_budget_exhausts_with_every_observed_figure(self):
-        history = [self.observation(load=3), self.observation(steal=6), self.observation(steal=7)]
+        history = [self.observation(load=3), self.observation(steal=6, offset=100),
+                   self.observation(steal=7, offset=200)]
         with self.assertRaisesRegex(ValueError, "host condition exhausted") as context:
             GATE.admit(history, 2, 3)
         for value in ('"load": 3.0', '"steal": 6.0', '"steal": 7.0'):
             self.assertIn(value, str(context.exception))
         self.assertIn(str(context.exception), GATE.markdown({"error": str(context.exception)}))
+
+    def test_peer_scheduler_count_does_not_limit_host_load_admission(self):
+        report = self.report()
+        cpus = os.cpu_count()
+        for row in report["scenarios"]:
+            if row["scenario"] == "S5c" or row["scenario"].startswith("D/"):
+                row["loads"] = [float(cpus)] * 5
+                for i, history in enumerate(row["host_conditions"]):
+                    history[0].update(self.observation(load=float(cpus),
+                        online=history[0]["schedulers_online"], offset=i * 1000))
+        self.assertTrue(GATE.passes(report))
+        source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
+        self.assertIn("result = if load <= cpus, do: fun.(), else: nil", source)
+        self.assertIn("cpus = host_cpus()", source)
+        self.assertIn(":erlang.system_info(:logical_processors_available)", source)
+        row = report["scenarios"][-1]
+        row["host_conditions"][0][0]["admission_cpus"] += 1
+        self.assertFalse(GATE.passes(report))
+        report = self.report()
+        report["host"]["admission_cpus"] = cpus + 1
+        report["host"]["logical_cpus"] = cpus + 1
+        self.assertFalse(GATE.passes(report))
+        self.assertEqual(GATE.admit([self.observation(load=cpus)], cpus, 30)["load"], cpus)
+        with self.assertRaisesRegex(ValueError, "host condition exhausted"):
+            GATE.admit([self.observation(load=cpus + 1)], cpus, 30)
+
+    def test_zero_elapsed_steal_consumes_a_host_condition_attempt(self):
+        zero, accepted = self.observation(), self.observation(offset=100)
+        zero["cpu_after"] = zero["cpu_before"]
+        zero["steal"] = None
+        source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
+        self.assertIn("steal: if(steal == nil, do: :null, else: steal)", source)
+        self.assertIs(GATE.admit([zero, accepted], os.cpu_count(), 2), accepted)
+        with self.assertRaisesRegex(ValueError, "host condition exhausted"):
+            GATE.admit([zero, accepted], os.cpu_count(), 1)
+        report = self.report()
+        report["scenarios"][0]["host_conditions"][0] = [zero, accepted]
+        self.assertTrue(GATE.passes(report))
+
+    def test_final_report_requires_the_observers_actual_off_heap_flag(self):
+        report = self.report()
+        source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
+        self.assertIn("[:monitor, {:message_queue_data, :off_heap}])", source)
+        self.assertIn("Process.info(observer, :message_queue_data)", source)
+        self.assertIn("final_report_observer_queue: observer_queue", source)
+        report["final_report_observer_queue"] = "on_heap"
+        self.assertFalse(GATE.passes(report))
+        del report["final_report_observer_queue"]
+        self.assertFalse(GATE.passes(report))
+
+    def test_attempt_counters_must_be_monotonic_and_inside_runner_brackets(self):
+        for kind in ("before_bracket", "after_bracket", "backwards_field", "backwards_attempt",
+                     "missing_brackets", "backwards_bracket", "invalid_bracket_load", "backwards_sample"):
+            report = self.report()
+            row = report["scenarios"][0]
+            history = row["host_conditions"][0]
+            if kind == "before_bracket":
+                report["host_brackets"]["before"]["stat"] = "cpu 101 0 0 900 0 0 0 0"
+            elif kind == "after_bracket":
+                report["host_brackets"]["after"]["stat"] = "cpu 199 0 0 900 0 0 0 0"
+            elif kind == "backwards_field":
+                # Total still advances and steal stays zero; individual fields regress.
+                history[0]["cpu_after"] = "cpu 201 0 0 899 0 0 0 0"
+            elif kind == "backwards_attempt":
+                history.insert(0, self.observation(steal=6, offset=100))
+            elif kind == "backwards_sample":
+                row["host_conditions"][1] = [self.observation()]
+            elif kind == "missing_brackets":
+                del report["host_brackets"]
+            elif kind == "backwards_bracket":
+                report["host_brackets"]["before"]["stat"] = "cpu 100001 0 0 0 0 0 0 0"
+            else:
+                report["host_brackets"]["after"]["loadavg"] = "nan"
+            with self.subTest(kind=kind):
+                self.assertFalse(GATE.passes(report))
+        report = self.report()
+        history = report["units_host_conditions"]["aead"][0]
+        history[0]["cpu_after"] = "cpu 100001 0 0 900 0 0 0 0"
+        history[0]["steal"] = 0.0
+        self.assertFalse(GATE.passes(report))
 
     def test_constants_are_read_from_bounds_and_gate_measurements_match_production(self):
         source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
@@ -146,6 +235,11 @@ class JWETeardownGateTest(unittest.TestCase):
         for text in ("processes.run", "args.output.write_text", "GITHUB_STEP_SUMMARY",
                      '"output": (result.stdout', "capture_output=True"):
             self.assertIn(text, source)
+        self.assertLess(source.index("before = host_snapshot()"), source.index("result = processes.run("))
+        self.assertLess(source.index("result = processes.run("), source.index("after = host_snapshot()"))
+        self.assertIn('report["host_brackets"] = brackets', source)
+        self.assertIn('Path("/proc/stat").read_text()', source)
+        self.assertIn('Path("/proc/loadavg").read_text()', source)
         self.assertFalse(any(isinstance(node, ast.Import) and
                              any(alias.name == "subprocess" for alias in node.names)
                              for node in ast.walk(tree)))

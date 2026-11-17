@@ -103,11 +103,13 @@ Headless assertions establish neither interactive UI behavior nor deployed-peer 
 
 ## JWE lifecycle gates
 
-`python3 -B scripts/mutations.py` verifies 60 distinct reversing patches. It
+`python3 -B scripts/mutations.py` verifies 69 distinct reversing patches. It
 first requires the selected test to pass on a clean tree, once per distinct
 command and baseline commit. Each applied patch must then fail with its named
 assertion; reversal must leave a clean tree. Equivalent changed lines are
-rejected even when patch headers or context differ.
+rejected even when patch headers, context, whitespace, or the location of a
+duplicated line within the same function differ. Function names and arities
+distinguish edits in different functions.
 
 `python3 -B scripts/jwe_teardown_gate.py --output teardown.json` records absolute
 trigger-to-last-end-marker monotonic microseconds against Bounds B(10,000), and
@@ -115,11 +117,18 @@ derived K_pf against Bounds K_pf. The constants are 170 ms and 5 ms respectively
 the gate reads them from the library. JSON and Markdown retain each scenario's
 maximum as a fraction of B and derived K_pf as a fraction of its bound.
 
-Linux samples require `/proc/loadavg` at most online schedulers and CPU steal
+Linux samples require `/proc/loadavg` at most the host's available logical CPUs
+(falling back to the main node's online schedulers when unknown), and CPU steal
 from `/proc/stat` at most 5% over the sample window. The artifact records the raw
 counters, loads, steal percentages, online schedulers, logical CPUs, CPU model
 and OTP release. Counter windows span at least 20 ms to avoid zero-tick windows
-for short units; the observation delay stays outside every timed unit.
+for short units; the observation delay stays outside every timed unit. A zero
+elapsed window is rejected. Final report sends target an observer whose recorded
+message queue flag must be `off_heap`.
+The Python runner reads `/proc/stat` and `/proc/loadavg` before and after the
+Elixir run, retaining those independent brackets. Every per-attempt CPU counter
+must be monotonic and lie within those brackets. Python checks load against the
+recorded host admission capacity and its own logical CPU count.
 Load and steal share 30 host-condition attempts. Placements have
 20 attempts; a handoff completed before D is retried. Exhausting either budget
 fails, with the observed attempts. No host rejection becomes a skip or a relaxed

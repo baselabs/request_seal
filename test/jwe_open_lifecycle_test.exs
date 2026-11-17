@@ -488,6 +488,8 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
   test "worker death kills its live resolvers before R" do
     s = Runtime.start(10, :resolvers)
     try do
+      # The coordinator must cancel these itself, before the guard's sweep.
+      true = :erlang.suspend_process(s.guard)
       {:spawn, _, worker, _, _, [_, _, _, _, lo, hi | _], _} =
         Enum.find(s.events, fn
           {:spawn, _, _, RequestSeal.JOSE.JWE.Worker, :run, _, _} -> true

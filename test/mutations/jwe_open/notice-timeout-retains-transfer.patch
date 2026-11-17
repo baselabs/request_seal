@@ -1,0 +1,9 @@
+--- a/lib/request_seal/jose/jwe/open.ex
++++ b/lib/request_seal/jose/jwe/open.ex
+@@ -66,5 +66,5 @@
+       {:DOWN, ^ref, :process, ^guard, _} -> :ok
+     end
+-    drain(tag, nil)
++    drain({tag}, nil)
+     Codec.error(:deadline_exceeded, :crypto)
+   end

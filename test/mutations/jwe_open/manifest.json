@@ -535,7 +535,7 @@
       "patch": "open-crash-as-policy.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "open result assembly crashes preserve internal failure after real custody",
-      "selection": "line:45",
+      "selection": "line:50",
       "failure": "open crashes must report internal failure",
       "covers": [
         "library crash classification in open"
@@ -545,7 +545,7 @@
       "patch": "preflight-crash-as-policy.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "preflight crashes escape without a validation verdict",
-      "selection": "line:78",
+      "selection": "line:93",
       "failure": "preflight crashes must exit non-normally",
       "covers": [
         "preflight crash classification"
@@ -555,7 +555,7 @@
       "patch": "open-forgets-notice-on-crash.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "open library crashes clear the received notice before returning",
-      "selection": "line:9",
+      "selection": "line:10",
       "failure": "open crash must delete the received caller notice",
       "covers": [
         "received notice cleanup and cancellation on bootstrap exception"
@@ -565,7 +565,7 @@
       "patch": "guard-handoff-past-F.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "a guard starting past F never transfers a caller notice",
-      "selection": "line:286",
+      "selection": "line:309",
       "failure": "past F the guard must retain and delete its notice",
       "covers": [
         "deadline gate immediately before caller notice handoff"
@@ -575,7 +575,7 @@
       "patch": "final-intake-does-not-loop.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "final intake retries every early deadline wait",
-      "selection": "line:309",
+      "selection": "line:332",
       "failure": "final intake must loop after an early timeout",
       "covers": [
         "absolute final intake wait"
@@ -585,7 +585,7 @@
       "patch": "D-drain-loses-preflight-crash.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "D drain keeps a preflight crash internal after accepted cardinality",
-      "selection": "line:157",
+      "selection": "line:178",
       "failure": "D drain must retain internal failure",
       "covers": [
         "preflight crash at the absolute D drain"
@@ -595,7 +595,7 @@
       "patch": "reply-before-final-handoff.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "an empty cardinality waits for the final preflight handoff",
-      "selection": "line:201",
+      "selection": "line:222",
       "failure": "cardinality alone must not complete preflight",
       "covers": [
         "no reply before successful final handoff"
@@ -605,11 +605,101 @@
       "patch": "codec-library-crashes-as-input.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "codec validation catches do not disguise broken library state",
-      "selection": "line:229",
+      "selection": "line:250",
       "failure": "Expected exception KeyError",
       "covers": [
         "validation boundaries preserve unexpected library crashes"
       ]
+    },
+    {
+      "patch": "preflight-validation-logs-crash.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "preflight crashes escape without a validation verdict",
+      "failure": "preflight validation crash must use a closed exit",
+      "covers": [
+        "error-class validation crashes are closed and never logged"
+      ],
+      "selection": "line:93"
+    },
+    {
+      "patch": "preflight-handoff-logs-crash.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "preflight crash after ok is internal failure and tears down all registered roles",
+      "failure": "preflight handoff crash must use a closed exit",
+      "covers": [
+        "error-class handoff crashes are closed and never logged"
+      ],
+      "selection": "line:139"
+    },
+    {
+      "patch": "resolver-logs-internal-crash.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "resolver normalization crashes escape the caller callback boundary",
+      "failure": "resolver normalization crash must use a closed exit",
+      "covers": [
+        "unexpected resolver errors never expose reason or stacktrace"
+      ],
+      "selection": "line:272"
+    },
+    {
+      "patch": "resolver-malformed-handle-crashes.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "malformed resolver handles are refused before R",
+      "failure": "malformed resolver handle must be refused promptly",
+      "covers": [
+        "malformed struct callback answers are rejected before the resolution deadline"
+      ],
+      "selection": "line:347"
+    },
+    {
+      "patch": "worker-crash-as-decryption.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "worker internal crashes retain their classification through the coordinator",
+      "failure": "worker internal crash must remain an internal failure",
+      "covers": [
+        "worker errors preserve positional internal failure in ready and resolved phases"
+      ],
+      "selection": "line:372"
+    },
+    {
+      "patch": "open-crash-skips-cancel.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "open library crashes clear the received notice before returning",
+      "failure": "open crash must await guard DOWN before returning",
+      "covers": [
+        "crash cancellation joins the guard even when notice deletion remains intact"
+      ],
+      "selection": "line:10"
+    },
+    {
+      "patch": "notice-timeout-skips-cancel.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "notice timeout joins the guard and deletes a transfer after the timeout",
+      "failure": "the expired notice receive must cancel and drain the guard",
+      "covers": [
+        "receive timeout calls production guard cancellation and late-transfer cleanup"
+      ],
+      "selection": "line:390"
+    },
+    {
+      "patch": "notice-timeout-retains-transfer.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "notice timeout joins the guard and deletes a transfer after the timeout",
+      "failure": "notice timeout must drain the late transfer",
+      "covers": [
+        "a handoff after the timeout leaves neither a table nor a transfer message"
+      ],
+      "selection": "line:390"
+    },
+    {
+      "patch": "telemetry-streams-before-preparation.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "open result assembly crashes preserve internal failure after real custody",
+      "failure": "telemetry preparation failure must publish no events",
+      "covers": [
+        "all telemetry measurements are prepared before publishing any outcome"
+      ],
+      "selection": "line:50"
     }
   ],
   "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."

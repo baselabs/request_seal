@@ -52,6 +52,12 @@ report during the D drain. A successful validation report ends outer validation
 verdicts; completion also requires the row handoff. Caller notice ownership is
 retained through exception cleanup, and a guard past F keeps and deletes its
 notice instead of transferring it to a caller that may already have returned.
+A caller whose notice wait times out kills and joins the guard before draining
+late transfers and deleting their tables. Error-class exceptions in every plain
+library entry exit with a closed atom, keeping exception arguments out of logs.
+A worker's unexpected exit settles its unfinished positions as internal failures.
+The caller prepares every telemetry measurement before publishing any outcome;
+telemetry's handler isolation preserves the completed result if a handler raises.
 
 ## Reasons
 
@@ -62,19 +68,25 @@ ETS and an off-heap guard mailbox keep reaction state independent of n. End
 notices avoid copying caller-sized exit reasons. The inherited registry remains
 complete even when the coordinator stops between process creation and handoff.
 
-The committed reduction oracles and 60 distinct reversing mutations check constant reaction,
+The committed reduction oracles and 69 distinct reversing mutations check constant reaction,
 linear complete teardown, queue bounds, guard heap and caller wait-end. A release
 gate measures the absolute bound and derives K_pf from byte units, report send
 and preflight exit. Constants come from Bounds; no baseline ratio replaces them.
 Final report measurements send the production row, count and control envelopes
-from a sensitive process with an off-heap mailbox. The consumer independently
+from a sensitive process with an off-heap mailbox to an off-heap observer.
+The report records the observer's actual queue flag. The consumer independently
 recomputes the longest unit + maximum report send + maximum preflight exit.
 
-Samples require Linux load average at most online schedulers and aggregate CPU
+Samples require Linux load average at most available host logical CPUs
+(falling back to the main node's online schedulers when availability is unknown) and aggregate CPU
 steal at most 5% across the sample window. Raw counters, load, CPU model, logical
 CPU count, online schedulers, OTP release and headroom accompany measurements.
+The Python runner independently brackets the run with Linux CPU and load
+readings, rejects regressing or out-of-bracket per-attempt counters, and checks
+load against both the recorded admission capacity and its own CPU count.
 Counter windows span at least 20 ms, outside the timed units, to admit short
-units only with a measurable CPU accounting denominator.
+units only with a measurable CPU accounting denominator. A zero elapsed window
+is rejected and consumes a host-condition attempt on both sides.
 Load and steal share 30 host-condition attempts; invalid placements have 20
 attempts. Exhausting either budget fails and reports the observed attempts.
 These are verification obligations, not one-run performance claims.

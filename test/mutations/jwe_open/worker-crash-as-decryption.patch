@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/coordinator.ex
++++ b/lib/request_seal/jose/jwe/coordinator.ex
+@@ -352,7 +352,7 @@
+     p = :maps.get(i, s.positions)
+     if p.resolver != nil, do: :erlang.exit(p.resolver, :kill)
+     failure = if reason == :normal, do: {:decryption_failed, :crypto, nil},
+-      else: {:internal_failure, :internal, nil}
++      else: {:decryption_failed, :crypto, nil}
+     s = if p.result == nil and (reason != :normal or p.phase in [:resolved, :refused, :width]),
+       do: put(s, i, %{p | phase: :refused, result: failure}, 0), else: s
+     dead_positions(i + 1, hi, s, reason)
