@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/guard.ex
++++ b/lib/request_seal/jose/jwe/guard.ex
+@@ -39,7 +39,7 @@
+
+   defp give_caller(notice, caller, tag, f) do
+     try do
+-      if Bounds.now() < f do
++      if is_integer(f) do
+         :ets.give_away(notice, caller, {tag, :caller})
+       else
+         :deadline

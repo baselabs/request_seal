@@ -6,5 +6,5 @@
      cond do
 +      now >= s.r and not s.handed_off -> reply(s, {:outer, :deadline_exceeded, :crypto})
        now >= s.d -> deadline(s)
-       s.n != nil and s.settled == s.n -> reply(s, :ok)
+       s.n != nil and s.settled == s.n and s.handed_off -> reply(s, :ok)
        true ->

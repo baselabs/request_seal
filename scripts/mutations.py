@@ -11,36 +11,49 @@ ROOT = Path(__file__).resolve().parents[1]
 DIRECTORY = ROOT / "test/mutations/jwe_open"
 
 
-def command(argv, *, check=True):
-    return processes.run(argv, cwd=ROOT, capture_output=True, text=True, check=check)
+def command(argv, *, check=True, root=ROOT):
+    return processes.run(argv, cwd=root, capture_output=True, text=True, check=check)
 
 
-def clean():
-    status = command(["git", "status", "--porcelain", "--untracked-files=all"]).stdout
+def clean(root=ROOT):
+    status = command(["git", "status", "--porcelain", "--untracked-files=all"], root=root).stdout
     if status:
         raise RuntimeError("mutation runner requires a clean tree:\n" + status)
 
 
-def prove(entry):
-    patch = DIRECTORY / entry["patch"]
-    clean()
+def prove(entry, *, green=None, root=ROOT, directory=DIRECTORY,
+          test_command=("mix", "test")):
+    patch = directory / entry["patch"]
+    clean(root)
+    argv = [*test_command, entry["file"], "--only", entry["selection"]]
+    # The cache belongs to this run, whose baseline and command stay unchanged.
+    # Never cache a failing or tree-dirtying baseline.
+    head = command(["git", "rev-parse", "HEAD"], root=root).stdout.strip()
+    key = tuple(map(str, [root, head, *argv]))
+    if green is None or key not in green:
+        result = command(argv, root=root, check=False)
+        if result.returncode != 0:
+            raise RuntimeError("baseline is not GREEN:\n" +
+                               (result.stdout or "") + (result.stderr or ""))
+        clean(root)
+        if green is not None:
+            green.add(key)
     applied = False
-    evidence = ""
     try:
-        command(["git", "apply", "--check", patch])
-        command(["git", "apply", patch])
+        command(["git", "apply", "--check", patch], root=root)
+        command(["git", "apply", patch], root=root)
         applied = True
-        result = command(["mix", "test", entry["file"], "--only", entry["selection"]], check=False)
+        result = command(argv, root=root, check=False)
         evidence = (result.stdout or "") + (result.stderr or "")
         if result.returncode == 0:
             raise RuntimeError("mutation remained GREEN")
         if entry["failure"] not in evidence:
             raise RuntimeError("mutation failed without its claimed assertion:\n" + evidence)
-        return "RED: " + entry["failure"]
+        return "GREEN baseline; RED: " + entry["failure"]
     finally:
         if applied:
-            command(["git", "apply", "-R", patch])
-        clean()
+            command(["git", "apply", "-R", patch], root=root)
+        clean(root)
 
 
 def main():
@@ -54,10 +67,11 @@ def main():
         if not entries:
             parser.error("unknown mutation")
     rows = []
+    green = set()
     failed = False
     for entry in entries:
         try:
-            evidence = prove(entry)
+            evidence = prove(entry, green=green)
         except Exception as error:
             failed = True
             evidence = "FAIL: " + str(error)

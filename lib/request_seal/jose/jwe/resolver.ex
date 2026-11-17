@@ -22,11 +22,12 @@ defmodule RequestSeal.JOSE.JWE.Resolver do
   end
 
   defp resolve(callback, request) do
-    try do
-      normalize(callback.(request), request.algorithm)
+    answer = try do
+      callback.(request)
     catch
       _, _ -> :key_resolver_failed
     end
+    normalize(answer, request.algorithm)
   end
 
   defp normalize(:error, _), do: :unknown_key

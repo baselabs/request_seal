@@ -62,7 +62,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
     now = Bounds.now()
     cond do
       now >= s.d -> deadline(s)
-      s.n != nil and s.settled == s.n -> reply(s, :ok)
+      s.n != nil and s.settled == s.n and s.handed_off -> reply(s, :ok)
       true ->
         s = if not s.expired_r and now >= s.r and s.handed_off, do: expire_r(s), else: s
         s = barrier(s, now)
@@ -366,24 +366,36 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
     s = drain_preflight(s, s.d + Bounds.preflight())
     case s do
       :overrun -> :internal_failure
+      :failed -> :internal_failure
       %{n: nil} -> reply(s, {:outer, :deadline_exceeded, :crypto})
       _ -> reply(fill_deadline(0, s.n, s), :ok)
     end
   end
   defp drain_preflight(%{preflight: nil} = s, _), do: s
   defp drain_preflight(s, at) do
+    if Bounds.now() >= at do
+      :erlang.exit(s.preflight, :kill)
+      :overrun
+    else
+      receive_preflight(s, at)
+    end
+  end
+  defp receive_preflight(s, at) do
     tag = s.tag
     pid = s.preflight
     guard = s.guard
     receive do
       {^tag, :cardinality, n, tc} -> drain_preflight(cardinality(s, n, tc), at)
-      {:EXIT, ^pid, _} -> %{s | preflight: nil}
+      {^tag, :preflight, :deadline} -> drain_preflight(%{s | preflight_final: true}, at)
+      {^tag, :preflight, {:outer, _, _}} -> drain_preflight(%{s | preflight_final: true}, at)
+      {^tag, :handed_off} -> drain_preflight(%{s | preflight_final: true}, at)
+      {:EXIT, ^pid, _} -> if s.preflight_final, do: %{s | preflight: nil}, else: :failed
       {:EXIT, ^guard, _} ->
         :ets.foldl(fn row, acc -> kill_registered(row); acc end, :ok, s.registry)
         :overrun
       _ -> drain_preflight(s, at)
     after
-      Bounds.remaining(at) -> :erlang.exit(pid, :kill); :overrun
+      Bounds.remaining(at) -> drain_preflight(s, at)
     end
   end
   defp fill_deadline(n, n, s), do: s

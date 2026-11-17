@@ -1,0 +1,9 @@
+--- a/lib/request_seal/jose/jwe/codec.ex
++++ b/lib/request_seal/jose/jwe/codec.ex
+@@ -393,5 +393,6 @@
+        }}
+     catch
+       :throw, {:jose_error, reason, layer} -> error(reason, layer)
++      _, _ -> error(:invalid_header)
+     end
+   end

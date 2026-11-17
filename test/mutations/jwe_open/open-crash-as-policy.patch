@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/open.ex
++++ b/lib/request_seal/jose/jwe/open.ex
+@@ -72,7 +72,7 @@
+         Codec.error(reason, layer)
+       _, _ ->
+         cancel(s)
+-        Codec.error(:internal_failure, :internal)
++        Codec.error(:invalid_policy)
+     after
+       cleanup(s)
+     end

@@ -18,7 +18,8 @@
       "selection": "line:30",
       "failure": "guard reaction must be constant before kill",
       "covers": [
-        "oracle 1; queued backlog"
+        "oracle 1; queued backlog",
+        "R12-6 schedules i and ii; tests 9a and 29"
       ]
     },
     {
@@ -28,7 +29,8 @@
       "selection": "line:67",
       "failure": "VM teardown must fit a + 256n",
       "covers": [
-        "oracle 2: n squared sweep"
+        "oracle 2: n squared sweep",
+        "R12-9 tick removed; each of five oracles has its own patches"
       ]
     },
     {
@@ -48,7 +50,8 @@
       "selection": "line:102",
       "failure": "bootstrap messages must be bounded",
       "covers": [
-        "oracle 3; bounded bootstrap at cap"
+        "oracle 3; bounded bootstrap at cap",
+        "Step 3(c), integrated in Step 2"
       ]
     },
     {
@@ -88,7 +91,8 @@
       "selection": "line:216",
       "failure": "caller reason must not enter a library queue",
       "covers": [
-        "oracle 3; reason disposal"
+        "oracle 3; reason disposal",
+        "R12-1 reproduction"
       ]
     },
     {
@@ -98,7 +102,8 @@
       "selection": "line:121",
       "failure": "guard heap must be constant at the cap",
       "covers": [
-        "oracle 4: ended set map"
+        "oracle 4: ended set map",
+        "R12-3 reproduction"
       ]
     },
     {
@@ -248,7 +253,8 @@
       "selection": "line:202",
       "failure": "resolver notices must be freed before P3",
       "covers": [
-        "notices freed at P3"
+        "notices freed at P3",
+        "Step 3(e), integrated in Step 2"
       ]
     },
     {
@@ -268,7 +274,8 @@
       "selection": "line:92",
       "failure": "preflight must cooperate at D",
       "covers": [
-        "D route: cooperative preflight each unit"
+        "D route: cooperative preflight each unit",
+        "Step 3(d), integrated for D route"
       ]
     },
     {
@@ -370,16 +377,7 @@
       "selection": "line:263",
       "failure": "admission must be strictly before R",
       "covers": [
-        "review9 admission table; test 24"
-      ]
-    },
-    {
-      "patch": "review10-late-admission.patch",
-      "file": "test/jwe_open_lifecycle_test.exs",
-      "test": "16 and 24 strict admission boundary and 18 late result gate",
-      "selection": "line:263",
-      "failure": "admission must be strictly before R",
-      "covers": [
+        "review9 admission table; test 24",
         "review10 admission base64 and late admission; tests 16 and 24"
       ]
     },
@@ -424,16 +422,6 @@
       ]
     },
     {
-      "patch": "R12-1-reason-disposal.patch",
-      "file": "test/jwe_open_oracles_test.exs",
-      "test": "R12-1 callback exit reasons never enter library queues",
-      "selection": "line:216",
-      "failure": "caller reason must not enter a library queue",
-      "covers": [
-        "R12-1 reproduction"
-      ]
-    },
-    {
       "patch": "R12-2-depth-accumulator-message.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 3 guard coordinator and caller queues have bounded terms",
@@ -441,16 +429,6 @@
       "failure": "library control queue must be constant size",
       "covers": [
         "R12-2 reproduction"
-      ]
-    },
-    {
-      "patch": "R12-3-map-registry-GC.patch",
-      "file": "test/jwe_open_oracles_test.exs",
-      "test": "oracle 4 guard heap stays constant with queued notices after GC",
-      "selection": "line:121",
-      "failure": "guard heap must be constant at the cap",
-      "covers": [
-        "R12-3 reproduction"
       ]
     },
     {
@@ -484,16 +462,6 @@
       ]
     },
     {
-      "patch": "R12-6-queue-head-reaction.patch",
-      "file": "test/jwe_open_oracles_test.exs",
-      "test": "oracle 1 constant guard reaction before kill with queued notices",
-      "selection": "line:30",
-      "failure": "guard reaction must be constant before kill",
-      "covers": [
-        "R12-6 schedules i and ii; tests 9a and 29"
-      ]
-    },
-    {
       "patch": "R12-7-old-crypto-cell.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "21 R12-7 terminal map retains input key and crypto layers",
@@ -511,46 +479,6 @@
       "failure": "contributor and down must share one key",
       "covers": [
         "R12-8 death after contributing"
-      ]
-    },
-    {
-      "patch": "R12-9-oracle-nonvacuity.patch",
-      "file": "test/jwe_open_oracles_test.exs",
-      "test": "oracle 2 complete topology and linear teardown in isolated peer",
-      "selection": "line:67",
-      "failure": "VM teardown must fit a + 256n",
-      "covers": [
-        "R12-9 tick removed; each of five oracles has its own patches"
-      ]
-    },
-    {
-      "patch": "step-c-reverse-bounded-bootstrap.patch",
-      "file": "test/jwe_open_oracles_test.exs",
-      "test": "oracle 3 guard coordinator and caller queues have bounded terms",
-      "selection": "line:102",
-      "failure": "bootstrap messages must be bounded",
-      "covers": [
-        "Step 3(c), integrated in Step 2"
-      ]
-    },
-    {
-      "patch": "step-d-reverse-cooperative-preflight.patch",
-      "file": "test/jwe_open_lifecycle_test.exs",
-      "test": "preflight cooperates at its next checkpoint at D",
-      "selection": "line:92",
-      "failure": "preflight must cooperate at D",
-      "covers": [
-        "Step 3(d), integrated for D route"
-      ]
-    },
-    {
-      "patch": "step-e-reverse-notice-deletion.patch",
-      "file": "test/jwe_open_oracles_test.exs",
-      "test": "notices freed at P3 and resolver custody phases do not overlap",
-      "selection": "line:202",
-      "failure": "resolver notices must be freed before P3",
-      "covers": [
-        "Step 3(e), integrated in Step 2"
       ]
     },
     {
@@ -602,7 +530,87 @@
         "exact copy bound for references and HAMT maps"
       ],
       "selection": "line:14"
+    },
+    {
+      "patch": "open-crash-as-policy.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "open result assembly crashes preserve internal failure after real custody",
+      "selection": "line:45",
+      "failure": "open crashes must report internal failure",
+      "covers": [
+        "library crash classification in open"
+      ]
+    },
+    {
+      "patch": "preflight-crash-as-policy.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "preflight crashes escape without a validation verdict",
+      "selection": "line:78",
+      "failure": "preflight crashes must exit non-normally",
+      "covers": [
+        "preflight crash classification"
+      ]
+    },
+    {
+      "patch": "open-forgets-notice-on-crash.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "open library crashes clear the received notice before returning",
+      "selection": "line:9",
+      "failure": "open crash must delete the received caller notice",
+      "covers": [
+        "received notice cleanup and cancellation on bootstrap exception"
+      ]
+    },
+    {
+      "patch": "guard-handoff-past-F.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "a guard starting past F never transfers a caller notice",
+      "selection": "line:286",
+      "failure": "past F the guard must retain and delete its notice",
+      "covers": [
+        "deadline gate immediately before caller notice handoff"
+      ]
+    },
+    {
+      "patch": "final-intake-does-not-loop.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "final intake retries every early deadline wait",
+      "selection": "line:309",
+      "failure": "final intake must loop after an early timeout",
+      "covers": [
+        "absolute final intake wait"
+      ]
+    },
+    {
+      "patch": "D-drain-loses-preflight-crash.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "D drain keeps a preflight crash internal after accepted cardinality",
+      "selection": "line:157",
+      "failure": "D drain must retain internal failure",
+      "covers": [
+        "preflight crash at the absolute D drain"
+      ]
+    },
+    {
+      "patch": "reply-before-final-handoff.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "an empty cardinality waits for the final preflight handoff",
+      "selection": "line:201",
+      "failure": "cardinality alone must not complete preflight",
+      "covers": [
+        "no reply before successful final handoff"
+      ]
+    },
+    {
+      "patch": "codec-library-crashes-as-input.patch",
+      "file": "test/jwe_open_failures_test.exs",
+      "test": "codec validation catches do not disguise broken library state",
+      "selection": "line:229",
+      "failure": "Expected exception KeyError",
+      "covers": [
+        "validation boundaries preserve unexpected library crashes"
+      ]
     }
   ],
-  "verification": "Expected assertions only. CI proves RED; historical trees are represented by restoring mutations, not reconstructed."
+  "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."
 }

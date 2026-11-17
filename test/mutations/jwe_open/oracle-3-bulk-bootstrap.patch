@@ -1,8 +1,8 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -83,6 +83,7 @@
-       {:'ETS-TRANSFER', notice, _, {^tag, :caller}} ->
-         bootstrap(%{s | notice: notice}, input, p, expected, count)
+@@ -145,6 +145,7 @@
+     guard = s.guard
+     receive do
        {^tag, :preflight, pid} ->
 +        send(pid, {tag, :input, input, p})
          send(pid, {tag, :policy, p})

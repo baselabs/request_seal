@@ -1,5 +1,8 @@
 """Reject stale, missing, or ambiguous JWE mutation proofs."""
+import difflib
 import json
+import re
+import tempfile
 from pathlib import Path
 import sys
 import unittest
@@ -7,6 +10,49 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import processes
+import mutations
+
+
+def changed_lines(patch, root=None):
+    """Ignore hunk context and headers; retain file, position and actual edits."""
+    changes = []
+    path = None
+    position = None
+    lines = patch.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("--- a/"):
+            path = line[6:]
+        elif line.startswith("@@"):
+            position = int(re.match(r"@@ -(\d+)", line)[1])
+            if root is not None:
+                # git apply accepts stale line numbers when context moved. Locate
+                # that context in the current source before comparing edits.
+                old = []
+                count = int(re.match(r"@@ -\d+(?:,(\d+))?", line)[1] or 1)
+                for context in lines[index + 1:]:
+                    if len(old) == count:
+                        break
+                    if context.startswith(("@@", "diff --git", "--- a/")):
+                        break
+                    if not context or context.startswith((" ", "-")):
+                        old.append(context[1:] if context else "")
+                source = (root / path).read_text().splitlines()
+                matches = [at + 1 for at in range(len(source) - len(old) + 1)
+                           if source[at:at + len(old)] == old]
+                if not matches:
+                    raise ValueError(f"mutation context missing: {path}:{position}")
+                position = min(matches, key=lambda at: abs(at - position))
+        elif line.startswith("---") or line.startswith("+++"):
+            continue
+        elif position is not None:
+            if line.startswith("-"):
+                changes.append((path, position, "-", line[1:]))
+                position += 1
+            elif line.startswith("+"):
+                changes.append((path, position, "+", line[1:]))
+            elif not line or line.startswith(" "):
+                position += 1
+    return tuple(changes)
 
 
 class MutationsTest(unittest.TestCase):
@@ -17,8 +63,18 @@ class MutationsTest(unittest.TestCase):
         self.assertTrue(names)
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(set(names), {path.name for path in directory.glob("*.patch")})
+        fingerprints = {}
+        contents = set()
         for entry in entries:
             with self.subTest(patch=entry["patch"]):
+                patch = (directory / entry["patch"]).read_text()
+                self.assertTrue(patch not in contents, "identical mutation patches")
+                contents.add(patch)
+                fingerprint = changed_lines(patch, ROOT)
+                self.assertTrue(fingerprint)
+                self.assertNotIn(fingerprint, fingerprints,
+                                 f"duplicate changed lines: {fingerprints.get(fingerprint)}")
+                fingerprints[fingerprint] = entry["patch"]
                 self.assertTrue(entry["failure"].strip())
                 self.assertNotIn("/", entry["patch"])
                 test_file = ROOT / entry["file"]
@@ -29,6 +85,94 @@ class MutationsTest(unittest.TestCase):
                 result = processes.run(["git", "apply", "--check", directory / entry["patch"]],
                     cwd=ROOT, capture_output=True, text=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class MutationRunnerTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        folder = Path(self.temporary.name)
+        self.root = folder / "repo"
+        self.root.mkdir()
+        self.directory = folder / "patches"
+        self.directory.mkdir()
+        self.log = folder / "executions"
+        self.run_git("init", "-q")
+        self.run_git("config", "user.name", "Test")
+        self.run_git("config", "user.email", "test@example.invalid")
+        self.baseline = "value = 0\n"
+        (self.root / "value.py").write_text(self.baseline)
+        (self.root / "selected.py").write_text(
+            "from pathlib import Path\nimport sys\nfrom value import value\n"
+            f"log = Path({str(self.log)!r})\n"
+            "with log.open('a') as output: output.write(str(value) + '\\n')\n"
+            "if value == 3: print('unrelated failure'); sys.exit(1)\n"
+            "if value == 4: Path('residue').write_text('dirty')\n"
+            "if value in (1, 2, 4): print('guard rejected mutation'); sys.exit(1)\n")
+        self.run_git("add", "value.py", "selected.py")
+        self.run_git("commit", "-qm", "Baseline")
+
+    def run_git(self, *args):
+        return mutations.command(["git", *args], root=self.root).stdout
+
+    def entry(self, value):
+        name = f"value-{value}.patch"
+        patch = "".join(difflib.unified_diff(
+            self.baseline.splitlines(True), [f"value = {value}\n"],
+            fromfile="a/value.py", tofile="b/value.py"))
+        (self.directory / name).write_text(patch)
+        return {"patch": name, "file": "selected.py", "selection": "line:1",
+                "failure": "guard rejected mutation"}
+
+    def prove(self, entry, green=None):
+        return mutations.prove(entry, green=green, root=self.root,
+                               directory=self.directory, test_command=(sys.executable, "-B"))
+
+    def test_green_is_required_once_for_each_selected_command(self):
+        green = set()
+        for value in (1, 2):
+            self.assertIn("GREEN baseline; RED", self.prove(self.entry(value), green))
+        self.assertEqual(self.log.read_text().splitlines(), ["0", "1", "2"])
+        different = self.entry(1)
+        different["selection"] = "line:2"
+        self.prove(different, green)
+        self.assertEqual(self.log.read_text().splitlines()[-2:], ["0", "1"])
+        self.assertEqual(self.run_git("status", "--porcelain"), "")
+        (self.root / "revision").write_text("new baseline\n")
+        self.run_git("add", "revision")
+        self.run_git("commit", "-qm", "Next baseline")
+        self.prove(self.entry(2), green)
+        self.assertEqual(self.log.read_text().splitlines()[-2:], ["0", "2"])
+
+    def test_non_green_baseline_never_applies_mutant(self):
+        (self.root / "selected.py").write_text("print('guard rejected mutation'); raise SystemExit(1)\n")
+        self.run_git("add", "selected.py")
+        self.run_git("commit", "-qm", "Failing baseline")
+        with self.assertRaisesRegex(RuntimeError, "baseline is not GREEN"):
+            self.prove(self.entry(1))
+        self.assertEqual((self.root / "value.py").read_text(), self.baseline)
+        self.assertEqual(self.run_git("status", "--porcelain"), "")
+
+    def test_survivor_and_unrelated_failure_are_reverted(self):
+        for value, error in [(5, "remained GREEN"), (3, "without its claimed assertion")]:
+            with self.subTest(value=value), self.assertRaisesRegex(RuntimeError, error):
+                self.prove(self.entry(value))
+            self.assertEqual((self.root / "value.py").read_text(), self.baseline)
+            self.assertEqual(self.run_git("status", "--porcelain"), "")
+
+    def test_dirty_post_reversal_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "requires a clean tree"):
+            self.prove(self.entry(4))
+        self.assertEqual((self.root / "value.py").read_text(), self.baseline)
+        self.assertTrue((self.root / "residue").is_file())
+
+    def test_fingerprint_ignores_context_and_file_metadata(self):
+        a = "--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n before\n-old\n+new\n after\n"
+        b = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -2 +2 @@\n-old\n+new\n"
+        self.assertEqual(changed_lines(a), changed_lines(b))
+        self.assertNotEqual(changed_lines(a), changed_lines(b.replace("+new", "+other")))
+        (self.root / "x").write_text("prefix\nbefore\nold\nafter\n")
+        self.assertEqual(changed_lines(a, self.root), changed_lines(b, self.root))
 
 
 if __name__ == "__main__":

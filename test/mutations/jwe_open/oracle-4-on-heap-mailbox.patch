@@ -6,6 +6,6 @@
          [tag, caller, address, flag, mode, r, d, f, policy.unwrap_timeout * 1_000],
 -        [:monitor, {:message_queue_data, :off_heap}])
 +        [:monitor, {:message_queue_data, :on_heap}])
-       count = if mode == :single, do: 1, else: count(input, 0, count_limit(p))
        s = %{tag: tag, address: address, guard: guard, monitor: monitor, flag: flag,
          d: d, f: f, mode: mode, notice: nil, down: nil, reply: nil,
+         payloads: %{}, settled: %{}, groups: [], auth: []}

@@ -20,18 +20,11 @@ defmodule RequestSeal.JOSE.JWE.Open do
       {guard, monitor} = :erlang.spawn_opt(Guard, :run,
         [tag, caller, address, flag, mode, r, d, f, policy.unwrap_timeout * 1_000],
         [:monitor, {:message_queue_data, :off_heap}])
-      count = if mode == :single, do: 1, else: count(input, 0, count_limit(p))
       s = %{tag: tag, address: address, guard: guard, monitor: monitor, flag: flag,
         d: d, f: f, mode: mode, notice: nil, down: nil, reply: nil,
         payloads: %{}, settled: %{}, groups: [], auth: []}
       try do
-        s = bootstrap(s, input, p, expected, count)
-        {outcome, s} = wait(s)
-        wait_end(Bounds.now())
-        cleanup(s)
-        answer = materialize(outcome, s)
-        emit(s, answer)
-        answer
+        take_notice(s, input, p, expected)
       after
         :erlang.unalias(address)
         :erlang.demonitor(monitor, [:flush])
@@ -39,7 +32,78 @@ defmodule RequestSeal.JOSE.JWE.Open do
       end
     catch
       :throw, {:jose_error, reason, layer} -> Codec.error(reason, layer)
-      _, _ -> Codec.error(:invalid_policy)
+      _, _ -> Codec.error(:internal_failure, :internal)
+    end
+  end
+
+  # Establish notice ownership outside the work that can raise, so its table id
+  # remains available to cleanup even if bootstrap or result assembly fails.
+  defp take_notice(s, input, p, expected) do
+    tag = s.tag
+    monitor = s.monitor
+    guard = s.guard
+    at = s.f + Bounds.teardown(:atomics.get(s.flag, 2))
+    receive do
+      {:'ETS-TRANSFER', notice, ^guard, {^tag, :caller}} ->
+        run(%{s | notice: notice}, input, p, expected)
+      {:DOWN, ^monitor, :process, ^guard, reason} ->
+        {answer, _} = wait(%{s | down: reason})
+        answer
+    after
+      Bounds.remaining(at) ->
+        if Bounds.now() < at, do: take_notice(s, input, p, expected),
+          else: Codec.error(:deadline_exceeded, :crypto)
+    end
+  end
+
+  defp run(s, input, p, expected) do
+    try do
+      count = if s.mode == :single, do: 1, else: count(input, 0, count_limit(p))
+      current = bootstrap(s, input, p, expected, count)
+      {outcome, current} = wait(current)
+      wait_end(Bounds.now())
+      cleanup(current)
+      answer = materialize(outcome, current)
+      emit(current, answer)
+      answer
+    catch
+      :throw, {:jose_error, reason, layer} ->
+        cancel(s)
+        Codec.error(reason, layer)
+      _, _ ->
+        cancel(s)
+        Codec.error(:internal_failure, :internal)
+    after
+      cleanup(s)
+    end
+  end
+
+  defp cancel(s) do
+    :atomics.put(s.flag, 1, 1)
+    # Returning the caller notice uses the same cancellation marker as caller
+    # death and wakes the guard without exposing any exception term to it.
+    if :ets.info(s.notice, :owner) == self() do
+      try do
+        :ets.give_away(s.notice, s.guard, {s.tag, :caller})
+      catch
+        :error, :badarg -> :ok
+      end
+    end
+    ref = :erlang.monitor(:process, s.guard)
+    try do
+      await_guard(s.guard, ref, s.f + Bounds.teardown(:atomics.get(s.flag, 2)))
+    after
+      :erlang.demonitor(ref, [:flush])
+    end
+    wait_end(Bounds.now())
+  end
+
+  defp await_guard(guard, ref, at) do
+    receive do
+      {:DOWN, ^ref, :process, ^guard, _} -> :ok
+    after
+      Bounds.remaining(at) ->
+        if Bounds.now() < at, do: await_guard(guard, ref, at), else: :ok
     end
   end
 
@@ -80,8 +144,6 @@ defmodule RequestSeal.JOSE.JWE.Open do
     monitor = s.monitor
     guard = s.guard
     receive do
-      {:'ETS-TRANSFER', notice, _, {^tag, :caller}} ->
-        bootstrap(%{s | notice: notice}, input, p, expected, count)
       {^tag, :preflight, pid} ->
         send(pid, {tag, :policy, p})
         send(pid, {tag, :count, count})

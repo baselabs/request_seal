@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/coordinator.ex
++++ b/lib/request_seal/jose/jwe/coordinator.ex
+@@ -62,7 +62,7 @@
+     now = Bounds.now()
+     cond do
+       now >= s.d -> deadline(s)
+-      s.n != nil and s.settled == s.n and s.handed_off -> reply(s, :ok)
++      s.n != nil and s.settled == s.n -> reply(s, :ok)
+       true ->
+         s = if not s.expired_r and now >= s.r and s.handed_off, do: expire_r(s), else: s
+         s = barrier(s, now)

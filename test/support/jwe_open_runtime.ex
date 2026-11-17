@@ -93,11 +93,13 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     items = Keyword.get(options, :items, List.duplicate(%{token: token, expected: expected}, n))
     single = Keyword.get(options, :single, false)
     p = if single, do: single(p, expected), else: p
+    hold_caller = Keyword.get(options, :hold_caller, false)
     {caller, monitor} = spawn_monitor(fn ->
       receive do
         :go ->
           result = if single, do: JWE.decrypt(token, p), else: JWE.decrypt_many(items, p)
           send(observer, {:returned, self(), result})
+          if hold_caller, do: (receive do :release -> :ok end)
       end
     end)
     :erlang.trace(caller, true, [:procs, :set_on_spawn, :send, :receive, :call, :monotonic_timestamp, {:tracer, observer}])

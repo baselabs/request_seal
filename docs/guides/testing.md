@@ -101,6 +101,30 @@ Other [notebooks](../../livebooks/overview.md) use locally generated keys.
 The runner validates Hex install cells before substituting the checkout; registry installation is separate.
 Headless assertions establish neither interactive UI behavior nor deployed-peer acceptance.
 
+## JWE lifecycle gates
+
+`python3 -B scripts/mutations.py` verifies 60 distinct reversing patches. It
+first requires the selected test to pass on a clean tree, once per distinct
+command and baseline commit. Each applied patch must then fail with its named
+assertion; reversal must leave a clean tree. Equivalent changed lines are
+rejected even when patch headers or context differ.
+
+`python3 -B scripts/jwe_teardown_gate.py --output teardown.json` records absolute
+trigger-to-last-end-marker monotonic microseconds against Bounds B(10,000), and
+derived K_pf against Bounds K_pf. The constants are 170 ms and 5 ms respectively;
+the gate reads them from the library. JSON and Markdown retain each scenario's
+maximum as a fraction of B and derived K_pf as a fraction of its bound.
+
+Linux samples require `/proc/loadavg` at most online schedulers and CPU steal
+from `/proc/stat` at most 5% over the sample window. The artifact records the raw
+counters, loads, steal percentages, online schedulers, logical CPUs, CPU model
+and OTP release. Counter windows span at least 20 ms to avoid zero-tick windows
+for short units; the observation delay stays outside every timed unit.
+Load and steal share 30 host-condition attempts. Placements have
+20 attempts; a handoff completed before D is retried. Exhausting either budget
+fails, with the observed attempts. No host rejection becomes a skip or a relaxed
+runtime bound.
+
 ## Web Bot Auth evidence
 
 `test/web_bot_auth_test.exs` checks protocol-00 E.1.1/E.2.1 generic bases and cryptography,

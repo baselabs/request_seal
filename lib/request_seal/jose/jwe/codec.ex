@@ -140,7 +140,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       depth(encoded, 0, false, false)
       {:ok, encoded}
     catch
-      _, _ -> error(:invalid_policy)
+      :throw, {:jose_error, _, _} -> error(:invalid_policy)
     end
   end
 
@@ -204,7 +204,9 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       {:ok, value}
     catch
       :throw, {:jose_error, reason, layer} -> error(reason, layer)
-      _, _ -> error(:invalid_header)
+      :error, :unexpected_end -> error(:invalid_header)
+      :error, {:invalid_byte, _} -> error(:invalid_header)
+      :error, {:unexpected_sequence, _} -> error(:invalid_header)
     end
   end
 
@@ -214,8 +216,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
   end
 
   def tree(v) when is_list(v) do
-    ensure(length(v) <= 64, :limit)
-    tree_list(v)
+    tree_list(v, 0)
   end
 
   def tree(v) when is_binary(v) do
@@ -236,12 +237,15 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     tree_pairs(rest)
   end
 
-  defp tree_list([]), do: :ok
+  defp tree_pairs(_), do: fail(:invalid_header)
 
-  defp tree_list([v | rest]) do
+  defp tree_list([], _), do: :ok
+  defp tree_list([_ | _], n) when n >= 64, do: fail(:limit)
+  defp tree_list([v | rest], n) do
     tree(v)
-    tree_list(rest)
+    tree_list(rest, n + 1)
   end
+  defp tree_list(_, _), do: fail(:invalid_header)
 
   defp whitespace?(<<>>), do: true
   defp whitespace?(<<b, rest::binary>>) when b in [32, 9, 10, 13], do: whitespace?(rest)
@@ -293,16 +297,16 @@ defmodule RequestSeal.JOSE.JWE.Codec do
   end
 
   def decode(value) when is_binary(value) do
-    try do
-      ensure(:binary.match(value, ["=", "\t", "\n", "\r", " "]) == :nomatch, :invalid_base64)
-      ensure(canonical?(value), :invalid_base64)
-      :base64.decode(value, %{mode: :urlsafe, padding: false})
-    catch
-      _, _ -> fail(:invalid_base64)
-    end
+    ensure(base64url?(value) and canonical?(value), :invalid_base64)
+    :base64.decode(value, %{mode: :urlsafe, padding: false})
   end
 
   def decode(_), do: fail(:invalid_base64)
+  defp base64url?(<<>>), do: true
+  defp base64url?(<<c, rest::binary>>)
+       when c in ?A..?Z or c in ?a..?z or c in ?0..?9 or c in [?-, ?_],
+       do: base64url?(rest)
+  defp base64url?(_), do: false
 
   defp canonical?(v) do
     case rem(byte_size(v), 4) do
@@ -389,7 +393,6 @@ defmodule RequestSeal.JOSE.JWE.Codec do
        }}
     catch
       :throw, {:jose_error, reason, layer} -> error(reason, layer)
-      _, _ -> error(:invalid_header)
     end
   end
 
@@ -429,7 +432,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       ensure(not (is_map_key(h, "apu") and is_map_key(h, "apv") and apu == apv), :invalid_header)
       %{apu: apu, apv: apv}
     catch
-      _, _ -> fail(:invalid_header)
+      :throw, {:jose_error, _, _} -> fail(:invalid_header)
     end
   end
 
@@ -455,7 +458,12 @@ defmodule RequestSeal.JOSE.JWE.Codec do
           rhs = if rhs < 0, do: rhs + prime, else: rhs
           ensure(xi < prime and yi < prime and rem(yi * yi, prime) == rhs, :invalid_header)
           point = <<4, x::binary, y::binary>>
-          :crypto.compute_key(:ecdh, point, <<1::unsigned-big-size(size * 8)>>, curve)
+          try do
+            :crypto.compute_key(:ecdh, point, <<1::unsigned-big-size(size * 8)>>, curve)
+          catch
+            :error, :badarg -> fail(:invalid_header)
+            :error, {:badarg, _, _} -> fail(:invalid_header)
+          end
           {:ec, crv, point}
 
         _ ->

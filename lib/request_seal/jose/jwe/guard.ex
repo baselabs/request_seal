@@ -8,25 +8,26 @@ defmodule RequestSeal.JOSE.JWE.Guard do
     try do
       notice = :ets.new(:caller_notice, [:private, {:heir, self(), {tag, :caller}}])
 
-      if give_caller(notice, caller, tag) do
-        ended = :ets.new(:ended, [:private, :set])
-        registry = :ets.new(:registry, [:protected, :set, {:heir, self(), {tag, :registry}}])
+      case give_caller(notice, caller, tag, f) do
+        true ->
+          ended = :ets.new(:ended, [:private, :set])
+          registry = :ets.new(:registry, [:protected, :set, {:heir, self(), {tag, :registry}}])
 
-        coordinator =
-          :erlang.spawn_link(Coordinator, :run, [
-            tag, self(), caller, notice, address, flag, mode, r, d, unwrap
-          ])
+          coordinator =
+            :erlang.spawn_link(Coordinator, :run, [
+              tag, self(), caller, notice, address, flag, mode, r, d, unwrap
+            ])
 
-        :ets.give_away(registry, coordinator, {tag, :registry})
-        :erlang.send_after(Bounds.milliseconds(f), self(), {tag, :f}, abs: true)
+          :ets.give_away(registry, coordinator, {tag, :registry})
+          :erlang.send_after(Bounds.milliseconds(f), self(), {tag, :f}, abs: true)
 
-        loop(%{
-          tag: tag, caller_notice: notice, ended: ended, registry: registry,
-          coordinator: coordinator, flag: flag, d: d, f: f, ended_at: nil,
-          exit_seen: false, awaiting: 0, stop_at: nil, anchor: nil, cause: nil
-        })
-      else
-        :normal
+          loop(%{
+            tag: tag, caller_notice: notice, ended: ended, registry: registry,
+            coordinator: coordinator, flag: flag, d: d, f: f, ended_at: nil,
+            exit_seen: false, awaiting: 0, stop_at: nil, anchor: nil, cause: nil
+          })
+        :deadline -> :deadline
+        false -> :normal
       end
     catch
       _, _ -> :internal_failure
@@ -36,9 +37,13 @@ defmodule RequestSeal.JOSE.JWE.Guard do
 
   defp finish(reason), do: exit(reason)
 
-  defp give_caller(notice, caller, tag) do
+  defp give_caller(notice, caller, tag, f) do
     try do
-      :ets.give_away(notice, caller, {tag, :caller})
+      if Bounds.now() < f do
+        :ets.give_away(notice, caller, {tag, :caller})
+      else
+        :deadline
+      end
     catch
       :error, :badarg -> false
     end

@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""Run the release teardown gate on CI and retain its machine-readable artifact."""
+"""Measure absolute trigger-to-last-end-marker monotonic microseconds against
+Bounds B(10,000), and derived K_pf against Bounds K_pf. Samples are admitted only
+when /proc/loadavg is at most online schedulers and /proc/stat CPU steal is at
+most 5% over the sample window. Exhausted host-condition or placement budgets
+fail, never skip. Retain host identity, observations and absolute headroom.
+CPU counter windows span at least 20 ms; that observation delay is outside all
+timed units and does not alter the absolute runtime measurements.
+"""
 import argparse
 import json
+import math
 import os
 from pathlib import Path
+import re
 import sys
 
 import processes
@@ -11,57 +20,175 @@ import processes
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def bounds():
+    """Independently check reported constants against the shipped Bounds source."""
+    source = (ROOT / "lib/request_seal/jose/jwe/bounds.ex").read_text()
+    values = {}
+    for name in ("max_tokens", "base_teardown_us", "per_item_teardown_us", "preflight_us"):
+        match = re.search(r"^  @" + name + r" ([\d_]+)$", source, re.MULTILINE)
+        if match is None:
+            raise ValueError("cannot read Bounds constant: " + name)
+        values[name] = int(match[1].replace("_", ""))
+    if ("def teardown(n), do: @base_teardown_us + @per_item_teardown_us * n" not in source or
+            "def preflight, do: @preflight_us" not in source):
+        raise ValueError("Bounds derivation changed; update its independent gate check")
+    n = values["max_tokens"]
+    return n, values["base_teardown_us"] + values["per_item_teardown_us"] * n, values["preflight_us"]
+
+
+def cpu_times(text):
+    """Parse Linux's aggregate CPU counters; guest time is already in user/nice."""
+    fields = text.splitlines()[0].split()
+    if fields[0] != "cpu" or len(fields) < 9:
+        raise ValueError("missing aggregate /proc/stat CPU counters")
+    values = [int(value) for value in fields[1:9]]
+    if any(value < 0 for value in values):
+        raise ValueError("negative CPU counter")
+    return sum(values), values[7]
+
+
+def load_average(text):
+    value = float(text.split()[0])
+    if not math.isfinite(value) or value < 0:
+        raise ValueError("invalid /proc/loadavg")
+    return value
+
+
+def steal_percent(before, after):
+    total_before, steal_before = cpu_times(before)
+    total_after, steal_after = cpu_times(after)
+    elapsed, stolen = total_after - total_before, steal_after - steal_before
+    if elapsed <= 0 or stolen < 0 or stolen > elapsed:
+        return None
+    return 100 * stolen / elapsed
+
+
+def admit(observations, online, attempts):
+    """Replay the shared load/steal retry budget from retained /proc samples."""
+    seen = []
+    for observation in observations[:attempts]:
+        load = load_average(observation["loadavg"])
+        steal = steal_percent(observation["cpu_before"], observation["cpu_after"])
+        seen.append({"load": load, "steal": steal})
+        if observation["load"] != load or observation["steal"] != steal:
+            raise ValueError("host observation disagrees with /proc counters")
+        if load <= online and steal is not None and 0 <= steal <= 5:
+            return observation
+    raise ValueError("host condition exhausted: " + json.dumps(seen))
+
+
+def host_samples(conditions, loads, steals, online, attempts):
+    if not (len(conditions) == len(loads) == len(steals) == 5):
+        return False
+    for history, load, steal in zip(conditions, loads, steals):
+        if not history or len(history) > attempts:
+            return False
+        # An exit upper bound can originate in a one- or two-scheduler peer.
+        selected_online = history[-1]["schedulers_online"]
+        if selected_online not in online or any(
+                row["schedulers_online"] != selected_online for row in history):
+            return False
+        accepted = admit(history, selected_online, attempts)
+        if accepted is not history[-1] or accepted["load"] != load or accepted["steal"] != steal:
+            return False
+    return True
+
+
 def markdown(report):
-    rows = ["| Scenario | Five trigger-to-last-end times (us) | Max (us) | Load |",
-            "|---|---|---|---|"]
+    if "error" in report:
+        return ("Teardown gate failed: " + report["error"] + "\nHost: " +
+                json.dumps(report.get("host", {})) + "\n" + report.get("output", ""))
+    host, constants = report["host"], report["constants"]
+    rows = [f"Host: {host['cpu_model']}; logical CPUs: {host['logical_cpus']}; "
+            f"online schedulers: {host['schedulers_online']}; OTP: {host['otp']}.",
+            f"Absolute limits from Bounds: B({constants['n']}) = {constants['b_us']} us; "
+            f"K_pf = {constants['k_pf_us']} us.", "",
+            "| Scenario | Five trigger-to-last-end times (us) | Max / B | Load | CPU steal (%) |",
+            "|---|---|---|---|---|"]
     for sample in report["scenarios"]:
-        rows.append("| {} | {} | {} | {} |".format(sample["scenario"],
-            ", ".join(str(value) for value in sample["times_us"]),
-            max(sample["times_us"]), ", ".join(str(value) for value in sample["loads"])))
-    rows += ["", "| Unit | Five times (us) | Load |", "|---|---|---|"]
+        rows.append("| {} | {} | {:.3%} | {} | {} |".format(sample["scenario"],
+            ", ".join(map(str, sample["times_us"])),
+            max(sample["times_us"]) / constants["b_us"],
+            ", ".join(map(str, sample["loads"])), ", ".join(map(str, sample["steals"]))))
+    rows += ["", "| Unit | Five times (us) | Load | CPU steal (%) |", "|---|---|---|---|"]
     for name, values in report["units_us"].items():
-        loads = report["units_loads"][name]
-        rows.append(f"| {name} | {', '.join(map(str, values))} | {', '.join(map(str, loads))} |")
+        loads, steals = report["units_loads"][name], report["units_steals"][name]
+        rows.append(f"| {name} | {', '.join(map(str, values))} | {loads} | {steals} |")
     for sample in report["scenarios"]:
         if sample["scenario"].startswith("D/"):
-            rows.append(f"| {sample['scenario']} cooperative exit | {sample['preflight_exit_us']} | |")
-    rows += ["", f"Derived K_pf: {report['derived_k_pf_us']} us; limit: 5000 us.",
-             f"S5c preflight exits: {report['s5c_exit_us']} us."]
+            rows.append(f"| {sample['scenario']} cooperative exit | {sample['preflight_exit_us']} | | |")
+    rows += ["", f"Derived K_pf: {report['derived_k_pf_us']} us; "
+             f"{report['derived_k_pf_us'] / constants['k_pf_us']:.3%} of Bounds K_pf.",
+             f"S5c preflight exits: {report['s5c_exit_us']} us.", "",
+             "Host observations (including rejected attempts):", "```json",
+             json.dumps({"scenarios": {row["scenario"]: row["host_conditions"]
+                                      for row in report["scenarios"]},
+                         "units": report["units_host_conditions"]}, indent=2), "```"]
     return "\n".join(rows) + "\n"
 
 
 def passes(report):
-    """Refuse missing samples as well as measurements outside the contract."""
+    """Recompute derived bounds and host admission; reject incomplete artifacts."""
+    try:
+        return _passes(report)
+    except (KeyError, TypeError, ValueError, IndexError, ZeroDivisionError):
+        return False
+
+
+def _passes(report):
     expected = {f"{trigger}/{topology}" for trigger in ("S1", "S4", "S5", "S7")
                 for topology in ("resolvers", "queued", "custody")}
     expected |= {"S5c", "D/token_scan", "D/expected", "D/name"}
+    constants, host = report["constants"], report["host"]
+    bound, k_pf, attempts = constants["b_us"], constants["k_pf_us"], constants["load_attempts"]
+    if (constants["n"], bound, k_pf) != bounds():
+        return False
+    if not (bound > 0 and k_pf > 0 and attempts > 0 and constants["placement_attempts"] > 0
+            and host["schedulers_online"] > 0 and host["logical_cpus"] > 0
+            and host["cpu_model"].strip() and host["otp"].strip()):
+        return False
     rows = report["scenarios"]
     if len(rows) != len(expected) or {row["scenario"] for row in rows} != expected:
         return False
     for row in rows:
         online = (1 if row["scenario"] == "S5c" else 2 if row["scenario"].startswith("D/")
-                  else report["constants"]["schedulers_online"])
-        if len(row["times_us"]) != 5 or len(row["loads"]) != 5:
+                  else host["schedulers_online"])
+        if len(row["times_us"]) != 5 or any(
+                not math.isfinite(value) or not 0 <= value <= bound for value in row["times_us"]):
             return False
-        if any(value < 0 or value > 170_000 for value in row["times_us"]):
-            return False
-        if any(value < 0 or value > online for value in row["loads"]):
+        if row["headroom"] != max(row["times_us"]) / bound or not host_samples(
+                row["host_conditions"], row["loads"], row["steals"], {online}, attempts):
             return False
     units = report["units_us"]
     if set(units) != {"separator_and_accounting", "expected_validation_and_serialization",
                       "permitted_name_validation", "final_report", "preflight_exit", "aead"}:
         return False
-    if any(len(values) != 5 or any(value < 0 for value in values) for values in units.values()):
+    if any(len(values) != 5 or any(not math.isfinite(value) or value < 0 for value in values)
+           for values in units.values()):
         return False
-    unit_loads = report["units_loads"]
-    if set(unit_loads) != set(units) or any(
-            len(values) != 5 or any(value < 0 or value > report["constants"]["schedulers_online"]
-                                    for value in values) for values in unit_loads.values()):
+    for key in ("units_loads", "units_steals", "units_host_conditions"):
+        if set(report[key]) != set(units):
+            return False
+    for name in units:
+        online = {host["schedulers_online"]}
+        if name == "preflight_exit":
+            online |= {1, 2}
+        if not host_samples(report["units_host_conditions"][name], report["units_loads"][name],
+                            report["units_steals"][name], online, attempts):
+            return False
+    longest = max(value for name, values in units.items()
+                  if name not in {"final_report", "preflight_exit", "aead"} for value in values)
+    final_report, exit_bound = max(units["final_report"]), max(units["preflight_exit"])
+    derived = longest + final_report + exit_bound
+    if (report["derived_k_pf_us"] != derived or derived > k_pf or
+            report["headroom"]["derived_k_pf"] != derived / k_pf or
+            report["derivation"] != {"longest_unit_us": longest, "final_report_us": final_report,
+                                     "exit_upper_bound_us": exit_bound}):
         return False
     exits = [report["s5c_exit_us"]] + [row["preflight_exit_us"] for row in rows
                                       if row["scenario"].startswith("D/")]
-    return (all(len(values) == 5 and all(0 <= value <= 5_000 for value in values)
-                for values in exits) and 0 <= report["derived_k_pf_us"] <= 5_000)
+    return all(len(values) == 5 and all(math.isfinite(value) and 0 <= value <= exit_bound
+                                       for value in values) for values in exits)
 
 
 def append_summary(summary):
@@ -79,9 +206,11 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.unlink(missing_ok=True)
     result = processes.run(["mix", "run", "scripts/jwe_teardown_gate.exs", str(args.output)],
-        cwd=ROOT, extra_env={"MIX_ENV": "test"}, check=False, timeout=3600)
+        cwd=ROOT, extra_env={"MIX_ENV": "test"}, check=False, timeout=3600,
+        capture_output=True, text=True)
     if not args.output.is_file():
-        failure = {"error": "gate did not produce measurements", "exit_code": result.returncode}
+        failure = {"error": "gate did not produce measurements", "exit_code": result.returncode,
+                   "output": (result.stdout or "") + (result.stderr or "")}
         args.output.write_text(json.dumps(failure, indent=2) + "\n")
         append_summary("Teardown gate failed before measurements: " + failure["error"] + "\n")
         return result.returncode or 1

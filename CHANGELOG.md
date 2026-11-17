@@ -2,6 +2,16 @@
 
 ## Unreleased 2.0.0
 
+- Report broken JWE library lifecycles as `:internal_failure`, retain caller
+  notices through exception cleanup, and join registered children before return.
+  Preflight cannot send a validation verdict after successful admission; final
+  intake retries early timeouts, and guards refuse caller-notice handoff past F.
+- Verify 60 distinct JWE reversing mutations with a passing clean baseline per
+  selected test and commit, then the named rejection and a clean reversal.
+  The teardown gate measures absolute Bounds limits with load and CPU steal
+  admission, host identity, retry evidence, and independently checked derivation.
+- Regenerate native JOSE inventories and disclosure allowlists after removing
+  obsolete native case files, without leaving Python bytecode caches.
 - Isolate JWE cancellation in a guard with an inherited registry and private
   child end notices. Teardown uses B(n) = 20 ms + 15 microseconds per item;
   caller wait-end is bounded by D + 100 ms + B(n), before caller handlers.

@@ -46,6 +46,13 @@ before forwarding it, with the same word and binary-byte bounds for handles;
 oversized answers are `:key_resolver_failed`. Sink delivery normalizes in its
 sender. RequestSeal owns UTF-8 traversal on every library path.
 
+Validation catches only explicit input failures. Unexpected library exceptions
+and exits become `:internal_failure`, including a preflight exit without a final
+report during the D drain. A successful validation report ends outer validation
+verdicts; completion also requires the row handoff. Caller notice ownership is
+retained through exception cleanup, and a guard past F keeps and deletes its
+notice instead of transferring it to a caller that may already have returned.
+
 ## Reasons
 
 Teardown work is linear per child. B(n) represents that work directly while
@@ -55,11 +62,22 @@ ETS and an off-heap guard mailbox keep reaction state independent of n. End
 notices avoid copying caller-sized exit reasons. The inherited registry remains
 complete even when the coordinator stops between process creation and handoff.
 
-The committed reduction oracles and reversing mutations check constant reaction,
+The committed reduction oracles and 60 distinct reversing mutations check constant reaction,
 linear complete teardown, queue bounds, guard heap and caller wait-end. A release
 gate measures the absolute bound and derives K_pf from byte units, report send
-and preflight exit under its declared load condition. These are verification
-obligations, not one-run performance claims.
+and preflight exit. Constants come from Bounds; no baseline ratio replaces them.
+Final report measurements send the production row, count and control envelopes
+from a sensitive process with an off-heap mailbox. The consumer independently
+recomputes the longest unit + maximum report send + maximum preflight exit.
+
+Samples require Linux load average at most online schedulers and aggregate CPU
+steal at most 5% across the sample window. Raw counters, load, CPU model, logical
+CPU count, online schedulers, OTP release and headroom accompany measurements.
+Counter windows span at least 20 ms, outside the timed units, to admit short
+units only with a measurable CPU accounting denominator.
+Load and steal share 30 host-condition attempts; invalid placements have 20
+attempts. Exhausting either budget fails and reports the observed attempts.
+These are verification obligations, not one-run performance claims.
 
 ## Consequences
 

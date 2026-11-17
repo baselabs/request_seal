@@ -3,8 +3,12 @@
 This script never calls RequestSeal or computes an expected cryptographic result.
 Positive bytes come unchanged from the corpus's published/peer sources. Negative
 headers change one public admission predicate and retain the original signature.
-Run with python3 -B so importing the inventory tooling leaves no bytecode cache.
+Imports leave no bytecode cache, including when invoked without -B.
 """
+import sys
+
+sys.dont_write_bytecode = True
+
 import base64
 import json
 from pathlib import Path
@@ -171,14 +175,27 @@ def embedded():
 
 
 def main():
-    protected(); batch(); embedded(); refresh()
+    PATHS.clear()
+    for folder in (CORPUS / "cases/jwe", CORPUS / "cases/jws"):
+        for path in folder.glob("native-*"):
+            if path.is_file():
+                path.unlink()
+    protected()
+    batch()
+    embedded()
+    refresh()
     config = ROOT / ".gitleaks.toml"
     text = config.read_text()
     marker = "# Native policy cases derived from public JOSE vectors."
-    if marker in text: text = text[:text.index(marker)]
+    suffix = ""
+    if marker in text:
+        start = text.index(marker)
+        end = text.index("\n]", start) + len("\n]")
+        suffix = text[end:]
+        text = text[:start].rstrip() + "\n"
     text += "\n" + marker + "\n[[allowlists]]\ndescription = \"Native JOSE policy and isolation cases carrying published or pinned peer compact vectors and explicit rejection mutations\"\npaths = [\n"
     text += "".join("  '''^" + p.replace(".", r"\.") + "$''',\n" for p in sorted(PATHS))
-    config.write_text(text + "]\n")
+    config.write_text(text + "]\n" + suffix.lstrip("\n"))
     print("Native JOSE cases:", len(PATHS))
 
 

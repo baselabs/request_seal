@@ -5,26 +5,39 @@ defmodule RequestSeal.JOSE.JWE.Preflight do
   def run(tag, parent, flag, mode, d) do
     :erlang.process_flag(:sensitive, true)
 
-    try do
+    validated = try do
       p = take_policy(tag, flag, d, mode)
       n = take_count(tag, parent, flag, d, mode, p)
       {rows, _, _} = intake(tag, flag, d, mode, p, n, 0, [], 0, 0)
       Codec.unit(flag, d)
-      send(parent, {tag, :preflight, :ok})
-      handoff(tag, parent, flag, d, p, :lists.reverse(rows), %{})
+      {:ok, p, rows}
     catch
       :throw, :preflight_deadline ->
-        :atomics.put(flag, 1, 1)
-        send(parent, {tag, :preflight, :deadline})
+        deadline(tag, parent, flag)
       :throw, {:jose_error, reason, layer} ->
         :atomics.put(flag, 1, 1)
         send(parent, {tag, :preflight, {:outer, reason, layer}})
-      _, _ ->
-        :atomics.put(flag, 1, 1)
-        send(parent, {tag, :preflight, {:outer, :invalid_policy, :input}})
+        :done
+    end
+
+    case validated do
+      {:ok, p, rows} ->
+        send(parent, {tag, :preflight, :ok})
+        try do
+          handoff(tag, parent, flag, d, p, :lists.reverse(rows), %{})
+        catch
+          :throw, :preflight_deadline -> deadline(tag, parent, flag)
+        end
+      :done -> :ok
     end
 
     exit(:normal)
+  end
+
+  defp deadline(tag, parent, flag) do
+    :atomics.put(flag, 1, 1)
+    send(parent, {tag, :preflight, :deadline})
+    :done
   end
 
   defp take_policy(tag, flag, d, mode) do
@@ -53,13 +66,15 @@ defmodule RequestSeal.JOSE.JWE.Preflight do
     end
   end
 
-  defp intake(tag, flag, d, _mode, _p, n, n, rows, input, plaintext) do
+  defp intake(tag, flag, d, mode, p, n, n, rows, input, plaintext) do
     :atomics.put(flag, 1, 1)
     Codec.unit(flag, d)
     receive do
       {^tag, :input_end} -> {rows, input, plaintext}
     after
-      Bounds.remaining(d) -> Codec.unit(flag, d)
+      Bounds.remaining(d) ->
+        Codec.unit(flag, d)
+        intake(tag, flag, d, mode, p, n, n, rows, input, plaintext)
     end
   end
 

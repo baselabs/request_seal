@@ -208,8 +208,9 @@ defmodule RequestSeal.JOSE.JWE.Worker do
   defp nearest([{_, group} | rest], d), do: nearest(rest, min(d, group.u))
 
   def fallback(token) do
+    width = Codec.width(token.enc)
     try do
-      {:ok, :crypto.strong_rand_bytes(Codec.width(token.enc))}
+      {:ok, :crypto.strong_rand_bytes(width)}
     catch
       _, _ -> Codec.error(:entropy_failure, :crypto)
     end
@@ -236,9 +237,13 @@ defmodule RequestSeal.JOSE.JWE.Worker do
       {:ok, key} when is_binary(key) and byte_size(key) == byte_size(prepared) and token.width_valid -> {key, true}
       _ -> {prepared, false}
     end
+    cipher = Codec.cipher(token.enc)
+    iv = token.iv
+    ct = token.ct
+    protected = token.protected
+    tag = token.tag
     try do
-      {:crypto.crypto_one_time_aead(Codec.cipher(token.enc), key, token.iv, token.ct,
-         token.protected, token.tag, false), success}
+      {:crypto.crypto_one_time_aead(cipher, key, iv, ct, protected, tag, false), success}
     catch
       _, _ -> {nil, false}
     end
