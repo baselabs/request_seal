@@ -39,7 +39,13 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
   test "separate-process Ed25519 reproduces RFC 9421 B.2.6 bytes and explicit EdDSA", ctx do
     key_file = write_rfc_key(ctx.dir)
-    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", [key_file], env: ctx.env, stderr_to_stdout: true)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", [key_file],
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
+
     key = agent_keys(ctx) |> hd() |> elem(1)
 
     for alg <- ["ed25519", {:jws, "EdDSA"}] do
@@ -138,7 +144,13 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
   defp byte_limit_key(ctx) do
     file = write_rfc_key(ctx.dir)
-    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", [file], env: ctx.env, stderr_to_stdout: true)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", [file],
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
+
     assert {:ok, handle} = SSHAgent.new("ed25519", ctx.socket, public_file(file))
     [entry] = :public_key.pem_decode(File.read!(Path.join(@root, "ed25519_private.pem")))
     {:ECPrivateKey, _, seed, _, _, _} = :public_key.pem_entry_decode(entry)
@@ -159,7 +171,13 @@ defmodule RequestSeal.CustodySSHAgentTest do
           {"ecdsa", "384", "ecdsa-p384-sha384", "ES384"}
         ] do
       file = generate(ctx, type, bits, type <> bits)
-      assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", [file], env: ctx.env, stderr_to_stdout: true)
+
+      assert {_, 0} =
+               RequestSeal.SystemCommand.run("ssh-add", [file],
+                 env: ctx.env,
+                 stderr_to_stdout: true
+               )
+
       key = public_file(file)
       assert Enum.any?(agent_keys(ctx), &(elem(&1, 1) == key))
 
@@ -177,7 +195,14 @@ defmodule RequestSeal.CustodySSHAgentTest do
     absent = generate(ctx, "ed25519", nil, "absent")
 
     for file <- [first, second],
-        do: assert({_, 0} = RequestSeal.SystemCommand.run("ssh-add", [file], env: ctx.env, stderr_to_stdout: true))
+        do:
+          assert(
+            {_, 0} =
+              RequestSeal.SystemCommand.run("ssh-add", [file],
+                env: ctx.env,
+                stderr_to_stdout: true
+              )
+          )
 
     assert_error(SSHAgent.new("ed25519", ctx.socket, public_file(absent)), :custodian_rejected)
     first_key = public_file(first)
@@ -186,13 +211,25 @@ defmodule RequestSeal.CustodySSHAgentTest do
     assert {:ok, signature} = Custody.sign(handle, @vector["base"])
     assert :ok = Crypto.verify("ed25519", @vector["base"], signature, first_key)
     assert {:error, _} = Crypto.verify("ed25519", @vector["base"], signature, second_key)
-    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", ["-d", first], env: ctx.env, stderr_to_stdout: true)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", ["-d", first],
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
+
     assert_error(Custody.sign(handle, @vector["base"]), :key_not_found)
   end
 
   test "stopped agent deadlines late replies caller cancellation and killed agent", ctx do
     file = write_rfc_key(ctx.dir)
-    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", [file], env: ctx.env, stderr_to_stdout: true)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", [file],
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
+
     assert {:ok, handle} = SSHAgent.new("ed25519", ctx.socket, public_file(file))
     assert {_, 0} = System.cmd("kill", ["-STOP", ctx.pid])
     start = System.monotonic_time(:millisecond)
@@ -241,7 +278,13 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
   test "captured real replies enforce mpint widths framing and verify before return", ctx do
     file = generate(ctx, "ecdsa", "256", "p256")
-    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", [file], env: ctx.env, stderr_to_stdout: true)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", [file],
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
+
     key = public_file(file)
     blob = File.read!(file <> ".pub") |> String.split() |> Enum.at(1) |> Base.decode64!()
     # Capture actual peer bytes until a high-bit scalar requires a sign byte.
@@ -337,7 +380,13 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
   test "send_timeout_close closes a saturated non-reading peer with a bounded failure", ctx do
     file = write_rfc_key(ctx.dir)
-    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", [file], env: ctx.env, stderr_to_stdout: true)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", [file],
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
+
     key = public_file(file)
     assert {:ok, handle} = SSHAgent.new("ed25519", ctx.socket, key)
     path = Path.join(ctx.dir, "nonreading")
@@ -441,7 +490,13 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
   defp hostile_sign(ctx, behavior, reason) do
     file = write_rfc_key(ctx.dir)
-    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", [file], env: ctx.env, stderr_to_stdout: true)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", [file],
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
+
     key = public_file(file)
     assert {:ok, handle} = SSHAgent.new("ed25519", ctx.socket, key)
     path = Path.join(ctx.dir, "hostile")
@@ -532,7 +587,13 @@ defmodule RequestSeal.CustodySSHAgentTest do
     file = Path.join(ctx.dir, name)
     args = ["-q", "-t", type, "-N", "", "-C", "custody-test", "-f", file]
     args = if bits, do: args ++ ["-b", bits], else: args
-    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-keygen", args, env: ctx.env, stderr_to_stdout: true)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-keygen", args,
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
+
     file
   end
 
@@ -573,7 +634,8 @@ defmodule RequestSeal.CustodySSHAgentTest do
   end
 
   defp agent_keys(ctx) do
-    {output, 0} = RequestSeal.SystemCommand.run("ssh-add", ["-L"], env: ctx.env, stderr_to_stdout: true)
+    {output, 0} =
+      RequestSeal.SystemCommand.run("ssh-add", ["-L"], env: ctx.env, stderr_to_stdout: true)
 
     String.split(output, "\n", trim: true)
     |> Enum.map(fn line ->

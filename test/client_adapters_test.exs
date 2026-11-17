@@ -848,7 +848,9 @@ defmodule RequestSeal.ClientAdaptersTest do
 
     env = [{"SSH_AUTH_SOCK", socket}, {"SSH_AGENT_PID", pid}]
     file = write_agent_key(dir)
-    assert {_, 0} = RequestSeal.SystemCommand.run("ssh-add", [file], env: env, stderr_to_stdout: true)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", [file], env: env, stderr_to_stdout: true)
 
     assert {:ok, public} =
              RequestSeal.PublicKey.import(

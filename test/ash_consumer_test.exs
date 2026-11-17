@@ -62,7 +62,11 @@ defmodule RequestSeal.AshConsumerTest do
     {mix, env} = consumer(scratch, root)
 
     {deps_output, deps_status} =
-      RequestSeal.SystemCommand.run(mix, ["deps.get"], cd: scratch, env: env, stderr_to_stdout: true)
+      RequestSeal.SystemCommand.run(mix, ["deps.get"],
+        cd: scratch,
+        env: env,
+        stderr_to_stdout: true
+      )
 
     assert deps_status == 0, deps_output
 
@@ -101,7 +105,11 @@ defmodule RequestSeal.AshConsumerTest do
     """
 
     {output, status} =
-      RequestSeal.SystemCommand.run(mix, ["run", "-e", probe], cd: scratch, env: env, stderr_to_stdout: true)
+      RequestSeal.SystemCommand.run(mix, ["run", "-e", probe],
+        cd: scratch,
+        env: env,
+        stderr_to_stdout: true
+      )
 
     assert status == 0, output
     assert output =~ "PASS: framework-free consumer"

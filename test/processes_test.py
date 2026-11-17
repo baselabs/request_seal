@@ -437,6 +437,35 @@ except KeyboardInterrupt:
                         pass
                     os.close(pidfd)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "pidfds bind the runtime after BEAM death")
+    def test_beam_death_cleans_the_runtime_owned_by_its_port(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "ready"
+            runtime = ('import os,signal,sys,time; from pathlib import Path; '
+                       'signal.signal(signal.SIGTERM,signal.SIG_IGN); '
+                       'Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(120)')
+            beam = ('Code.require_file("test/support/system_command.ex"); '
+                    'RequestSeal.SystemCommand.run(System.find_executable("python3"), System.argv())')
+            with processes.command(["elixir", "-e", beam, "--", "-B", "-c", runtime, str(ready)],
+                                   cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as parent:
+                deadline = time.monotonic() + 20
+                while not ready.exists():
+                    self.assertFalse(processes.exited(parent, timeout=0))
+                    self.assertLess(time.monotonic(), deadline, "BEAM port did not start its real runtime")
+                    time.sleep(0.01)
+                pid = int(ready.read_text())
+                _, _, pidfd = self.runtime_identity(pid, parent.pid)
+                try:
+                    os.kill(parent.pid, signal.SIGKILL)
+                    self.assertTrue(select.select([pidfd], [], [], 10)[0],
+                                    "runtime survived the death of its BEAM port owner")
+                finally:
+                    try:
+                        signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    os.close(pidfd)
+
     def test_inherited_ignored_hangup_remains_ignored(self):
         with tempfile.TemporaryDirectory() as directory:
             ready = Path(directory) / "ready"

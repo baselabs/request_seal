@@ -7,7 +7,12 @@ defmodule RequestSeal.SystemCommand do
   def run(executable, args, options \\ []) do
     {timeout, options} = Keyword.pop(options, :timeout, 300)
     python = System.find_executable("python3") || raise "python3 is required"
-    System.cmd(python, [@runner, "--timeout", to_string(timeout), "--", executable | args], options)
+
+    System.cmd(
+      python,
+      [@runner, "--timeout", to_string(timeout), "--", executable | args],
+      options
+    )
   end
 
   def agent(socket) do
@@ -19,7 +24,18 @@ defmodule RequestSeal.SystemCommand do
         :binary,
         :exit_status,
         :stderr_to_stdout,
-        args: [@runner, "--pid-file", pid_file, "--timeout", "600", "--", "ssh-agent", "-D", "-a", socket]
+        args: [
+          @runner,
+          "--pid-file",
+          pid_file,
+          "--timeout",
+          "600",
+          "--",
+          "ssh-agent",
+          "-D",
+          "-a",
+          socket
+        ]
       ])
 
     await_agent(port, socket, pid_file, System.monotonic_time(:millisecond) + 10_000)
