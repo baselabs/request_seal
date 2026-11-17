@@ -2,6 +2,17 @@
 
 ## Unreleased 2.0.0
 
+- Isolate JWE cancellation in a guard with an inherited registry and private
+  child end notices. Teardown uses B(n) = 20 ms + 15 microseconds per item;
+  caller wait-end is bounded by D + 100 ms + B(n), before caller handlers.
+- Bound each JWE expectation and the policy excluding that expectation to
+  4,096 words, including closure environments. Expectations carry at most
+  16,384 binary bytes; permitted names carry at most 16,384 UTF-8 bytes each.
+  Violations return `:invalid_policy`. Resolvers can reference large keyrings.
+- Bound returned JWE handles to 4,096 words and 16,384 binary bytes at the
+  producer, and normalize sink deliveries before sending. Oversized resolver
+  answers return positional `:key_resolver_failed`.
+
 - Documentation between releases links to `main`; development versions refuse
   to publish to Hex. Release source links and install requirements follow the version.
 - Each GitHub release carries the verified Hex tarball, corpus archive and checksum,
@@ -19,7 +30,7 @@
   6 months after its first stable release, the latest minor of the previous major.
 
 - Pipeline bounded sensitive JWE admission ranges into deadline-checked resolvers,
-  reuse bounded content-authentication workers, and reap every child before batch
+  reuse bounded content-authentication workers, and await child end notices during
   finalization. Preserve one unwrap call per handle at the batch-wide barrier.
 - Stop Local unwrap ranges between items when the operation owner dies, with
   the documented cancellation limit for an already-running native item.

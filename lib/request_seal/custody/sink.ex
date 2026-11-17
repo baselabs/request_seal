@@ -5,6 +5,9 @@ defmodule RequestSeal.Custody.Sink do
   Custodians call `deliver/3` directly from the process holding the key. They
   never return a CEK through the custody runner. Only the owner decides whether
   a delivery arrived before its absolute deadline and settles each index once.
+  `deliver/3` normalizes in the sending process: unknown indices send nothing;
+  only an exact-width binary CEK or `:error` crosses the delivery address.
+  Malformed outcomes become `:error` before any message is sent.
   """
   alias RequestSeal.Custody.Context
   @derive {Inspect, only: []}
@@ -13,7 +16,7 @@ defmodule RequestSeal.Custody.Sink do
 
   @opaque t :: %__MODULE__{
             owner: pid(),
-            address: reference(),
+            address: reference() | map(),
             tag: reference(),
             widths: %{non_neg_integer() => 128 | 256},
             deadline: integer()
@@ -29,9 +32,29 @@ defmodule RequestSeal.Custody.Sink do
   or CEKs of the wrong width settle `:error`. Revoked aliases discard sends.
   """
   @spec deliver(t(), non_neg_integer(), {:ok, binary()} | :error) :: :ok
-  def deliver(%__MODULE__{address: address, tag: tag}, index, outcome) do
-    send(address, {tag, index, outcome})
+  def deliver(%__MODULE__{address: address, tag: tag, widths: widths}, index, outcome) do
+    case :maps.find(index, widths) do
+      {:ok, bits} ->
+        normalized = case outcome do
+          {:ok, cek} when is_binary(cek) and bit_size(cek) == bits -> {:ok, cek}
+          _ -> :error
+        end
+        case address do
+          routes when is_map(routes) ->
+            {route, route_tag} = :maps.get(index, routes)
+            send(route, {route_tag, index, normalized})
+          alias when is_reference(alias) -> send(alias, {tag, index, normalized})
+        end
+      :error -> :ok
+    end
     :ok
+  end
+
+  @doc false
+  def routed(routes, %Context{deadline: deadline, owner: owner}) do
+    widths = :maps.map(fn _, {_, _, bits} -> bits end, routes)
+    addresses = :maps.map(fn _, {address, tag, _} -> {address, tag} end, routes)
+    %__MODULE__{owner: owner, address: addresses, tag: make_ref(), widths: widths, deadline: deadline}
   end
 
   @doc false

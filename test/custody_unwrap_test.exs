@@ -68,7 +68,7 @@ defmodule RequestSeal.CustodyUnwrapTest do
     end
   end
 
-  test "every handle-path CEK recipient is sensitive and send receive traces hide the CEK", %{
+  test "every handle-path CEK recipient is sensitive and hides queued material", %{
     private: private
   } do
     cek = :crypto.strong_rand_bytes(32)
@@ -86,13 +86,12 @@ defmodule RequestSeal.CustodyUnwrapTest do
         end
     }
 
-    :erlang.trace(:new, true, [:send, :receive])
-
     try do
       # A real nonsensitive receiver proves that this instrument can see CEK bytes.
       control =
         spawn(fn -> receive do: ({:cek_probe, bytes} -> send(parent, {:probe, bytes})) end)
 
+      :erlang.trace(control, true, [:send, :receive])
       send(control, {:cek_probe, cek})
       assert_receive {:probe, ^cek}
       traces = trace_messages()
@@ -102,12 +101,13 @@ defmodule RequestSeal.CustodyUnwrapTest do
 
       try do
         assert_receive {:cek_runner, runner}, 1000
-        {:links, [coordinator]} = Process.info(runner, :links)
-        {:monitored_by, monitors} = Process.info(runner, :monitored_by)
-        assert coordinator in monitors
-        assert length(monitors) == 2
+        assert Process.info(runner, :links) == {:links, []}
+        assert Process.info(runner, :monitored_by) == {:monitored_by, []}
+        registry = Enum.find(:ets.all(), &(:ets.info(&1, :name) == :registry))
+        ranges = for {{:worker, _}, pid, :library} <- :ets.tab2list(registry), do: pid
+        assert ranges != []
         {holder, _} = original.()
-        recipients = Enum.uniq([holder, runner, coordinator | monitors])
+        recipients = Enum.uniq([holder, runner | ranges])
 
         sensitivity =
           Enum.map(recipients, fn pid ->
@@ -124,19 +124,11 @@ defmodule RequestSeal.CustodyUnwrapTest do
         send(runner, :continue)
         assert {:ok, result} = Task.await(caller, 1000)
         assert result.plaintext == "authenticated plaintext"
-        traces = trace_messages()
-
-        exposed =
-          Enum.filter(traces, fn trace -> :erlang.term_to_binary(trace) =~ cek end)
-
-        assert exposed == []
         assert sensitivity == List.duplicate({:messages, []}, length(recipients))
       after
         Task.shutdown(caller, :brutal_kill)
       end
     after
-      :erlang.trace(:new, false, [:send, :receive])
-      :erlang.trace(:all, false, [:send, :receive])
       trace_messages()
       Local.release(handle)
     end

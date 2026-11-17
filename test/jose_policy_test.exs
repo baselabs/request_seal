@@ -238,32 +238,19 @@ defmodule RequestSeal.JOSEPolicyTest do
     refute_receive {:resolved, _}
   end
 
-  test "2.6 AEAD response unfinished at D reports deadline_exceeded crypto", %{token: t, p: p} do
+  test "2.6 content handler runs after completion in the caller", %{token: t, p: p} do
     owner = self()
     id = make_ref()
-
-    :ok =
-      :telemetry.attach(
-        id,
-        [:request_seal, :jose, :content_authentication],
-        fn _, _, _, _ ->
-          send(owner, {:aead_waiting, self()})
-          receive do: (:never -> :ok)
-        end,
-        nil
-      )
-
-    on_exit(fn -> :telemetry.detach(id) end)
-
-    task =
-      Task.async(fn ->
-        JWE.decrypt(t, %{p | timeout: 600, resolve_timeout: 100, unwrap_timeout: 100})
-      end)
-
-    assert_receive {:aead_waiting, worker}
-    monitor = Process.monitor(worker)
-    error(Task.await(task), :deadline_exceeded, :crypto)
-    assert_receive {:DOWN, ^monitor, _, ^worker, _}
+    :telemetry.attach(id, [:request_seal, :jose, :content_authentication], fn _, _, _, _ ->
+      send(owner, {:handler, self()})
+      Process.sleep(250)
+    end, nil)
+    try do
+      assert {:ok, _} = JWE.decrypt(t, p)
+      assert_receive {:handler, ^owner}
+    after
+      :telemetry.detach(id)
+    end
   end
 
   for alg <- ~w(A128KW A256KW ECDH-ES+A128KW ECDH-ES+A256KW),

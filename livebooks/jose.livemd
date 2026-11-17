@@ -168,3 +168,14 @@ and X25519 recipients with unwrap-only custody handles, as defined by
 [RFC 7518 §4.6](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.6) and
 [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html). Each encryption uses a
 fresh ephemeral key; the protected header gains only its public `epk`.
+
+
+JWE single and batch open share the guard and heir-notice lifecycle. With
+F = D + 100 ms and B(n) = 20 ms + 15 microseconds per item, caller wait-end is
+bounded by F + B(n), before cleanup and telemetry handlers. The policy excluding
+`protected.expected` is at most 4,096 words, including function environments;
+each expectation is at most 4,096 words and 16,384 binary bytes. Permitted UTF-8
+names are at most 16,384 bytes each. Violations are `:invalid_policy` (positional
+for batch expectations). Resolvers with large keyrings capture an ETS table,
+registered name or `persistent_term` key. Returned handles have the same word
+and binary-byte bounds and oversized answers give `:key_resolver_failed`.

@@ -1,4 +1,6 @@
-# 0016 — Proposed: Open JWE through one bounded coordinator
+# 0016 — Open JWE through one bounded coordinator
+
+Status: Accepted; coordination amended by [ADR 0033](0033-jwe-guard-and-heir-notices.md).
 
 ## Context
 
@@ -25,7 +27,8 @@ expiry depends on which step was running.
    `:key_resolver_failed` at `:key`; an unwrap unfinished at U still authenticates under a
    prepared random content key and returns `:decryption_failed` at `:crypto`; content
    authentication unfinished at D returns `:deadline_exceeded` at `:crypto`. The caller
-   waits at most a fixed 100 ms after D for finalization.
+   stamps wait-end by F + B(n), where F = D + 100 ms and
+   B(n) = 20 ms + 15 microseconds per item (ADR 0033).
 4. A fallback content key is drawn before key management on every path. Refusals, failed unwraps and unwrap expiry still authenticate under the fallback and return `:decryption_failed` at `:crypto`. Successful plaintext requires an accepted, width-valid key delivery and full authentication. The content-authentication event carries only `outcome: :ok | :failed`.
 5. The resolver returns `:error` or exactly `{:ok, %{algorithm: same_alg, key: handle}}`,
    where the handle binds `{:jwe, alg}` and grants `:unwrap`. A closure entry is refused
@@ -37,14 +40,21 @@ expiry depends on which step was running.
 7. `decrypt_many/2` returns `{:ok, results}` in input order, including `{:ok, []}`, each
    result being what `decrypt/2` would return for that item. The only outer errors are
    `:invalid_policy`, `:invalid_serialization`, `:limit` and `:deadline_exceeded` when
-   finalization misses D + 100 ms.
+   D passes before cardinality is accepted or the caller reaches F + B(n); `:internal_failure` covers a broken library lifecycle.
 8. Caller death cancels the operation without returning partial plaintext.
 
 ## Consequences
 
-This proposed lifecycle requires explicit phase budgets and handle-only decrypt resolution.
+This lifecycle requires explicit phase budgets and handle-only decrypt resolution.
 No plaintext leaves before complete authentication; batches return one final ordered result list.
 Caller death cancels work without releasing partial plaintext.
 Batch telemetry carries only `count`, `groups`, `failed`, and `deadline_exceeded`;
 custody unwrap carries only `duration` and `items`.
 The `jwe.decrypt_many` corpus surface defines cross-language cases for the proposed API.
+
+
+[ADR 0033](0033-jwe-guard-and-heir-notices.md) defines the guard, inherited
+registry, private child notices, bounded bootstrap and callback ingress. The
+coordinator handles control data; sensitive ranges own input and sinks. The
+coordinator sends its reply before the guard sweeps; the caller waits for the
+guard's completion or its own bound before exposing the result.

@@ -202,20 +202,41 @@ item. Aggregate limits are checked across the whole batch before key work;
 input includes serialized expectations and plaintext limits count ciphertext
 widths. Empty input returns `{:ok, []}`.
 
-A sensitive coordinator accepts admission outcomes from a bounded pool over
-contiguous index ranges. Each accepted width-valid item starts its resolver
-immediately; the resolver checks R again before calling application code.
-The coordinator groups by exact custody handle after the batch-wide barrier.
-Each group makes one
-unwrap call into its coordinator-owned sink. Accepted deliveries survive later
-stall or group failure; only unsettled positions take the fallback. Sensitive
-AEAD workers run in a pool bounded to `System.schedulers_online()`. Width-failed
-items authenticate without waiting for resolvers. Grouping waits until all
-admissions and required resolutions settle, or R. Every group uses that one
-barrier timestamp plus `unwrap_timeout`, even if processing is delayed. All
-children, including idle pool workers, are cancelled and reaped before the
-final list is sent. Results are positional, and no plaintext reaches the caller before the final list. Caller exit cancels the
-coordinator and workers. Finalization has a fixed 100 ms allowance after D.
+A guard owns the cancellation boundary and creates the registry with itself as
+heir. A coordinator processes bounded control messages; sensitive preflight and
+range workers hold input, handles and content keys. The range count is at most
+min(n, 32, online schedulers). Each admitted width-valid token starts its resolver
+immediately. All resolver end notices precede custody creation. Groups use a
+handle digest and full handle equality, and each group unwraps once into
+range-owned aliases. Accepted deliveries survive later group failure; unsettled
+positions authenticate under their prepared fallback. The public result remains
+withheld until finalization.
+
+The policy excluding single-open `protected.expected` is at most 4,096 words,
+including function environments. Each expectation is at most 4,096 words and
+16,384 bytes of binaries in total. Each permitted UTF-8 name is at most 16,384
+bytes, checked before scanning it. Exceeding an expectation bound is positional
+`:invalid_policy` in a batch; exceeding a policy or name bound is outer
+`:invalid_policy`. Single open reports all three as `:invalid_policy`. Shared
+occurrences count individually. A resolver with a large keyring captures a
+registered name, ETS table or `persistent_term` key. A returned handle also has
+4,096-word and 16,384-binary-byte bounds, including its function environment;
+an oversized answer is that item's `:key_resolver_failed`.
+
+F is D + 100 ms. Teardown has B(n) = 20 ms + 15 microseconds per item, with
+n initially zero and published when cardinality is accepted. The caller's
+wait-end is bounded by F + B(n), even with a suspended guard. Cleanup and
+caller-owned telemetry handlers follow that stamp. The guard reacts to caller
+notice ownership or F before dequeuing another message, kills the coordinator,
+and sweeps the inherited registry once. Private heir notices observe callback
+completion without copying callback exit reasons. Children check caller
+ownership and their deadline immediately before invoking callbacks. Arbitrary
+unlinked descendants created by caller code remain its responsibility.
+
+At most n + 35 library-owned processes are alive simultaneously, 2n + 35 are
+created over a call, and n + 3 ETS tables coexist, with one two-cell atomics
+array. Single open uses six processes and five tables over its lifetime. These
+are transient costs of isolating cancellation and custody.
 
 Malformed items and invalid expectations are positional errors. Invalid policy,
 a nonproper list, aggregate limits, or missing finalization are outer errors
@@ -223,8 +244,7 @@ with no result list. See `RequestSeal.JOSE.JWE.decrypt_many/2` for the complete
 reason lists. When no deadline or custodian lifecycle change occurs, batch
 results equal individual decryption under the corresponding item policies.
 
-`[:request_seal, :jose, :content_authentication]` emits once immediately after
-each real AEAD returns, with only `outcome: :ok | :failed` and no measurements.
+`[:request_seal, :jose, :content_authentication]` records once when each real AEAD returns and emits after teardown, with only `outcome: :ok | :failed` and no measurements.
 `[:request_seal, :jose, :decrypt_many]` has only `count`, `groups`, `failed`, and
 `deadline_exceeded` measurements and empty metadata. Every custody unwrap event
 has only `duration` and `items` measurements, with no per-item outcome.

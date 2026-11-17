@@ -126,3 +126,10 @@ RequestSeal makes no constant-time claim across machines, loads, keys, ciphertex
 RSA-OAEP padding failures and GCM authentication failures return the identical complete error:
 `%RequestSeal.JOSE.Error{reason: :decryption_failed, layer: :crypto, correlation: nil, retryable: false}`.
 Run `MIX_ENV=test mix run bench/ceilings.exs` for parser resource measurements and OAEP timing distributions.
+
+
+JWE callback exit reasons never enter library control queues: while a caller-code
+child owns its private end-notice table, neither guard nor coordinator links to
+or monitors it. The runtime transfers the empty table on exit; library roles
+exit with closed atoms. Callback-created unlinked descendants and external
+side effects remain the callback owner's responsibility.

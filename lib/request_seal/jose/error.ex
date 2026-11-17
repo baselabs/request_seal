@@ -10,7 +10,7 @@ defmodule RequestSeal.JOSE.Error do
   Selection errors: `:algorithm_not_permitted`, `:algorithm_mismatch`,
   `:unsupported_critical_header`, `:unknown_key`, `:key_resolver_failed`.
   Operation errors: `:invalid_signature`, `:signer_failed`, `:decryption_failed`,
-  `:entropy_failure`, `:deadline_exceeded`, `:nesting_depth`, `:content_type_mismatch`.
+  `:entropy_failure`, `:internal_failure` (library lifecycle failure), `:deadline_exceeded`, `:nesting_depth`, `:content_type_mismatch`.
   Unwrap and authentication failures share `:decryption_failed`; no bytes, key
   identifiers, callback reason, or exception text is retained. Correlation is nil.
   Layers identify `:input`, `:key`, `:crypto`, or `:nesting`.
@@ -20,7 +20,7 @@ defmodule RequestSeal.JOSE.Error do
     compression_unsupported detached_payload algorithm_not_permitted algorithm_mismatch
     unsupported_critical_header unknown_key key_resolver_failed invalid_signature signer_failed
     invalid_iv invalid_tag decryption_failed entropy_failure deadline_exceeded nesting_depth
-    content_type_mismatch unexpected_member protected_mismatch)a
+    content_type_mismatch unexpected_member protected_mismatch internal_failure)a
   defstruct [:reason, :layer, :correlation, retryable: false]
   @type reason :: unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))
   @type t :: %__MODULE__{reason: reason(), layer: atom(), retryable: boolean(), correlation: nil}

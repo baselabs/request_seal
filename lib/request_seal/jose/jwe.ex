@@ -11,7 +11,7 @@ defmodule RequestSeal.JOSE.JWE do
   A256GCMKW, and `dir`. Content encryption is A128GCM or A256GCM. No symmetric secret can be supplied in a public key or header.
 
   Decryption resolves only custody handles. CEKs pass directly from sensitive
-  holders through coordinator-owned sinks; custody runners receive summaries.
+  holders through range-owned sinks; custody workers return summaries.
   Admission and resolution end at R, unwrap at U, and content authentication at
   D. A random CEK is prepared on every key-management path, success included.
   Key-management failure still runs AEAD and returns `:decryption_failed`.
@@ -231,8 +231,8 @@ defmodule RequestSeal.JOSE.JWE do
   @doc """
   Authenticate and decrypt a compact JWE under an explicit policy (RFC 7516).
 
-  Protected bytes remain verbatim AEAD associated data. A sensitive coordinator
-  and disposable sensitive workers withhold plaintext until full authentication.
+  Protected bytes remain verbatim AEAD associated data. Sensitive range workers
+  withhold plaintext until full authentication; the coordinator handles only control data.
   Caller death cancels work. No key operation runs through a resolver closure.
 
   ## Parameters
@@ -261,7 +261,7 @@ defmodule RequestSeal.JOSE.JWE do
         values use exact decoded JSON equality; absent and different values both
         give `:protected_mismatch`. The map has at most 64 string keys and
         serializes to at most 16,384 bytes. Permitted names are at most 64 unique
-        strings. Overlap, or naming any of alg/enc/iv/tag/epk/apu/apv, is
+        UTF-8 strings, each at most 16,384 bytes. Overlap, or naming any of alg/enc/iv/tag/epk/apu/apv, is
         `:invalid_policy`. An empty expected map is valid; the consumer chooses
         its completeness. Members must be read for the selected algorithm, in
         expected, or permitted; others give `:unexpected_member`.
@@ -285,14 +285,26 @@ defmodule RequestSeal.JOSE.JWE do
   accepted sink delivery sets the one success flag. Every other key-management
   outcome uses the prepared fallback and runs AEAD, succeeding only if both the
   success flag and tag validation hold. The content-authentication event is
-  emitted exactly once immediately after AEAD returns, with only
+  recorded once when AEAD returns and emitted by the caller after teardown, with only
   `outcome: :ok | :failed`. Width is public and its bypass reveals no key fact.
 
   Admission unfinished at R returns `:deadline_exceeded`/`:input`; a resolver
   unfinished at R returns `:key_resolver_failed`/`:key`. Unwrap unfinished at U
   still authenticates with the fallback and returns `:decryption_failed`/`:crypto`.
   Content authentication unfinished at D returns `:deadline_exceeded`/`:crypto`.
-  The caller allows a fixed 100 ms for finalization after D.
+  F = D + 100 ms. Teardown has B(n) = 20 ms + 15 microseconds per item;
+  the caller stamps its wait-end by F + B(n), before cleanup and telemetry handlers.
+  Single open uses n = 1 once cardinality is accepted. A suspended guard cannot extend the caller's wait.
+
+  The policy excluding `protected.expected` is bounded to 4,096 words, including
+  closure environments. Each expectation is bounded to 4,096 words and a total
+  of 16,384 binary bytes, before UTF-8 validation or serialization. Exceeding any
+  of these bounds, or the permitted-name byte bound, is `:invalid_policy`.
+  Resolvers with a large keyring capture a registered name, ETS table or
+  `persistent_term` key. Returned handles have the same 4,096-word and
+  16,384-binary-byte bounds, including their closure environments; oversized
+  answers are `:key_resolver_failed`. Optional `content: :object` decodes only
+  authenticated plaintext and also retains its bytes in the result.
 
   All headers read before authentication are untrusted: even a forged header
   matching expectations can reach resolution and custody. Resolvers must have no
@@ -333,21 +345,7 @@ defmodule RequestSeal.JOSE.JWE do
   """
   @spec decrypt(binary(), map()) :: {:ok, Result.t()} | {:error, JOSE.Error.t()}
   def decrypt(compact, policy) do
-    started = System.monotonic_time(:millisecond)
-
-    safe(fn ->
-      p = policy(policy, :jwe)
-
-      case JOSE.JWE.Open.call(
-             [%{token: compact, expected: p.protected.expected}],
-             p,
-             started,
-             false
-           ) do
-        {:ok, [result], _groups} -> result
-        {:error, _} = error -> error
-      end
-    end)
+    JOSE.JWE.Open.open(compact, policy, :single)
   end
 
   @doc """
@@ -365,21 +363,34 @@ defmodule RequestSeal.JOSE.JWE do
   With call start t0, admission/resolution ends at R = t0 + resolve_timeout;
   each group's unwrap ends at U = resolution_end + unwrap_timeout; all work ends
   at D = t0 + timeout. Budgets are required integers 1–300,000 ms and their sum
-  must be strictly below timeout. The caller waits at most D + 100 ms for
-  finalization. Admission at R is `:deadline_exceeded`/`:input`; resolution at R
+  must be strictly below timeout. F = D + 100 ms; the caller stamps wait-end
+  by F + B(n), where B(n) = 20 ms + 15 microseconds per item. Admission at R is `:deadline_exceeded`/`:input`; resolution at R
   is `:key_resolver_failed`/`:key`; unwrap at U still authenticates under a
   prepared random CEK and is `:decryption_failed`/`:crypto`; unfinished AEAD at D
   is `:deadline_exceeded`/`:crypto`.
 
-  One sensitive coordinator owns all sinks and accepted deliveries. Concurrent
-  admission workers process contiguous ranges and pipeline accepted admissions
-  into disposable resolvers. One batch-wide admission/resolution barrier precedes
-  grouping by exact handle, with one custody
-  call per group. Accepted prefixes survive a group's failure or timeout.
-  Disposable sensitive AEAD workers are bounded to `System.schedulers_online()`.
-  Width-failed items skip resolution and unwrap and authenticate without waiting
-  for other resolvers. Caller death cancels the coordinator and workers. No
-  plaintext is sent to the caller before the final list.
+  A guard creates an heir registry and a coordinator. A sensitive preflight
+  worker validates all aggregate limits before at most min(n, 32, online
+  schedulers) sensitive range workers admit contiguous ranges. Each accepted
+  width-valid item starts a resolver immediately. Grouping uses a digest plus
+  full handle equality, after the batch-wide resolution barrier and every
+  resolver's end notice. Each group makes one custody call. Range-owned aliases
+  preserve accepted deliveries and discard late ones. Width failures authenticate
+  without waiting for resolvers. Only fully authenticated plaintext reaches the
+  caller, which withholds the public result until finalization.
+
+  Caller death or F makes the guard kill the coordinator before sweeping its
+  registry. Caller-code children transfer private heir notices and have no
+  reason-bearing library links or monitors while executing callbacks. Each child
+  checks caller ownership and its deadline immediately before its callback.
+  There are at most n + 35 library-owned processes alive, 2n + 35 created over
+  the call, n + 3 simultaneous ETS tables, and one two-cell atomics array. Single
+  open creates six processes and five tables over its lifetime. Caller-created
+  callback descendants remain the callback's responsibility.
+
+  The policy and expectation bounds, permitted-name bound and returned-handle
+  bound are `decrypt/2`'s. An oversized expectation is positional `:invalid_policy`;
+  an oversized policy or name is outer `:invalid_policy`.
 
   Returns `{:ok, results}` (including `{:ok, []}`), each result being `decrypt/2`'s
   success or error. Item shape errors are `:invalid_serialization`; invalid
@@ -392,10 +403,12 @@ defmodule RequestSeal.JOSE.JWE do
   `:decryption_failed`, and `:deadline_exceeded`.
   Outer errors (no results) are `:invalid_policy`, `:invalid_serialization` for
   a nonproper list, `:limit` for aggregate bounds, or `:deadline_exceeded` if
-  finalization misses D + 100 ms. Only `:deadline_exceeded` is retryable.
+  D passes before cardinality is accepted or the caller reaches F + B(n).
+  `:internal_failure` reports a broken library
+  lifecycle or a preflight overrun. Only `:deadline_exceeded` is retryable.
 
   The content-authentication event has only `outcome: :ok | :failed`, once after
-  each real AEAD returns. Batch telemetry contains only `count`, `groups`,
+  each real AEAD returns, emitted after teardown. Batch telemetry contains only `count`, `groups`,
   `failed`, and `deadline_exceeded` measurements. Custody unwrap carries only
   `duration` and `items`. Resolvers read unauthenticated data and must have no
   authorization, replay-consumption, or other trusted side effects; expectations
@@ -405,39 +418,7 @@ defmodule RequestSeal.JOSE.JWE do
   @spec decrypt_many([%{token: binary(), expected: map()}], map()) ::
           {:ok, [{:ok, Result.t()} | {:error, JOSE.Error.t()}]} | {:error, JOSE.Error.t()}
   def decrypt_many(items, policy) do
-    started = System.monotonic_time(:millisecond)
-
-    result =
-      safe(fn ->
-        p = policy(policy, :batch)
-        JOSE.JWE.Open.call(items, p, started, true)
-      end)
-
-    {answer, groups} =
-      case result do
-        {:ok, results, groups} -> {{:ok, results}, groups}
-        {:error, _} = error -> {error, 0}
-      end
-
-    results =
-      case answer do
-        {:ok, results} -> results
-        _ -> []
-      end
-
-    :telemetry.execute(
-      [:request_seal, :jose, :decrypt_many],
-      %{
-        count: if(proper_list?(items), do: length(items), else: 0),
-        groups: groups,
-        failed: Enum.count(results, &match?({:error, _}, &1)),
-        deadline_exceeded:
-          Enum.count(results, &match?({:error, %{reason: :deadline_exceeded}}, &1))
-      },
-      %{}
-    )
-
-    answer
+    JOSE.JWE.Open.open(items, policy, :batch)
   end
 
   defp encrypted_key!(alg, ek, h) when alg in ~w(A128KW A256KW ECDH-ES+A128KW ECDH-ES+A256KW),

@@ -15,6 +15,12 @@ defmodule RequestSeal.KeyHandle do
   explicitly encoded Ed25519 sources. Fetch a fresh handle for each operation,
   or fetch again and retry once on `:key_not_found` after owner restart.
 
+  A handle returned by a JWE resolver is bounded to 4,096 words and 16,384
+  binary bytes, including a function's environment and each shared occurrence.
+  The resolver process validates this before forwarding the handle. An oversized
+  answer gives that item's `:key_resolver_failed`. Store larger custodian state
+  behind a reference rather than capturing it in the handle.
+
   Loading the library starts no process or store. Local construction starts one
   holder per handle. An asymmetric public key is obtained through
   `RequestSeal.Custody.public_key/1`; HMAC has no public export.
