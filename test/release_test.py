@@ -345,6 +345,27 @@ class ReleaseIdentityTest(unittest.TestCase):
         self.assertTrue(docs.release_errors("CHANGELOG.md", current.replace("~> 2.0", "~> 1.2") + history, "2.0.0-dev"))
 
 
+    def test_dispatch_resolves_future_tagged_source_and_raw_assets_in_head(self):
+        self.assertFalse(docs.ref_exists(self.root, "refs/tags/v2.3.4"))
+        for base in ("https://github.com/baselabs/request_seal/blob/v2.3.4/",
+                     "https://raw.githubusercontent.com/baselabs/request_seal/v2.3.4/"):
+            with self.subTest(base=base):
+                release.verify_published_destinations(f"[Source]({base}mix.exs)", "2.3.4",
+                                                      event="workflow_dispatch", root=self.root)
+                for path in ("missing.md", "corpus"):
+                    with self.assertRaisesRegex(ValueError, "missing or nonregular file in HEAD"):
+                        release.verify_published_destinations(f"[Source]({base}{path})", "2.3.4",
+                                                              event="workflow_dispatch", root=self.root)
+        (self.root / "uncommitted.md").write_text("not in HEAD")
+        (self.root / "symlink.md").symlink_to("mix.exs")
+        self.git("add", "symlink.md")
+        self.git("commit", "--quiet", "-m", "Add symlink")
+        for path in ("uncommitted.md", "symlink.md"):
+            with self.assertRaisesRegex(ValueError, "missing or nonregular file in HEAD"):
+                release.verify_published_destinations(
+                    f"[Source](https://github.com/baselabs/request_seal/blob/v2.3.4/{path})",
+                    "2.3.4", event="workflow_dispatch", root=self.root)
+
 class ReleaseWorkflowTest(unittest.TestCase):
     def test_each_focused_check_has_its_own_help_option(self):
         result = run([sys.executable, "-B", str(ROOT / "scripts/check.py"), "--help"], capture_output=True, text=True, check=True, timeout=30)
@@ -394,27 +415,6 @@ class ReleaseWorkflowTest(unittest.TestCase):
             release.verify_published_destinations(
                 "[Missing](https://request-seal.hexdocs.pm/1.0.0/no-such-release-page.html)",
                 "1.0.0", deadline_seconds=2)
-
-    def test_dispatch_resolves_future_tagged_source_and_raw_assets_in_head(self):
-        self.assertFalse(docs.ref_exists(self.root, "refs/tags/v2.3.4"))
-        for base in ("https://github.com/baselabs/request_seal/blob/v2.3.4/",
-                     "https://raw.githubusercontent.com/baselabs/request_seal/v2.3.4/"):
-            with self.subTest(base=base):
-                release.verify_published_destinations(f"[Source]({base}mix.exs)", "2.3.4",
-                                                      event="workflow_dispatch", root=self.root)
-                for path in ("missing.md", "corpus"):
-                    with self.assertRaisesRegex(ValueError, "missing or nonregular file in HEAD"):
-                        release.verify_published_destinations(f"[Source]({base}{path})", "2.3.4",
-                                                              event="workflow_dispatch", root=self.root)
-        (self.root / "uncommitted.md").write_text("not in HEAD")
-        (self.root / "symlink.md").symlink_to("mix.exs")
-        self.git("add", "symlink.md")
-        self.git("commit", "--quiet", "-m", "Add symlink")
-        for path in ("uncommitted.md", "symlink.md"):
-            with self.assertRaisesRegex(ValueError, "missing or nonregular file in HEAD"):
-                release.verify_published_destinations(
-                    f"[Source](https://github.com/baselabs/request_seal/blob/v2.3.4/{path})",
-                    "2.3.4", event="workflow_dispatch", root=self.root)
 
     def test_only_canonical_first_party_forms_pass_the_offline_gate(self):
         for target in ("https://request-seal.hexdocs.pm/2.3.4/RequestSeal.html",
@@ -474,7 +474,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertIsNotNone(release.first_party(release.urlsplit(target)))
                 with self.assertRaises(ValueError):
                     release.release_notes("## 2.3.4 - 2026-11-17\n\n" + target, "2.3.4")
-                self.assertTrue(docs.first_party_link_errors(self.root, "README.md", release.urlsplit(target), "2.3.4", set(), {}))
+                self.assertTrue(docs.first_party_link_errors(ROOT, "README.md", release.urlsplit(target), "2.3.4", set(), {}))
 
     def test_references_must_resolve_inside_the_released_section(self):
         for use in ("[Guide][policy]", "[policy][]", "[policy]", "![Guide][policy]", "![policy][]", "![policy]"):
