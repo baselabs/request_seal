@@ -244,7 +244,7 @@ end
         target = "WWW.GITHUB.COM/baselabs/request_seal/blob/main/README.md"
         errors = docs.content_errors(ROOT, "README.md", target, docs.public_paths(ROOT))
         self.assertEqual(1, len(errors), errors)
-        self.assertIn("canonical", errors[0])
+        self.assertEqual(f"README.md:1: {target}: ambiguous uppercase extended autolink", errors[0])
 
     def test_profile_corpus_urls_are_canonical(self):
         for path in (ROOT / "corpus/cases/profile").glob("*.json"):
