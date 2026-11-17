@@ -82,7 +82,7 @@ assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
         with tempfile.TemporaryDirectory() as directory:
             processes.run([sys.executable, "-B", "-c",
                            'import os; from pathlib import Path; '
-                           'assert Path.cwd() == Path(os.environ["EXPECTED_DIRECTORY"]); '
+                           'assert Path.cwd() == Path(os.environ["EXPECTED_DIRECTORY"]).resolve(); '
                            'Path("completed").write_text("done")'],
                           cwd=directory, extra_env={"EXPECTED_DIRECTORY": directory}, timeout=10)
             self.assertEqual("done", (Path(directory) / "completed").read_text())
