@@ -237,7 +237,9 @@ class ReleaseIdentityTest(unittest.TestCase):
                    "https://github.com/baselabs/request_seal/raw/v2.3.3/image.png",
                    "https://github.com/baselabs/request_seal/tree/v2.3.4/docs",
                    "https://hexdocs.pm/request_seal/2.3.4/%2e%2e/compatibility.html")
-        containers = ("{}", "> {}", "- Outer\n    - {}", "<!-- {} -->", "<!--> {}", "<!---> {}")
+        prose = ("{}", "> {}", "- Outer\n    - {}")
+        comments = ("<!-- {} -->", "<!--> {}", "<!---> {}")
+        containers = prose + tuple(container.format(comment) for container in prose for comment in comments)
         for target in targets:
             for link in (f"[link]({target})", f"![image]({target})", f"[ref]: {target}",
                          f'<a href="{target}">link</a>', f"<img src='{target}'>"):
@@ -248,16 +250,24 @@ class ReleaseIdentityTest(unittest.TestCase):
                             release.release_notes("## 2.3.4 - 2026-11-17\n\n" + body, "2.3.4")
                         message = str(raised.exception)
                         self.assertRegex(message, r"CHANGELOG.md:\d+:")
-                        # Short malformed comments can fail the explicit section format first.
-                        if not body.startswith(("<!-->", "<!--->")):
+                        if "<!--" in body:
+                            number = 3 + body[:body.index("<!--")].count("\n")
+                            self.assertEqual(f"CHANGELOG.md:{number}: unsupported HTML comment; use prose outside comments", message)
+                        else:
                             self.assertRegex(message, "destination|ambiguous reference definition")
                             self.assertIn(target, message)
 
     def test_visible_comments_and_quotes_are_still_checked(self):
-        for body, number in (("- Intro.\n\n<!-- [bad](relative.md) -->", 5),
-                             ("- Intro.\n\n> [bad](relative.md)", 5)):
-            with self.subTest(body=body), self.assertRaisesRegex(ValueError, f"CHANGELOG.md:{number}: destination 'relative.md'"):
-                release.release_notes("## 2.3.4 - 2026-11-17\n\n" + body, "2.3.4")
+        for container in ("{}", "> {}", "- {}", "- Outer\n    - {}"):
+            for comment in ("<!-- [bad](relative.md) -->", "<!--> [bad](relative.md)", "<!---> [bad](relative.md)"):
+                body = "- Intro.\n\n" + container.format(comment)
+                number = 5 + container.count("\n")
+                message = f"CHANGELOG.md:{number}: unsupported HTML comment; use prose outside comments"
+                with self.subTest(body=body), self.assertRaisesRegex(ValueError, "^" + re.escape(message) + "$"):
+                    release.release_notes("## 2.3.4 - 2026-11-17\n\n" + body, "2.3.4")
+        body = "- Intro.\n\n> [bad](relative.md)"
+        with self.assertRaisesRegex(ValueError, "CHANGELOG.md:5: destination 'relative.md'"):
+            release.release_notes("## 2.3.4 - 2026-11-17\n\n" + body, "2.3.4")
 
     def test_raw_html_and_ambiguous_destinations_are_rejected(self):
         for body in ('<a href="https://example.com/a">link</a>', '<img src="https://example.com/a">',
@@ -711,7 +721,9 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 release.validate_destination(target, "2.3.4")
 
     def test_autolinks_and_bare_urls_follow_the_same_destination_rules_everywhere(self):
-        for container in ("{}", "<!-- {} -->", "> {}"):
+        prose = ("{}", "> {}", "- {}")
+        comments = ("<!-- {} -->", "<!--> {}", "<!---> {}")
+        for container in prose + tuple(outer.format(comment) for outer in prose for comment in comments):
             for target in ("https://github.com/baselabs/request_seal/blob/main/README.md",
                            "http://request-seal.hexdocs.pm/2.3.4/readme.html",
                            "www.github.com/baselabs/request_seal/blob/v2.3.4/README.md",
@@ -719,7 +731,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
                            "https://hexdocs.pm/request_seal/2.3.4/readme.html"):
                 for occurrence in (target, "<" + target + ">"):
                     body = container.format(occurrence)
-                    with self.subTest(body=body), self.assertRaisesRegex(ValueError, r"CHANGELOG.md:\d+: destination"):
+                    reason = "unsupported HTML comment; use prose outside comments" if "<!--" in body else "destination"
+                    with self.subTest(body=body), self.assertRaisesRegex(ValueError, re.escape("CHANGELOG.md:3: " + reason)):
                         release.release_notes("## 2.3.4 - 2026-11-17\n\n" + body, "2.3.4")
         for target in ("mailto:security@example.com", "custom:opaque", "http://example.com/a"):
             with self.subTest(target=target):

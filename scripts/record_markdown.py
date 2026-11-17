@@ -55,6 +55,7 @@ def combinatorial_samples():
         "escape": ("", ""),
         "html": ('<span title="', '">text</span>'),
         "footnote": ("[^", "]"),
+        "literal-angle": ("<", ""),
     }
     containers = ("paragraph", "list", "quote", "table", "footnote")
     delimiters = "[]()<>`|!\\*_~\"'"
@@ -69,7 +70,8 @@ def combinatorial_samples():
                     a, b = ("\\" + delimiter, "") if left == "escape" else left_parts
                     c, d = ("\\" + delimiter, "") if right == "escape" else right_parts
                     if arrangement == "adjacent":
-                        inline = a + "x" + b + c + "x" + d
+                        inline = (a + ("" if left == "literal-angle" else "x") + b +
+                                  c + ("" if right == "literal-angle" else "x") + d)
                     else:
                         inline = a + c + url + b + d
                     tail = " https://request-seal.hexdocs.pm/2.3.4/readme.html tail `"
@@ -97,6 +99,19 @@ def combinatorial_samples():
                     sample = {**sample, "name": sample["name"] + "-url-boundary",
                               "markdown": "\n\n".join(url_parts) + suffix}
                 yield sample
+    yield from literal_angle_samples()
+
+
+def literal_angle_samples():
+    """Failed angle tokens next to each URL family in every inline container."""
+    for container in ("paragraph", "quote", "list", "table", "footnote"):
+        for kind, target in (("www-lower", "www.example.com/path"), ("www-upper", "WWW.example.com/path"),
+                             ("http", "http://example.com/path"), ("https", "https://example.com/path"),
+                             ("email", "user@example.com")):
+            for form, inline in (("unclosed", "<" + target), ("nested", "<<" + target + ">")):
+                yield {"name": f"literal-angle-{kind}-{form}-{container}",
+                       "construct": "unmatched angle / " + kind + " / " + form + " / " + container,
+                       "angle_class": kind, "container": container, "markdown": contain(inline, container, 0)}
 
 
 def require_budget(calls):
@@ -118,6 +133,8 @@ def expected_outcome(sample, version):
         # Retain the named authoring rejection, without tying the reference
         # case to a particular source line or destination's spelling.
         for name in ("autolink destination encoding", "encoding in an extended autolink",
+                     "literal angle before an extended autolink", "uppercase extended autolink",
+                     "extended email autolink after literal angle",
                      "unused link reference definition", "unused footnote definition",
                      "multiline reference label", "backtick fence info string",
                      "reference definition in a container", "nested block in a footnote definition",
@@ -163,10 +180,10 @@ class RenderedLinks(HTMLParser):
 def render(markdown):
     # Only the explicitly synthetic corpus fields reach the public API. No
     # documentation, changelog, Git tree, or caller-provided file is submitted.
-    for match in re.finditer(r"(?:https?://|(?=www\.))([A-Za-z0-9.-]+)", markdown):
+    for match in re.finditer(r"(?:https?://|(?=www\.))([A-Za-z0-9.-]+)", markdown, re.I):
         host = match[1].lower()
         if host not in {"example.com", "www.example.com", "request-seal.hexdocs.pm", "hexdocs.pm",
-                        "hex.pm", "github.com", "raw.githubusercontent.com"}:
+                        "hex.pm", "github.com", "www.github.com", "raw.githubusercontent.com"}:
             raise ValueError("synthetic corpus URLs must use example.com or RequestSeal's public URLs")
     result = run(["gh", "api", "markdown", "-f", "mode=gfm", "-f", "text=" + markdown],
                  capture_output=True, text=True, timeout=60)

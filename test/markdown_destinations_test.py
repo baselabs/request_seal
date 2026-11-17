@@ -15,12 +15,12 @@ class MarkdownDestinationsTest(unittest.TestCase):
     def test_combinatorial_section_covers_every_ordered_pair_and_arrangement(self):
         corpus = json.loads((ROOT / "test/fixtures/markdown_destinations.json").read_text())
         samples = [sample for sample in corpus["samples"] if "pair" in sample]
-        generated = list(record_markdown.combinatorial_samples())
-        self.assertEqual(364, len(samples))
+        generated = [sample for sample in record_markdown.combinatorial_samples() if "pair" in sample]
+        self.assertEqual(420, len(samples))
         self.assertEqual({sample["name"]: sample["markdown"] for sample in generated},
                          {sample["name"]: sample["markdown"] for sample in samples})
         constructs = {name for sample in samples for name in sample["pair"]}
-        self.assertEqual(14, len(constructs))
+        self.assertEqual(15, len(constructs))
         self.assertEqual({(left, right, arrangement) for left in constructs for right in constructs if left != right
                           for arrangement in ("adjacent", "overlap")},
                          {(sample["pair"][0], sample["pair"][1], sample["arrangement"]) for sample in samples})
@@ -33,6 +33,23 @@ class MarkdownDestinationsTest(unittest.TestCase):
                         and "destinations" in sample["expected"]]
             self.assertGreater(len(accepted), 20)
             self.assertTrue(all("github_hrefs" in sample for sample in accepted))
+
+    def test_literal_angles_cover_each_url_family_and_container(self):
+        corpus = json.loads((ROOT / "test/fixtures/markdown_destinations.json").read_text())
+        samples = [sample for sample in corpus["samples"] if "angle_class" in sample]
+        generated = list(record_markdown.literal_angle_samples())
+        self.assertEqual(50, len(samples))
+        self.assertEqual({sample["name"]: sample["markdown"] for sample in generated},
+                         {sample["name"]: sample["markdown"] for sample in samples})
+        for container in ("paragraph", "quote", "list", "table", "footnote"):
+            selected = [sample for sample in samples if sample["container"] == container]
+            self.assertEqual({"www-lower", "www-upper", "http", "https", "email"},
+                             {sample["angle_class"] for sample in selected})
+            for sample in selected:
+                expected = [] if sample["angle_class"].startswith("www-") else [
+                    "mailto:user@example.com" if sample["angle_class"] == "email" else
+                    sample["angle_class"] + "://example.com/path"]
+                self.assertEqual(expected, sample["github_hrefs"], sample["name"])
 
     def test_recording_resumes_only_missing_renderings(self):
         corpus = json.loads((ROOT / "test/fixtures/markdown_destinations.json").read_text())

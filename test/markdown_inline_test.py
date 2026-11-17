@@ -85,6 +85,25 @@ class MarkdownInlineTest(unittest.TestCase):
             with self.subTest(source=source), self.assertRaisesRegex(ValueError, reason):
                 release.release_destinations(source, "2.3.4")
 
+    def test_failed_angle_www_is_rejected_without_claiming_a_rendered_link(self):
+        for host in ("www.github.com", "WWW.GITHUB.COM"):
+            source = "<" + host + "/baselabs/request_seal/blob/v2.3.4/README.md>"
+            for container in ("{}", "> {}", "- {}", "| {} |\n|---|", "Use [^x].\n\n[^x]: {}"):
+                body = container.format(source)
+                with self.subTest(body=body), self.assertRaisesRegex(ValueError, "destination .*ambiguous literal angle"):
+                    release.release_destinations(body, "2.3.4")
+
+    def test_failed_angles_preserve_http_and_simple_email_destinations(self):
+        for target, expected in (("http://example.com/path", "http://example.com/path"),
+                                 ("https://example.com/path", "https://example.com/path"),
+                                 ("user@example.com", "mailto:user@example.com")):
+            for source in ("<" + target, "<<" + target + ">"):
+                with self.subTest(source=source):
+                    self.assertEqual([expected], release.release_destinations(source, "2.3.4"))
+        for source in ("<user%20name@example.com", "<user@example..com"):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "extended email autolink after literal angle"):
+                release.release_destinations(source, "2.3.4")
+
 
 if __name__ == "__main__":
     unittest.main()

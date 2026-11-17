@@ -83,6 +83,7 @@ HTML_INLINE = re.compile(
     r"(?:\s*=\s*(?:[^\s\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*\s*/?>|"
     r"<!--(?:[^-]|-(?!->))*-->|<\?.*?\?>|<![A-Z]+\s+[^>]*>|<!\[CDATA\[.*?\]\]>", re.S)
 BARE_URL = re.compile(r"(?:https?://|www\.)[^\x09-\x0d\x20<]*", re.I)
+SIMPLE_EMAIL = re.compile(r"[A-Za-z0-9._+-]+@[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)*\.[A-Za-z]+")
 # Outside Markdown, quotes delimit source/JSON strings rather than GFM autolinks.
 TEXT_URL = re.compile(r"(?:https?://|www\.)[^\x09-\x0d\x20<>\"'`]*", re.I)
 FENCE = re.compile(r"([ \t>+*.0-9()-]*(?:\[[ xX]\][ \t]*)?)(`{3,}|~{3,})(.*)$")
@@ -392,6 +393,7 @@ def extract_destinations(source, strict=False, markdown=True):
     contexts = list(inline_blocks(visible)) if markdown else [(0, len(visible))]
     entries, occupied = [], []
     bracket_ranges = []
+    literal_angles = []
 
     def reject(offset, reason):
         if strict:
@@ -467,6 +469,9 @@ def extract_destinations(source, strict=False, markdown=True):
                              HTML_INLINE.match(visible, offset, finish))
                     if angle:
                         cursor = angle.end()
+                    else:
+                        boundary = re.search(r"[<>]", visible[cursor:finish])
+                        literal_angles.append((cursor, cursor + boundary.start() if boundary else finish))
                     continue
                 if token[0] == "[":
                     image = offset > beginning and visible[offset - 1] == "!" and not escaped(visible, offset - 1)
@@ -535,17 +540,37 @@ def extract_destinations(source, strict=False, markdown=True):
                 continue
             # autolink.c: www_match checks the preceding source character;
             # url_match rewinds the complete alphabetic scheme before ':'.
+            reason = False
             if markdown and match.start() > beginning:
                 previous = source[match.start() - 1]
-                if (match[0].lower().startswith("www.") and previous not in "*_~(\t\n\r\f\v "
+                if match[0].lower().startswith("www.") and previous == "<" and not escaped(source, match.start() - 1):
+                    # A failed handle_pointy_brace leaves '<' literal. It is
+                    # not a www_match boundary. Reject the tempting URL-like
+                    # spelling instead of claiming a href the renderer omits.
+                    reason = "ambiguous literal angle before an extended autolink"
+                elif (match[0].lower().startswith("www.") and previous not in "*_~(\t\n\r\f\v "
                         or not match[0].lower().startswith("www.") and previous.isascii() and previous.isalpha()):
                     cursor = match.start() + 1
                     continue
+            if markdown and match[0].lower().startswith("www.") and not match[0].startswith("www."):
+                reason = reason or "ambiguous uppercase extended autolink"
             target = bare_destination(match[0])
-            reason = ("ambiguous destination encoding in an extended autolink; use a canonical literal URL"
-                      if markdown and quote(target, safe="/:#?@!$&'()*+,;=-._~%") != target else False)
+            if markdown and quote(target, safe="/:#?@!$&'()*+,;=-._~%") != target:
+                reason = reason or "ambiguous destination encoding in an extended autolink; use a canonical literal URL"
             add(match.start(), match.end(), target, reason)
             cursor = match.end()
+    # autolink.c: postprocess_text recognizes email after inline parsing, even
+    # when an unmatched '<' prevented an angle autolink. Match literal ASCII
+    # addresses; reject token encoding/escaping that needs text-node folding.
+    for beginning, finish in literal_angles:
+        for match in re.finditer(r"[^\s<>]+@[^\s<>]+", visible[beginning:finish]):
+            start, end = beginning + match.start(), beginning + match.end()
+            if any(a <= start < b for a, b in occupied):
+                continue
+            if SIMPLE_EMAIL.fullmatch(match[0]):
+                add(start, end, "mailto:" + match[0])
+            else:
+                reject(start, "ambiguous extended email autolink after literal angle")
     return sorted(entries)
 
 
@@ -709,6 +734,10 @@ def reference_label(label):
 def release_destinations(body, version, first_line=1, all_reference_labels=None):
     """Validate visible destinations and section-local references conservatively."""
     visible = masked_code(body)
+    comment = visible.find("<!--")
+    if comment >= 0:
+        line = first_line + body.count("\n", 0, comment)
+        raise ValueError(f"CHANGELOG.md:{line}: unsupported HTML comment; use prose outside comments")
     try:
         entries = extract_destinations(body, strict=True)
     except ValueError as error:
@@ -776,10 +805,6 @@ def release_destinations(body, version, first_line=1, all_reference_labels=None)
     if raw:
         line = first_line + body.count("\n", 0, raw.start())
         raise ValueError(f"CHANGELOG.md:{line}: unsupported raw HTML {raw[0]!r}; use Markdown links and images")
-    comment = visible.find("<!--")
-    if comment >= 0:
-        line = first_line + body.count("\n", 0, comment)
-        raise ValueError(f"CHANGELOG.md:{line}: unsupported HTML comment; use prose outside comments")
     return targets
 
 
@@ -814,7 +839,7 @@ def release_notes(source, version):
                 if not text.startswith("## "):
                     raise ValueError(f"CHANGELOG.md:{number}: release headings and fences must start in column one")
             if "<!--" in text and not re.fullmatch(r"[^\n]*<!--(?:(?!-->).)*-->[^\n]*", text):
-                raise ValueError(f"CHANGELOG.md:{number}: multiline or ambiguous HTML comment is unsupported")
+                raise ValueError(f"CHANGELOG.md:{number}: unsupported HTML comment; use prose outside comments")
             if text.startswith("## "):
                 if previous.strip():
                     raise ValueError(f"CHANGELOG.md:{number}: release heading requires a preceding blank line")

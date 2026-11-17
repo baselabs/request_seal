@@ -350,8 +350,13 @@ deactivates earlier link openers, and brackets never cross table cells. Literal
 closers return their remaining text to the bare-URL scan. Unclosed brackets
 suppress extended autolinks until the inline context ends. A `www.` autolink
 requires a preceding space, `*`, `_`, `~`, `(`, or the start of its inline context.
-An escaped `<` is literal text. Autolink destinations requiring href encoding
-are rejected by construct name rather than shortened or rewritten.
+An escaped `<` is literal text. An unmatched `<` before a `www.` candidate is
+rejected as a literal-angle ambiguity; it does not establish a rendered link.
+Uppercase `WWW.` candidates are also rejected. Unmatched angles leave bare
+HTTP(S) URLs visible. Simple ASCII email addresses in unmatched angle text
+produce `mailto:` destinations; complex email tokens are rejected by name.
+Autolink destinations requiring href encoding are rejected by construct name
+rather than shortened or rewritten.
 Top-level tables parse each cell and row separately, with equally many header
 and delimiter cells and at most three spaces before the delimiter. Four spaces
 or a tab do not form a table delimiter. Excess body cells, indented code directly

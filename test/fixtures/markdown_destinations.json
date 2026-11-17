@@ -5785,7 +5785,7 @@
         "blockquote"
       ],
       "expected": {
-        "reject": "unused\\ link\\ reference\\ definition"
+        "reject": "extended\\ email\\ autolink\\ after\\ literal\\ angle"
       }
     },
     {
@@ -5833,7 +5833,7 @@
         "li"
       ],
       "expected": {
-        "reject": "unused\\ link\\ reference\\ definition"
+        "reject": "extended\\ email\\ autolink\\ after\\ literal\\ angle"
       }
     },
     {
@@ -6060,7 +6060,7 @@
         "li"
       ],
       "expected": {
-        "reject": "encoding\\ in\\ an\\ extended\\ autolink"
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
       }
     },
     {
@@ -6149,7 +6149,7 @@
       ],
       "github_blocks": [],
       "expected": {
-        "reject": "encoding\\ in\\ an\\ extended\\ autolink"
+        "reject": "extended\\ email\\ autolink\\ after\\ literal\\ angle"
       }
     },
     {
@@ -10100,6 +10100,2221 @@
       ],
       "expected": {
         "reject": "unused\\ footnote\\ definition"
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-paragraph",
+      "construct": "literal angle before noncanonical www destination",
+      "markdown": "<www.github.com/baselabs/request_seal/blob/v2.3.4/README.md>",
+      "github_hrefs": [],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-quote",
+      "construct": "literal angle before noncanonical www destination",
+      "markdown": "> <www.github.com/baselabs/request_seal/blob/v2.3.4/README.md>",
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "http-angle-www-lower-before-bare",
+      "construct": "scheme autolink adjacent to www destination",
+      "markdown": "<https://example.com/inner>www.github.com/baselabs/request_seal/blob/v2.3.4/README.md",
+      "github_hrefs": [
+        "https://example.com/inner"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "https://example.com/inner"
+        ]
+      }
+    },
+    {
+      "name": "http-angle-www-lower-before-angle",
+      "construct": "scheme autolink adjacent to www destination",
+      "markdown": "<https://example.com/inner><www.github.com/baselabs/request_seal/blob/v2.3.4/README.md>",
+      "github_hrefs": [
+        "https://example.com/inner"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "http-angle-www-lower-after-bare",
+      "construct": "scheme autolink adjacent to www destination",
+      "markdown": "www.github.com/baselabs/request_seal/blob/v2.3.4/README.md<https://example.com/inner>",
+      "github_hrefs": [
+        "http://www.github.com/baselabs/request_seal/blob/v2.3.4/README.md",
+        "https://example.com/inner"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "canonical"
+      }
+    },
+    {
+      "name": "http-angle-www-lower-after-angle",
+      "construct": "scheme autolink adjacent to www destination",
+      "markdown": "<www.github.com/baselabs/request_seal/blob/v2.3.4/README.md><https://example.com/inner>",
+      "github_hrefs": [
+        "https://example.com/inner"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-paragraph",
+      "construct": "literal angle before noncanonical www destination",
+      "markdown": "<WWW.GITHUB.COM/baselabs/request_seal/blob/v2.3.4/README.md>",
+      "github_hrefs": [],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-quote",
+      "construct": "literal angle before noncanonical www destination",
+      "markdown": "> <WWW.GITHUB.COM/baselabs/request_seal/blob/v2.3.4/README.md>",
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "http-angle-www-upper-before-bare",
+      "construct": "scheme autolink adjacent to www destination",
+      "markdown": "<HTTPS://example.com/inner>WWW.GITHUB.COM/baselabs/request_seal/blob/v2.3.4/README.md",
+      "github_hrefs": [
+        "HTTPS://example.com/inner"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "HTTPS://example.com/inner"
+        ]
+      }
+    },
+    {
+      "name": "http-angle-www-upper-before-angle",
+      "construct": "scheme autolink adjacent to www destination",
+      "markdown": "<HTTPS://example.com/inner><WWW.GITHUB.COM/baselabs/request_seal/blob/v2.3.4/README.md>",
+      "github_hrefs": [
+        "HTTPS://example.com/inner"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "http-angle-www-upper-after-bare",
+      "construct": "scheme autolink adjacent to www destination",
+      "markdown": "WWW.GITHUB.COM/baselabs/request_seal/blob/v2.3.4/README.md<HTTPS://example.com/inner>",
+      "github_hrefs": [
+        "HTTPS://example.com/inner"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "uppercase\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "http-angle-www-upper-after-angle",
+      "construct": "scheme autolink adjacent to www destination",
+      "markdown": "<WWW.GITHUB.COM/baselabs/request_seal/blob/v2.3.4/README.md><HTTPS://example.com/inner>",
+      "github_hrefs": [
+        "HTTPS://example.com/inner"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-unclosed-paragraph",
+      "construct": "unmatched angle / www-lower / unclosed / paragraph",
+      "angle_class": "www-lower",
+      "container": "paragraph",
+      "markdown": "<www.example.com/path",
+      "github_hrefs": [],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-nested-paragraph",
+      "construct": "unmatched angle / www-lower / nested / paragraph",
+      "angle_class": "www-lower",
+      "container": "paragraph",
+      "markdown": "<<www.example.com/path>",
+      "github_hrefs": [],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-unclosed-paragraph",
+      "construct": "unmatched angle / www-upper / unclosed / paragraph",
+      "angle_class": "www-upper",
+      "container": "paragraph",
+      "markdown": "<WWW.example.com/path",
+      "github_hrefs": [],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-nested-paragraph",
+      "construct": "unmatched angle / www-upper / nested / paragraph",
+      "angle_class": "www-upper",
+      "container": "paragraph",
+      "markdown": "<<WWW.example.com/path>",
+      "github_hrefs": [],
+      "github_blocks": [],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-http-unclosed-paragraph",
+      "construct": "unmatched angle / http / unclosed / paragraph",
+      "angle_class": "http",
+      "container": "paragraph",
+      "markdown": "<http://example.com/path",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-http-nested-paragraph",
+      "construct": "unmatched angle / http / nested / paragraph",
+      "angle_class": "http",
+      "container": "paragraph",
+      "markdown": "<<http://example.com/path>",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-unclosed-paragraph",
+      "construct": "unmatched angle / https / unclosed / paragraph",
+      "angle_class": "https",
+      "container": "paragraph",
+      "markdown": "<https://example.com/path",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-nested-paragraph",
+      "construct": "unmatched angle / https / nested / paragraph",
+      "angle_class": "https",
+      "container": "paragraph",
+      "markdown": "<<https://example.com/path>",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-unclosed-paragraph",
+      "construct": "unmatched angle / email / unclosed / paragraph",
+      "angle_class": "email",
+      "container": "paragraph",
+      "markdown": "<user@example.com",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-nested-paragraph",
+      "construct": "unmatched angle / email / nested / paragraph",
+      "angle_class": "email",
+      "container": "paragraph",
+      "markdown": "<<user@example.com>",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-unclosed-quote",
+      "construct": "unmatched angle / www-lower / unclosed / quote",
+      "angle_class": "www-lower",
+      "container": "quote",
+      "markdown": "> <www.example.com/path",
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-nested-quote",
+      "construct": "unmatched angle / www-lower / nested / quote",
+      "angle_class": "www-lower",
+      "container": "quote",
+      "markdown": "> <<www.example.com/path>",
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-unclosed-quote",
+      "construct": "unmatched angle / www-upper / unclosed / quote",
+      "angle_class": "www-upper",
+      "container": "quote",
+      "markdown": "> <WWW.example.com/path",
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-nested-quote",
+      "construct": "unmatched angle / www-upper / nested / quote",
+      "angle_class": "www-upper",
+      "container": "quote",
+      "markdown": "> <<WWW.example.com/path>",
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-http-unclosed-quote",
+      "construct": "unmatched angle / http / unclosed / quote",
+      "angle_class": "http",
+      "container": "quote",
+      "markdown": "> <http://example.com/path",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-http-nested-quote",
+      "construct": "unmatched angle / http / nested / quote",
+      "angle_class": "http",
+      "container": "quote",
+      "markdown": "> <<http://example.com/path>",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-unclosed-quote",
+      "construct": "unmatched angle / https / unclosed / quote",
+      "angle_class": "https",
+      "container": "quote",
+      "markdown": "> <https://example.com/path",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-nested-quote",
+      "construct": "unmatched angle / https / nested / quote",
+      "angle_class": "https",
+      "container": "quote",
+      "markdown": "> <<https://example.com/path>",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-unclosed-quote",
+      "construct": "unmatched angle / email / unclosed / quote",
+      "angle_class": "email",
+      "container": "quote",
+      "markdown": "> <user@example.com",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-nested-quote",
+      "construct": "unmatched angle / email / nested / quote",
+      "angle_class": "email",
+      "container": "quote",
+      "markdown": "> <<user@example.com>",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-unclosed-list",
+      "construct": "unmatched angle / www-lower / unclosed / list",
+      "angle_class": "www-lower",
+      "container": "list",
+      "markdown": "- <www.example.com/path",
+      "github_hrefs": [],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-nested-list",
+      "construct": "unmatched angle / www-lower / nested / list",
+      "angle_class": "www-lower",
+      "container": "list",
+      "markdown": "- <<www.example.com/path>",
+      "github_hrefs": [],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-unclosed-list",
+      "construct": "unmatched angle / www-upper / unclosed / list",
+      "angle_class": "www-upper",
+      "container": "list",
+      "markdown": "- <WWW.example.com/path",
+      "github_hrefs": [],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-nested-list",
+      "construct": "unmatched angle / www-upper / nested / list",
+      "angle_class": "www-upper",
+      "container": "list",
+      "markdown": "- <<WWW.example.com/path>",
+      "github_hrefs": [],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-http-unclosed-list",
+      "construct": "unmatched angle / http / unclosed / list",
+      "angle_class": "http",
+      "container": "list",
+      "markdown": "- <http://example.com/path",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-http-nested-list",
+      "construct": "unmatched angle / http / nested / list",
+      "angle_class": "http",
+      "container": "list",
+      "markdown": "- <<http://example.com/path>",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-unclosed-list",
+      "construct": "unmatched angle / https / unclosed / list",
+      "angle_class": "https",
+      "container": "list",
+      "markdown": "- <https://example.com/path",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-nested-list",
+      "construct": "unmatched angle / https / nested / list",
+      "angle_class": "https",
+      "container": "list",
+      "markdown": "- <<https://example.com/path>",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-unclosed-list",
+      "construct": "unmatched angle / email / unclosed / list",
+      "angle_class": "email",
+      "container": "list",
+      "markdown": "- <user@example.com",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-nested-list",
+      "construct": "unmatched angle / email / nested / list",
+      "angle_class": "email",
+      "container": "list",
+      "markdown": "- <<user@example.com>",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-unclosed-table",
+      "construct": "unmatched angle / www-lower / unclosed / table",
+      "angle_class": "www-lower",
+      "container": "table",
+      "markdown": "| <www.example.com/path |\n|---|",
+      "github_hrefs": [],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-nested-table",
+      "construct": "unmatched angle / www-lower / nested / table",
+      "angle_class": "www-lower",
+      "container": "table",
+      "markdown": "| <<www.example.com/path> |\n|---|",
+      "github_hrefs": [],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-unclosed-table",
+      "construct": "unmatched angle / www-upper / unclosed / table",
+      "angle_class": "www-upper",
+      "container": "table",
+      "markdown": "| <WWW.example.com/path |\n|---|",
+      "github_hrefs": [],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-nested-table",
+      "construct": "unmatched angle / www-upper / nested / table",
+      "angle_class": "www-upper",
+      "container": "table",
+      "markdown": "| <<WWW.example.com/path> |\n|---|",
+      "github_hrefs": [],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-http-unclosed-table",
+      "construct": "unmatched angle / http / unclosed / table",
+      "angle_class": "http",
+      "container": "table",
+      "markdown": "| <http://example.com/path |\n|---|",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-http-nested-table",
+      "construct": "unmatched angle / http / nested / table",
+      "angle_class": "http",
+      "container": "table",
+      "markdown": "| <<http://example.com/path> |\n|---|",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-unclosed-table",
+      "construct": "unmatched angle / https / unclosed / table",
+      "angle_class": "https",
+      "container": "table",
+      "markdown": "| <https://example.com/path |\n|---|",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-nested-table",
+      "construct": "unmatched angle / https / nested / table",
+      "angle_class": "https",
+      "container": "table",
+      "markdown": "| <<https://example.com/path> |\n|---|",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-unclosed-table",
+      "construct": "unmatched angle / email / unclosed / table",
+      "angle_class": "email",
+      "container": "table",
+      "markdown": "| <user@example.com |\n|---|",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-nested-table",
+      "construct": "unmatched angle / email / nested / table",
+      "angle_class": "email",
+      "container": "table",
+      "markdown": "| <<user@example.com> |\n|---|",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-unclosed-footnote",
+      "construct": "unmatched angle / www-lower / unclosed / footnote",
+      "angle_class": "www-lower",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <www.example.com/path",
+      "github_hrefs": [],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-lower-nested-footnote",
+      "construct": "unmatched angle / www-lower / nested / footnote",
+      "angle_class": "www-lower",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <<www.example.com/path>",
+      "github_hrefs": [],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-unclosed-footnote",
+      "construct": "unmatched angle / www-upper / unclosed / footnote",
+      "angle_class": "www-upper",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <WWW.example.com/path",
+      "github_hrefs": [],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-www-upper-nested-footnote",
+      "construct": "unmatched angle / www-upper / nested / footnote",
+      "angle_class": "www-upper",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <<WWW.example.com/path>",
+      "github_hrefs": [],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "literal-angle-http-unclosed-footnote",
+      "construct": "unmatched angle / http / unclosed / footnote",
+      "angle_class": "http",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <http://example.com/path",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-http-nested-footnote",
+      "construct": "unmatched angle / http / nested / footnote",
+      "angle_class": "http",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <<http://example.com/path>",
+      "github_hrefs": [
+        "http://example.com/path"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "http://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-unclosed-footnote",
+      "construct": "unmatched angle / https / unclosed / footnote",
+      "angle_class": "https",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <https://example.com/path",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-https-nested-footnote",
+      "construct": "unmatched angle / https / nested / footnote",
+      "angle_class": "https",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <<https://example.com/path>",
+      "github_hrefs": [
+        "https://example.com/path"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/path"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-unclosed-footnote",
+      "construct": "unmatched angle / email / unclosed / footnote",
+      "angle_class": "email",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <user@example.com",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "literal-angle-email-nested-footnote",
+      "construct": "unmatched angle / email / nested / footnote",
+      "angle_class": "email",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <<user@example.com>",
+      "github_hrefs": [
+        "mailto:user@example.com"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "mailto:user@example.com"
+        ]
+      }
+    },
+    {
+      "name": "pair-inline-literal-angle-adjacent",
+      "construct": "inline / literal-angle / adjacent / table",
+      "pair": [
+        "inline",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "table",
+      "markdown": "| [x](https://example.com/interaction)< https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-inline-literal-angle-overlap",
+      "construct": "inline / literal-angle / overlap / footnote",
+      "pair": [
+        "inline",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: [<https://example.com/interaction](https://example.com/interaction) https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-reference-literal-angle-adjacent-url-boundary",
+      "construct": "reference / literal-angle / adjacent / footnote",
+      "pair": [
+        "reference",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: [https://example.com/interaction][ref]<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[ref]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "raw\\ HTML"
+      }
+    },
+    {
+      "name": "pair-reference-literal-angle-overlap",
+      "construct": "reference / literal-angle / overlap / paragraph",
+      "pair": [
+        "reference",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "paragraph",
+      "markdown": "[<https://example.com/interaction][ref] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[ref]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-collapsed-literal-angle-adjacent-url-boundary",
+      "construct": "collapsed / literal-angle / adjacent / paragraph",
+      "pair": [
+        "collapsed",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "paragraph",
+      "markdown": "[https://example.com/interaction][]<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "unused\\ link\\ reference\\ definition"
+      }
+    },
+    {
+      "name": "pair-collapsed-literal-angle-overlap",
+      "construct": "collapsed / literal-angle / overlap / list",
+      "pair": [
+        "collapsed",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "list",
+      "markdown": "- [<https://example.com/interaction][] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "unused\\ link\\ reference\\ definition"
+      }
+    },
+    {
+      "name": "pair-shortcut-literal-angle-adjacent-url-boundary",
+      "construct": "shortcut / literal-angle / adjacent / list",
+      "pair": [
+        "shortcut",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "list",
+      "markdown": "- [https://example.com/interaction]<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "unused\\ link\\ reference\\ definition"
+      }
+    },
+    {
+      "name": "pair-shortcut-literal-angle-overlap",
+      "construct": "shortcut / literal-angle / overlap / quote",
+      "pair": [
+        "shortcut",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "quote",
+      "markdown": "> [<https://example.com/interaction] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "unused\\ link\\ reference\\ definition"
+      }
+    },
+    {
+      "name": "pair-http-angle-literal-angle-adjacent",
+      "construct": "http-angle / literal-angle / adjacent / quote",
+      "pair": [
+        "http-angle",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "quote",
+      "markdown": "> <https://example.com/x>< https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/x",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/x",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-http-angle-literal-angle-overlap",
+      "construct": "http-angle / literal-angle / overlap / table",
+      "pair": [
+        "http-angle",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "table",
+      "markdown": "| <https://example.com/<https://example.com/interaction> https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|",
+      "github_hrefs": [
+        "https://example.com/",
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/",
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-ftp-angle-literal-angle-adjacent",
+      "construct": "ftp-angle / literal-angle / adjacent / table",
+      "pair": [
+        "ftp-angle",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "table",
+      "markdown": "| <ftp://example.com/x>< https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "reject": "unsupported\\ URL\\ scheme"
+      }
+    },
+    {
+      "name": "pair-ftp-angle-literal-angle-overlap",
+      "construct": "ftp-angle / literal-angle / overlap / footnote",
+      "pair": [
+        "ftp-angle",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <ftp://example.com/<https://example.com/interaction> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-mailto-angle-literal-angle-adjacent",
+      "construct": "mailto-angle / literal-angle / adjacent / footnote",
+      "pair": [
+        "mailto-angle",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <mailto:x@example.com>< https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+        "mailto:x@example.com"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+          "mailto:x@example.com"
+        ]
+      }
+    },
+    {
+      "name": "pair-mailto-angle-literal-angle-overlap",
+      "construct": "mailto-angle / literal-angle / overlap / paragraph",
+      "pair": [
+        "mailto-angle",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "paragraph",
+      "markdown": "<mailto:<https://example.com/interaction@example.com> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction@example.com",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction@example.com",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-email-angle-literal-angle-adjacent",
+      "construct": "email-angle / literal-angle / adjacent / paragraph",
+      "pair": [
+        "email-angle",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "paragraph",
+      "markdown": "<x@example.com>< https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+        "mailto:x@example.com"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+          "mailto:x@example.com"
+        ]
+      }
+    },
+    {
+      "name": "pair-email-angle-literal-angle-overlap",
+      "construct": "email-angle / literal-angle / overlap / list",
+      "pair": [
+        "email-angle",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "list",
+      "markdown": "- <<https://example.com/interaction@example.com> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction@example.com",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction@example.com",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-https-bare-literal-angle-adjacent",
+      "construct": "https-bare / literal-angle / adjacent / list",
+      "pair": [
+        "https-bare",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "list",
+      "markdown": "- https://example.com/x< https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/x",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/x",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-https-bare-literal-angle-overlap",
+      "construct": "https-bare / literal-angle / overlap / quote",
+      "pair": [
+        "https-bare",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "quote",
+      "markdown": "> https://example.com/<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/",
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/",
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-www-bare-literal-angle-adjacent",
+      "construct": "www-bare / literal-angle / adjacent / quote",
+      "pair": [
+        "www-bare",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "quote",
+      "markdown": "> www.example.com/x< https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "http://www.example.com/x",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+          "www.example.com/x"
+        ]
+      }
+    },
+    {
+      "name": "pair-www-bare-literal-angle-overlap",
+      "construct": "www-bare / literal-angle / overlap / table",
+      "pair": [
+        "www-bare",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "table",
+      "markdown": "| www.example.com/<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|",
+      "github_hrefs": [
+        "http://www.example.com/",
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+          "www.example.com/"
+        ]
+      }
+    },
+    {
+      "name": "pair-code-literal-angle-adjacent-url-boundary",
+      "construct": "code / literal-angle / adjacent / table",
+      "pair": [
+        "code",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "table",
+      "markdown": "| `https://example.com/interaction`<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "code",
+        "table"
+      ],
+      "expected": {
+        "reject": "raw\\ HTML"
+      }
+    },
+    {
+      "name": "pair-code-literal-angle-overlap",
+      "construct": "code / literal-angle / overlap / footnote",
+      "pair": [
+        "code",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: `<https://example.com/interaction` https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "code",
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-escape-literal-angle-adjacent-url-boundary",
+      "construct": "escape / literal-angle / adjacent / footnote",
+      "pair": [
+        "escape",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: \\[https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container1].\n\n[^container1]: \\]https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container2].\n\n[^container2]: \\(https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container3].\n\n[^container3]: \\)https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container4].\n\n[^container4]: \\<https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container5].\n\n[^container5]: \\>https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container6].\n\n[^container6]: \\`https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container7].\n\n[^container7]: \\|https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container8].\n\n[^container8]: \\!https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container9].\n\n[^container9]: \\\\https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container10].\n\n[^container10]: \\*https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container11].\n\n[^container11]: \\_https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container12].\n\n[^container12]: \\~https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container13].\n\n[^container13]: \\\"https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\nUse [^container14].\n\n[^container14]: \\'https://example.com/interaction<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "raw\\ HTML"
+      }
+    },
+    {
+      "name": "pair-escape-literal-angle-overlap",
+      "construct": "escape / literal-angle / overlap / paragraph",
+      "pair": [
+        "escape",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "paragraph",
+      "markdown": "\\[<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\]<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\(<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\)<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\<<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\><https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\`<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\|<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\!<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\\\<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\*<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\_<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\~<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\\"<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n\\'<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-html-literal-angle-adjacent-url-boundary",
+      "construct": "html / literal-angle / adjacent / paragraph",
+      "pair": [
+        "html",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "paragraph",
+      "markdown": "<span title=\"https://example.com/interaction\">text</span><x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "encoding\\ in\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "pair-html-literal-angle-overlap",
+      "construct": "html / literal-angle / overlap / list",
+      "pair": [
+        "html",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "list",
+      "markdown": "- <span title=\"<https://example.com/interaction\">text</span> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "autolink\\ destination\\ encoding"
+      }
+    },
+    {
+      "name": "pair-footnote-literal-angle-adjacent-url-boundary",
+      "construct": "footnote / literal-angle / adjacent / list",
+      "pair": [
+        "footnote",
+        "literal-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "list",
+      "markdown": "- [^https://example.com/interaction]<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[^x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "unused\\ footnote\\ definition"
+      }
+    },
+    {
+      "name": "pair-footnote-literal-angle-overlap",
+      "construct": "footnote / literal-angle / overlap / quote",
+      "pair": [
+        "footnote",
+        "literal-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "quote",
+      "markdown": "> [^<https://example.com/interaction] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[^x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "unused\\ footnote\\ definition"
+      }
+    },
+    {
+      "name": "pair-literal-angle-inline-adjacent",
+      "construct": "literal-angle / inline / adjacent / footnote",
+      "pair": [
+        "literal-angle",
+        "inline"
+      ],
+      "arrangement": "adjacent",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <[x](https://example.com/interaction) https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-inline-overlap",
+      "construct": "literal-angle / inline / overlap / paragraph",
+      "pair": [
+        "literal-angle",
+        "inline"
+      ],
+      "arrangement": "overlap",
+      "container": "paragraph",
+      "markdown": "<[https://example.com/interaction](https://example.com/interaction) https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-reference-adjacent-url-boundary",
+      "construct": "literal-angle / reference / adjacent / list",
+      "pair": [
+        "literal-angle",
+        "reference"
+      ],
+      "arrangement": "adjacent",
+      "container": "list",
+      "markdown": "- <https://example.com/interaction[x][ref] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[ref]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://example.com/interaction%5Bx%5D%5Bref%5D",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "encoding\\ in\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "pair-literal-angle-reference-overlap",
+      "construct": "literal-angle / reference / overlap / quote",
+      "pair": [
+        "literal-angle",
+        "reference"
+      ],
+      "arrangement": "overlap",
+      "container": "quote",
+      "markdown": "> <[https://example.com/interaction][ref] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[ref]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-collapsed-adjacent-url-boundary",
+      "construct": "literal-angle / collapsed / adjacent / table",
+      "pair": [
+        "literal-angle",
+        "collapsed"
+      ],
+      "arrangement": "adjacent",
+      "container": "table",
+      "markdown": "| <https://example.com/interaction[x][] https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|\n\n[x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://example.com/interaction%5Bx%5D%5B%5D",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "reject": "encoding\\ in\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "pair-literal-angle-collapsed-overlap",
+      "construct": "literal-angle / collapsed / overlap / footnote",
+      "pair": [
+        "literal-angle",
+        "collapsed"
+      ],
+      "arrangement": "overlap",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <[https://example.com/interaction][] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "unused\\ link\\ reference\\ definition"
+      }
+    },
+    {
+      "name": "pair-literal-angle-shortcut-adjacent-url-boundary",
+      "construct": "literal-angle / shortcut / adjacent / paragraph",
+      "pair": [
+        "literal-angle",
+        "shortcut"
+      ],
+      "arrangement": "adjacent",
+      "container": "paragraph",
+      "markdown": "<https://example.com/interaction[x] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://example.com/interaction%5Bx%5D",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "encoding\\ in\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "pair-literal-angle-shortcut-overlap",
+      "construct": "literal-angle / shortcut / overlap / list",
+      "pair": [
+        "literal-angle",
+        "shortcut"
+      ],
+      "arrangement": "overlap",
+      "container": "list",
+      "markdown": "- <[https://example.com/interaction] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "unused\\ link\\ reference\\ definition"
+      }
+    },
+    {
+      "name": "pair-literal-angle-http-angle-adjacent",
+      "construct": "literal-angle / http-angle / adjacent / quote",
+      "pair": [
+        "literal-angle",
+        "http-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "quote",
+      "markdown": "> <<https://example.com/x> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/x",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/x",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-http-angle-overlap",
+      "construct": "literal-angle / http-angle / overlap / table",
+      "pair": [
+        "literal-angle",
+        "http-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "table",
+      "markdown": "| <<https://example.com/https://example.com/interaction> https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|",
+      "github_hrefs": [
+        "https://example.com/https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-ftp-angle-adjacent",
+      "construct": "literal-angle / ftp-angle / adjacent / footnote",
+      "pair": [
+        "literal-angle",
+        "ftp-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <<ftp://example.com/x> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "unsupported\\ URL\\ scheme"
+      }
+    },
+    {
+      "name": "pair-literal-angle-ftp-angle-overlap",
+      "construct": "literal-angle / ftp-angle / overlap / paragraph",
+      "pair": [
+        "literal-angle",
+        "ftp-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "paragraph",
+      "markdown": "<<ftp://example.com/https://example.com/interaction> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "unsupported\\ URL\\ scheme"
+      }
+    },
+    {
+      "name": "pair-literal-angle-mailto-angle-adjacent",
+      "construct": "literal-angle / mailto-angle / adjacent / list",
+      "pair": [
+        "literal-angle",
+        "mailto-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "list",
+      "markdown": "- <<mailto:x@example.com> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+        "mailto:x@example.com"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+          "mailto:x@example.com"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-mailto-angle-overlap",
+      "construct": "literal-angle / mailto-angle / overlap / quote",
+      "pair": [
+        "literal-angle",
+        "mailto-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "quote",
+      "markdown": "> <<mailto:https://example.com/interaction@example.com> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+        "mailto:https://example.com/interaction@example.com"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "destination\\ 'mailto:https://example\\.com/interaction@example\\.com':\\ requires\\ an\\ absolute\\ mailto\\ URL"
+      }
+    },
+    {
+      "name": "pair-literal-angle-email-angle-adjacent",
+      "construct": "literal-angle / email-angle / adjacent / table",
+      "pair": [
+        "literal-angle",
+        "email-angle"
+      ],
+      "arrangement": "adjacent",
+      "container": "table",
+      "markdown": "| <<x@example.com> https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+        "mailto:x@example.com"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+          "mailto:x@example.com"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-email-angle-overlap",
+      "construct": "literal-angle / email-angle / overlap / footnote",
+      "pair": [
+        "literal-angle",
+        "email-angle"
+      ],
+      "arrangement": "overlap",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <<https://example.com/interaction@example.com> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction@example.com",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction@example.com",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-https-bare-adjacent",
+      "construct": "literal-angle / https-bare / adjacent / paragraph",
+      "pair": [
+        "literal-angle",
+        "https-bare"
+      ],
+      "arrangement": "adjacent",
+      "container": "paragraph",
+      "markdown": "<https://example.com/x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/x",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "destinations": [
+          "https://example.com/x",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-https-bare-overlap",
+      "construct": "literal-angle / https-bare / overlap / list",
+      "pair": [
+        "literal-angle",
+        "https-bare"
+      ],
+      "arrangement": "overlap",
+      "container": "list",
+      "markdown": "- <https://example.com/https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-www-bare-adjacent",
+      "construct": "literal-angle / www-bare / adjacent / quote",
+      "pair": [
+        "literal-angle",
+        "www-bare"
+      ],
+      "arrangement": "adjacent",
+      "container": "quote",
+      "markdown": "> <www.example.com/x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "pair-literal-angle-www-bare-overlap",
+      "construct": "literal-angle / www-bare / overlap / table",
+      "pair": [
+        "literal-angle",
+        "www-bare"
+      ],
+      "arrangement": "overlap",
+      "container": "table",
+      "markdown": "| <www.example.com/https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "reject": "literal\\ angle\\ before\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "pair-literal-angle-code-adjacent-url-boundary",
+      "construct": "literal-angle / code / adjacent / footnote",
+      "pair": [
+        "literal-angle",
+        "code"
+      ],
+      "arrangement": "adjacent",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <https://example.com/interaction`x` https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction%60x%60",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "encoding\\ in\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "pair-literal-angle-code-overlap",
+      "construct": "literal-angle / code / overlap / paragraph",
+      "pair": [
+        "literal-angle",
+        "code"
+      ],
+      "arrangement": "overlap",
+      "container": "paragraph",
+      "markdown": "<`https://example.com/interaction` https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "code"
+      ],
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-escape-adjacent-url-boundary",
+      "construct": "literal-angle / escape / adjacent / list",
+      "pair": [
+        "literal-angle",
+        "escape"
+      ],
+      "arrangement": "adjacent",
+      "container": "list",
+      "markdown": "- <https://example.com/interaction\\[x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\]x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\(x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\)x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\<x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\>x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\`x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\|x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\!x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\\\x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\*x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\_x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\~x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\\"x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n- <https://example.com/interaction\\'x https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction%5C",
+        "https://example.com/interaction%5C!x",
+        "https://example.com/interaction%5C%22x",
+        "https://example.com/interaction%5C%5Bx",
+        "https://example.com/interaction%5C%5Cx",
+        "https://example.com/interaction%5C%5Dx",
+        "https://example.com/interaction%5C%60x",
+        "https://example.com/interaction%5C%7Cx",
+        "https://example.com/interaction%5C'x",
+        "https://example.com/interaction%5C(x",
+        "https://example.com/interaction%5C)x",
+        "https://example.com/interaction%5C*x",
+        "https://example.com/interaction%5C_x",
+        "https://example.com/interaction%5C~x",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "autolink\\ destination\\ encoding"
+      }
+    },
+    {
+      "name": "pair-literal-angle-escape-overlap",
+      "construct": "literal-angle / escape / overlap / quote",
+      "pair": [
+        "literal-angle",
+        "escape"
+      ],
+      "arrangement": "overlap",
+      "container": "quote",
+      "markdown": "> <\\[https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\]https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\(https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\)https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\<https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\>https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\`https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\|https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\!https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\\\https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\*https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\_https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\~https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\\"https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n> <\\'https://example.com/interaction https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ],
+      "expected": {
+        "destinations": [
+          "https://example.com/interaction",
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      }
+    },
+    {
+      "name": "pair-literal-angle-html-adjacent-url-boundary",
+      "construct": "literal-angle / html / adjacent / table",
+      "pair": [
+        "literal-angle",
+        "html"
+      ],
+      "arrangement": "adjacent",
+      "container": "table",
+      "markdown": "| <https://example.com/interaction<span title=\"x\">text</span> https://request-seal.hexdocs.pm/2.3.4/readme.html tail ` |\n|---|",
+      "github_hrefs": [
+        "https://example.com/interaction",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "table"
+      ],
+      "expected": {
+        "reject": "raw\\ HTML"
+      }
+    },
+    {
+      "name": "pair-literal-angle-html-overlap",
+      "construct": "literal-angle / html / overlap / footnote",
+      "pair": [
+        "literal-angle",
+        "html"
+      ],
+      "arrangement": "overlap",
+      "container": "footnote",
+      "markdown": "Use [^container0].\n\n[^container0]: <<span title=\"https://example.com/interaction\">text</span> https://request-seal.hexdocs.pm/2.3.4/readme.html tail `",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ],
+      "expected": {
+        "reject": "encoding\\ in\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "pair-literal-angle-footnote-adjacent-url-boundary",
+      "construct": "literal-angle / footnote / adjacent / paragraph",
+      "pair": [
+        "literal-angle",
+        "footnote"
+      ],
+      "arrangement": "adjacent",
+      "container": "paragraph",
+      "markdown": "<https://example.com/interaction[^x] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[^x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://example.com/interaction%5B%5Ex%5D",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [],
+      "expected": {
+        "reject": "encoding\\ in\\ an\\ extended\\ autolink"
+      }
+    },
+    {
+      "name": "pair-literal-angle-footnote-overlap",
+      "construct": "literal-angle / footnote / overlap / list",
+      "pair": [
+        "literal-angle",
+        "footnote"
+      ],
+      "arrangement": "overlap",
+      "container": "list",
+      "markdown": "- <[^https://example.com/interaction] https://request-seal.hexdocs.pm/2.3.4/readme.html tail `\n\n[^x]: https://example.com/interaction",
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ],
+      "expected": {
+        "reject": "unused\\ footnote\\ definition"
+      }
+    },
+    {
+      "name": "literal-angle-email-repeated-domain-dot",
+      "construct": "unmatched angle / email / repeated domain dot",
+      "markdown": "<user@example..com",
+      "github_hrefs": [],
+      "github_blocks": [],
+      "expected": {
+        "reject": "extended\\ email\\ autolink\\ after\\ literal\\ angle"
       }
     }
   ],
