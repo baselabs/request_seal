@@ -119,6 +119,12 @@ defmodule RequestSeal.AshConsumerTest do
     end
     """)
 
+    # The consumer resolves against the repository's lock. Unlocked, offline Hex
+    # resolution picks the newest release the cached registry lists, whose
+    # package need not be cached; newest-release resolution is the latest lane's
+    # claim, not this test's.
+    File.cp!(Path.expand("../mix.lock", __DIR__), Path.join(scratch, "mix.lock"))
+
     elixir_bin = :code.lib_dir(:elixir) |> to_string() |> Path.join("../../bin") |> Path.expand()
     otp_bin = :code.root_dir() |> to_string() |> Path.join("bin")
 
