@@ -77,6 +77,14 @@ class ToolchainTest(unittest.TestCase):
         self.assertIn("fromJSON(needs.toolchain.outputs.matrix)", ci)
         self.assertIn("node-version: ${{ needs.toolchain.outputs.node }}", ci)
 
+    def test_notebook_tooling_requires_the_latest_lane_minor_without_reading_outside_files(self):
+        configuration = pins.toolchain((ROOT / ".tool-versions").read_text())
+        major, minor = configuration["elixir"].split(".")[:2]
+        source = (ROOT / "tools/notebooks/mix.exs").read_text()
+        self.assertEqual([f"~> {major}.{minor}"], re.findall(r'^\s*elixir: "([^"]+)",$', source, re.M))
+        # Dependency updaters copy only this directory; the project must load from it alone.
+        self.assertNotRegex(source, r"File\.|Path\.expand|__DIR__|\.\./")
+
     def test_no_tracked_source_copies_an_exact_pin(self):
         configuration = pins.toolchain((ROOT / ".tool-versions").read_text())
         versions = {configuration["node"]} | {

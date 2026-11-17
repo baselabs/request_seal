@@ -5,8 +5,9 @@ defmodule RequestSealNotebooks.MixProject do
     [
       app: :request_seal_notebooks,
       version: "0.1.0",
-      # The notebook tooling runs on the latest Elixir pinned in .tool-versions.
-      elixir: latest_elixir(),
+      # The notebook tooling runs on the latest CI lane's Elixir minor. The project reads no
+      # file outside this directory, so dependency updaters can resolve it on its own.
+      elixir: "~> 1.20",
       # The Livebook Hex release pins earmark_parser; isolate it from ExDoc.
       # Exact Livebook identity binds the internal importer/exporter we execute.
       deps: [
@@ -30,16 +31,4 @@ defmodule RequestSealNotebooks.MixProject do
   end
 
   def application, do: [extra_applications: [:crypto]]
-
-  defp latest_elixir do
-    ~r/^elixir\s+(.+)$/m
-    |> Regex.run(File.read!(Path.expand("../../.tool-versions", __DIR__)),
-      capture: :all_but_first
-    )
-    |> hd()
-    |> String.split()
-    |> Enum.map(&(&1 |> String.split("-otp-") |> hd() |> Version.parse!()))
-    |> Enum.max(Version)
-    |> to_string()
-  end
 end
