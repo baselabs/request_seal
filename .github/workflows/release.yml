@@ -108,10 +108,12 @@ jobs:
           response=$(mktemp)
           trap 'rm -f "$response"' EXIT
           if gh api --include "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME" > "$response"; then
-            echo 'exists=true' >> "$GITHUB_OUTPUT"
-            echo 'names<<RELEASE_ASSET_NAMES' >> "$GITHUB_OUTPUT"
-            sed '1,/^\r\{0,1\}$/d' "$response" | jq -r '.assets[].name' >> "$GITHUB_OUTPUT"
-            echo 'RELEASE_ASSET_NAMES' >> "$GITHUB_OUTPUT"
+            {
+              echo 'exists=true'
+              echo 'names<<RELEASE_ASSET_NAMES'
+              sed '1,/^\r\{0,1\}$/d' "$response" | jq -r '.assets[].name'
+              echo 'RELEASE_ASSET_NAMES'
+            } >> "$GITHUB_OUTPUT"
           else
             status=$(awk '/^HTTP\// { code=$2 } END { print code }' "$response")
             if [ "$status" = 404 ]; then

@@ -31,6 +31,7 @@ defmodule RequestSeal.PublicDocumentationTest do
     assert "docs/guides/verifying-releases.md" in extras
     refute "docs/operations/releases.md" in extras
     refute "docs/operations/releases.md" in files
+
     assert Regex.match?(
              project[:docs][:groups_for_extras][:Guides],
              "docs/guides/verifying-releases.md"
@@ -60,6 +61,7 @@ defmodule RequestSeal.PublicDocumentationTest do
 
       Module.create(module, changed, Macro.Env.location(__ENV__))
       [guard, "hex.publish"] = module.project()[:aliases][:"hex.publish"]
+
       File.write!(
         Path.join(directory, "mix.exs"),
         String.replace(source, ~r/@version "[^"]+"/, "@version \"#{version}\"")
