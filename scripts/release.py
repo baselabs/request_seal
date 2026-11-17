@@ -8,9 +8,10 @@ import os
 from pathlib import Path
 import posixpath
 import re
+import string
 import subprocess
 import uuid
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 SEMVER = re.compile(
@@ -60,35 +61,127 @@ def source_url(source):
     return matches[0].rstrip("/")
 
 
-def markdown_lines(source):
-    """Yield lines with fenced blocks marked, including their delimiters."""
+def markdown_blocks(source):
+    """Yield code visibility, content offsets and container identity for each line."""
+    root = {"paragraph": False}
+    containers = []
     fence = None
-    for line in source.splitlines(keepends=True):
-        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
-        fenced = fence is not None or marker is not None
-        if marker:
-            run, rest = marker.groups()
-            if fence is None:
-                fence = run
-            elif run[0] == fence[0] and len(run) >= len(fence) and not rest.strip():
-                fence = None
-        yield line, fenced
+
+    def indent(line, offset, column, limit=None):
+        while offset < len(line) and line[offset] in " \t" and (limit is None or column < limit):
+            column += 4 - column % 4 if line[offset] == "\t" else 1
+            offset += 1
+        return offset, column
+
+    def interrupts(text):
+        return re.match(r"(?:>|[-+*][ \t]|\d{1,9}[.)][ \t]|`{3,}|~{3,}|#{1,6}(?:\s|$))", text)
+
+    for original in source.splitlines(keepends=True):
+        # Parse expanded columns, then map content offsets back to source bytes.
+        # A container boundary can fall in the middle of a tab expansion.
+        line = original.expandtabs(4)
+        offsets = [0]
+        for index, char in enumerate(original):
+            width = 4 - (len(offsets) - 1) % 4 if char == "\t" else 1
+            offsets.extend([index + 1] * width)
+        offset = column = 0
+        lazy = False
+        for index, container in enumerate(containers):
+            start, col = indent(line, offset, column)
+            if container["kind"] == "list" and col >= container["column"]:
+                offset, column = indent(line, offset, column, container["column"])
+            elif container["kind"] == "quote" and col - column <= 3 and line[start:start + 1] == ">":
+                offset, column = start + 1, col + 1
+                if line[offset:offset + 1] in (" ", "\t"):
+                    offset, column = indent(line, offset, column, column + 1)
+            elif not line.strip():
+                break  # Blank lines keep list items open.
+            elif containers[-1]["paragraph"] and not interrupts(line[start:]) and fence is None:
+                lazy = True
+                break
+            else:
+                del containers[index:]
+                break
+
+        context = containers[-1] if containers else root
+        if fence and fence[0] is not context:
+            fence = None
+        starts_container = False
+        if not lazy and fence is None:
+            while True:
+                start, col = indent(line, offset, column)
+                if col - column > 3:
+                    break
+                if line[start:start + 1] == ">":
+                    offset, column = start + 1, col + 1
+                    if line[offset:offset + 1] in (" ", "\t"):
+                        offset, column = indent(line, offset, column, column + 1)
+                    container = {"kind": "quote", "paragraph": False}
+                else:
+                    marker = re.match(r"(?:[-+*]|\d{1,9}[.)])(?=[ \t])", line[start:])
+                    if marker is None:
+                        break
+                    offset, column = start + marker.end(), col + marker.end()
+                    end, end_column = indent(line, offset, column)
+                    if end_column - column <= 4:
+                        offset, column = end, end_column
+                    else:
+                        offset, column = indent(line, offset, column, column + 1)
+                    container = {"kind": "list", "column": column, "paragraph": False}
+                context["paragraph"] = False
+                containers.append(container)
+                context = container
+                starts_container = True
+
+        start, col = indent(line, offset, column)
+        text = line[start:]
+        code = False
+        if fence:
+            code = True
+            marker = re.match(r"(`{3,}|~{3,})(.*)$", text)
+            if col - column <= 3 and marker:
+                run, rest = marker.groups()
+                if run[0] == fence[1][0] and len(run) >= len(fence[1]) and not rest.strip():
+                    fence = None
+        elif not lazy and col - column >= 4 and (starts_container or not context["paragraph"]):
+            code = bool(text.strip())
+        elif col - column <= 3:
+            marker = re.match(r"(`{3,}|~{3,})(.*)$", text)
+            if marker and (marker[1][0] == "~" or "`" not in marker[2]):
+                fence = context, marker[1]
+                code = True
+        context["paragraph"] = bool(text.strip()) and not code and not re.match(r"#{1,6}(?:\s|$)", text)
+        yield original, code, offsets[offset], context
+
+
+def markdown_lines(source):
+    """Yield lines with container-aware code blocks marked, including fences."""
+    for line, code, _, _ in markdown_blocks(source):
+        yield line, code
 
 
 def pin_markdown_links(body, version, repository_url):
     """Pin Markdown destinations, preserving code and destination delimiters."""
     # Mask block code first; offsets still refer to the original Markdown bytes.
-    visible = "".join(
-        re.sub(r"[^\n]", " ", line) if fenced or re.match(r"^(?: {4}|\t)", line) else line
-        for line, fenced in markdown_lines(body)
-    )
-    # A code span closes with exactly the same number of backticks, even across lines.
+    lines = []
+    offset = 0
+    pieces = []
+    for line, code, content, context in markdown_blocks(body):
+        lines.append((offset, offset + content, offset + len(line), context))
+        pieces.append(re.sub(r"[^\n]", " ", line) if code else " " * content + line[content:])
+        offset += len(line)
+    visible = "".join(pieces)
+    # Exact backtick runs may span lines, but never a blank line.
     spans = list(re.finditer(r"`+", visible))
     cursor = 0
     while cursor < len(spans):
         opening = spans[cursor]
+        if len(re.search(r"\\*$", visible[:opening.start()])[0]) % 2:
+            cursor += 1
+            continue
         closing = next((index for index in range(cursor + 1, len(spans))
-                        if spans[index][0] == opening[0]), None)
+                        if spans[index][0] == opening[0]
+                        and not re.search(r"\n[ \t]*\n", visible[opening.end():spans[index].start()])), None)
         if closing is None:
             cursor += 1
         else:
@@ -120,62 +213,110 @@ def pin_markdown_links(body, version, repository_url):
         return (start, end, end) if end > start and depth == 0 else None
 
     def pinned(target, image):
-        if target.startswith(("#", "//")) or urlsplit(target).scheme:
+        target = re.sub(r"\\([" + re.escape(string.punctuation) + r"])", r"\1", target)
+        if target.startswith(("#", "//")) or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", target):
             return target
         if target.startswith("?"):
             raise ValueError("CHANGELOG.md has an invalid relative link: " + target)
-        parts = urlsplit(target)
-        path = posixpath.normpath(unquote(parts.path).lstrip("/"))
+        path, fragment_mark, fragment = target.partition("#")
+        path, query_mark, query = path.partition("?")
+        path = posixpath.normpath(path.lstrip("/"))
         if path == ".." or path.startswith("../"):
             raise ValueError("CHANGELOG.md link escapes the repository: " + target)
-        path = quote(path, safe="/!$&'()*+,;=:@-._~")
-        suffix = ("?" + parts.query if parts.query else "") + ("#" + parts.fragment if parts.fragment else "")
-        return repository_url.rstrip("/") + ("/raw/v" if image else "/blob/v") + version + "/" + path + suffix
+        target = path + query_mark + query + fragment_mark + fragment
+        target = "".join(quote(char, safe="") if ord(char) <= 32 or ord(char) == 127 or char in "<>()\\" else char
+                         for char in target)
+        return repository_url.rstrip("/") + ("/raw/v" if image else "/blob/v") + version + "/" + target
 
     replacements = []
-    # Footnotes have prose after the colon, not a reference-link destination.
-    for match in re.finditer(r"^ {0,3}\[(?!\^)(?:\\.|[^\]\\])+\]:[ \t]*", visible, re.MULTILINE):
-        found = destination(match.end())
-        if found:
-            start, end, _ = found
-            replacements.append((start, end, pinned(body[start:end], False)))
+    title = r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))'''
 
-    cursor = 0
-    while cursor < len(visible):
-        if visible[cursor] == "\\":
-            cursor += 2
+    def label(value):
+        return " ".join(value.split()).casefold()
+
+    definitions = {}
+    for line_start, content, line_end, context in lines:
+        match = re.match(r" {0,3}\[((?!\^)(?:\\.|[^\]\\])+)\]:[ \t]*", visible[content:line_end])
+        if not match:
             continue
-        image = visible.startswith("![", cursor)
-        opening = cursor + 1 if image else cursor
-        if visible[opening:opening + 1] != "[":
-            cursor += 1
-            continue
-        end, depth = opening + 1, 1
-        while end < len(visible) and depth:
-            if visible[end] == "\\":
-                end += 2
-                continue
-            if visible[end] == "[":
-                depth += 1
-            elif visible[end] == "]":
-                depth -= 1
-            end += 1
-        if depth or visible[end:end + 1] != "(":
-            cursor += 1
-            continue
-        start = end + 1
-        while start < len(visible) and visible[start].isspace():
+        start = content + match.end()
+        if visible[start:start + 1] == "\n":
             start += 1
+            while start < len(visible) and visible[start] in " \t":
+                start += 1
         found = destination(start)
-        if found:
-            start, finish, after = found
-            # Only a valid closing delimiter (with optional title) makes a link.
-            closing = re.match(r'''(?:\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\([^()]*\)))?\s*\)''', visible[after:])
-            if closing:
-                replacements.append((start, finish, pinned(body[start:finish], image)))
-                cursor = after + closing.end()
+        if not found:
+            continue
+        start, finish, after = found
+        ending = re.match(r"[ \t]*(?:\n[ \t]*)?" + title + r"[ \t]*(?:\n|$)", visible[after:])
+        if ending is None:
+            ending = re.match(r"[ \t]*(?:\n|$)", visible[after:])
+        if ending is None:
+            continue
+        end = after + ending.end()
+        if re.search(r"\n[ \t]*\n", visible[line_start:end].rstrip("\n")):
+            continue
+        if any(other is not context for begin, _, _, other in lines if line_start < begin < end):
+            continue
+        key = label(match[1])
+        definitions.setdefault(key, []).append((start, finish))
+        visible = visible[:line_start] + re.sub(r"[^\n]", " ", visible[line_start:end]) + visible[end:]
+
+    uses = {}
+
+    def scan(cursor, limit):
+        while cursor < limit:
+            if visible[cursor] == "\\":
+                cursor += 2
                 continue
-        cursor = end
+            image = visible.startswith("![", cursor)
+            opening = cursor + 1 if image else cursor
+            if visible[opening:opening + 1] != "[":
+                cursor += 1
+                continue
+            end, depth = opening + 1, 1
+            while end < limit and depth:
+                if visible[end] == "\\":
+                    end += 2
+                    continue
+                if visible[end] == "[":
+                    depth += 1
+                elif visible[end] == "]":
+                    depth -= 1
+                end += 1
+            if depth:
+                cursor += 1
+                continue
+            scan(opening + 1, end - 1)  # Link text can itself contain an image.
+            after_link = end
+            inline = False
+            if visible[end:end + 1] == "(":
+                start = end + 1
+                while start < limit and visible[start].isspace():
+                    start += 1
+                found = destination(start)
+                if found:
+                    start, finish, after = found
+                    closing = re.match(r"(?:\s+" + title + r")?\s*\)", visible[after:limit])
+                    if closing:
+                        replacements.append((start, finish, pinned(body[start:finish], image)))
+                        after_link, inline = after + closing.end(), True
+            if not inline:
+                reference = re.match(r"\[((?:\\.|[^\[\]\\])*)\]", visible[end:limit])
+                key = label((reference[1] if reference and reference[1] else visible[opening + 1:end - 1]))
+                if key in definitions:
+                    uses.setdefault(key, set()).add(image)
+                    if reference:
+                        after_link = end + reference.end()
+            cursor = after_link
+
+    scan(0, len(visible))
+    for key, destinations in definitions.items():
+        kinds = uses.get(key, {False})
+        if len(kinds) > 1:
+            raise ValueError("CHANGELOG.md reference label used by both image and link: " + key)
+        for start, finish in destinations:
+            replacements.append((start, finish, pinned(body[start:finish], True in kinds)))
 
     for start, end, replacement in sorted(replacements, reverse=True):
         body = body[:start] + replacement + body[end:]

@@ -12,9 +12,8 @@
 - Pre-release tags create GitHub pre-releases. Release notes preserve Markdown code
   and pin documentation links and images to their release tag. SBOM generation
   verifies upstream binaries on Linux and macOS, on x86-64 and ARM64, and terminates
-  child runtimes on timeout.
+  child runtimes on timeout, interrupt, or terminal loss.
 - Hex publishing and the release gate require a dated, nonempty CHANGELOG section.
-  GitHub release notes pin relative documentation links to the released tag.
 - Security fixes cover the latest minor of the latest stable major and, for
   6 months after its first stable release, the latest minor of the previous major.
 

@@ -64,6 +64,14 @@ class PublicDocsTest(unittest.TestCase):
                         "--predicate-type https://cyclonedx.org/bom",
                         'mix hex.package fetch request_seal "$VERSION"', 'cmp "$assets_dir/request_seal-$VERSION.tar"'):
             self.assertIn(command, source)
+        commands = [line.strip() for line in source.replace("\\\n", " ").splitlines()
+                    if line.strip().startswith("gh attestation verify ")]
+        self.assertEqual(2, len(commands))
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn("--signer-workflow baselabs/request_seal/.github/workflows/release.yml", command)
+                self.assertIn('--source-ref "refs/tags/v$VERSION"', command)
+                self.assertIn("--deny-self-hosted-runners", command)
         self.assertNotIn("HEX_API_KEY", source)
         self.assertNotIn("gh attestation verify", (ROOT / runbook).read_text())
         self.assertIn("../guides/verifying-releases.md", (ROOT / runbook).read_text())

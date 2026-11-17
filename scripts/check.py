@@ -6,13 +6,12 @@ import math
 import re
 import selectors
 import time
-import signal
 import tempfile
 from pathlib import Path
 import subprocess
 import sys
 from release import development_snapshot, package_version, release_notes, source_url
-from processes import run
+from processes import install_signal_handlers, run, stop_group
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,30 +46,6 @@ def check_dialyzer():
     """Analyze every warning with no source or file suppression path."""
     run(["mix", "run", "--no-start", "-e", DIALYZER_SUPPRESSION_CHECK])
     run(["mix", "dialyzer"])
-
-
-def stop_group(process):
-    # Keep an unreaped leader until all signals finish; never target a reused pgid.
-    if process.returncode is not None:
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    except PermissionError:
-        # macOS denies signaling a group whose leader exited unreaped; the
-        # SIGKILL step below proves the exit before discharging the error.
-        pass
-    time.sleep(0.2)
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        # Some hosts deny signaling an exited, unreaped group leader. Only
-        # discharge that error when wait proves this owned child already exited.
-        process.wait(timeout=0)
-    process.wait()
 
 
 def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
@@ -309,16 +284,18 @@ def notebooks():
         extra_env={"REQUESTSEAL_PYTHON": sys.executable})
 
 if __name__ == "__main__":
+    install_signal_handlers()
     class SelectCheck(argparse.Action):
         def __call__(self, parser, namespace, values, option_string=None):
             selected = getattr(namespace, self.dest) or []
             setattr(namespace, self.dest, [*selected, option_string])
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--notebooks-only", action="store_true")
+    parser.add_argument("--notebooks-only", action="store_true",
+                        help="Run only notebooks; cannot combine with focused check flags")
     for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only"):
         parser.add_argument(flag, dest="focused_checks", action=SelectCheck, nargs=0,
-                            help="Run only this check (may combine focused checks)")
+                            help="Run only this check; can combine with other focused checks, but not with --notebooks-only")
     parser.add_argument("--execute-notebook", nargs=2, metavar=("SCRIPT", "COMPLETION"))
     parser.add_argument("--notebook-timeout", type=float, default=300)
     args = parser.parse_args()

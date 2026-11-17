@@ -27,6 +27,8 @@ defmodule RequestSeal.ReleaseSBOMTest do
           "http://example.com/tmp/package",
           "ssh://example.com/home/source",
           "git://example.com/home/source",
+          "git+https://example.com/home/source",
+          "git+ssh://example.com/home/source",
           "mailto:team@example.com",
           "urn:example:/tmp/package",
           "data:text/plain,/tmp/package"
@@ -76,6 +78,9 @@ defmodule RequestSeal.ReleaseSBOMTest do
           "C:\\Users\\x",
           "\\\\server\\share",
           "file:///etc/x",
+          "git+file:///home/rp/x",
+          "GIT+FILE:///tmp/x/",
+          "svn+file:///opt/x/",
           "~/x",
           "$HOME/x",
           "${HOME}/x",

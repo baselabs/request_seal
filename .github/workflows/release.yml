@@ -117,6 +117,12 @@ jobs:
           else
             status=$(awk '/^HTTP\// { code=$2 } END { print code }' "$response")
             if [ "$status" = 404 ]; then
+              gh api --paginate "repos/$GH_REPO/releases" > "$response"
+              draft=$(jq -sr --arg tag "$GITHUB_REF_NAME" '[.[][] | select(.draft and .tag_name == $tag) | .tag_name] | first // empty' "$response")
+              if [ -n "$draft" ]; then
+                echo "Refusing to publish over draft release: $draft" >&2
+                exit 1
+              fi
               echo 'exists=false' >> "$GITHUB_OUTPUT"
             else
               echo "Cannot determine existing release (HTTP ${status:-unavailable})" >&2

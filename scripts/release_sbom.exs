@@ -117,7 +117,7 @@ defmodule RequestSeal.ReleaseSBOM do
     # A URI's path is public protocol data unless it uses the file scheme.
     candidate =
       Regex.replace(
-        ~r{\b(?:(?!file:)[a-z][a-z0-9+.-]*://|(?:mailto|urn|data):)[^\s<>"']+}i,
+        ~r{\b(?:(?!(?:[a-z][a-z0-9+.-]*\+)?file:)[a-z][a-z0-9+.-]*://|(?:mailto|urn|data):)[^\s<>"']+}i,
         value,
         ""
       )

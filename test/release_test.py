@@ -174,7 +174,7 @@ class ReleaseIdentityTest(unittest.TestCase):
             ("[id]: /docs/x.md", "[id]: " + blob + "docs/x.md"),
             ("![a](docs/x.png)", "![a](" + raw + "docs/x.png)"),
             ("![a](<docs/a b.png>)", "![a](<" + raw + "docs/a%20b.png>)"),
-            ("[t](docs/a(b).md)", "[t](" + blob + "docs/a(b).md)"),
+            ("[t](docs/a(b).md)", "[t](" + blob + "docs/a%28b%29.md)"),
             ("[t](https://example.com/a) [t](#part)", None),
             ("[t](ssh://example.com/a) [t](mailto:team@example.com)", None),
             ("[t](custom:opaque) [t](//example.com/a)", None),
@@ -193,7 +193,7 @@ class ReleaseIdentityTest(unittest.TestCase):
                                  release.release_notes("## 2.3.4 - 2026-11-17\n\n" + source + "\n", "2.3.4", base))
 
     def test_release_notes_reject_escaping_and_query_only_destinations(self):
-        for target in ("../x.md", "docs/../../x.md", "%2e%2e/x.md", "?raw=1"):
+        for target in ("../x.md", "docs/../../x.md", "a/../../x.md", "?raw=1"):
             for link in (f"[t]({target})", f"![a]({target})", f"[id]: {target}"):
                 with self.subTest(link=link), self.assertRaisesRegex(ValueError, re.escape(target)):
                     release.release_notes("## 2.3.4 - 2026-11-17\n\n" + link, "2.3.4")
@@ -202,6 +202,114 @@ class ReleaseIdentityTest(unittest.TestCase):
         source = '`[code](docs/a.md)` [live](docs/a.md)\n\n    [code](../escape.md)\n\n[live](docs/b.md)\n'
         expected = source.replace('[live](docs/', '[live](https://github.com/example/library/blob/v2.3.4/docs/')
         self.assertEqual(expected, release.release_notes("## 2.3.4 - 2026-11-17\n\n" + source, "2.3.4", "https://github.com/example/library"))
+
+    def pin(self, source):
+        return release.pin_markdown_links(source, "2.3.4", "https://github.com/example/library")
+
+    def test_container_indentation_pins_prose_and_rejects_escapes(self):
+        for source in (
+            "- Outer\n    - Inner [n](docs/x.md)",
+            "- Item\n\n    Second paragraph [n](docs/x.md)",
+            "1. Item\n    continued [n](docs/x.md)",
+            "- Outer\n    - Inner\n        - Third [n](docs/x.md)",
+            "- Outer\n\t- Inner [n](docs/x.md)",
+            "Paragraph\n    continued [n](docs/x.md)",
+            "> Paragraph\n>     continued [n](docs/x.md)",
+            "- Item\n  > Paragraph\n  >     continued [n](docs/x.md)",
+            "- Lazy\ncontinuation [n](docs/x.md)",
+            "- Item\n\nOutside\n    continued [n](docs/x.md)",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(source.replace("docs/x.md", "https://github.com/example/library/blob/v2.3.4/docs/x.md"), self.pin(source))
+                with self.assertRaisesRegex(ValueError, "escapes the repository"):
+                    self.pin(source.replace("docs/x.md", "../x.md"))
+
+    def test_container_indented_and_fenced_code_is_preserved(self):
+        for source in (
+            "    [n](../x.md)", "\t[n](../x.md)",
+            "- Item\n\n      [n](../x.md)",
+            "- Item\n\n  \t  [n](../x.md)",
+            "- Item\n\n\t  [n](../x.md)",
+            "-     [n](../x.md)",
+            "- Item\n    ```md\n    [n](../x.md)\n    ```",
+            "- Item\n  > ```md\n  > [n](../x.md)\n  > ```",
+            ">     [n](../x.md)",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(source, self.pin(source))
+        source = "- Item\n  ```md\n  [code](../x.md)\n  ```\n  [live](docs/x.md)"
+        self.assertIn("[live](https://github.com/example/library/blob/v2.3.4/docs/x.md)", self.pin(source))
+
+    def test_nested_image_and_reference_images_use_raw_destinations(self):
+        source = "[![badge](docs/x.png)](docs/y.md)"
+        self.assertEqual("[![badge](https://github.com/example/library/raw/v2.3.4/docs/x.png)](https://github.com/example/library/blob/v2.3.4/docs/y.md)", self.pin(source))
+        for image in ("![a][logo]", "![logo][]", "![logo]", "![a][ LoGo ]", "![a][my  logo]"):
+            definition = "[My LoGo]: docs/logo.png" if "my" in image else "[LoGo]: docs/logo.png"
+            with self.subTest(image=image):
+                source = image + "\n\n" + definition
+                self.assertEqual(source.replace("docs/logo.png", "https://github.com/example/library/raw/v2.3.4/docs/logo.png"), self.pin(source))
+
+    def test_reference_label_cannot_serve_both_images_and_links(self):
+        for source in (
+            "![a][logo] [b][LOGO]\n\n[logo]: docs/x.png",
+            "![My  Logo][] [my logo]\n\n[MY LOGO]: docs/x.png",
+            "[![logo]](docs/y.md) [logo]\n\n[logo]: docs/x.png",
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "both image and link: (?:my )?logo"):
+                self.pin(source)
+
+    def test_reference_definitions_require_a_complete_valid_line(self):
+        for source in (
+            "[Breaking]: The API now requires x",
+            '[id]: docs/x.md "title" trailing prose',
+            "[id]: docs/x.md 'unclosed",
+            "[id]: docs/x.md (unclosed",
+            '[id]: docs/x.md "title\n\nunclosed"',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(source, self.pin(source))
+
+    def test_reference_definitions_in_containers_and_on_following_lines(self):
+        for source in (
+            "- [id]: docs/x.md", "> [id]: docs/x.md",
+            "- Item\n\n    [id]: docs/x.md",
+            "- Outer\n    - [id]: docs/x.md",
+            "- > [id]: docs/x.md",
+            "[id]:\n  docs/x.md", "> [id]:\n>   docs/x.md",
+            "- [id]:\n    docs/x.md",
+            '[id]: docs/x.md "title\ncontinued"',
+            "[id]: docs/x.md 'title\ncontinued'",
+            "[id]: docs/x.md (title\ncontinued)",
+            '[id]: docs/x.md\n  "title"',
+            '> [id]: docs/x.md "title\n> continued"',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(source.replace("docs/x.md", "https://github.com/example/library/blob/v2.3.4/docs/x.md"), self.pin(source))
+
+    def test_destinations_preserve_percent_bytes_and_resolve_markdown_escapes(self):
+        for source, target in (
+            ("[t](docs/a%29.md)", "docs/a%29.md"),
+            (r"[t](docs/a\)b.md)", "docs/a%29b.md"),
+            ("[t](<docs/a b.md>)", "docs/a%20b.md"),
+            ("[t](%2e%2e/x.md)", "%2e%2e/x.md"),
+            ("[t](docs/a%2f%2F.md)", "docs/a%2f%2F.md"),
+            ("[t](<docs/a\\b.md>)", "docs/a%5Cb.md"),
+        ):
+            with self.subTest(source=source):
+                self.assertIn("https://github.com/example/library/blob/v2.3.4/" + target, self.pin(source))
+
+    def test_escaped_and_unpaired_backticks_do_not_hide_links(self):
+        for source in (
+            r"\`[n](docs/x.md)`",
+            "`unpaired\n\n[n](docs/x.md)\n`later",
+            "```a`b```\n[n](docs/x.md)",
+        ):
+            with self.subTest(source=source):
+                self.assertIn("[n](https://github.com/example/library/blob/v2.3.4/docs/x.md)", self.pin(source))
+        source = "~~~a`b\n[n](../x.md)\n~~~"
+        self.assertEqual(source, self.pin(source))
+        self.assertFalse(next(release.markdown_lines("```a`b```\n"))[1])
+        self.assertTrue(next(release.markdown_lines("~~~a`b\n"))[1])
 
     def test_version_requires_one_semantic_attribute_and_no_inline_literal(self):
         for source in ('version: "2.3.4"', '@version "2.3.4"\n@version "2.3.5"\nversion: @version', '@version "2.3"\nversion: @version'):
@@ -235,8 +343,19 @@ class ReleaseIdentityTest(unittest.TestCase):
 class ReleaseWorkflowTest(unittest.TestCase):
     def test_each_focused_check_has_its_own_help_option(self):
         result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/check.py"), "--help"], capture_output=True, text=True, check=True, timeout=30)
-        for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only"):
+        for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only", "--notebooks-only"):
             self.assertRegex(result.stdout, r"(?m)^  " + flag + r"\s+")
+            option = re.search(r"(?m)^  " + flag + r"[ \t]+(.*(?:\n {3,}[^\n]*)*)", result.stdout)[1]
+            help_text = " ".join(option.split())
+            if flag == "--notebooks-only":
+                self.assertIn("cannot combine with focused check flags", help_text)
+            else:
+                self.assertIn("can combine with other focused checks", help_text)
+                self.assertIn("but not with --notebooks-only", help_text)
+
+    def test_changelog_has_one_release_link_pinning_statement(self):
+        current = (ROOT / "CHANGELOG.md").read_text().split("## Unreleased 2.0.0", 1)[1].split("\n## ", 1)[0]
+        self.assertEqual(1, len(re.findall(r"pin(?:s)? (?:relative )?documentation links", current)))
 
     def test_prerelease_flag_uses_the_verified_job_output(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
@@ -252,7 +371,14 @@ class ReleaseWorkflowTest(unittest.TestCase):
         publish = workflow.split("\n  publish:\n")[1]
         self.assertEqual(1, publish.count('gh api --include "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME"'))
         self.assertNotIn("gh release view", publish)
-        self.assertIn('if [ "$status" = 404 ]; then\n              echo \'exists=false\'', publish)
+        detection = publish.split("- name: Detect existing release", 1)[1].split("- name: Compare existing", 1)[0]
+        self.assertIn('if [ "$status" = 404 ]; then', detection)
+        self.assertIn('gh api --paginate "repos/$GH_REPO/releases" > "$response"', detection)
+        self.assertIn('select(.draft and .tag_name == $tag)', detection)
+        self.assertIn('--arg tag "$GITHUB_REF_NAME"', detection)
+        self.assertRegex(detection, r'Refusing to publish over draft release: \$draft[^\n]*\n\s+exit 1')
+        self.assertLess(detection.index('gh api --paginate'), detection.index("echo 'exists=false'"))
+        self.assertEqual(1, publish.count('id: existing'))
         self.assertIn('HTTP ${status:-unavailable}', publish)
         self.assertRegex(publish, r'HTTP \$\{status:-unavailable\}[^\n]*\n\s+exit 1')
         self.assertIn("if: steps.existing.outputs.exists == 'true'", publish)

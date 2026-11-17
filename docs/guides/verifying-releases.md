@@ -50,14 +50,18 @@ on the package tarball. Keep the predicate URLs exactly as shown:
 
 ```sh
 for file in "request_seal-$VERSION.tar" corpus.tar.gz sbom.cdx.json; do
-  gh attestation verify "$assets_dir/$file" --repo baselabs/request_seal --predicate-type https://slsa.dev/provenance/v1
+  gh attestation verify "$assets_dir/$file" --repo baselabs/request_seal --predicate-type https://slsa.dev/provenance/v1 \
+    --signer-workflow baselabs/request_seal/.github/workflows/release.yml \
+    --source-ref "refs/tags/v$VERSION" --deny-self-hosted-runners
 done
-gh attestation verify "$assets_dir/request_seal-$VERSION.tar" --repo baselabs/request_seal --predicate-type https://cyclonedx.org/bom
+gh attestation verify "$assets_dir/request_seal-$VERSION.tar" --repo baselabs/request_seal --predicate-type https://cyclonedx.org/bom \
+  --signer-workflow baselabs/request_seal/.github/workflows/release.yml \
+  --source-ref "refs/tags/v$VERSION" --deny-self-hosted-runners
 ```
 
-Each command must succeed. Inspect the verified signer and workflow identity;
-the expected workflow is `.github/workflows/release.yml` in
-`baselabs/request_seal`. See GitHub's [attestation verification documentation](https://cli.github.com/manual/gh_attestation_verify)
+Each command must succeed. These flags require the signer workflow
+`baselabs/request_seal/.github/workflows/release.yml`, the selected release tag
+as the source ref, and a GitHub-hosted runner. See GitHub's [attestation verification documentation](https://cli.github.com/manual/gh_attestation_verify)
 for the verifier's trust policy and output. These checks establish artifact
 origin and the attested dependency inventory; callers still choose which
 release and dependencies they trust.

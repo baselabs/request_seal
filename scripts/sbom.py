@@ -10,7 +10,7 @@ import tarfile
 import tempfile
 
 from release import normalize_sbom, package_version
-from processes import run
+from processes import install_signal_handlers, run
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL_VERSION = "0.12.1"
@@ -76,6 +76,7 @@ def generate(output, tarball=None):
 
 
 if __name__ == "__main__":
+    install_signal_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tarball", type=Path)
     parser.add_argument("--output", type=Path, default=Path("sbom.cdx.json"))
