@@ -1,6 +1,7 @@
 """Exercise toolchain pairing and GitHub outputs against the checked-in pins."""
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -75,6 +76,28 @@ class ToolchainTest(unittest.TestCase):
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn("fromJSON(needs.toolchain.outputs.matrix)", ci)
         self.assertIn("node-version: ${{ needs.toolchain.outputs.node }}", ci)
+
+    def test_no_tracked_source_copies_an_exact_pin(self):
+        configuration = pins.toolchain((ROOT / ".tool-versions").read_text())
+        versions = {configuration["node"]} | {
+            value for lane in configuration["matrix"]["include"] for key, value in lane.items() if key != "lane"
+        }
+        # Records state the toolchain a past result was produced on; locks are resolver output.
+        records = ("CHANGELOG.md", "docs/adr/", "PROVENANCE.md", "mix.lock", "corpus/")
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True, timeout=30,
+        ).stdout.splitlines()
+        sources = [path for path in tracked if path != ".tool-versions" and not any(
+            path.startswith(record) or path.endswith(record) for record in records
+        )]
+        self.assertIn("tools/notebooks/mix.exs", sources)
+        for path in sources:
+            try:
+                source = (ROOT / path).read_text()
+            except (UnicodeDecodeError, FileNotFoundError):
+                continue
+            for version in versions:
+                self.assertNotRegex(source, r"(?<![\d.])" + re.escape(version) + r"(?![\d.])", path)
 
 
 if __name__ == "__main__":

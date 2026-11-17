@@ -362,7 +362,7 @@ class BuildContractsTest(unittest.TestCase):
         _, runtime_path = clients.running_toolchain()
         dependencies = clients.dependency_metadata(runtime_path)
         published = {name: dependency for name, dependency in dependencies.items() if dependency["published"]}
-        self.assertEqual("0.23.0", published["finch"]["floor"])
+        self.assertEqual("0.24.0", published["finch"]["floor"])
         self.assertEqual("0.7.4", published["req"]["floor"])
         self.assertEqual("1.4.2", published["telemetry"]["floor"])
         self.assertEqual("3.37.4", published["ash"]["floor"])

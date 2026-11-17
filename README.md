@@ -39,7 +39,7 @@ Add optional dependencies for the integrations you use. The table is a reference
 | `:bandit` | `~> 1.14` | To run the example receiver |
 | `:phoenix` | `~> 1.8.15` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
-| `:finch` | `>= 0.23.0 and < 0.25.0` | Finch transport and caller-started pools |
+| `:finch` | `>= 0.24.0 and < 0.25.0` | Finch transport and caller-started pools |
 | `:ash` | `>= 3.37.4 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
 | `:ash_onetime` | `~> 1.9 and >= 1.9.2` | Recommended durable replay; Elixir 1.20+ |
 | `:ash_hooks` | `>= 3.0.0 and < 4.0.0` | Webhook signing and verification; Elixir 1.20+ |
@@ -51,7 +51,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 [
   {:request_seal, "~> 1.0"},
   {:req, "~> 0.7.4"},
-  {:finch, ">= 0.23.0 and < 0.25.0"},
+  {:finch, ">= 0.24.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},
   {:bandit, "~> 1.14"},
   {:jason, "~> 1.0"}
@@ -523,7 +523,7 @@ HTTP signature algorithms (`RequestSeal.Crypto.algorithms/0`): `ed25519`, `ecdsa
 
 ## Compatibility
 
-Elixir 1.18 or newer, below 2.0 (`elixir: "~> 1.18"`), on OTP 27 or newer. CI tests three pairs: 1.18.4/27, 1.19.5/28, and 1.20.4/29. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Development instructions work on macOS and Linux; Windows developers use WSL2. What 1.x keeps stable, what a minor release may add, and how APIs are deprecated is in [compatibility and deprecation](docs/reference/compatibility.md); supported versions for security fixes are in [SECURITY.md](SECURITY.md).
+Elixir 1.18 or newer, below 2.0 (`elixir: "~> 1.18"`), on OTP 27 or newer. CI tests Elixir 1.18, 1.19 and 1.20, each with the OTP release paired with it in `.tool-versions`. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Development instructions work on macOS and Linux; Windows developers use WSL2. What 1.x keeps stable, what a minor release may add, and how APIs are deprecated is in [compatibility and deprecation](docs/reference/compatibility.md); supported versions for security fixes are in [SECURITY.md](SECURITY.md).
 
 ## Security model
 

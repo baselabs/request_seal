@@ -196,7 +196,11 @@ def check_client_floors(elixir, runtime_path):
             "  def application, do: [extra_applications: [:request_seal]]\n"
             "end\n"
         )
-        for relative in files + ["test/test_helper.exs", "test/support/multi_signature_helper.exs"]:
+        # The consumer starts from the repository lock: Mix re-resolves only the
+        # published dependencies whose exact floor differs from it, so test tools
+        # and transitive packages stay at the versions the suite was run against.
+        shutil.copyfile(ROOT / "mix.lock", project / "mix.lock")
+        for relative in files +["test/test_helper.exs", "test/support/multi_signature_helper.exs"]:
             target = project / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             if (ROOT / relative).is_dir():
@@ -228,7 +232,8 @@ end
         ]
         for command in commands:
             print("RUN " + " ".join(command[:3]), flush=True)
-            subprocess.run(command, cwd=project, env=env, check=True, timeout=300)
+            # A cold floor consumer compiles the whole Ash, Phoenix and Bandit graph.
+            subprocess.run(command, cwd=project, env=env, check=True, timeout=1200)
         if not env.get("REQUESTSEAL_REPLAY_PG_URL"):
             raise ValueError("REQUESTSEAL_REPLAY_PG_URL is not set; PostgreSQL dependency floors were not verified")
         print("PASS: fresh consumer compiles and passes covering tests at every published dependency floor", flush=True)

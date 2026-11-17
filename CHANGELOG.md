@@ -36,6 +36,10 @@
   JWE retains its existing policy, parse order, callback forms, and deadline.
 - Set stable dependency ranges from each locked version through the next major,
   retaining the existing ash_onetime requirement.
+- Require Finch 0.24.0 or later. Finch 0.23 HTTP/2 pools return
+  `:pool_not_available` before their connection is ready, directly and through
+  Req. CI now compiles and tests a fresh consumer at every published
+  dependency floor.
 
 ## 1.0.0 - 2026-11-11
 
