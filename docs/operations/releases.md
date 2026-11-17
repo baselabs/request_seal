@@ -104,20 +104,29 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    source and raw-asset paths as regular files in the checked-out commit's HEAD
    tree. Step 7 checks that same commit, which step 8 will tag. No future GitHub
    tag URL is requested. The prepublication guard validates authored targets
-   without requesting future URLs. Inspect registry checksums and optional metadata.
+   without requesting future URLs. The current version's Hex package page is also
+   a future destination: prepublication checks and dispatch validate its package
+   name and version without fetching it. Inspect registry checksums and optional metadata.
    After the tag push, use `--destination-event push` to GET every first-party
    destination. Each real HTTP GET must return 200; redirects fail immediately
    without following them. HTTP 404, 5xx and transport errors retry with 1, 2, 4,
-   8, then at most 10 seconds of backoff, within one 180-second total deadline
-   for the check, including request time (at most 15 seconds per request).
+   8, then at most 10 seconds of backoff, within a 180-second scheduling budget
+   for the check. Response bodies are read in chunks with a deadline check and
+   a refreshed socket timeout before each read, including slow-drip responses.
    HTTP 429 also retries, honoring `Retry-After` (seconds or HTTP date) within
    that deadline. Other 4xx statuses are final. A permanent failure stops retries
    after collecting that round's results, even if another URL still returns 404.
-   The socket timeout for each request is `min(15, remaining_seconds)`; the
-   worst-case bound is the 180-second deadline plus one socket timeout (at most
-   15 seconds), or 195 seconds. Transport errors include TLS errors and malformed
-   or prematurely closed HTTP responses. Failure lists every failing destination
-   and its last status or transport error. The workflow selects its mode explicitly by event.
+   The socket timeout is set to `min(15, remaining_seconds)` before each request
+   and body chunk. That timeout applies per socket operation.
+   Python's standard library does not bound DNS resolution. After resolution,
+   each connection attempt to a resolved address gets the socket timeout;
+   multiple addresses can therefore require multiple timeouts. Socket reads also
+   use that timeout per operation, including while parsing response headers.
+   There is no guaranteed total wall-clock bound of 180 or 195 seconds. Body
+   reads and retries stop when the deadline is observed. Transport errors include
+   TLS errors and malformed or prematurely closed HTTP responses. A decode error
+   fails only its target. The final failure message lists every destination's own
+   last outcome, including successful 200 responses. The workflow selects its mode explicitly by event.
 6. Install from Hex in a clean consumer, without a path or Git override. Use an
    empty Mix install directory and verify the installed application version and
    an actual public entry point:
@@ -242,14 +251,19 @@ and every query string fail there. Canonical forms are:
 - `https://github.com/baselabs/request_seal/compare/v<base>...v<version>`:
   dispatch verifies that the base tag exists and is an ancestor of HEAD, and
   push checks the URL live;
-- `https://hex.pm/packages/request_seal/<version>`, checked live in both modes
-  after Hex publication.
+- `https://hex.pm/packages/request_seal/<version>`: prepublication checks and
+  dispatch validate this package and the version in `mix.exs` without requesting
+  the future page; push checks it live. Historical versions are always checked live.
 
 Public advisory permalinks are also checked live. External standards retain their
 authored URLs. A HexDocs fragment must name an actual HTML `id` in real ExDoc output
 or the published documentation tarball (the destination check reads the real HTTP
 page). GitHub source fragments allow only `#L<n>` and `#L<n>-L<m>`, within the checked
-file's line count and with a forward range. Raw assets and other first-party forms
+file's line count and with a forward range. Blobs rendered as markup, including
+Markdown and Livebooks, reject line fragments because GitHub does not select
+rendered lines that way. The extension inventory follows
+[GitHub Markup's supported formats](https://github.com/github/markup#markups).
+Raw assets and other first-party forms
 allow no fragment. The same canonical classifier serves the documentation check;
 outside dated release notes it also allows current `main` source links, package
 and repository landing pages, the Security tab, and canonical unversioned HexDocs
@@ -261,6 +275,10 @@ The class is this repository's or package's content on GitHub and Hex, including
 alternate delivery routes. Classification ignores case and recognizes `www.`,
 percent-decoded and normalized paths; validation rejects noncanonical host/path
 casing, encoding, dot segments, credentials, ports and queries.
+Both `request-seal` and `request_seal` in identifying paths are first-party;
+paths require the canonical underscore spelling. The hyphenated HexDocs subdomain
+remains canonical. Quotes, backticks, non-ASCII characters, and uppercase scheme
+or host spellings are rejected with the canonical form.
 
 | Hosts and identifying routes | Outcome |
 | --- | --- |
@@ -285,14 +303,21 @@ become an allowed release form.
 
 Full and collapsed references must have a definition inside the released section.
 A definition counts only outside code, at the start of a block: after a blank
-line, at the start of the section, or immediately after another definition.
+line, at the start of the section, immediately after an ATX or setext heading,
+or immediately after another definition.
 A definition-shaped line in paragraph continuation is rejected with its line.
 Definitions inside fences or indented code cannot resolve visible uses.
 A shortcut reference counts when its label has a definition anywhere in the
-CHANGELOG, and also requires that definition inside this section. Adjacent shortcut
-references separated by whitespace, such as `[RFC 9421] [section 2]`, remain two
-references when both labels are defined. Labels compare
+CHANGELOG, and also requires that definition inside this section. Full references
+have no whitespace between text and label: `[a][b]` needs a definition for `b`.
+Whitespace, including a newline, makes `[a] [b]` two shortcut references. Each
+resolves independently when defined and otherwise remains literal text, so
+undefined `[RFC 9421] [section 2]` is accepted. Labels compare
 case-insensitively with whitespace collapsed. Unresolved references name their line.
+GitHub footnotes use `[^label]` and need a unique `[^label]: …` definition in the
+same released section; unresolved uses and duplicate definitions fail. Code spans
+pair equal-length backtick runs within a paragraph, list-item paragraph, or
+heading. Escaped backticks cannot open spans; unmatched runs remain literal text.
 Errors name the source line and destination, for example
 `CHANGELOG.md:7: destination 'docs/guide.md': requires an absolute HTTP(S) or mailto URL`
 or `first-party destination must use version 2.0.0`. Raw HTML and section-format
@@ -315,11 +340,15 @@ use the referenced local tag tree; fetch tags before running the gate. A `main`
 URL uses the working tree being checked and current `mix.exs` inventory, even
 without a local or remote `main` ref. A current-version source URL uses the
 working tree until its tag exists. Current-version documentation links also
-retain generated-page and fragment checks during builds. Every tracked UTF-8 text
-file is scanned for first-party destinations, including package source and metadata,
-`corpus/`, `docs/`, `livebooks/`, README and CHANGELOG; new unignored text is checked
-before staging too. Binary files are excluded. This uses the same extractor and
-classifier as release notes.
+retain generated-page and fragment checks during builds. First-party scanning
+covers the package `files` and documentation `extras` evaluated from `mix.exs`,
+all tracked `livebooks/` and `corpus/` files, tracked Markdown outside `test/` and
+`scripts/`, and `.github/` workflows and templates. Newly authored, unignored files
+in those categories are checked before staging too. Test/script fixtures and
+other nonpublication files are excluded unless explicitly shipped or documented;
+binary files are excluded. This uses the same extractor and classifier as release
+notes. Markdown bare URLs end at ASCII whitespace or `<`, then lose GFM trailing
+punctuation, unbalanced closing parentheses and trailing entity references.
 
 ## Dependency updates
 

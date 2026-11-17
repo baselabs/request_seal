@@ -91,7 +91,7 @@ class PublicDocsTest(unittest.TestCase):
         self.assertNotIn("HEX_API_KEY", source)
         self.assertNotIn("gh attestation verify", (ROOT / runbook).read_text())
         self.assertIn("../guides/verifying-releases.md", (ROOT / runbook).read_text())
-        self.assertIn("(https:\x2f\x2fgithub.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md)", (ROOT / "CHANGELOG.md").read_text())
+        self.assertIn("(https://github.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md)", (ROOT / "CHANGELOG.md").read_text())
 
     def test_first_party_absolute_links_check_current_inventory_and_historical_trees(self):
         configuration = docs.public_configuration(ROOT)
@@ -102,38 +102,38 @@ class PublicDocsTest(unittest.TestCase):
             return docs.content_errors(ROOT, "README.md", f"[Guide]({target})", self.paths,
                                        version, configuration["documents"], references)
 
-        for target in (f"https:\x2f\x2frequest-seal.hexdocs.pm/{version}/web-bot-auth.html",
-                       f"https:\x2f\x2frequest-seal.hexdocs.pm/{version}/livebooks.html",
-                       f"https:\x2f\x2frequest-seal.hexdocs.pm/{version}/livebook-web-bot-auth.html",
-                       "https:\x2f\x2frequest-seal.hexdocs.pm",
-                       "https:\x2f\x2frequest-seal.hexdocs.pm/",
-                       f"https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v{version}/README.md",
-                       "https:\x2f\x2frequest-seal.hexdocs.pm/1.0.0/compatibility.html",
-                       "https:\x2f\x2fraw.githubusercontent.com/baselabs/request_seal/v1.0.0/README.md",
-                       "https:\x2f\x2frequest-seal.hexdocs.pm/1.0.0/web-bot-auth.html",
-                       "https:\x2f\x2frequest-seal.hexdocs.pm/1.0.0/phoenix-and-plug.html",
-                       "https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v1.0.0/docs/guides/web-bot-auth.md",
-                       "https:\x2f\x2fgithub.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md"):
+        for target in (f"https://request-seal.hexdocs.pm/{version}/web-bot-auth.html",
+                       f"https://request-seal.hexdocs.pm/{version}/livebooks.html",
+                       f"https://request-seal.hexdocs.pm/{version}/livebook-web-bot-auth.html",
+                       "https://request-seal.hexdocs.pm",
+                       "https://request-seal.hexdocs.pm/",
+                       f"https://github.com/baselabs/request_seal/blob/v{version}/README.md",
+                       "https://request-seal.hexdocs.pm/1.0.0/compatibility.html",
+                       "https://raw.githubusercontent.com/baselabs/request_seal/v1.0.0/README.md",
+                       "https://request-seal.hexdocs.pm/1.0.0/web-bot-auth.html",
+                       "https://request-seal.hexdocs.pm/1.0.0/phoenix-and-plug.html",
+                       "https://github.com/baselabs/request_seal/blob/v1.0.0/docs/guides/web-bot-auth.md",
+                       "https://github.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md"):
             with self.subTest(target=target):
                 self.assertEqual([], errors(target))
         for target, reason in (
-            (f"https:\x2f\x2frequest-seal.hexdocs.pm/{version}/releases.html", "HexDocs page is missing"),
-            (f"https:\x2f\x2frequest-seal.hexdocs.pm/{version}/nonexistent.html", "HexDocs page is missing"),
-            ("https:\x2f\x2frequest-seal.hexdocs.pm/nonexistent.html", "HexDocs page is missing"),
-            ("https:\x2f\x2fhexdocs.pm/request_seal/1.0.0/compatibility.html", "canonical"),
-            ("https:\x2f\x2fgithub.com/baselabs/request_seal/raw/v1.0.0/README.md", "canonical source form"),
-            (f"https:\x2f\x2frequest-seal.hexdocs.pm/{version}/.private.html", "private or unsafe path"),
-            ("https:\x2f\x2frequest-seal.hexdocs.pm/1.0.0/verifying-releases.html", "HexDocs page is missing"),
-            ("https:\x2f\x2fraw.githubusercontent.com/baselabs/request_seal/v1.0.0/missing.png", "missing or nonregular"),
-            ("https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v1.0.0/docs/guides/verifying-releases.md", "missing or nonregular"),
-            ("https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v1.0.0/.private/record.md", "private or unsafe path"),
-            ("https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v1.0.0/docs/operations/releases.md", "repository-only document"),
-            ("https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v99.0.0/README.md", "ref is missing"),
+            (f"https://request-seal.hexdocs.pm/{version}/releases.html", "HexDocs page is missing"),
+            (f"https://request-seal.hexdocs.pm/{version}/nonexistent.html", "HexDocs page is missing"),
+            ("https://request-seal.hexdocs.pm/nonexistent.html", "HexDocs page is missing"),
+            ("https://hexdocs.pm/request_seal/1.0.0/compatibility.html", "canonical"),
+            ("https://github.com/baselabs/request_seal/raw/v1.0.0/README.md", "canonical source form"),
+            (f"https://request-seal.hexdocs.pm/{version}/.private.html", "private or unsafe path"),
+            ("https://request-seal.hexdocs.pm/1.0.0/verifying-releases.html", "HexDocs page is missing"),
+            ("https://raw.githubusercontent.com/baselabs/request_seal/v1.0.0/missing.png", "missing or nonregular"),
+            ("https://github.com/baselabs/request_seal/blob/v1.0.0/docs/guides/verifying-releases.md", "missing or nonregular"),
+            ("https://github.com/baselabs/request_seal/blob/v1.0.0/.private/record.md", "private or unsafe path"),
+            ("https://github.com/baselabs/request_seal/blob/v1.0.0/docs/operations/releases.md", "repository-only document"),
+            ("https://github.com/baselabs/request_seal/blob/v99.0.0/README.md", "ref is missing"),
         ):
             with self.subTest(target=target):
                 self.assertTrue(any(reason in error for error in errors(target)), errors(target))
         # Canonical forms reach the missing-page check through every syntax.
-        target = f"https:\x2f\x2frequest-seal.hexdocs.pm/{version}/missing.html"
+        target = f"https://request-seal.hexdocs.pm/{version}/missing.html"
         for link in (f"![asset]({target})", f"[guide]: {target}", f'<a href="{target}">guide</a>', f'<img src="{target}">'):
             found = docs.content_errors(ROOT, "README.md", link, self.paths, version, configuration["documents"], references)
             self.assertEqual(1, len(found), found)
@@ -156,7 +156,7 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
             (root / "scripts").mkdir()
             (root / "scripts/release.py").write_bytes((ROOT / "scripts/release.py").read_bytes())
             (root / "scripts/processes.py").write_bytes((ROOT / "scripts/processes.py").read_bytes())
-            for target, accepted in (("https:\x2f\x2frequest-seal.hexdocs.pm/1.0.0/compatibility.html", True),
+            for target, accepted in (("https://request-seal.hexdocs.pm/1.0.0/compatibility.html", True),
                                      ("docs/reference/compatibility.md", False)):
                 (root / "CHANGELOG.md").write_text(f"## 1.0.0 - 2026-11-11\n\n- [Policy]({target})\n")
                 result = processes.run(["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression, "--", directory],
@@ -172,8 +172,8 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
         version = docs.public_configuration(ROOT)["version"]
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
-            for base in (f"https:\x2f\x2frequest-seal.hexdocs.pm/{version}/",
-                         f"https:\x2f\x2fhexdocs.pm/request_seal/{version}/"):
+            for base in (f"https://request-seal.hexdocs.pm/{version}/",
+                         f"https://hexdocs.pm/request_seal/{version}/"):
                 with self.subTest(base=base):
                     (output / "guide.html").unlink(missing_ok=True)
                     (output / "readme.html").write_text(f'<a href="{base}guide.html#section">Guide</a>')
@@ -185,7 +185,7 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
 
     def test_git_installs_are_rejected_in_public_text(self):
         for install in (
-            '{:request_seal, git: "https:\x2f\x2fgithub.com/baselabs/request_seal.git"}',
+            '{:request_seal, git: "https://github.com/baselabs/request_seal.git"}',
             '{:request_seal,\n git: "git@github.com:baselabs/request_seal.git"}',
             '{:request_seal, github: "baselabs/request_seal"}',
             'github: "request_seal"',
@@ -227,7 +227,7 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
 
     def test_release_checks_keep_public_links_and_key_custody_text(self):
         source = '\n'.join((
-            'source_url: "https:\x2f\x2fgithub.com/baselabs/request_seal"',
+            'source_url: "https://github.com/baselabs/request_seal"',
             'Keep private keys in caller-owned custody.',
             'Verify the private security-reporting channel.',
             '{:request_seal,\n "~> 0.1.0", optional: true}',

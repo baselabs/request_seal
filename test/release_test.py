@@ -23,9 +23,6 @@ import check as gate
 import check_docs as docs
 from processes import run, temporary_directory
 
-# Encode fixture URL separators so source scanning cannot mistake negative or
-# interpolated test inputs for authored documentation destinations.
-
 @contextmanager
 def local_http(responses, observed=None, response_delay=0):
     requests = []
@@ -37,7 +34,11 @@ def local_http(responses, observed=None, response_delay=0):
                 observed.append(time.monotonic())
             sequence = responses[self.path]
             response = sequence.pop(0) if len(sequence) > 1 else sequence[0]
-            status, headers = response if isinstance(response, tuple) else (response, {})
+            if isinstance(response, tuple):
+                status, headers, *bodies = response
+                body = bodies[0] if bodies else b""
+            else:
+                status, headers, body = response, {}, b""
             if status == 0:
                 self.close_connection = True
                 return
@@ -45,10 +46,15 @@ def local_http(responses, observed=None, response_delay=0):
             self.send_response(status)
             for name, value in headers.items():
                 self.send_header(name, value)
-            if 300 <= status < 400:
+            if 300 <= status < 400 and "Location" not in headers:
                 self.send_header("Location", "/ok")
             try:
                 self.end_headers()
+                chunks = [(0, body)] if isinstance(body, bytes) else body
+                for delay, chunk in chunks:
+                    time.sleep(delay)
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 pass  # The deadline test closes its real client socket first.
 
@@ -200,14 +206,14 @@ class ReleaseIdentityTest(unittest.TestCase):
     def test_release_notes_are_verbatim_with_literal_absolute_destinations(self):
         body = ('### Changed\n\n'
                 '-  Keep **wording**, `code`, &copy; and trailing spaces.  \n'
-                '[Guide](https:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/web-bot-auth.html#replay)\n'
-                '[Source](<https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v2.3.4/README.md> "Read me")\n'
-                '![Asset](https:\x2f\x2fraw.githubusercontent.com/baselabs/request_seal/v2.3.4/image.png)\n'
+                '[Guide](https://request-seal.hexdocs.pm/2.3.4/web-bot-auth.html#replay)\n'
+                '[Source](<https://github.com/baselabs/request_seal/blob/v2.3.4/README.md> "Read me")\n'
+                '![Asset](https://raw.githubusercontent.com/baselabs/request_seal/v2.3.4/image.png)\n'
                 '[External](https://www.rfc-editor.org/rfc/rfc9421.html#section-2)\n'
-                '[Advisory](https:\x2f\x2fgithub.com/baselabs/request_seal/security/advisories/GHSA-vj55-78vg-59wf)\n'
+                '[Advisory](https://github.com/baselabs/request_seal/security/advisories/GHSA-vj55-78vg-59wf)\n'
                 '[Query](https://example.com/a%28b%29?q=1&next=2)\n'
                 '[Mail](mailto:security@example.com) [Reference][guide]\n\n'
-                '[guide]: https:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/compatibility.html "Policy"\n'
+                '[guide]: https://request-seal.hexdocs.pm/2.3.4/compatibility.html "Policy"\n'
                 '<!-- [Example](https://example.com/comment) -->\n'
                 '```markdown\n[Example](https://example.com/code)\n```\n')
         source = '## Unreleased 2.4.0\n\n[Pending](relative.md)\n\n## 2.3.4 - 2026-11-17\n\n' + body + '\n'
@@ -217,16 +223,16 @@ class ReleaseIdentityTest(unittest.TestCase):
     def test_every_visible_destination_is_checked_in_containers_and_comments(self):
         targets = ("docs/x.md", "", "#fragment", "?q=1", "//example.com/x", "custom:opaque",
                    "https://", "https://example.com:bad/x", "https://user@example.com/x",
-                   "https:\x2f\x2f%68exdocs.pm/request_seal/1.0.0/web-bot-auth.html",
-                   "https:\x2f\x2fhexdocs.pm./request_seal/1.0.0/web-bot-auth.html",
-                   "https:\x2f\x2fhexdocs.pm/request_seal/1.0.0/web-bot-auth.html",
-                   "https:\x2f\x2frequest-seal.hexdocs.pm/1.0.0/web-bot-auth.html",
-                   "https:\x2f\x2frequest-seal.hexdocs.pm/web-bot-auth.html",
-                   "https:\x2f\x2fraw.githubusercontent.com/baselabs/request_seal/main/README.md",
-                   "https:\x2f\x2fgithub.com/baselabs/request_seal/blob/main/README.md",
-                   "https:\x2f\x2fgithub.com/baselabs/request_seal/raw/v2.3.3/image.png",
-                   "https:\x2f\x2fgithub.com/baselabs/request_seal/tree/v2.3.4/docs",
-                   "https:\x2f\x2fhexdocs.pm/request_seal/2.3.4/%2e%2e/compatibility.html")
+                   "https://%68exdocs.pm/request_seal/1.0.0/web-bot-auth.html",
+                   "https://hexdocs.pm./request_seal/1.0.0/web-bot-auth.html",
+                   "https://hexdocs.pm/request_seal/1.0.0/web-bot-auth.html",
+                   "https://request-seal.hexdocs.pm/1.0.0/web-bot-auth.html",
+                   "https://request-seal.hexdocs.pm/web-bot-auth.html",
+                   "https://raw.githubusercontent.com/baselabs/request_seal/main/README.md",
+                   "https://github.com/baselabs/request_seal/blob/main/README.md",
+                   "https://github.com/baselabs/request_seal/raw/v2.3.3/image.png",
+                   "https://github.com/baselabs/request_seal/tree/v2.3.4/docs",
+                   "https://hexdocs.pm/request_seal/2.3.4/%2e%2e/compatibility.html")
         containers = ("{}", "> {}", "- Outer\n    - {}", "<!-- {} -->", "<!--> {}", "<!---> {}")
         for target in targets:
             for link in (f"[link]({target})", f"![image]({target})", f"[ref]: {target}",
@@ -281,8 +287,8 @@ class ReleaseIdentityTest(unittest.TestCase):
         (self.root / "scripts").mkdir()
         shutil.copyfile(ROOT / "scripts/release.py", self.root / "scripts/release.py")
         shutil.copyfile(ROOT / "scripts/processes.py", self.root / "scripts/processes.py")
-        valid = "https:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/compatibility.html"
-        for target in (valid, "relative.md", "", "#frag", "https:\x2f\x2fhexdocs.pm/request_seal/1.0.0/compatibility.html"):
+        valid = "https://request-seal.hexdocs.pm/2.3.4/compatibility.html"
+        for target in (valid, "relative.md", "", "#frag", "https://hexdocs.pm/request_seal/1.0.0/compatibility.html"):
             body = f"- [Policy]({target})\n"
             source = "## 2.3.4 - 2026-11-17\n\n" + body
             (self.root / "CHANGELOG.md").write_text(source)
@@ -314,10 +320,10 @@ class ReleaseIdentityTest(unittest.TestCase):
         source = (ROOT / "CHANGELOG.md").read_text()
         body = source.split("## 1.0.0 - 2026-11-11\n", 1)[1].split("\n## ", 1)[0].strip("\n") + "\n"
         self.assertEqual(body, release.release_notes(source, "1.0.0"))
-        self.assertEqual(4, body.count("https:\x2f\x2frequest-seal.hexdocs.pm/1.0.0/"))
+        self.assertEqual(4, body.count("https://request-seal.hexdocs.pm/1.0.0/"))
         finalized = source.replace("## Unreleased 2.0.0", "## 2.0.0 - 2026-11-17").replace(
-            "https:\x2f\x2fgithub.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md",
-            "https:\x2f\x2frequest-seal.hexdocs.pm/2.0.0/verifying-releases.html")
+            "https://github.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md",
+            "https://request-seal.hexdocs.pm/2.0.0/verifying-releases.html")
         expected = finalized.split("## 2.0.0 - 2026-11-17\n", 1)[1].split("\n## ", 1)[0].strip("\n") + "\n"
         self.assertEqual(expected, release.release_notes(finalized, "2.0.0"))
 
@@ -352,8 +358,8 @@ class ReleaseIdentityTest(unittest.TestCase):
 
     def test_dispatch_resolves_future_tagged_source_and_raw_assets_in_head(self):
         self.assertFalse(docs.ref_exists(self.root, "refs/tags/v2.3.4"))
-        for base in ("https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v2.3.4/",
-                     "https:\x2f\x2fraw.githubusercontent.com/baselabs/request_seal/v2.3.4/"):
+        for base in ("https://github.com/baselabs/request_seal/blob/v2.3.4/",
+                     "https://raw.githubusercontent.com/baselabs/request_seal/v2.3.4/"):
             with self.subTest(base=base):
                 release.verify_published_destinations(f"[Source]({base}mix.exs)", "2.3.4",
                                                       event="workflow_dispatch", root=self.root)
@@ -368,11 +374,11 @@ class ReleaseIdentityTest(unittest.TestCase):
         for path in ("uncommitted.md", "symlink.md"):
             with self.assertRaisesRegex(ValueError, "missing or nonregular file in HEAD"):
                 release.verify_published_destinations(
-                    f"[Source](https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v2.3.4/{path})",
+                    f"[Source](https://github.com/baselabs/request_seal/blob/v2.3.4/{path})",
                     "2.3.4", event="workflow_dispatch", root=self.root)
 
     def test_source_fragments_resolve_against_the_dispatch_head_line_count(self):
-        target = "https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v2.3.4/mix.exs"
+        target = "https://github.com/baselabs/request_seal/blob/v2.3.4/mix.exs"
         for fragment in ("#L1", "#L1-L2"):
             release.verify_published_destinations(f"[Source]({target}{fragment})", "2.3.4", "workflow_dispatch", self.root)
         for fragment in ("#L9999", "#L2-L1"):
@@ -380,7 +386,7 @@ class ReleaseIdentityTest(unittest.TestCase):
                 release.verify_published_destinations(f"[Source]({target}{fragment})", "2.3.4", "workflow_dispatch", self.root)
 
     def test_compare_requires_an_existing_ancestor_tag_in_dispatch(self):
-        body = "https:\x2f\x2fgithub.com/baselabs/request_seal/compare/v2.3.3...v2.3.4"
+        body = "https://github.com/baselabs/request_seal/compare/v2.3.3...v2.3.4"
         with self.assertRaisesRegex(ValueError, "base tag is missing"):
             release.verify_published_destinations(body, "2.3.4", "workflow_dispatch", self.root)
         self.git("tag", "v2.3.3")
@@ -389,6 +395,173 @@ class ReleaseIdentityTest(unittest.TestCase):
         self.git("commit", "--quiet", "-m", "Unrelated history")
         with self.assertRaisesRegex(ValueError, "not an ancestor"):
             release.verify_published_destinations(body, "2.3.4", "workflow_dispatch", self.root)
+
+    def test_current_hex_package_is_a_future_destination_without_network_requests(self):
+        # Audit the real code in a separate interpreter so the observer is removed
+        # with the process. No HTTP client or classifier is replaced.
+        self.identity("1.0.0")
+        script = '''import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import release, check_docs, check
+root = Path(sys.argv[2])
+requests = []
+sys.addaudithook(lambda event, args: requests.append(event) if event in
+                ("socket.connect", "socket.getaddrinfo", "urllib.Request") else None)
+target = "https://hex.pm/packages/request_seal/1.0.0"
+source = "## 1.0.0 - 2026-11-17\\n\\n- " + target + "\\n"
+notes = release.release_notes(source, "1.0.0")
+sources = {name: (root / name).read_text() for name in ("mix.exs", "corpus/index.json")}
+sources["CHANGELOG.md"] = source
+assert check.corpus_release_errors(sources) == []
+release.verify_published_destinations(notes, "1.0.0", "workflow_dispatch", root)
+assert check_docs.first_party_link_errors(root, "README.md", target, "1.0.0", set(), {}) == []
+print("NETWORK_EVENTS=" + json.dumps(requests))
+'''
+        result = run([sys.executable, "-B", "-c", script, ROOT / "scripts", self.root],
+                     capture_output=True, text=True, timeout=30)
+        self.assertIn("NETWORK_EVENTS=[]", result.stdout)
+        for target in ("https://hex.pm/packages/request-seal/1.0.0",
+                       "https://hex.pm/packages/request_seal/2.0.0"):
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, "canonical|version 1.0.0"):
+                release.release_destinations(target, "1.0.0")
+
+
+class DestinationRegressionTest(unittest.TestCase):
+    def test_bare_url_candidates_include_quotes_backticks_and_non_ascii(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        for suffix in ("'s", '"', "`", "\N{NO-BREAK SPACE}next"):
+            with self.subTest(suffix=suffix):
+                candidate = target + suffix
+                self.assertEqual([candidate], [value for _, value, _ in release.extract_destinations(candidate)])
+                for classify in (release.classify_destination,
+                                 lambda value: release.validate_destination(value, "2.3.4")):
+                    with self.assertRaisesRegex(ValueError, "canonical form: https://request-seal.hexdocs.pm/"):
+                        classify(candidate)
+
+    def test_code_spans_cannot_pair_across_block_boundaries(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/missing.html"
+        for body in (f"- Renamed `a to b\n- See {target} for `details`.",
+                     f"### Changed `x\n- See {target} for `details`.",
+                     f"Paragraph `x\n\nSee {target} for `details`.",
+                     f"Title `x\n===\nSee {target} for `details`."):
+            with self.subTest(body=body):
+                self.assertEqual([target], release.release_destinations(body, "2.3.4"))
+        self.assertEqual([], release.release_destinations(f"`text\n{target}`", "2.3.4"))
+        self.assertEqual([target], release.release_destinations(f"Unclosed `` text {target}", "2.3.4"))
+
+    def test_escaped_backticks_cannot_open_code_spans(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/missing.html"
+        body = f"- Escaped \\` then {target} and `code`."
+        self.assertEqual([target], release.release_destinations(body, "2.3.4"))
+        self.assertEqual([], release.release_destinations(f"Two slashes \\\\`{target}`", "2.3.4"))
+        # Within a span a backslash does not escape its closing delimiter.
+        self.assertEqual([target], release.release_destinations(f"`code\\` {target}", "2.3.4"))
+
+    def test_whitespace_separates_shortcuts_from_full_references(self):
+        for separator in (" ", "\n"):
+            body = "[RFC 9421]" + separator + "[section 2]"
+            self.assertEqual([], release.release_destinations(body, "2.3.4"))
+            for definitions, targets in (
+                ("[RFC 9421]: https://example.com/rfc", ["https://example.com/rfc"]),
+                ("[RFC 9421]: https://example.com/rfc\n[section 2]: https://example.com/section",
+                 ["https://example.com/rfc", "https://example.com/section"]),
+            ):
+                self.assertEqual(targets, release.release_destinations(body + "\n\n" + definitions, "2.3.4"))
+        with self.assertRaisesRegex(ValueError, "reference 'b' requires a definition"):
+            release.release_destinations("[a][b]", "2.3.4")
+
+    def test_hyphenated_paths_are_first_party_and_require_canonical_spelling(self):
+        for target, canonical in (
+            ("https://github.com/baselabs/request-seal/blob/v2.3.4/mix.exs",
+             "https://github.com/baselabs/request_seal/blob/v2.3.4/<path>"),
+            ("https://hexdocs.pm/request-seal/2.3.4/readme.html",
+             "https://request-seal.hexdocs.pm/2.3.4/<page>"),
+            ("https://hex.pm/packages/request-seal/2.3.4", "https://hex.pm/packages/request_seal/2.3.4"),
+        ):
+            with self.subTest(target=target):
+                self.assertIsNotNone(release.first_party(release.urlsplit(target)))
+                with self.assertRaisesRegex(ValueError, re.escape(canonical)):
+                    release.validate_destination(target, "2.3.4")
+        self.assertEqual("hexdocs", release.classify_destination("https://request-seal.hexdocs.pm/2.3.4/readme.html")["kind"])
+
+    def test_link_occupied_range_starts_at_its_own_matched_bracket(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/missing.html"
+        body = f"- [x] see {target} foo](https://example.com)"
+        self.assertEqual([target, "https://example.com"], release.release_destinations(body, "2.3.4"))
+
+    def test_heading_end_is_a_valid_reference_definition_boundary(self):
+        for heading in ("### Links", "Links\n====", "Links\n----"):
+            with self.subTest(heading=heading):
+                self.assertEqual(["https://example.com"], release.release_destinations(
+                    heading + "\n[g]: https://example.com\n\nUse [g].", "2.3.4"))
+
+    def test_footnotes_require_unique_section_local_definitions(self):
+        self.assertEqual([], release.release_destinations("- Note[^one].\n\n[^one]: Explanation.", "2.3.4"))
+        target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        self.assertEqual([target], release.release_destinations(f"Note[^one].\n\n[^one]: See {target}", "2.3.4"))
+        with self.assertRaisesRegex(ValueError, "footnote.*requires a definition inside"):
+            release.release_destinations("Note[^one].", "2.3.4")
+        with self.assertRaisesRegex(ValueError, "duplicate footnote definition"):
+            release.release_destinations("Note[^one].\n\n[^one]: First.\n[^one]: Second.", "2.3.4")
+        source = ("## 2.3.4 - 2026-11-17\n\nNote[^one].\n\n"
+                  "## 2.3.3 - 2026-11-16\n\n[^one]: Other section.\n")
+        with self.assertRaisesRegex(ValueError, "footnote.*requires a definition inside"):
+            release.release_notes(source, "2.3.4")
+
+    def test_rendered_markup_blobs_reject_line_fragments(self):
+        for extension in (".md", ".markdown", ".livemd", ".rst", ".adoc", ".rdoc", ".mdx", ".rst.txt"):
+            target = "https://github.com/baselabs/request_seal/blob/v2.3.4/file" + extension
+            with self.subTest(extension=extension), self.assertRaisesRegex(ValueError, "line fragments.*rendered markup"):
+                release.validate_destination(target + "#L1", "2.3.4")
+            self.assertEqual("github", release.validate_destination(target, "2.3.4"))
+        self.assertEqual("github", release.validate_destination(
+            "https://github.com/baselabs/request_seal/blob/v2.3.4/mix.exs#L1", "2.3.4"))
+
+    def test_scheme_and_host_case_require_the_canonical_form(self):
+        for target in ("HTTPS://request-seal.hexdocs.pm/2.3.4/readme.html",
+                       "https://REQUEST-SEAL.HEXDOCS.PM/2.3.4/readme.html"):
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, "canonical form: https://request-seal.hexdocs.pm/"):
+                release.classify_destination(target)
+
+    def test_redirect_failure_does_not_skip_the_next_target(self):
+        output = io.StringIO()
+        with local_http({"/a-redirect": [302], "/z-ok": [200]}) as (base, requests):
+            with redirect_stdout(output), self.assertRaises(ValueError) as raised:
+                release.verify_http_destinations([base + "/a-redirect", base + "/z-ok"], deadline_seconds=2)
+            self.assertEqual(["/a-redirect", "/z-ok"], requests)
+            self.assertIn(f"{base}/a-redirect: HTTP 302", str(raised.exception))
+            self.assertIn(base + "/z-ok: HTTP 200", str(raised.exception))
+            self.assertIn(f"HTTP 200 {base}/z-ok", output.getvalue())
+
+    def test_decode_failure_does_not_skip_the_next_target(self):
+        with local_http({"/a-invalid": [(200, {}, b"\xff")], "/z-ok": [200]}) as (base, requests):
+            with self.assertRaisesRegex(ValueError, "response decode error: UnicodeDecodeError") as raised:
+                release.verify_http_destinations([base + "/a-invalid#fragment", base + "/z-ok"], deadline_seconds=2)
+            self.assertEqual(["/a-invalid", "/z-ok"], requests)
+            self.assertIn(base + "/z-ok: HTTP 200", str(raised.exception))
+
+    def test_slow_drip_body_cannot_extend_the_read_deadline(self):
+        body = [(0.02, b"x")] * 100
+        with local_http({"/drip": [(200, {}, body)]}) as (base, requests):
+            started = time.monotonic()
+            with self.assertRaisesRegex(ValueError, "transport error.*[Tt]ime"):
+                release.verify_http_destinations([base + "/drip#missing"], deadline_seconds=0.15)
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertEqual(["/drip"], requests)
+
+    def test_truncated_body_is_a_transport_failure_and_is_retried(self):
+        with local_http({"/truncated": [(200, {"Content-Length": "20"}, b"partial"), 200]}) as (base, requests):
+            release.verify_http_destinations([base + "/truncated"], deadline_seconds=4)
+            self.assertEqual(["/truncated", "/truncated"], requests)
+
+    def test_issue_number_redirect_names_its_pull_request_url(self):
+        path = "/baselabs/request_seal/issues/12"
+        pull = "https://github.com/baselabs/request_seal/pull/12"
+        with local_http({path: [(302, {"Location": pull})]}) as (base, requests):
+            with self.assertRaisesRegex(ValueError, re.escape("use " + pull)):
+                release.verify_http_destinations([base + path], deadline_seconds=2)
+            self.assertEqual([path], requests)
 
 
 class ReleaseWorkflowTest(unittest.TestCase):
@@ -434,32 +607,32 @@ class ReleaseWorkflowTest(unittest.TestCase):
         output = io.StringIO()
         with redirect_stdout(output):
             release.verify_published_destinations(
-                "[Source](https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v1.0.0/README.md)", "1.0.0", event="push")
-        self.assertIn("HTTP 200 https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v1.0.0/README.md", output.getvalue())
+                "[Source](https://github.com/baselabs/request_seal/blob/v1.0.0/README.md)", "1.0.0", event="push")
+        self.assertIn("HTTP 200 https://github.com/baselabs/request_seal/blob/v1.0.0/README.md", output.getvalue())
         with self.assertRaisesRegex(ValueError, "HTTP 404"):
             release.verify_published_destinations(
-                "[Missing](https:\x2f\x2frequest-seal.hexdocs.pm/1.0.0/no-such-release-page.html)",
+                "[Missing](https://request-seal.hexdocs.pm/1.0.0/no-such-release-page.html)",
                 "1.0.0", deadline_seconds=2)
 
     def test_only_canonical_first_party_forms_pass_the_offline_gate(self):
-        for target in ("https:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/RequestSeal.html",
-                       "https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v2.3.4/README.md",
-                       "https:\x2f\x2fraw.githubusercontent.com/baselabs/request_seal/v2.3.4/README.md"):
+        for target in ("https://request-seal.hexdocs.pm/2.3.4/RequestSeal.html",
+                       "https://github.com/baselabs/request_seal/blob/v2.3.4/README.md",
+                       "https://raw.githubusercontent.com/baselabs/request_seal/v2.3.4/README.md"):
             self.assertTrue(release.validate_destination(target, "2.3.4"))
         for target, canonical in (
-            ("https:\x2f\x2fhexdocs.pm/request_seal/2.3.4/compatibility.html", "https:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/<page>"),
-            ("https:\x2f\x2fgithub.com/baselabs/request_seal/raw/v2.3.4/README.md", "https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v2.3.4/<path>"),
+            ("https://hexdocs.pm/request_seal/2.3.4/compatibility.html", "https://request-seal.hexdocs.pm/2.3.4/<page>"),
+            ("https://github.com/baselabs/request_seal/raw/v2.3.4/README.md", "https://github.com/baselabs/request_seal/blob/v2.3.4/<path>"),
         ):
             with self.subTest(target=target), self.assertRaisesRegex(ValueError, re.escape(canonical)):
                 release.validate_destination(target, "2.3.4")
 
     def test_autolinks_and_bare_urls_follow_the_same_destination_rules_everywhere(self):
         for container in ("{}", "<!-- {} -->", "> {}"):
-            for target in ("https:\x2f\x2fgithub.com/baselabs/request_seal/blob/main/README.md",
-                           "http:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/readme.html",
-                           "www\x2egithub.com/baselabs/request_seal/blob/v2.3.4/README.md",
-                           "WWW\x2eGITHUB.COM/baselabs/request_seal/blob/v2.3.4/README.md",
-                           "https:\x2f\x2fhexdocs.pm/request_seal/2.3.4/readme.html"):
+            for target in ("https://github.com/baselabs/request_seal/blob/main/README.md",
+                           "http://request-seal.hexdocs.pm/2.3.4/readme.html",
+                           "www.github.com/baselabs/request_seal/blob/v2.3.4/README.md",
+                           "WWW.GITHUB.COM/baselabs/request_seal/blob/v2.3.4/README.md",
+                           "https://hexdocs.pm/request_seal/2.3.4/readme.html"):
                 for occurrence in (target, "<" + target + ">"):
                     body = container.format(occurrence)
                     with self.subTest(body=body), self.assertRaisesRegex(ValueError, r"CHANGELOG.md:\d+: destination"):
@@ -484,19 +657,19 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_first_party_classification_cannot_be_bypassed_by_normalization(self):
         targets = (
-            "https:\x2f\x2fhexdocs.pm/Request_Seal/1.0.0/readme.html",
-            "https:\x2f\x2fwww\x2egithub.com/baselabs/request_seal/blob/main/README.md",
-            "https:\x2f\x2fgithub.com/baselabs/./request_seal/blob/v2.3.4/README.md",
-            "https:\x2f\x2fhexdocs.pm/x/../request_seal/2.3.4/readme.html",
-            "https:\x2f\x2fhexdocs.pm/request_seal/../other/2.3.4/readme.html",
-            "https:\x2f\x2fgithub.com/baselabs/request_seal/../other/blob/v2.3.4/README.md",
-            "https:\x2f\x2fGITHUB.COM/BaseLabs/Request_Seal/blob/v2.3.4/README.md",
-            "https:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/%72eadme.html",
-            "https:\x2f\x2fgithub.com/baselabs/%72equest_seal/blob/v2.3.4/README.md",
-            "https:\x2f\x2fuser@github.com/baselabs/request_seal/blob/v2.3.4/README.md",
-            "https:\x2f\x2fgithub.com:443/baselabs/request_seal/blob/v2.3.4/README.md",
-            "https:\x2f\x2fwww\x2erequest-seal.hexdocs.pm/2.3.4/readme.html",
-            "https:\x2f\x2fRAW.GITHUBUSERCONTENT.COM/baselabs/request_seal/v2.3.4/README.md",
+            "https://hexdocs.pm/Request_Seal/1.0.0/readme.html",
+            "https://www.github.com/baselabs/request_seal/blob/main/README.md",
+            "https://github.com/baselabs/./request_seal/blob/v2.3.4/README.md",
+            "https://hexdocs.pm/x/../request_seal/2.3.4/readme.html",
+            "https://hexdocs.pm/request_seal/../other/2.3.4/readme.html",
+            "https://github.com/baselabs/request_seal/../other/blob/v2.3.4/README.md",
+            "https://GITHUB.COM/BaseLabs/Request_Seal/blob/v2.3.4/README.md",
+            "https://request-seal.hexdocs.pm/2.3.4/%72eadme.html",
+            "https://github.com/baselabs/%72equest_seal/blob/v2.3.4/README.md",
+            "https://user@github.com/baselabs/request_seal/blob/v2.3.4/README.md",
+            "https://github.com:443/baselabs/request_seal/blob/v2.3.4/README.md",
+            "https://www.request-seal.hexdocs.pm/2.3.4/readme.html",
+            "https://RAW.GITHUBUSERCONTENT.COM/baselabs/request_seal/v2.3.4/README.md",
         )
         for target in targets:
             with self.subTest(target=target):
@@ -521,7 +694,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                     release.release_notes(source, "2.3.4")
                 self.assertEqual(body + "\n" + definition, release.release_notes(
                     "## 2.3.4 - 2026-11-17\n\n" + body + "\n" + definition, "2.3.4"))
-        for use in ("[Guide][missing]", "[missing][]", "[Guide]\n[missing]",
+        for use in ("[Guide][missing]", "[missing][]",
                     "[][missing]", "![][missing]", "[][]", "![][]"):
             with self.assertRaisesRegex(ValueError, "CHANGELOG.md:3: reference"):
                 release.release_notes("## 2.3.4 - 2026-11-17\n\n" + use, "2.3.4")
@@ -552,7 +725,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 2)
 
     def test_gfm_bare_destinations_strip_only_extended_autolink_suffixes(self):
-        target = "https:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/readme.html"
+        target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
         for suffix in ("?", "!", ".", ",", ":", "*", "_", "~", ")", "&copy;", "&123;", "&#123;", "&#xAB;", "**)."):
             with self.subTest(suffix=suffix):
                 self.assertEqual([target], release.release_destinations(target + suffix, "2.3.4"))
@@ -563,7 +736,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertEqual("https://example.com/a;", release.bare_destination("https://example.com/a;"))
 
     def test_visible_links_accept_emphasis_own_url_text_and_shortcut_references(self):
-        target = "https:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/readme.html"
+        target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
         for body in (f"*[Guide]({target})*", f"**[Guide]({target})**", f"[Guide]({target})—details",
                      f"[{target}]({target})", "www.example.com", target.rsplit("/", 1)[0] + "/",
                      "[RFC 9421] [section 2]\n\n[RFC 9421]: https://example.com/rfc\n[section 2]: https://example.com/section"):
@@ -572,7 +745,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_code_spans_and_blocks_have_no_destinations_or_reference_uses(self):
         for code in ("[bad](relative.md)", "[Guide][missing]", "<<size::16>>", "<<a::binary>>",
-                     "https:\x2f\x2fhexdocs.pm/request_seal/1.0.0/readme.html", '<a href="relative.md">x</a>'):
+                     "https://hexdocs.pm/request_seal/1.0.0/readme.html", '<a href="relative.md">x</a>'):
             for container in ("`{}`", "``{}``", "```text\n{}\n```", "~~~~\n{}\n~~~~", "    {}", "    - {}", "- Item\n\n      {}"):
                 body = container.format(code)
                 with self.subTest(body=body):
@@ -600,12 +773,12 @@ class ReleaseWorkflowTest(unittest.TestCase):
     def test_every_alternate_first_party_host_is_classified_and_rejected(self):
         targets = [f"https://{host}/baselabs/request_seal/v2.3.4/README.md" for host in
                    ("raw.github.com", "codeload.github.com", "media.githubusercontent.com", "uploads.github.com")]
-        targets += ["https:\x2f\x2fapi.github.com/repos/baselabs/request_seal/contents/README.md",
-                    "https:\x2f\x2fhex.pm/api/packages/request_seal/releases/2.3.4",
-                    "https:\x2f\x2fdiff.hex.pm/diff/request_seal/2.3.3..2.3.4",
-                    "https:\x2f\x2fpreview.hex.pm/preview/request_seal/2.3.4",
-                    "https:\x2f\x2frepo.hex.pm/tarballs/request_seal-2.3.4.tar",
-                    "https:\x2f\x2frepo.hex.pm/docs/request_seal-2.3.4.tar.gz"]
+        targets += ["https://api.github.com/repos/baselabs/request_seal/contents/README.md",
+                    "https://hex.pm/api/packages/request_seal/releases/2.3.4",
+                    "https://diff.hex.pm/diff/request_seal/2.3.3..2.3.4",
+                    "https://preview.hex.pm/preview/request_seal/2.3.4",
+                    "https://repo.hex.pm/tarballs/request_seal-2.3.4.tar",
+                    "https://repo.hex.pm/docs/request_seal-2.3.4.tar.gz"]
         for target in targets:
             with self.subTest(target=target):
                 self.assertIsNotNone(release.first_party(release.urlsplit(target)))
@@ -614,10 +787,10 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertRegex(" ".join(docs.first_party_link_errors(ROOT, "README.md", release.urlsplit(target), "2.3.4", set(), {})), "canonical")
 
     def test_queries_and_unsupported_fragments_are_rejected_with_the_canonical_form(self):
-        bases = ("https:\x2f\x2frequest-seal.hexdocs.pm/2.3.4/readme.html",
-                 "https:\x2f\x2fgithub.com/baselabs/request_seal/blob/v2.3.4/README.md",
-                 "https:\x2f\x2fraw.githubusercontent.com/baselabs/request_seal/v2.3.4/README.md",
-                 "https:\x2f\x2fhex.pm/packages/request_seal/2.3.4")
+        bases = ("https://request-seal.hexdocs.pm/2.3.4/readme.html",
+                 "https://github.com/baselabs/request_seal/blob/v2.3.4/README.md",
+                 "https://raw.githubusercontent.com/baselabs/request_seal/v2.3.4/README.md",
+                 "https://hex.pm/packages/request_seal/2.3.4")
         for base in bases:
             for suffix in ("?raw=true", "?"):
                 with self.subTest(target=base + suffix), self.assertRaisesRegex(ValueError, "no query string.*canonical"):

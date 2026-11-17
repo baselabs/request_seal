@@ -3,7 +3,7 @@
 import argparse
 import datetime
 import hashlib
-from http.client import HTTPException
+from http.client import HTTPException, IncompleteRead
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from html import unescape
@@ -16,7 +16,7 @@ import ssl
 import subprocess
 import time
 import uuid
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from processes import install_signal_handlers, run
@@ -72,14 +72,54 @@ REFERENCE = re.compile(r"[ \t]+(" + DESTINATION + r")(?:(?:[ \t]+)" + TITLE + r"
 URL_ATTRIBUTE = re.compile(r"\b(?:href|src)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s<>]*))", re.I)
 RAW_HTML = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)|<![A-Za-z\[]|<\?")
 AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\n]*)>")
-BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'`]*", re.I)
+BARE_URL = re.compile(r"(?:https?://|www\.)[^\x09-\x0d\x20<]*", re.I)
+# Outside Markdown, quotes delimit source/JSON strings rather than GFM autolinks.
+TEXT_URL = re.compile(r"(?:https?://|www\.)[^\x09-\x0d\x20<>\"'`]*", re.I)
 FENCE = re.compile(r"([ \t>+*.0-9()-]*(?:\[[ xX]\][ \t]*)?)(`{3,}|~{3,})(.*)$")
 DESTINATION_DEADLINE = 180
+# https://github.com/github/markup#markups and its registered markup extensions.
+MARKDOWN_SUFFIXES = (".md", ".markdown", ".mdown", ".mkdn", ".mkd", ".mdwn", ".mdx", ".litcoffee", ".livemd")
+RENDERED_MARKUP = MARKDOWN_SUFFIXES + (
+    ".textile", ".rdoc", ".org", ".creole", ".mediawiki", ".wiki", ".rst", ".rest",
+    ".rst.txt", ".rest.txt", ".asciidoc", ".adoc", ".asc", ".pod", ".pod6",
+)
 
 GITHUB_ASSET_HOSTS = {"github-cloud.githubusercontent.com", "objects.githubusercontent.com",
                       "objects-origin.githubusercontent.com", "release-assets.githubusercontent.com",
                       "github-releases.githubusercontent.com", "github-cloud.s3.amazonaws.com"}
 HEX_HOSTS = {"hex.pm", "diff.hex.pm", "preview.hex.pm", "repo.hex.pm"}
+
+
+def escaped(source, offset):
+    start = offset
+    while start and source[start - 1] == "\\":
+        start -= 1
+    return (offset - start) % 2 == 1
+
+
+def inline_blocks(source):
+    """Inline parsing cannot pair delimiters across paragraph/container boundaries."""
+    start = offset = 0
+    previous_quote = None
+    for line in source.splitlines(keepends=True):
+        text = line.rstrip("\r\n")
+        quote = re.match(r" {0,3}(?:>[ \t]*)*", text)[0]
+        content = text[len(quote):]
+        item = re.match(r"[ \t]*(?:[-+*]|[0-9]{1,9}[.)])[ \t]+", content)
+        heading = re.match(r" {0,3}#{1,6}(?:[ \t]|$)", content)
+        ending = (not content.strip() or heading or
+                  re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", content) or
+                  re.fullmatch(r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})", content))
+        if (item or heading or quote.count(">") != previous_quote or not content.strip()) and start < offset:
+            yield start, offset
+            start = offset
+        offset += len(line)
+        if ending:
+            yield start, offset
+            start = offset
+        previous_quote = quote.count(">")
+    if start < offset:
+        yield start, offset
 
 
 def masked_code(source):
@@ -118,16 +158,19 @@ def masked_code(source):
         blank = not text.strip()
         offset += len(line)
     visible = "".join(chars)
-    cursor = 0
-    while match := re.search(r"`+", visible[cursor:]):
-        start = cursor + match.start()
-        end = cursor + match.end()
-        closing = re.search(r"(?<!`)" + re.escape(match[0]) + r"(?!`)", visible[end:])
-        if closing and "\n\n" not in visible[end:end + closing.start()]:
-            cursor = end + closing.end()
-            hide(start, cursor)
-        else:
-            cursor = end
+    for beginning, finish in inline_blocks(visible):
+        runs = list(re.finditer(r"`+", visible[beginning:finish]))
+        cursor = 0
+        while cursor < len(runs):
+            opening = runs[cursor]
+            cursor += 1
+            if escaped(visible, beginning + opening.start()):
+                continue
+            closing = next((index for index in range(cursor, len(runs))
+                            if len(runs[index][0]) == len(opening[0])), None)
+            if closing is not None:
+                hide(beginning + opening.start(), beginning + runs[closing].end())
+                cursor = closing + 1
     return "".join(chars)
 
 
@@ -156,35 +199,55 @@ def extract_destinations(source, strict=False, markdown=True):
         entries.append((start, target.removeprefix("<").removesuffix(">"), ambiguous))
         occupied.append((start, end))
 
-    for start in INLINE_START.finditer(visible):
-        match = INLINE.match(visible, start.start())
-        candidate = visible[start.end():].split("\n", 1)[0].split(")", 1)[0]
-        beginning = visible.rfind("[", 0, start.start())
-        add(beginning if beginning >= 0 else start.start(), match.end() if match else start.end(),
-            match[1] if match else candidate, match is None)
-    previous_definition, previous_blank = False, True
-    offset = 0
-    for original, line in zip(source.splitlines(keepends=True), visible.splitlines(keepends=True)):
-        definition = REFERENCE_START.search(line)
-        if definition:
-            prefix = line[:definition.start()]
-            valid = prefix in ("", " ", "  ", "   ") and (previous_blank or previous_definition)
-            match = REFERENCE.match(line.rstrip("\r\n"), definition.end())
-            if strict and not valid:
-                raise ValueError(f"line {1 + source.count(chr(10), 0, offset)}: ambiguous reference definition {original.strip()!r}")
-            add(offset + definition.start(), offset + len(line),
-                match[1] if match else line[definition.end():].strip(), not valid or match is None)
-            previous_definition = valid and match is not None
-        else:
-            previous_definition = False
-        previous_blank = not original.strip()
-        offset += len(line)
+    if markdown:
+        openings = {}
+        for beginning, finish in inline_blocks(visible):
+            stack = []
+            for bracket in re.finditer(r"[\[\]]", visible[beginning:finish]):
+                offset = beginning + bracket.start()
+                if escaped(visible, offset):
+                    continue
+                if bracket[0] == "[":
+                    stack.append(offset)
+                elif stack:
+                    openings[offset] = stack.pop()
+        for start in INLINE_START.finditer(visible):
+            if escaped(visible, start.start()):
+                continue
+            match = INLINE.match(visible, start.start())
+            candidate = visible[start.end():].split("\n", 1)[0].split(")", 1)[0]
+            add(openings.get(start.start(), start.start()), match.end() if match else start.end(),
+                match[1] if match else candidate, match is None)
+        previous_definition, previous_boundary = False, True
+        offset = 0
+        for original, line in zip(source.splitlines(keepends=True), visible.splitlines(keepends=True)):
+            definition = REFERENCE_START.search(line)
+            if definition:
+                prefix = line[:definition.start()]
+                valid = prefix in ("", " ", "  ", "   ") and (previous_boundary or previous_definition)
+                match = REFERENCE.match(line.rstrip("\r\n"), definition.end())
+                if strict and not valid:
+                    raise ValueError(f"line {1 + source.count(chr(10), 0, offset)}: ambiguous reference definition {original.strip()!r}")
+                if definition[1].startswith("^"):
+                    # Footnote bodies are prose, not link destinations. Their URLs
+                    # still pass through the ordinary inline/autolink scan below.
+                    previous_definition = valid
+                else:
+                    add(offset + definition.start(), offset + len(line),
+                        match[1] if match else line[definition.end():].strip(), not valid or match is None)
+                    previous_definition = valid and match is not None
+            else:
+                previous_definition = False
+            previous_boundary = (not original.strip() or
+                                 re.match(r" {0,3}#{1,6}(?:[ \t]|$)", line) is not None or
+                                 re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", line.rstrip("\r\n")) is not None)
+            offset += len(line)
     for match in URL_ATTRIBUTE.finditer(visible):
         add(match.start(), match.end(), unescape(next(value for value in match.groups() if value is not None)))
     for match in AUTOLINK.finditer(visible):
         if not any(start <= match.start() < end for start, end in occupied):
             add(match.start(), match.end(), match[1])
-    for match in BARE_URL.finditer(visible):
+    for match in (BARE_URL if markdown else TEXT_URL).finditer(visible):
         if not any(start <= match.start() < end for start, end in occupied):
             add(match.start(), match.end(), bare_destination(match[0]))
     return sorted(entries)
@@ -197,17 +260,17 @@ def first_party(url):
     paths = (decoded.lower(), posixpath.normpath(decoded).lower())
     if host in ("request-seal.hexdocs.pm", "request_seal.hexdocs.pm"):
         return "hexdocs"
-    if host == "hexdocs.pm" and any(re.match(r"/request_seal(?:/|$)", path) for path in paths):
+    if host == "hexdocs.pm" and any(re.match(r"/request[-_]seal(?:/|$)", path) for path in paths):
         return "hexdocs"
     if host in GITHUB_ASSET_HOSTS:
         return "github"  # Opaque asset URLs cannot establish a stable repository ref.
-    if host == "baselabs.github.io" and any(re.match(r"/request_seal(?:/|$)", path) for path in paths):
+    if host == "baselabs.github.io" and any(re.match(r"/request[-_]seal(?:/|$)", path) for path in paths):
         return "github"
     if host == "github.com" or host.endswith((".github.com", ".githubusercontent.com")):
-        if any(re.search(r"(?:^|/)baselabs/request_seal(?:[/.]|$)", path) for path in paths):
+        if any(re.search(r"(?:^|/)baselabs/request[-_]seal(?:[/.]|$)", path) for path in paths):
             return "github_raw" if host in {"raw.github.com", "raw.githubusercontent.com", "media.githubusercontent.com"} else "github"
-    if host in HEX_HOSTS and (any(re.search(r"(?:^|/)request_seal(?:[-/.]|$)", path) for path in paths)
-                              or re.search(r"(?:^|[=&/])request_seal(?:[=&/]|$)", unquote(url.query).lower())):
+    if host in HEX_HOSTS and (any(re.search(r"(?:^|/)request[-_]seal(?:[-/.]|$)", path) for path in paths)
+                              or re.search(r"(?:^|[=&/])request[-_]seal(?:[=&/]|$)", unquote(url.query).lower())):
         return "hex"
     return None
 
@@ -240,6 +303,8 @@ def classify_destination(target, version=None, released=False):
     if not kind:
         return None
     canonical = canonical_forms(version if released else None)[kind]
+    if not target.startswith("https://") or re.search(r"[^\x21-\x7e]|[<>\\\"'`]", target):
+        raise ValueError("first-party destination requires a literal canonical HTTPS URL; canonical form: " + canonical)
     if "?" in target.split("#", 1)[0]:
         raise ValueError("first-party destination allows no query string; canonical form: " + canonical)
     first_party_syntax(url, kind, version if released else None)
@@ -283,6 +348,8 @@ def classify_destination(target, version=None, released=False):
             result.update(ref=parts[0], path=parts[1], version=parts[0][1:] if parts[0] != "main" else None)
             if url.fragment and (kind != "github" or not re.fullmatch(r"L[1-9][0-9]*(?:-L[1-9][0-9]*)?", url.fragment)):
                 raise ValueError("GitHub source fragment requires #L<n> or #L<n>-L<m>; canonical form: " + canonical)
+            if url.fragment and result["path"].lower().endswith(RENDERED_MARKUP):
+                raise ValueError("GitHub line fragments do not select lines in rendered markup; canonical form: " + canonical + " (without a line fragment)")
     if result["path"] and (result["path"].endswith("/") or any(part.startswith(".") or not part for part in result["path"].split("/"))):
         raise ValueError("first-party link targets a private or unsafe path; canonical form: " + canonical)
     if url.fragment and result["kind"] not in ("hexdocs", "github"):
@@ -294,13 +361,11 @@ def classify_destination(target, version=None, released=False):
 
 def validate_destination(target, version):
     """Validate literal authoring syntax and the shared canonical forms."""
+    classified = classify_destination(target, version, released=True)
     if (not target or re.search(r"[^\x21-\x7e]|[<>\\\"'`]", target)
             or re.search(r"&(?:#\w+|[A-Za-z][A-Za-z0-9]*);|%(?![0-9A-Fa-f]{2})", target)):
         raise ValueError("requires a literal absolute URL; ambiguous destination syntax")
     url = urlsplit("https://" + target if target.lower().startswith("www.") else target)
-    classified = classify_destination(target, version, released=True)
-    if target.lower().startswith("www.") and classified:
-        raise ValueError("first-party destination requires canonical form: " + canonical_forms(version)[first_party(url)])
     if url.scheme in ("http", "https"):
         if not url.hostname or url.username is not None or url.password is not None:
             raise ValueError("requires an absolute HTTP(S) URL without credentials")
@@ -363,15 +428,17 @@ def release_destinations(body, version, first_line=1, all_reference_labels=None)
         except ValueError as error:
             raise ValueError(f"CHANGELOG.md:{line}: destination {target!r}: {error}") from error
         targets.append(target)
-    definitions = set()
+    definitions, footnotes = set(), set()
     for match in REFERENCE_START.finditer(visible):
         label = reference_label(match[1])
         line = first_line + body.count("\n", 0, match.start())
-        if not label or label.startswith("^") or "\\" in label or "[" in label:
+        if not label or label == "^" or "\\" in label or "[" in label:
             raise ValueError(f"CHANGELOG.md:{line}: ambiguous reference definition {label!r}")
-        if label in definitions:
-            raise ValueError(f"CHANGELOG.md:{line}: duplicate reference definition {label!r}")
-        definitions.add(label)
+        collection = footnotes if label.startswith("^") else definitions
+        if label in collection:
+            kind = "footnote" if label.startswith("^") else "reference"
+            raise ValueError(f"CHANGELOG.md:{line}: duplicate {kind} definition {label!r}")
+        collection.add(label)
     known = definitions | {reference_label(match[1]) for match in REFERENCE_START.finditer(body)} | (all_reference_labels or set())
     cursor = 0
     bracket = re.compile(r"\[([^\[\]\n]*)\]")
@@ -385,10 +452,15 @@ def release_destinations(body, version, first_line=1, all_reference_labels=None)
         if rest.startswith(":"):
             continue
         label = reference_label(match[1])
-        following = re.match(r"([ \t]*(?:\n[ \t]*)?)\[([^\[\]\n]*)\]", rest)
-        explicit = following is not None and (not following[1] or not following[2] or label not in known)
+        if label.startswith("^"):
+            if label not in footnotes:
+                line = first_line + body.count("\n", 0, match.start())
+                raise ValueError(f"CHANGELOG.md:{line}: footnote {label!r} requires a definition inside the released section")
+            continue
+        following = re.match(r"\[([^\[\]\n]*)\]", rest)
+        explicit = following is not None
         if explicit:
-            label = reference_label(following[2] or match[1])
+            label = reference_label(following[1] or match[1])
             cursor += following.end()
         if (explicit or label in known) and label not in definitions:
             line = first_line + body.count("\n", 0, match.start())
@@ -477,14 +549,35 @@ def retry_after_seconds(value):
             return 0
 
 
+def read_response_body(response, deadline, collect=False):
+    """Check the budget between reads, including bodies arriving a byte at a time."""
+    body = bytearray()
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("destination deadline exceeded while reading response body")
+        # HTTPResponse exposes no timeout setter. Its SocketIO owns the real
+        # socket, also for HTTPS; update it before every single buffered read.
+        if response.fp is not None:
+            response.fp.raw._sock.settimeout(min(15, remaining))
+        chunk = response.read1(65536)
+        if not chunk:
+            if response.length:
+                raise IncompleteRead(bytes(body), response.length)
+            return bytes(body)
+        if collect:
+            body.extend(chunk)
+
+
 def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
-    """No redirects; retry transient errors. Bound: deadline plus one socket timeout."""
+    """No redirects; budget retries/body reads. DNS has no stdlib time bound."""
     class NoRedirect(HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             return None
 
     opener = build_opener(NoRedirect())
     pending = set(targets)
+    all_targets = pending.copy()
     failures = {target: "not requested before deadline" for target in pending}
     due = {target: 0 for target in pending}
     deadline = time.monotonic() + deadline_seconds
@@ -498,15 +591,30 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
             if due[target] > time.monotonic():
                 continue
             retry_after = 0
+            redirect = ""
+            status = None
             try:
                 with opener.open(Request(target, headers={"User-Agent": "RequestSeal-release"}), timeout=min(15, remaining)) as response:
                     status = response.status
                     fragment = urlsplit(target).fragment
-                    ids = page_ids(response.read().decode("utf-8")) if status == 200 and fragment else None
+                    data = read_response_body(response, deadline, collect=bool(fragment))
+                    ids = page_ids(data.decode("utf-8")) if status == 200 and fragment else None
             except HTTPError as error:
                 status = error.code
                 retry_after = retry_after_seconds(error.headers.get("Retry-After")) if status == 429 else 0
+                destination = urljoin(target, error.headers.get("Location", ""))
+                authored, resolved = urlsplit(target), urlsplit(destination)
+                issue = re.fullmatch(r"/baselabs/request_seal/issues/([1-9][0-9]*)", authored.path)
+                if (300 <= status < 400 and issue and resolved.hostname == "github.com"
+                        and resolved.path == "/baselabs/request_seal/pull/" + issue[1]):
+                    redirect = "; this number is a pull request; use https://github.com" + resolved.path
                 error.close()
+            except UnicodeError as error:
+                outcome = f"HTTP {status}; " if status is not None else ""
+                failures[target] = outcome + f"response decode error: {type(error).__name__}: {error}"
+                pending.remove(target)
+                final = True
+                continue
             except (HTTPException, ssl.SSLError, OSError, URLError) as error:
                 failures[target] = f"transport error: {type(error).__name__}: {error}"
                 due[target] = time.monotonic() + backoff
@@ -515,19 +623,17 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
             if status == 200:
                 pending.remove(target)
                 if ids is not None and unquote(urlsplit(target).fragment) not in ids:
-                    failures[target] = "HexDocs fragment is missing from the real page"
+                    failures[target] = "HTTP 200; HexDocs fragment is missing from the real page"
                     final = True
                 else:
                     failures.pop(target, None)
             else:
-                failures[target] = f"HTTP {status} (expected HTTP 200, got {status})"
+                failures[target] = f"HTTP {status} (expected HTTP 200, got {status})" + redirect
                 if status == 404 or status == 429 or 500 <= status <= 599:
                     due[target] = time.monotonic() + max(backoff, retry_after)
                 else:
                     pending.remove(target)
                     final = True
-                    if 300 <= status < 400:
-                        break  # A redirect fails immediately, without another request.
         remaining = deadline - time.monotonic()
         # Once a permanent failure makes success impossible, report the last
         # result for every destination; do not wait out unrelated 404 retries.
@@ -537,7 +643,15 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
         backoff = min(backoff * 2, 10)
     if failures:
         raise ValueError("Release destinations failed:\n" + "\n".join(
-            f"{target}: {status}" for target, status in sorted(failures.items())))
+            f"{target}: {failures.get(target, 'HTTP 200')}" for target in sorted(all_targets)))
+
+
+def ref_exists(root, ref):
+    result = run(["git", "show-ref", "--verify", "--quiet", ref], cwd=root,
+                 capture_output=True, check=False, timeout=30)
+    if result.returncode not in (0, 1):
+        raise ValueError(f"cannot inspect git ref {ref}")
+    return result.returncode == 0
 
 
 def compare_errors(root, ref, against="HEAD"):
@@ -578,7 +692,13 @@ def verify_published_destinations(body, version, event="push", root=ROOT, deadli
         if not link:
             continue
         errors = []
-        if event == "workflow_dispatch" and link["kind"] == "github_compare":
+        if (event == "workflow_dispatch" and link["kind"] == "hex_package"
+                and link["version"] == package_version((root / "mix.exs").read_text())
+                and not ref_exists(root, "refs/tags/v" + link["version"])):
+            # The release classifier already binds the package and version.
+            # This page is created by Hex publication, before the tag push.
+            continue
+        elif event == "workflow_dispatch" and link["kind"] == "github_compare":
             errors = compare_errors(root, link["ref"])
         elif link["kind"] in ("github", "github_raw"):
             ref = "HEAD" if event == "workflow_dispatch" else "refs/tags/" + link["ref"]

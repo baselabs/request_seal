@@ -12,9 +12,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from http.client import HTTPException
 import json
-from release import (classify_destination, compare_errors, extract_destinations, first_party,
+from release import (MARKDOWN_SUFFIXES, classify_destination, compare_errors, extract_destinations, first_party,
                      git_source_errors, install_requirement, page_ids,
-                     parse_version, source_fragment_errors, verify_http_destinations)
+                     parse_version, ref_exists, source_fragment_errors, verify_http_destinations)
 from processes import install_signal_handlers, run, temporary_directory
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,14 +73,6 @@ def public_paths(root):
     if "README.md" not in paths:
         raise ValueError("public source inventory did not find its README.md positive control")
     return paths
-
-
-def ref_exists(root, ref):
-    result = run(["git", "show-ref", "--verify", "--quiet", ref], cwd=root,
-                 capture_output=True, check=False, timeout=30)
-    if result.returncode not in (0, 1):
-        raise ValueError(f"cannot inspect git ref {ref}")
-    return result.returncode == 0
 
 
 def public_configuration(root):
@@ -272,8 +264,15 @@ def published_documents(root, version):
     parse_version(version)
     with temporary_directory(prefix="requestseal-package-") as directory:
         output = Path(directory) / "package"
-        run(["mix", "hex.package", "fetch", "request_seal", version, "--unpack", "--output", output],
-            cwd=root, extra_env={"HEX_HOME": str(Path(directory) / "hex")}, timeout=180)
+        try:
+            result = run(["mix", "hex.package", "fetch", "request_seal", version, "--unpack", "--output", output],
+                         cwd=root, extra_env={"HEX_HOME": str(Path(directory) / "hex")}, check=False, timeout=180)
+        except (OSError, subprocess.SubprocessError) as error:
+            hex_metadata(version)
+            raise ValueError("Hex unreachable: package fetch failed for published version " + version) from error
+        if result.returncode:
+            hex_metadata(version)
+            raise ValueError("Hex unreachable: package fetch failed for published version " + version)
         if not (output / "README.md").is_file():
             raise ValueError("published package is missing README.md for " + version)
         return {path.relative_to(output).as_posix() for path in output.rglob("*")
@@ -315,6 +314,11 @@ def first_party_link_errors(root, relative, url, version, published, references)
                 return ["HexDocs fragment is missing from real documentation output for " + release_version]
             return []
         if kind in ("github_live", "hex_package"):
+            if (kind == "hex_package" and link["version"] == version
+                    and not ref_exists(root, "refs/tags/v" + version)):
+                # The current release's package page does not exist until Hex
+                # publication. Historical/tagged releases still require HTTP.
+                return []
             key = ("HTTP", url.geturl())
             if key not in references:
                 try:
@@ -360,8 +364,13 @@ def first_party_link_errors(root, relative, url, version, published, references)
             else:
                 inventory_key = ("package", name)
                 if inventory_key not in references:
-                    references[inventory_key] = published_documents(root, name.removeprefix("v"))
+                    try:
+                        references[inventory_key] = published_documents(root, name.removeprefix("v"))
+                    except (OSError, ValueError, subprocess.SubprocessError) as error:
+                        references[inventory_key] = str(error)
                 documents = references[inventory_key]
+                if isinstance(documents, str):
+                    return [documents]
             if target not in documents:
                 return ["published document links a repository-only document at " + key]
     except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -379,8 +388,11 @@ def content_errors(root, relative, source, paths, version=None, published=None, 
     if INTERNAL_PROCESS.search(source):
         errors.append(f"{relative}: internal process material is not public documentation")
     errors.extend(release_errors(relative, source, version))
-    targets = [target for _, target, _ in extract_destinations(source)]
-    for target in targets:
+    for offset, target, ambiguous in extract_destinations(source):
+        if ambiguous:
+            line = 1 + source.count("\n", 0, offset)
+            errors.append(f"{relative}:{line}: {target}: ambiguous destination syntax")
+            continue
         try:
             url = urlsplit("https://" + target if target.lower().startswith("www.") else target)
         except ValueError:
@@ -529,10 +541,21 @@ def fence_errors(root, relative, source):
     return errors
 
 
-def tracked_link_errors(root, paths, version, published, references, checked=()):
-    """Every tracked UTF-8 text file is a link source, including corpus metadata."""
+def link_scan_paths(paths, configuration):
+    """The package/docs inventories plus repository publication sources."""
+    return configuration["files"] | configuration["documents"] | {
+        relative for relative in paths
+        if relative.startswith(("livebooks/", "corpus/", ".github/"))
+        or (Path(relative).suffix.lower() in MARKDOWN_SUFFIXES
+            and not relative.startswith(("test/", "scripts/")))
+    }
+
+
+def tracked_link_errors(root, paths, version, published, references, checked=(), configuration=None):
+    """Scan UTF-8 publication sources; fixtures have no authored destinations."""
+    configuration = public_configuration(root) if configuration is None else configuration
     errors = []
-    for relative in sorted(set(paths) - set(checked)):
+    for relative in sorted(link_scan_paths(paths, configuration) - set(checked)):
         path = root / relative
         if not path.is_file() or path.is_symlink():
             continue
@@ -543,19 +566,23 @@ def tracked_link_errors(root, paths, version, published, references, checked=())
             source = data.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        for offset, target, ambiguous in extract_destinations(source, markdown=path.suffix in (".md", ".livemd")):
+        for offset, target, ambiguous in extract_destinations(source, markdown=path.suffix.lower() in MARKDOWN_SUFFIXES):
+            is_first_party = False
             try:
                 url = urlsplit("https://" + target if target.lower().startswith("www.") else target)
-                if not first_party(url):
+                is_first_party = first_party(url) is not None
+                if not is_first_party:
                     continue
+                classify_destination(target)
                 reasons = first_party_link_errors(root, relative, target, version, published, references)
                 if ambiguous:
                     reasons.append("ambiguous destination syntax")
                 line = 1 + source.count("\n", 0, offset)
                 errors.extend(f"{relative}:{line}: {target}: {reason}" for reason in reasons)
             except ValueError as error:
-                if re.search(r"request[_-]seal", unquote(target), re.I):
-                    errors.append(f"{relative}: {target}: {error}")
+                if is_first_party:
+                    line = 1 + source.count("\n", 0, offset)
+                    errors.append(f"{relative}:{line}: {target}: {error}")
     return errors
 
 
@@ -563,6 +590,7 @@ def check(root=ROOT, docs_output=None):
     configuration = public_configuration(root)
     approved = configuration["documents"] | SOURCE_DOCUMENTS
     paths = public_paths(root)
+    scan_paths = link_scan_paths(paths, configuration)
     errors = inventory_errors(root, approved, paths)
     errors.extend(package_errors(root, configuration))
     with temporary_directory(prefix="requestseal-docs-") if docs_output is None else nullcontext() as scratch:
@@ -572,13 +600,14 @@ def check(root=ROOT, docs_output=None):
                 cwd=root, extra_env={"MIX_ENV": "dev"}, timeout=900)
         references = {"WORKTREE": (configuration, {p: "100644" for p in paths}), "DOCS_OUTPUT": docs_output}
         references[("hexdocs", configuration["version"])] = documentation_inventory(Path(docs_output), configuration["version"])
-        for relative in sorted(approved):
+        for relative in sorted(approved & scan_paths):
             path = root / relative
             if path.is_file() and not path.is_symlink():
                 source = path.read_bytes().decode("utf-8")
                 errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"], references))
                 errors.extend(fence_errors(root, relative, source))
-        errors.extend(tracked_link_errors(root, paths, configuration["version"], configuration["documents"], references, approved))
+        errors.extend(tracked_link_errors(root, paths, configuration["version"], configuration["documents"], references,
+                                         approved, configuration))
         for relative in sorted(configuration["files"] - approved):
             path = root / relative
             if path.is_file() and not path.is_symlink():
