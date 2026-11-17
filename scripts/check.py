@@ -103,9 +103,11 @@ def ci_action_errors(workflow, required_actions=None):
     """Require the build's essential actions and immutable commit identities.
 
     A reference to a workflow in this repository (./.github/workflows/...) is fixed by the
-    commit being run, so it is the one reference that carries no commit identity."""
+    commit being run, so it is the one reference that carries no commit identity. Comments
+    are removed first: a commented-out step is not a step."""
     errors = []
-    actions = re.findall(r"uses:\s*(\S+)", workflow)
+    workflow = "\n".join(re.sub(r"(^|\s)#.*$", "", line) for line in workflow.splitlines())
+    actions = re.findall(r"\buses:\s*([^\s,}]+)", workflow)
     if required_actions is None:
         required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
     local = re.compile(r"\./\.github/workflows/[A-Za-z0-9_.-]+\.yml")
@@ -123,7 +125,7 @@ def check_ci_actions():
         "actions/checkout", "erlef/setup-beam", "actions/setup-python",
         "actions/upload-artifact", "actions/download-artifact", "actions/attest",
     })
-    for workflow in sorted(workflows.glob("*.yml")):
+    for workflow in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
         errors += [f"{workflow.name}: {error}" for error in ci_action_errors(workflow.read_text(), set())]
     if errors:
         raise ValueError("\n".join(errors))

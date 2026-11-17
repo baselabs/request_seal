@@ -642,13 +642,21 @@ class BuildContractsTest(unittest.TestCase):
         self.assertEqual([], gate.ci_action_errors(original))
         import re
         checkout = re.search(r"actions/checkout@[0-9a-f]{40}", original).group()
+        # A commented-out reference is not a step, mutable or not.
+        self.assertEqual([], gate.ci_action_errors(original.replace(
+            "- uses: " + checkout, "- uses: " + checkout + "  # was @v4\n      # - uses: actions/checkout@v4")))
         for name in ("ci.yml", "contributions.yml"):
             caller = (ROOT / ".github/workflows" / name).read_text()
             self.assertEqual([], gate.ci_action_errors(caller, set()), name)
             self.assertTrue(gate.ci_action_errors(caller.replace(
                 "./.github/workflows/proofs.yml", "baselabs/request_seal/.github/workflows/proofs.yml@main"), set()))
         for changed in (original.replace(checkout, "actions/checkout@v4"), original.replace(checkout, "other/action@" + "a" * 40),
-                        original.replace(checkout, "./.github/workflows/../../evil.yml")):
+                        original.replace(checkout, "./.github/workflows/../../evil.yml"),
+                        original.replace("- uses: " + checkout, "# - uses: " + checkout),
+                        original.replace("      - uses: actions/setup-node@", "      # - uses: actions/setup-node@"),
+                        original.replace("- uses: " + checkout, "- {uses: actions/checkout@v4}"),
+                        original.replace("- uses: " + checkout, "- uses: " + checkout
+                                         + "\n      - {uses: other/action@v1, with: {a: b}}", 1)):
             with self.subTest(changed=changed):
                 self.assertTrue(gate.ci_action_errors(changed))
 

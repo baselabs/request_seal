@@ -18,16 +18,15 @@ jobs:
     needs: [proofs]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
     steps:
-      - name: Require every qualification job to succeed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every proof job in this run to have succeeded
         env:
-          NEEDS: ${{ toJSON(needs) }}
-        run: |
-          python3 -I - <<'PY'
-          import json, os, sys
-          results = json.loads(os.environ["NEEDS"])
-          failed = [name for name, job in results.items() if job["result"] != "success"]
-          if not results or failed:
-              print("Qualification refused: " + (", ".join(failed) or "no jobs"))
-              sys.exit(1)
-          PY
+          GH_TOKEN: ${{ github.token }}
+          PROOFS_RESULT: ${{ needs.proofs.result }}
+        run: python3 scripts/qualify.py

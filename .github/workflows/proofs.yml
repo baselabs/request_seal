@@ -33,6 +33,7 @@ jobs:
       - id: pins
         run: python3 scripts/toolchain.py --github-output "$GITHUB_OUTPUT"
   verify:
+    name: verify (${{ matrix.lane }})
     needs: toolchain
     runs-on: ubuntu-24.04
     timeout-minutes: 40

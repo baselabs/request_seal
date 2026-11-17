@@ -14,6 +14,34 @@ pins = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pins)
 
 
+SERVICE_IMAGE = "${{ needs.toolchain.outputs.postgres_image }}"
+
+
+def workflow_sources():
+    workflows = ROOT / ".github/workflows"
+    return {path.name: path.read_text() for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])}
+
+
+def container_errors(name, source):
+    """Every image a workflow starts must be the reader's output, and only proofs/verify starts one.
+
+    Comments are removed first; block (`image: x`) and flow (`{image: x}`) mappings both count,
+    and a job container in either form is refused outright."""
+    source = "\n".join(re.sub(r"(^|\s)#.*$", "", line) for line in source.splitlines())
+    errors = [f"{name}: image {image}" for image in
+              re.findall(r"\bimage\s*:\s*(\$\{\{[^}]*\}\}|[^\s,}]+)", source) if image != SERVICE_IMAGE]
+    errors += [f"{name}: job container" for _ in re.findall(r"\bcontainer\s*:", source)]
+    jobs = source.partition("\njobs:\n")[2]
+    headers = list(re.finditer(r"(?m)^  ([A-Za-z0-9_-]+):", jobs))
+    for header, following in zip(headers, headers[1:] + [None]):
+        body = jobs[header.end():following.start() if following else len(jobs)]
+        if re.search(r"\bservices\s*:", body) and (name, header[1]) != ("proofs.yml", "verify"):
+            errors.append(f"{name}: services in {header[1]}")
+    if re.search(r"\bservices\s*:", source.partition("\njobs:\n")[0]):
+        errors.append(f"{name}: services outside a job")
+    return errors
+
+
 class ToolchainTest(unittest.TestCase):
     def test_lanes_sort_paired_pins_without_copying_versions(self):
         source = (ROOT / ".tool-versions").read_text()
@@ -69,12 +97,11 @@ class ToolchainTest(unittest.TestCase):
         versions = [configuration["node"]] + [
             value for lane in configuration["matrix"]["include"] for key, value in lane.items() if key != "lane"
         ]
-        for path in (ROOT / ".github/workflows").glob("*.yml"):
-            source = path.read_text()
+        for name, source in workflow_sources().items():
             if "erlef/setup-beam@" in source or "actions/setup-node@" in source:
                 self.assertIn('scripts/toolchain.py --github-output "$GITHUB_OUTPUT"', source)
             for version in versions:
-                self.assertNotIn(version, source, str(path))
+                self.assertNotIn(version, source, name)
         proofs = (ROOT / ".github/workflows/proofs.yml").read_text()
         self.assertIn("fromJSON(needs.toolchain.outputs.matrix)", proofs)
         self.assertIn("node-version: ${{ needs.toolchain.outputs.node }}", proofs)
@@ -96,13 +123,30 @@ class ToolchainTest(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 pins.service_images(changed)
         # Every workflow takes a service image from the reader's output, never a literal.
-        for path in (ROOT / ".github/workflows").glob("*.yml"):
-            text = path.read_text()
-            self.assertNotIn(digest, text, path.name)
-            for literal in re.findall(r"(?m)^\s+image:\s*(.+)$", text):
-                self.assertEqual("${{ needs.toolchain.outputs.postgres_image }}", literal, path.name)
-        self.assertIn("image: ${{ needs.toolchain.outputs.postgres_image }}",
-                      (ROOT / ".github/workflows/proofs.yml").read_text())
+        sources = workflow_sources()
+        for name, text in sources.items():
+            self.assertNotIn(digest, text, name)
+            self.assertEqual([], container_errors(name, text))
+        proofs = sources["proofs.yml"]
+        self.assertIn("        image: " + SERVICE_IMAGE + "\n", proofs)
+        verify = "    services:\n      postgres:\n        image: " + SERVICE_IMAGE
+        for changed, name in (
+            (proofs.replace(SERVICE_IMAGE, "postgres:18"), "proofs.yml"),
+            (proofs.replace(SERVICE_IMAGE, '"postgres:18"'), "proofs.yml"),
+            (proofs.replace(verify, "    services: {postgres: {image: postgres:18}}"), "proofs.yml"),
+            (proofs.replace(verify, '    services: {postgres: {image: "' + image + '"}}'), "proofs.yml"),
+            (proofs.replace("  mutations:\n", "  mutations:\n    container: postgres:18\n"), "proofs.yml"),
+            (proofs.replace("  mutations:\n", "  mutations:\n    container: {image: " + SERVICE_IMAGE + "}\n"),
+             "proofs.yml"),
+            (proofs.replace("  teardown:\n", "  teardown:\n    services:\n      postgres:\n        image: "
+                            + SERVICE_IMAGE + "\n"), "proofs.yml"),
+            (sources["ci.yml"].replace("  qualified:\n", "  qualified:\n    services: {}\n"), "ci.yml"),
+            (proofs.replace(verify, verify), "contributions.yml"),
+        ):
+            with self.subTest(name=name, changed=changed):
+                self.assertTrue(container_errors(name, changed))
+        commented = proofs.replace("  mutations:\n", "  mutations:\n    # container: postgres:18\n")
+        self.assertEqual([], container_errors("proofs.yml", commented))
         self.assertIn("postgres_image: ${{ steps.pins.outputs.postgres_image }}",
                       (ROOT / ".github/workflows/proofs.yml").read_text())
 
