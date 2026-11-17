@@ -374,6 +374,7 @@ class ReleaseIdentityTest(unittest.TestCase):
             "<!--\n<img src='literal.png'>",
             "<?\n<img src='literal.png'>",
             "<![CDATA[\n<img src='literal.png'>", "<?\n[t](docs/a.md)\n?>",
+            "<div>\n<![unknown]>\n[t](literal.md)\n</div>",
             "<!DOCTYPE\n[t](docs/a.md)\n>", "<![CDATA[\n[t](docs/a.md)\n]]>",
             "<div>\n[t](docs/a.md)\n</div>", "<custom>\n[t](docs/a.md)\n</custom>",
             "text <!-- [t](docs/a.md) --> end", "text <? [t](docs/a.md) ?> end",
@@ -395,6 +396,10 @@ class ReleaseIdentityTest(unittest.TestCase):
              '<a href="' + blob + 'docs/a.md" title="[t](literal.md)">'),
             ('<pre src="docs/b.png">\n[t](literal.md)\n</pre>',
              '<pre src="' + raw + 'docs/b.png">\n[t](literal.md)\n</pre>'),
+            ("<div>\n<!--><img src='docs/b.png'>\n</div>",
+             "<div>\n<!--><img src='" + raw + "docs/b.png'>\n</div>"),
+            ("<div>\n<!---><img src='docs/b.png'>\n</div>",
+             "<div>\n<!---><img src='" + raw + "docs/b.png'>\n</div>"),
             ('para\n<custom>\n[t](docs/a.md)', 'para\n<custom>\n[t](' + blob + 'docs/a.md)'),
         ):
             with self.subTest(source=source):
@@ -426,6 +431,19 @@ class ReleaseIdentityTest(unittest.TestCase):
         ):
             with self.subTest(source=source):
                 self.assertEqual(expected, self.pin(source))
+
+    def test_commonmark_2_4_and_2_5_destinations_decode_escapes_and_entities_once(self):
+        blob = "https://github.com/example/library/blob/v2.3.4/"
+        for source, target in (
+            ("[t](docs/&copy.md)", "docs/&amp;copy.md"),
+            ("[t](docs/&copy;.md)", "docs/©.md"),
+            (r"[t](docs/\&copy;.md)", "docs/&amp;copy;.md"),
+            ("[t](docs/x.md?a=1&amp;b=2)", "docs/x.md?a=1&amp;b=2"),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual("[t](" + blob + target + ")", self.pin(source))
+        with self.assertRaisesRegex(ValueError, "escapes the repository"):
+            self.pin("[t](&#37;2e&#37;2e/x.md)")
 
     def test_real_changelog_pins_exact_public_destinations(self):
         source = (ROOT / "CHANGELOG.md").read_text()

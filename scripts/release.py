@@ -250,9 +250,14 @@ def pin_markdown_links(body, version, repository_url):
 
     def pinned(target, image, html=False):
         original = target
-        target = unescape(target)
-        if not html:
-            target = re.sub(r"\\([" + re.escape(string.punctuation) + r"])", r"\1", target)
+        if html:
+            target = unescape(target)
+        else:
+            # CommonMark §§2.4–2.5: escapes and semicolon-terminated entities
+            # are consumed once; an escaped ampersand cannot start an entity.
+            target = re.sub(r"\\([" + re.escape(string.punctuation) + r"])|"
+                            r"&(?:#[xX][0-9A-Fa-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});",
+                            lambda match: match[1] if match[1] is not None else unescape(match[0]), target)
         if target.startswith(("#", "//")) or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", target):
             return original
         if target.startswith("?"):
@@ -272,8 +277,7 @@ def pin_markdown_links(body, version, repository_url):
         target = path + query_mark + query + fragment_mark + fragment
         target = "".join(quote(char, safe="") if ord(char) <= 32 or ord(char) == 127 or char in "<>()\\\"'`" else char
                          for char in target)
-        if html:
-            target = target.replace("&", "&amp;")
+        target = target.replace("&", "&amp;")
         return repository_url.rstrip("/") + ("/raw/v" if image else "/blob/v") + version + "/" + target
 
     def pin_html(start, end):
@@ -284,6 +288,13 @@ def pin_markdown_links(body, version, repository_url):
         class Attributes(HTMLParser):
             # Browser raw-text elements cannot contain nested HTML attributes.
             CDATA_CONTENT_ELEMENTS = ("script", "style", "textarea")
+
+            def parse_marked_section(self, i, report=1):
+                # Raw HTML blocks may contain bogus declarations. Browsers
+                # consume these as comments; HTMLParser otherwise asserts.
+                if not self.rawdata.startswith("<![CDATA[", i):
+                    return self.parse_bogus_comment(i, report)
+                return super().parse_marked_section(i, report)
 
             def handle_starttag(self, tag, attrs):
                 line, column = self.getpos()
@@ -297,7 +308,8 @@ def pin_markdown_links(body, version, repository_url):
                     replacements.append((a, b, pinned(body[a:b], attr[1].lower() == "src", html=True)))
 
         parser = Attributes(convert_charrefs=False)
-        parser.feed(source)
+        # CommonMark §6.6 also accepts these two short HTML comments.
+        parser.feed(re.sub(r"<!--(?:>|->)", lambda match: mask(match[0]), source))
         parser.close()
 
     # Block HTML has no Markdown inlines, even when it contains Markdown fences.
