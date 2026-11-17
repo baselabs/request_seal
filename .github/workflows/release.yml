@@ -33,7 +33,7 @@ jobs:
           python-version: '3.12'
       - name: Verify release identity
         id: identity
-        run: python3 scripts/release.py --verify
+        run: python3 scripts/release.py --verify --notes-file release-notes.md
       - name: Verify dependencies and corpus pin
         env:
           MIX_ENV: test
@@ -70,17 +70,7 @@ jobs:
         env:
           VERSION: ${{ steps.identity.outputs.version }}
           MIX_ENV: prod
-        run: |
-          mix escript.install hex sbom 0.12.1 --force
-          escripts=$(mix run --no-start -e 'IO.puts(Mix.path_for(:escripts))' | tail -n 1)
-          scratch=$(mktemp -d)
-          trap 'rm -rf "$scratch"' EXIT
-          mkdir "$scratch/package"
-          tar -xOf "request_seal-$VERSION.tar" contents.tar.gz | tar -xz -C "$scratch/package"
-          mix run --no-start scripts/release_sbom.exs --prepare "$scratch/package"
-          "$escripts/mix_sbom" cyclonedx "$scratch/package" --output "$PWD/sbom.cdx.json" --schema 1.6 --format json --only prod --classification library --exclude-system-dependencies --no-enhance-metadata --no-vulnerabilities --force
-          python3 scripts/release.py --normalize-sbom sbom.cdx.json
-          mix run --no-start scripts/release_sbom.exs --verify sbom.cdx.json
+        run: python3 scripts/sbom.py --tarball "request_seal-$VERSION.tar" --output sbom.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-assets
@@ -90,6 +80,7 @@ jobs:
             corpus.tar.gz
             corpus.sha256
             sbom.cdx.json
+            release-notes.md
   publish:
     if: github.event_name == 'push'
     needs: verify
@@ -143,5 +134,5 @@ jobs:
               fi
             done
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --notes-from-tag "${assets[@]}"
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "RequestSeal $VERSION" --notes-file release-notes.md "${assets[@]}"
           fi

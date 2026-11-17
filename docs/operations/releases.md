@@ -7,13 +7,21 @@ documentation, and required counterparts. Named provider profiles use extension 
 The native TypeScript counterpart is `@request-seal/core` from `baselabs/request-seal-typescript`;
 both repositories use the [conformance corpus](../reference/corpus-format.md).
 
-1. Set `@version` in `mix.exs` to the release version, removing `-dev`.
-   Docs derive `source_ref` as `v<version>` for releases and `main` for pre-releases.
-   Install requirements use `~> X.Y.Z` before 1.0 and `~> MAJOR.MINOR` thereafter.
+1. Set `@version` in `mix.exs` to the release version. A pre-release whose first
+   identifier starts with `dev` is a development snapshot: its source links use
+   `main`, and publishing and release verification refuse it. Other pre-releases
+   and stable releases use `v<version>` source links and can be published.
+   Snapshot installs select the coming stable line. Stable installs use `~> X.Y.Z`
+   before 1.0 and `~> MAJOR.MINOR` thereafter; other pre-releases use
+   `~> MAJOR.MINOR.PATCH-<pre-release>` so Elixir matches that pre-release.
    Match `corpus/index.json`'s `elixir_release` to `v<version>`, including `-dev`
    between releases; the gate and release workflow enforce this identity.
    Update `test/support/conformance_pin.ex` whenever the index digest changes.
-   Maintain release and migration guidance in CHANGELOG.md.
+   In this release commit, rename `## Unreleased 2.0.0` to
+   `## 2.0.0 - YYYY-MM-DD` (substitute the version and actual release date), and
+   finish the release and migration guidance beneath it. This dated, nonempty
+   section becomes the GitHub release notes. Verification rejects a missing,
+   undated, or empty section before a tag exists.
    Confirm the explicit public document inventory and supported profiles.
 2. Use the latest Elixir/OTP pair and Node pin from `.tool-versions`.
    Run the release gate and inspect generated docs in a browser separately:
@@ -80,10 +88,9 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    curl --fail --location --silent --show-error --output /dev/null "https://hexdocs.pm/request_seal/$VERSION/index.html"
    ```
 
-   Confirm Hex reports that version and
-   HexDocs serves the expected guides, with source links pointing at the `v<version>`
-   tag (`source_ref` in `mix.exs`). Inspect actual registry checksums and optional
-   metadata.
+   Confirm Hex reports that version and HexDocs serves the expected guides.
+   Inspect actual registry checksums and optional metadata. Source-link targets
+   are checked after the tag push in step 8.
 6. Install from Hex in a clean consumer, without a path or Git override. Use an
    empty Mix install directory and verify the installed application version and
    an actual public entry point:
@@ -112,16 +119,23 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
 
    Confirm the completed run is for that exact commit and passed. Dispatch uses
    read-only repository permissions and produces a workflow artifact for inspection;
-   it creates no attestations or release assets. It refuses every pre-release,
-   mismatched corpus identity, or existing version tag pointing at another commit.
+   it creates no attestations or release assets. It refuses development snapshots,
+   invalid release notes, mismatched corpus identity, or an existing version tag
+   pointing at another commit.
    It rebuilds the package and compares it byte for byte with the published Hex
    tarball before attestation or publication of release assets. Inspect the
    CycloneDX 1.6 SBOM: telemetry and optional integrations are included, development
-   and test tools are excluded. The pinned EEF `sbom` 0.12.1 escript reads the
-   unpacked package with Mix's locked production dependency closure, including
-   all optional integrations. The workflow checks every component and version
-   against that closure. Optional serial and generation-time fields are removed
-   and ordering normalized for repeatable bytes.
+   and test tools are excluded. `python3 scripts/sbom.py` downloads upstream's
+   prebuilt binary, verifies its checksum before execution, and reads the unpacked
+   package with Mix's locked production dependency closure, including all optional
+   integrations. The binary version and digest live in `scripts/sbom.py`.
+   CI's latest lane calls the same entry point for every development tarball;
+   only releases compare against Hex. Every component and version is checked
+   against the production closure, and filesystem paths are rejected.
+   The timestamp is removed, ordering is normalized, and a UUIDv5 serial binds
+   the package name, version, and tarball SHA-256 for repeatable bytes.
+   The artifact also contains `release-notes.md` for the publishing job; that file
+   is used as release notes and is not uploaded as a release asset.
 8. Only after the dry run passes, push the annotated release tag from that commit:
 
    ```sh
@@ -129,7 +143,10 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    git push origin "v$VERSION"
    ```
 
-   Confirm the tag's `Release` run passed. Its read-only verification job repeats
+   After the tag push, confirm HexDocs source links resolve to the `v<version>`
+   tag (`source_ref` in `mix.exs`). Confirm the tag's `Release` run passed and its
+   title and notes match the version and dated CHANGELOG section.
+   Its read-only verification job repeats
    the dry run, including the Hex byte comparison. Only its tag-only publishing
    job receives release and attestation write permissions. It attests build
    provenance for the package tarball, corpus archive, and SBOM, and binds a

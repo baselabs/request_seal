@@ -131,14 +131,18 @@ defmodule RequestSeal.MixProject do
   end
 
   defp source_ref do
+    if development_snapshot?(), do: "main", else: "v#{@version}"
+  end
+
+  defp development_snapshot? do
     case Version.parse!(@version).pre do
-      [] -> "v#{@version}"
-      _ -> "main"
+      [first | _] when is_binary(first) -> String.starts_with?(first, "dev")
+      _ -> false
     end
   end
 
   defp release_runtime_check!(_args) do
-    if "dev" in Version.parse!(@version).pre do
+    if development_snapshot?() do
       Mix.raise(
         "Publishing RequestSeal requires a release version; development versions cannot publish."
       )

@@ -1,0 +1,62 @@
+[
+  {
+    "version": "2.0.0",
+    "development": false,
+    "source_ref": "v2.0.0",
+    "install_requirement": "~> 2.0"
+  },
+  {
+    "version": "2.0.0-dev",
+    "development": true,
+    "source_ref": "main",
+    "install_requirement": "~> 2.0"
+  },
+  {
+    "version": "2.0.0-dev1",
+    "development": true,
+    "source_ref": "main",
+    "install_requirement": "~> 2.0"
+  },
+  {
+    "version": "2.0.0-dev.2",
+    "development": true,
+    "source_ref": "main",
+    "install_requirement": "~> 2.0"
+  },
+  {
+    "version": "2.0.0-rc.1",
+    "development": false,
+    "source_ref": "v2.0.0-rc.1",
+    "install_requirement": "~> 2.0.0-rc.1"
+  },
+  {
+    "version": "2.0.0-beta.2",
+    "development": false,
+    "source_ref": "v2.0.0-beta.2",
+    "install_requirement": "~> 2.0.0-beta.2"
+  },
+  {
+    "version": "2.0.0-0.dev",
+    "development": false,
+    "source_ref": "v2.0.0-0.dev",
+    "install_requirement": "~> 2.0.0-0.dev"
+  },
+  {
+    "version": "0.6.0",
+    "development": false,
+    "source_ref": "v0.6.0",
+    "install_requirement": "~> 0.6.0"
+  },
+  {
+    "version": "0.6.0-dev",
+    "development": true,
+    "source_ref": "main",
+    "install_requirement": "~> 0.6.0"
+  },
+  {
+    "version": "0.6.0-rc.1",
+    "development": false,
+    "source_ref": "v0.6.0-rc.1",
+    "install_requirement": "~> 0.6.0-rc.1"
+  }
+]

@@ -29,7 +29,7 @@ Add this entry to your `mix.exs` dependency list, then run `mix deps.get`:
 {:request_seal, "~> 2.0"}
 ```
 
-Install RequestSeal 2.0 from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds. RequestSeal needs Elixir 1.18 or newer (below 2.0) on Erlang/OTP 27 or newer; the optional ash_onetime and ash_hooks integrations need Elixir 1.20.
+Install RequestSeal from [Hex](https://hex.pm/packages/request_seal). Commit your application's `mix.lock` for reproducible builds. RequestSeal needs Elixir 1.18 or newer (below 2.0) on Erlang/OTP 27 or newer; the optional ash_onetime and ash_hooks integrations need Elixir 1.20.
 
 Add optional dependencies for the integrations you use. The table is a reference; the complete webhook dependency list follows.
 

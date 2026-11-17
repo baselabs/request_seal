@@ -51,19 +51,24 @@ defmodule RequestSeal.NotebookCheck do
     {source, length(cells)}
   end
 
-  def install_requirement(root) do
-    python = System.get_env("REQUESTSEAL_PYTHON") || System.find_executable("python3")
+  def install_requirement(root, version \\ nil) do
+    python =
+      System.get_env("REQUESTSEAL_PYTHON") || System.find_executable("python3") ||
+        raise("Python interpreter unavailable: python3 is required to derive notebook installs")
 
-    case System.cmd(python, [Path.join(root, "scripts/release.py"), "--install-requirement"]) do
+    args = [Path.join(root, "scripts/release.py"), "--install-requirement"]
+    args = if version, do: args ++ ["--for-version", version], else: args
+
+    case System.cmd(python, args) do
       {requirement, 0} -> String.trim(requirement)
       _ -> raise "Cannot derive the notebook install requirement"
     end
   end
 
-  def local_source!(source, root) do
+  def local_source!(source, root, version \\ nil) do
     if String.contains?(source, "Mix.install") and String.contains?(source, ":request_seal") do
       # RequestSeal is the first dependency; optional integrations may follow it.
-      install = "Mix.install([" <> inspect({:request_seal, install_requirement(root)})
+      install = "Mix.install([" <> inspect({:request_seal, install_requirement(root, version)})
 
       unless length(String.split(source, install)) == 2 do
         raise "Notebook must contain exactly one matching Hex install cell"
@@ -180,6 +185,43 @@ if "--self-test" in System.argv() do
     RequestSeal.NotebookCheck.rejects!(name, "matching Hex install cell", fn ->
       RequestSeal.NotebookCheck.local_source!(changed, root)
     end)
+  end
+
+  current_version =
+    root
+    |> Path.join("mix.exs")
+    |> File.read!()
+    |> then(&Regex.run(~r/@version "([^"]+)"/, &1))
+    |> Enum.at(1)
+    |> Version.parse!()
+
+  bumped = "#{current_version.major}.#{current_version.minor + 1}.0-dev"
+
+  RequestSeal.NotebookCheck.rejects!(
+    "bumped version with stale install",
+    "matching Hex install cell",
+    fn ->
+      RequestSeal.NotebookCheck.local_source!(source, root, bumped)
+    end
+  )
+
+  previous_path = System.fetch_env("PATH")
+  previous_python = System.fetch_env("REQUESTSEAL_PYTHON")
+
+  try do
+    System.put_env("PATH", "")
+    System.delete_env("REQUESTSEAL_PYTHON")
+
+    RequestSeal.NotebookCheck.rejects!("missing python3", "Python interpreter unavailable", fn ->
+      RequestSeal.NotebookCheck.install_requirement(root)
+    end)
+  after
+    for {name, previous} <- [{"PATH", previous_path}, {"REQUESTSEAL_PYTHON", previous_python}] do
+      case previous do
+        {:ok, value} -> System.put_env(name, value)
+        :error -> System.delete_env(name)
+      end
+    end
   end
 
   hex_install = inspect({:request_seal, RequestSeal.NotebookCheck.install_requirement(root)})

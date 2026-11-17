@@ -5,10 +5,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import release
+import sbom
 import check as gate
 import check_docs as docs
 
@@ -32,6 +34,7 @@ class ReleaseIdentityTest(unittest.TestCase):
     def identity(self, version):
         (self.root / "mix.exs").write_text(f'@version "{version}"\nversion: @version,\n')
         (self.root / "corpus/index.json").write_text(json.dumps({"elixir_release": "v" + version}))
+        (self.root / "CHANGELOG.md").write_text(f"# Changelog\n\n## {version} - 2026-11-17\n\n- Release behavior.\n")
 
     def verify(self, event="workflow_dispatch", ref="refs/heads/main"):
         return release.verify_identity(self.root, event, ref)
@@ -58,11 +61,48 @@ class ReleaseIdentityTest(unittest.TestCase):
             with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, "release tag"):
                 self.verify("push", ref)
 
-    def test_every_prerelease_is_refused(self):
-        for version in ("2.3.4-dev", "2.3.4-dev.2", "2.3.4-rc.1", "2.3.4-0"):
-            self.identity(version)
-            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "pre-release"):
-                self.verify()
+    def test_shared_version_cases(self):
+        cases = json.loads((ROOT / "test/fixtures/release_versions.json").read_text())
+        for case in cases:
+            version = case["version"]
+            with self.subTest(version=version):
+                self.assertEqual(case["development"], release.development_snapshot(version))
+                self.assertEqual(case["source_ref"], release.source_ref(version))
+                self.assertEqual(case["install_requirement"], release.install_requirement(version))
+                self.identity(version)
+                if case["development"]:
+                    with self.assertRaisesRegex(ValueError, "development snapshots"):
+                        self.verify()
+                else:
+                    self.assertEqual(version, self.verify())
+                    self.git("tag", "v" + version)
+                    self.assertEqual(version, self.verify("push", "refs/tags/v" + version))
+                sources = {path: (self.root / path).read_text() for path in ("mix.exs", "corpus/index.json")}
+                self.assertEqual([], gate.corpus_release_errors(sources))
+
+    def test_changelog_release_notes(self):
+        source = "# Changelog\n\n## Unreleased 2.4.0\n\n- Future.\n\n## 2.3.4 - 2026-11-17\n\n### Fixed\n\n- Public release behavior.\n\n## 2.3.3 - 2026-11-16\n\n- Older.\n"
+        self.assertEqual("### Fixed\n\n- Public release behavior.\n", release.release_notes(source, "2.3.4"))
+        for changed in (
+            source.replace("2.3.4", "2.3.5"),
+            source.replace(" - 2026-11-17", ""),
+            source.replace("2026-11-17", "2026-02-30"),
+            source.replace("### Fixed\n\n- Public release behavior.", ""),
+            source.replace("- Public release behavior.", ""),
+            source.replace("## 2.3.4 -", "## Unreleased 2.3.4 -"),
+        ):
+            with self.subTest(source=changed), self.assertRaises(ValueError):
+                release.release_notes(changed, "2.3.4")
+        (self.root / "CHANGELOG.md").write_text(source.replace("## 2.3.4 -", "## Unreleased 2.3.4 -"))
+        with self.assertRaisesRegex(ValueError, "dated section"):
+            self.verify()  # Dry run must reject before any tag exists.
+
+    def test_bumped_version_rejects_stale_documented_installs(self):
+        source = '{:request_seal, "~> 2.0"}'
+        for path in ("README.md", "livebooks/environment.livemd", "livebooks/overview.md"):
+            self.assertEqual([], docs.release_errors(path, source, "2.0.0-dev"))
+            for version in ("2.1.0-dev", "3.0.0-dev"):
+                self.assertTrue(docs.release_errors(path, source, version))
 
     def test_stale_corpus_and_unexpected_event_are_refused(self):
         (self.root / "corpus/index.json").write_text('{"elixir_release":"v2.3.3"}')
@@ -126,27 +166,45 @@ class ReleaseWorkflowTest(unittest.TestCase):
             self.assertIn(permission + ": write", publish)
         self.assertIn("sbom-path: sbom.cdx.json", publish)
 
-    def test_sbom_normalization_removes_only_volatile_fields_and_sorts_graph(self):
+    def test_sbom_serial_binds_package_identity_and_bytes_and_sorts_graph(self):
         bom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,
                "serialNumber": "urn:uuid:00000000-0000-4000-8000-000000000000",
-               "metadata": {"timestamp": "2026-01-01T00:00:00Z", "component": {"name": "request_seal"}},
+               "metadata": {"timestamp": "2026-01-01T00:00:00Z", "component": {"name": "request_seal", "version": "2.0.0-dev"}},
                "components": [{"bom-ref": "z", "name": "telemetry"}, {"bom-ref": "a", "name": "plug"}],
                "dependencies": [{"ref": "z", "dependsOn": ["z", "a"]}, {"ref": "a"}]}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sbom.cdx.json"
             path.write_text(json.dumps(bom))
-            release.normalize_sbom(path)
+            tarball = Path(directory) / "package.tar"
+            tarball.write_bytes(b"package contents")
+            release.normalize_sbom(path, tarball)
             first = path.read_bytes()
             normalized = json.loads(first)
-            self.assertNotIn("serialNumber", normalized)
+            serial = uuid.UUID(normalized["serialNumber"])
+            self.assertEqual(serial.urn, normalized["serialNumber"])
+            self.assertEqual(5, serial.version)
             self.assertNotIn("timestamp", normalized["metadata"])
             self.assertEqual(bom["metadata"]["component"], normalized["metadata"]["component"])
             self.assertEqual(["a", "z"], [c["bom-ref"] for c in normalized["components"]])
-            release.normalize_sbom(path)
+            release.normalize_sbom(path, tarball)
             self.assertEqual(first, path.read_bytes())
+            path.write_text(json.dumps(bom))
+            release.normalize_sbom(path, tarball)
+            self.assertEqual(first, path.read_bytes())
+            tarball.write_bytes(b"different package contents")
+            release.normalize_sbom(path, tarball)
+            self.assertNotEqual(normalized["serialNumber"], json.loads(path.read_text())["serialNumber"])
             path.write_text(json.dumps({**bom, "specVersion": "1.5"}))
             with self.assertRaisesRegex(ValueError, "CycloneDX 1.6"):
-                release.normalize_sbom(path)
+                release.normalize_sbom(path, tarball)
+
+    def test_untrusted_tool_bytes_are_rejected_before_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mix_sbom"
+            path.write_bytes(b"untrusted executable bytes")
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                sbom.verify_tool(path)
+            self.assertEqual(0, path.stat().st_mode & 0o111)
 
 
 if __name__ == "__main__":

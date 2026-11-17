@@ -196,7 +196,12 @@ def check_corpus_release():
 
 RELEASE_RUNTIME_CHECK = r'''
 check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd()
-if "dev" in Version.parse!(Mix.Project.config()[:version]).pre do
+development? =
+  case Version.parse!(Mix.Project.config()[:version]).pre do
+    [first | _] when is_binary(first) -> String.starts_with?(first, "dev")
+    _ -> false
+  end
+if development? do
   try do
     check.([])
   rescue
@@ -236,6 +241,12 @@ def check_package():
         run(["mix", "hex.build", "--unpack", "--output", str(artifact)])
         check_package_metadata(artifact / "hex_metadata.config")
     print("PASS: release runtime guard and optional package requirements; unpacked artifact deleted")
+
+
+def check_sbom():
+    from sbom import generate
+    with tempfile.TemporaryDirectory(prefix="sbom-check-") as directory:
+        generate(Path(directory) / "sbom.cdx.json")
 
 
 def normalize_exdoc_inventory(output, project_root=ROOT):
@@ -318,6 +329,10 @@ def notebooks():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--notebooks-only", action="store_true")
+    parser.add_argument("--ci-actions-only", action="store_true")
+    parser.add_argument("--corpus-release-only", action="store_true")
+    parser.add_argument("--package-only", action="store_true")
+    parser.add_argument("--sbom-only", action="store_true")
     parser.add_argument("--execute-notebook", nargs=2, metavar=("SCRIPT", "COMPLETION"))
     parser.add_argument("--notebook-timeout", type=float, default=300)
     args = parser.parse_args()
@@ -325,6 +340,17 @@ if __name__ == "__main__":
         if args.execute_notebook:
             output, _ = execute_notebook(*args.execute_notebook, timeout=args.notebook_timeout)
             print(output, end="")
+            raise SystemExit(0)
+        focused = [
+            (args.ci_actions_only, check_ci_actions),
+            (args.corpus_release_only, check_corpus_release),
+            (args.package_only, check_package),
+            (args.sbom_only, check_sbom),
+        ]
+        if any(selected for selected, _ in focused):
+            for selected, operation in focused:
+                if selected:
+                    operation()
             raise SystemExit(0)
         check_ci_actions()
         if not args.notebooks_only:
@@ -343,6 +369,7 @@ if __name__ == "__main__":
             check_doc_links(ROOT / "doc")
             run(["mix", "hex.audit"])
             check_package()
+            check_sbom()
         notebooks()
     except subprocess.CalledProcessError as error:
         raise SystemExit(error.returncode)

@@ -2,13 +2,13 @@
 
 ## Unreleased 2.0.0
 
-- Mark development snapshots as `2.0.0-dev`, link their documentation to `main`,
-  and refuse to publish a development version to Hex. Release source links derive
-  from the package version; corpus identity and documented installs track it.
-- Verify published Hex package bytes before releasing corpus assets. The Release
-  workflow supports a read-only dry run, publishes a CycloneDX 1.6 production
-  dependency SBOM, and attests package, corpus, and SBOM build provenance plus
-  the package's SBOM.
+- Documentation between releases links to `main`; development versions refuse
+  to publish to Hex. Release source links and install requirements follow the version.
+- Each GitHub release carries the verified Hex tarball, corpus archive and checksum,
+  and a CycloneDX 1.6 SBOM, with build provenance and an SBOM attestation.
+  Verify them using the commands in the [release runbook](https://github.com/baselabs/request_seal/blob/main/docs/operations/releases.md).
+- Security fixes cover the latest minor of the latest stable major and, for
+  6 months after its first stable release, the latest minor of the previous major.
 
 - Add ECDH-ES, ECDH-ES+A128KW, and ECDH-ES+A256KW with P-256, P-384,
   and X25519 recipients. `KeyManagement.agree/4` generates ephemeral keys and

@@ -33,12 +33,19 @@ defmodule RequestSeal.PublicDocumentationTest do
   test "development identity links source to main and refuses publishing" do
     project = Mix.Project.config()
     version = Version.parse!(project[:version])
-    expected = if version.pre == [], do: "v#{project[:version]}", else: "main"
+
+    development? =
+      case version.pre do
+        [first | _] when is_binary(first) -> String.starts_with?(first, "dev")
+        _ -> false
+      end
+
+    expected = if development?, do: "main", else: "v#{project[:version]}"
     assert project[:docs][:source_ref] == expected
     [guard, "hex.publish"] = Mix.Project.config()[:aliases][:"hex.publish"]
 
     cond do
-      "dev" in version.pre ->
+      development? ->
         assert_raise Mix.Error, ~r/development versions cannot publish/, fn -> guard.([]) end
 
       Version.match?(System.version(), ">= 1.20.0") ->
@@ -58,12 +65,29 @@ defmodule RequestSeal.PublicDocumentationTest do
     {:defmodule, _, [_, [do: {:__block__, _, body}]]} = quoted
     body = Enum.reject(body, &match?({:use, _, [{:__aliases__, _, [:Mix, :Project]}]}, &1))
 
-    for {version, expected, development?} <- [
-          {"2.3.4", "v2.3.4", false},
-          {"2.3.4-rc.1", "main", false},
-          {"2.3.4-dev", "main", true},
-          {"2.3.4-dev.2", "main", true}
-        ] do
+    cases = "test/fixtures/release_versions.json" |> File.read!() |> :json.decode()
+
+    for %{
+          "version" => version,
+          "source_ref" => expected,
+          "development" => development?,
+          "install_requirement" => requirement
+        } <- cases do
+      stable =
+        version |> Version.parse!() |> Map.put(:pre, []) |> Map.put(:build, nil) |> to_string()
+
+      assert Version.match?(if(development?, do: stable, else: version), requirement)
+
+      {derived, 0} =
+        System.cmd(System.find_executable("python3"), [
+          "scripts/release.py",
+          "--install-requirement",
+          "--for-version",
+          version
+        ])
+
+      assert String.trim(derived) == requirement
+
       module =
         Module.concat(__MODULE__, "Version#{String.replace(version, ~r/[^a-zA-Z0-9]/, "_")}")
 

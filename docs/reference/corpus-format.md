@@ -26,7 +26,8 @@ Format `request-seal-conformance-corpus-index/1` requires:
 
 - `elixir_release`: `v` followed by the package version in `mix.exs`, including its
   pre-release suffix between releases. The declared gate fails when they differ.
-  The release workflow refuses pre-release versions and publishes the corpus only
+  The release workflow refuses development snapshots (a first pre-release identifier
+  starting with `dev`) and accepts other pre-releases. It publishes the corpus only
   for a tag equal to both, pointing at the release commit.
 - `files`: every regular file below sources and cases, sorted by relative path,
   each with `path` and lowercase hexadecimal `sha256`.
