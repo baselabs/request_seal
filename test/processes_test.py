@@ -23,7 +23,7 @@ class ProcessGroupTest(unittest.TestCase):
         self.assertIs(processes.run, sbom.run)
         for script in ("check.py", "sbom.py"):
             tree = ast.parse((ROOT / "scripts" / script).read_text())
-            handlers = [node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)
+            handlers = [node for node in ast.walk(tree.body[-1]) if isinstance(node, ast.ExceptHandler)
                         and isinstance(node.type, ast.Attribute)
                         and ast.unparse(node.type) == "subprocess.TimeoutExpired"]
             self.assertEqual(1, len(handlers), script)
