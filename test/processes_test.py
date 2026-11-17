@@ -1246,27 +1246,37 @@ catching = next(start + index + 1 for index, line in enumerate(lines)
                                     if outcome == "signal" else "except Exception as error:"))
 first = False
 second = False
-def observe(frame, event, arg):
+tool = sys.monitoring.DEBUGGER_ID
+events = sys.monitoring.events
+def entering(code, offset):
     global first, second
-    if (outcome == "signal" and not first and event == "call"
-            and frame.f_code is processes.ProcessEvents.select.__code__):
+    if outcome == "signal" and not first and code is processes.ProcessEvents.select.__code__:
         first = True
         os.kill(os.getpid(), signal.SIGTERM)
-    if not second and (
-            (window == "classify" and event == "line"
-             and frame.f_code is processes.main.__code__ and frame.f_lineno == classification)
-            or (window == "catch" and event == "line"
-                and frame.f_code is processes.main.__code__ and frame.f_lineno == catching)
-            or (window == "report" and event == "call" and frame.f_code is processes._report.__code__)):
+    if not second and window == "report" and code is processes._report.__code__:
         second = True
         os.kill(os.getpid(), signal.SIGINT if outcome == "signal" else signal.SIGTERM)
-    return observe
-sys.argv = ["processes.py", "--", "sleep", "60"]
-sys.settrace(observe)
+def line(code, number):
+    global second
+    if not second and ((window == "classify" and number == classification)
+                       or (window == "catch" and number == catching)):
+        second = True
+        os.kill(os.getpid(), signal.SIGINT if outcome == "signal" else signal.SIGTERM)
+# Monitoring callbacks remain registered when the first signal raises. A trace
+# callback would be removed by CPython and never inject the second signal.
+sys.monitoring.use_tool_id(tool, "owner-signals")
+sys.monitoring.register_callback(tool, events.PY_START, entering)
+sys.monitoring.register_callback(tool, events.LINE, line)
+sys.monitoring.set_local_events(tool, processes.main.__code__, events.LINE)
+sys.monitoring.set_local_events(tool, processes.ProcessEvents.select.__code__, events.PY_START)
+sys.monitoring.set_local_events(tool, processes._report.__code__, events.PY_START)
+sys.argv = ["processes.py", "--timeout", "1", "--", "sleep", "60"]
 try:
     status = processes.main()
 finally:
-    sys.settrace(None)
+    for code in (processes.main.__code__, processes.ProcessEvents.select.__code__, processes._report.__code__):
+        sys.monitoring.set_local_events(tool, code, 0)
+    sys.monitoring.free_tool_id(tool)
 assert second, "second signal was not injected in the chosen outcome path"
 if outcome == "signal":
     assert first, "first signal was not injected"
@@ -1287,14 +1297,16 @@ raise SystemExit(status)
 
     def test_owner_unwatchable_stdin_is_eof_and_stops_its_child(self):
         with tempfile.TemporaryDirectory() as directory:
-            regular = Path(directory) / "stdin"
-            regular.touch()
-            for channel in (Path(os.devnull), regular):
+            empty = Path(directory) / "empty"
+            empty.touch()
+            partial = Path(directory) / "partial"
+            partial.write_bytes(b"stop")  # No newline or EOF event may be required.
+            for channel in (Path(os.devnull), empty, partial):
                 with self.subTest(channel=channel.name), channel.open("rb") as incoming:
                     pid_file = Path(directory) / "pid"
                     result = subprocess.run(
                         [sys.executable, "-B", "scripts/processes.py", "--pid-file", str(pid_file),
-                         "--", "sleep", "60"], cwd=ROOT,
+                         "--timeout", "1", "--", "sleep", "60"], cwd=ROOT,
                         stdin=incoming, capture_output=True, timeout=10)
                     self.assertEqual(125, result.returncode, result.stderr)
                     self.assertEqual(b"", result.stdout)
@@ -1305,17 +1317,93 @@ raise SystemExit(status)
                     self.assertEqual(1, status.returncode, "owner left its child running")
                     pid_file.unlink()
 
+    def test_owner_closed_fd_zero_is_eof_and_stops_its_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "pid"
+            result = subprocess.run(
+                ["sh", "-c", 'exec 0<&-; exec "$@"', "owner", sys.executable, "-B",
+                 "scripts/processes.py", "--timeout", "1", "--pid-file", str(pid_file),
+                 "--", "sleep", "60"], cwd=ROOT, capture_output=True, timeout=10)
+            self.assertEqual(125, result.returncode, result.stderr)
+            self.assertEqual(b"", result.stdout)
+            self.assertEqual(b"requestseal-owner: command owner closed stdin\n", result.stderr)
+            pid = int(pid_file.read_text())
+            status = subprocess.run(["ps", "-p", str(pid), "-o", "pid="],
+                                    capture_output=True, timeout=5)
+            self.assertEqual(1, status.returncode, "owner left its child running")
+
+    def test_owner_chosen_stop_survives_signals_after_main_and_during_shutdown(self):
+        source = '''import os, runpy, sys, threading
+window, release = sys.argv[1], int(sys.argv[2])
+paused = False
+def observe(frame, event, arg):
+    global paused
+    after_main = (window == "exit" and event == "exception"
+                  and frame.f_code.co_filename.endswith("scripts/processes.py")
+                  and frame.f_code.co_name == "<module>" and arg[0] is SystemExit)
+    shutdown = (window == "shutdown" and event == "call"
+                and frame.f_code is threading._shutdown.__code__)
+    if not paused and (after_main or shutdown):
+        paused = True
+        print("paused", flush=True)
+        os.read(release, 1)
+        os.close(release)
+    return observe
+sys.settrace(observe)
+sys.argv = ["scripts/processes.py", "--timeout", "1", "--", "sleep", "60"]
+runpy.run_path("scripts/processes.py", run_name="__main__")
+'''
+        for window in ("exit", "shutdown"):
+            with self.subTest(window=window):
+                reader, writer = os.pipe()
+                try:
+                    owner = subprocess.Popen(
+                        [sys.executable, "-B", "-c", source, window, str(reader)], cwd=ROOT,
+                        pass_fds=(reader,), stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                except BaseException:
+                    os.close(writer)
+                    raise
+                finally:
+                    os.close(reader)
+                try:
+                    owner.stdin.write(b"stop\n")
+                    owner.stdin.flush()
+                    self.assertTrue(select.select([owner.stdout], [], [], 5)[0], "owner never paused")
+                    self.assertEqual(b"paused\n", owner.stdout.readline())
+                    os.kill(owner.pid, signal.SIGTERM)
+                    os.kill(owner.pid, signal.SIGINT)
+                    try:
+                        os.write(writer, b"+")
+                    except BrokenPipeError:
+                        pass  # Still collect the status if a signal broke the pause.
+                    stdout, stderr = owner.communicate(timeout=10)
+                    self.assertEqual(0, owner.returncode, stderr)
+                    self.assertEqual(b"", stdout)
+                    self.assertEqual(b"requestseal-owner: command stopped\n", stderr)
+                finally:
+                    os.close(writer)  # Release the hook even when an assertion fails.
+                    if owner.poll() is None:
+                        owner.terminate()
+                        owner.wait(timeout=10)
+                    owner.stdin.close()
+                    owner.stdout.close()
+                    owner.stderr.close()
+
     def test_in_process_owner_restores_the_neutral_reporter_on_return_and_raise(self):
-        source = '''import sys
+        source = '''import signal, sys
 sys.path.insert(0, "scripts")
 import processes
 mode = sys.argv[1]
-sys.argv = ["processes.py"] if mode == "raise" else ["processes.py", "--", "sleep", "60"]
+signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGHUP})
+previous = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+sys.argv = ["processes.py"] if mode == "raise" else ["processes.py", "--timeout", "1", "--", "sleep", "60"]
 try:
     assert processes.main() == 0
     assert mode == "return"
 except SystemExit as error:
     assert mode == "raise" and error.code == 2
+assert signal.pthread_sigmask(signal.SIG_BLOCK, set()) == previous
 processes._report("neutral reporter")
 '''
         for mode in ("return", "raise"):

@@ -213,6 +213,8 @@ defmodule RequestSeal.SystemCommandTest do
         end
 
         assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+        # The first caller received the crash; teardown does not report it twice.
+        assert :ok = SystemCommand.stop_agent(owner)
       after
         SystemCommand.stop_agent(owner)
         File.rm_rf!(dir)
@@ -237,6 +239,88 @@ defmodule RequestSeal.SystemCommandTest do
 
       assert 137 = SystemCommand.signal_agent(owner, :terminate)
       assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+    after
+      SystemCommand.stop_agent(owner)
+      File.rm_rf!(dir)
+    end
+  end
+
+  test "signal requests consume a queued real agent crash and retain it for stop" do
+    for signal <- [:stop, :continue] do
+      dir = agent_directory()
+      socket = Path.join(dir, "agent")
+      {owner, pid} = SystemCommand.agent(socket)
+      monitor = Process.monitor(owner)
+      [port] = Enum.filter(Port.list(), &(Port.info(&1, :connected) == {:connected, owner}))
+      ref = make_ref()
+
+      try do
+        :erlang.suspend_process(owner)
+
+        try do
+          # Put the request first, then wait for the real status to be queued.
+          # The signal clause must consume it before touching the closed port.
+          send(owner, {{:signal, signal}, self(), ref})
+          assert {_, 0} = System.cmd("kill", ["-KILL", pid])
+
+          assert eventually(fn ->
+                   {:messages, messages} = Process.info(owner, :messages)
+                   Enum.any?(messages, &match?({^port, {:exit_status, 137}}, &1))
+                 end)
+
+          assert eventually(fn -> Port.info(port) == nil end)
+        after
+          :erlang.resume_process(owner)
+        end
+
+        assert_receive {^ref, {:error, "agent owner exited: 137"}}
+        assert eventually(fn -> terminal_agent?(owner) end)
+        assert {:error, "agent owner shutdown failed: 137"} = SystemCommand.stop_agent(owner)
+        assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+        assert :ok = SystemCommand.stop_agent(owner)
+      after
+        SystemCommand.stop_agent(owner)
+        File.rm_rf!(dir)
+      end
+    end
+  end
+
+  test "an exit during signal acknowledgement is reported and retained for stop" do
+    dir = agent_directory()
+    socket = Path.join(dir, "agent")
+    {owner, pid} = SystemCommand.agent(socket)
+    monitor = Process.monitor(owner)
+    [port] = Enum.filter(Port.list(), &(Port.info(&1, :connected) == {:connected, owner}))
+    {:os_pid, owner_pid} = Port.info(port, :os_pid)
+    ref = make_ref()
+
+    try do
+      assert {_, 0} = System.cmd("kill", ["-STOP", to_string(owner_pid)])
+
+      try do
+        assert eventually(fn -> stopped?(to_string(owner_pid)) end)
+        send(owner, {{:signal, :stop}, self(), ref})
+
+        assert eventually(fn ->
+                 Process.info(owner, :current_function) ==
+                   {:current_function, {SystemCommand, :await_signal, 4}}
+               end)
+
+        # TERM is pending before the Python owner resumes. It cleans up the
+        # real agent and exits without acknowledging the buffered signal.
+        assert {_, 0} = System.cmd("kill", ["-TERM", to_string(owner_pid)])
+      after
+        if Port.info(port) do
+          assert {_, 0} = System.cmd("kill", ["-CONT", to_string(owner_pid)])
+        end
+      end
+
+      assert_receive {^ref, {:error, "agent owner exited: 143"}}
+      assert eventually(fn -> terminal_agent?(owner) end)
+      assert {:error, "agent owner shutdown failed: 143"} = SystemCommand.stop_agent(owner)
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+      assert {_, 1} = System.cmd("ps", ["-p", pid, "-o", "pid="])
+      refute File.exists?(socket)
     after
       SystemCommand.stop_agent(owner)
       File.rm_rf!(dir)

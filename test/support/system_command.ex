@@ -1,5 +1,12 @@
 defmodule RequestSeal.SystemCommand do
-  @moduledoc false
+  @moduledoc """
+  Owns test commands and real SSH agents through a command-channel port.
+
+  An agent's terminal status is retained until a stop or terminate request
+  reports it. Other signal requests report the exit without consuming it.
+  After reporting the status to stop or terminate, the owner exits; a later
+  stop returns `:ok` because the earlier caller already received the outcome.
+  """
   @runner Path.expand("../../scripts/processes.py", __DIR__)
   @readiness_timeout 10_000
   @shutdown_timeout 7_000
@@ -42,6 +49,12 @@ defmodule RequestSeal.SystemCommand do
     end
   end
 
+  @doc """
+  Stops an agent, returning an error for a retained nonzero terminal status.
+
+  Reporting that status completes the owner's lifetime. A later stop returns
+  `:ok`, including after a crash was reported to stop or terminate.
+  """
   def stop_agent(owner), do: agent_request(owner, :stop)
 
   def signal_agent(owner, signal) when signal in [:stop, :continue, :terminate] do
@@ -133,11 +146,33 @@ defmodule RequestSeal.SystemCommand do
       {{:signal, signal}, from, ref} ->
         # Signal numbers differ on BSD/macOS; resolve them in the Python owner.
         name = %{stop: "SIGSTOP", continue: "SIGCONT"}
-        true = Port.command(port, "signal " <> name[signal] <> "\n")
-        deadline = System.monotonic_time(:millisecond) + @signal_timeout
-        await_signal(port, name[signal], "", deadline)
-        send(from, {ref, :ok})
-        agent_loop(port, monitor)
+
+        result =
+          receive do
+            {^port, {:exit_status, status}} ->
+              {:exited, status}
+          after
+            0 ->
+              try do
+                true = Port.command(port, "signal " <> name[signal] <> "\n")
+              rescue
+                # A closed port still owes its real exit-status message.
+                ArgumentError -> :ok
+              end
+
+              deadline = System.monotonic_time(:millisecond) + @signal_timeout
+              await_signal(port, name[signal], "", deadline)
+          end
+
+        case result do
+          :ok ->
+            send(from, {ref, :ok})
+            agent_loop(port, monitor)
+
+          {:exited, status} ->
+            send(from, {ref, {:error, "agent owner exited: #{status}"}})
+            agent_exited(monitor, status)
+        end
 
       {:DOWN, ^monitor, :process, _, _} ->
         finish_stop(port)
@@ -179,7 +214,7 @@ defmodule RequestSeal.SystemCommand do
         end
 
       {^port, {:exit_status, status}} ->
-        raise "agent owner exited during signal: #{status}"
+        {:exited, status}
     after
       max(0, deadline - System.monotonic_time(:millisecond)) ->
         raise "ssh-agent signal deadline exceeded"

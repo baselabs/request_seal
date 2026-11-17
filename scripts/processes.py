@@ -29,7 +29,8 @@ Exceptions from later pending handlers also get type-and-message reports while
 the first handler's exception keeps precedence.
 Child outcomes emit no such line. Signals name the signal, without a traceback.
 Once main() chooses an outcome, further owner signals cannot change its status
-or interrupt its report before it returns.
+or interrupt its report, including through CLI exit and interpreter shutdown.
+In-process callers regain their previous signal mask when main() returns.
 As with shell commands, a child can itself choose a reserved status; the prefix
 distinguishes an owner outcome in merged output. Child stdin is /dev/null;
 owner stdin carries only owner commands.
@@ -603,23 +604,31 @@ def command_timeout(value):
     return seconds
 
 
+def _choose_owner_outcome(outcome):
+    # Mark first so dispatchers also drop handlers already scheduled by Python,
+    # including one run while pthread_sigmask is entering the blocked state.
+    outcome["chosen"] = True
+    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+
+
 class _OwnerParser(argparse.ArgumentParser):
     def error(self, message):
-        self.outcome["chosen"] = True
+        _choose_owner_outcome(self.outcome)
         self.print_usage(sys.stderr)
         _report(message)
         self.exit(2)
 
     def exit(self, status=0, message=None):
-        self.outcome["chosen"] = True
+        _choose_owner_outcome(self.outcome)
         if status == 0:
             _report("help requested")
         super().exit(status, message)
 
 
-def main():
+def main(*, restore_signal_mask=True):
     global _report_prefix
     previous_prefix = _report_prefix
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
     outcome = {"chosen": False}
     try:
         _report_prefix = "requestseal-owner: "
@@ -638,7 +647,14 @@ def main():
             if args.pid_file:
                 write_pid_file(args.pid_file, process.pid)
             try:
-                process.events.register(sys.stdin, "owner")
+                # kqueue accepts regular files but need not report their EOF.
+                # Decide command-channel eligibility independently of backend.
+                if sys.stdin is None:
+                    raise EOFError("command owner closed stdin")
+                mode = os.fstat(0).st_mode
+                if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or stat.S_ISCHR(mode)):
+                    raise EOFError("command owner closed stdin")
+                process.events.register(0, "owner")
             except (OSError, ValueError):
                 raise EOFError("command owner closed stdin") from None
             deadline = time.monotonic() + args.timeout
@@ -674,21 +690,21 @@ def main():
                     if len(incoming) > 128:
                         raise ValueError("owner command too long")
         if stopping:
-            outcome["chosen"] = True
+            _choose_owner_outcome(outcome)
             _report("command stopped")
             return 0
-        outcome["chosen"] = True
+        _choose_owner_outcome(outcome)
         return 128 - process.returncode if process.returncode < 0 else process.returncode
     except subprocess.TimeoutExpired as error:
-        outcome["chosen"] = True
+        _choose_owner_outcome(outcome)
         _report(f"command deadline exceeded after {error.timeout}s")
         return 124
     except Exception as error:
-        outcome["chosen"] = True
+        _choose_owner_outcome(outcome)
         _report(error)
         return 125
     except (KeyboardInterrupt, SystemExit) as error:
-        outcome["chosen"] = True
+        _choose_owner_outcome(outcome)
         if isinstance(error, KeyboardInterrupt):
             signum = signal.SIGINT
         else:
@@ -699,7 +715,9 @@ def main():
         return 128 + signum
     finally:
         _report_prefix = previous_prefix
+        if restore_signal_mask:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(restore_signal_mask=False))
