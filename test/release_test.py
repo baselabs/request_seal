@@ -492,7 +492,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                     release.release_notes(source, "2.3.4")
                 self.assertEqual(body + "\n" + definition, release.release_notes(
                     "## 2.3.4 - 2026-11-17\n\n" + body + "\n" + definition, "2.3.4"))
-        for use in ("[Guide][missing]", "[missing][]"):
+        for use in ("[Guide][missing]", "[missing][]", "[Guide]\n[missing]"):
             with self.assertRaisesRegex(ValueError, "CHANGELOG.md:3: reference"):
                 release.release_notes("## 2.3.4 - 2026-11-17\n\n" + use, "2.3.4")
         self.assertEqual("- Literal [brackets].\n", release.release_notes(

@@ -69,7 +69,7 @@ URL_ATTRIBUTE = re.compile(r"\b(?:href|src)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\
 RAW_HTML = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)|<![A-Za-z\[]|<\?")
 AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\n]*)>")
 BARE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"'`]*", re.I)
-REFERENCE_USE = re.compile(r"\[([^\[\]\n]+)\](?:[ \t]*\[([^\[\]\n]*)\])?")
+REFERENCE_USE = re.compile(r"\[([^\[\]\n]+)\](?:[ \t]*(?:\n[ \t]*)?\[([^\[\]\n]*)\])?")
 FENCE = re.compile(r"([ \t>+*.0-9()-]*)(`{3,}|~{3,})(.*)$")
 DESTINATION_DEADLINE = 180
 
@@ -278,6 +278,7 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
     deadline = time.monotonic() + deadline_seconds
     backoff = 1
     while pending:
+        redirected = False
         for target in sorted(pending):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -296,11 +297,12 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
                 pending.remove(target)
                 failures.pop(target, None)
             else:
-                failures[target] = f"expected HTTP 200, got {status}"
+                failures[target] = f"HTTP {status} (expected HTTP 200, got {status})"
+                redirected = redirected or 300 <= status < 400
                 if status != 404 and not 500 <= status <= 599:
                     pending.remove(target)  # Permanent, including every 3xx.
         remaining = deadline - time.monotonic()
-        if not pending or remaining <= 0:
+        if redirected or not pending or remaining <= 0:
             break
         time.sleep(min(backoff, remaining))
         backoff = min(backoff * 2, 10)
