@@ -11,11 +11,13 @@ defmodule RequestSeal.JOSE.JWE.Codec do
   def fail(reason, layer \\ :input), do: throw({:jose_error, reason, layer})
   def ensure(true, _), do: :ok
   def ensure(_, reason), do: fail(reason)
+
   def error(reason, layer \\ :input),
     do: {:error, %Error{reason: reason, layer: layer, retryable: reason == :deadline_exceeded}}
 
   def policy(p, batch, flag, deadline) do
     unit(flag, deadline)
+
     keys = [
       :algorithms,
       :encryption,
@@ -32,6 +34,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     ensure(is_map(p) and not is_map_key(p, :__struct__) and map_size(p) <= 12, :invalid_policy)
 
     unit(flag, deadline)
+
     ensure(
       :lists.sort(:maps.keys(:maps.remove(:content, p))) == :lists.sort(keys),
       :invalid_policy
@@ -41,12 +44,14 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     ensure(:maps.get(:content, p, :binary) in [:binary, :object], :invalid_policy)
 
     unit(flag, deadline)
+
     ensure(
       is_integer(:erlang.map_get(:timeout, p)) and :erlang.map_get(:timeout, p) in 1..300_000,
       :invalid_policy
     )
 
     unit(flag, deadline)
+
     ensure(
       is_integer(:erlang.map_get(:resolve_timeout, p)) and
         :erlang.map_get(:resolve_timeout, p) in 1..300_000,
@@ -54,6 +59,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     )
 
     unit(flag, deadline)
+
     ensure(
       is_integer(:erlang.map_get(:unwrap_timeout, p)) and
         :erlang.map_get(:unwrap_timeout, p) in 1..300_000,
@@ -61,6 +67,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     )
 
     unit(flag, deadline)
+
     ensure(
       :erlang.map_get(:resolve_timeout, p) + :erlang.map_get(:unwrap_timeout, p) <
         :erlang.map_get(:timeout, p),
@@ -71,6 +78,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     ensure(is_function(:erlang.map_get(:key_resolver, p), 1), :invalid_policy)
 
     unit(flag, deadline)
+
     ensure(
       is_integer(:erlang.map_get(:max_plaintext, p)) and
         :erlang.map_get(:max_plaintext, p) in 1..1_048_576,
@@ -83,12 +91,14 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     protected = :erlang.map_get(:protected, p)
 
     unit(flag, deadline)
+
     ensure(
       is_map(protected) and not is_map_key(protected, :__struct__) and map_size(protected) <= 2,
       :invalid_policy
     )
 
     unit(flag, deadline)
+
     ensure(
       :lists.sort(:maps.keys(protected)) ==
         [:permitted],
@@ -99,6 +109,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
     if batch do
       unit(flag, deadline)
+
       ensure(
         is_integer(:erlang.map_get(:max_tokens, p)) and
           :erlang.map_get(:max_tokens, p) in 1..10_000,
@@ -106,6 +117,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       )
 
       unit(flag, deadline)
+
       ensure(
         is_integer(:erlang.map_get(:max_total_input, p)) and
           :erlang.map_get(:max_total_input, p) in 1..67_108_864,
@@ -113,6 +125,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       )
 
       unit(flag, deadline)
+
       ensure(
         is_integer(:erlang.map_get(:max_total_plaintext, p)) and
           :erlang.map_get(:max_total_plaintext, p) in 1..67_108_864,
@@ -134,7 +147,12 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     try do
       ensure(is_map(value), :invalid_policy)
       tree(value)
-      ensure(:lists.all(fn k -> expected_key?(k, permitted) end, :maps.keys(value)), :invalid_policy)
+
+      ensure(
+        :lists.all(fn k -> expected_key?(k, permitted) end, :maps.keys(value)),
+        :invalid_policy
+      )
+
       encoded = :erlang.iolist_to_binary(:json.encode(value))
       ensure(byte_size(encoded) <= 16_384, :invalid_policy)
       depth(encoded, 0, false, false)
@@ -159,6 +177,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
   defp names([x | xs], seen, flag, deadline) when is_binary(x) and length(seen) < 64 do
     unit(flag, deadline)
     ensure(byte_size(x) <= Bounds.permitted_name_bytes(), :invalid_policy)
+
     ensure(
       utf8?(x) and not :lists.member(x, seen) and not :lists.member(x, @reserved),
       :invalid_policy
@@ -241,10 +260,12 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
   defp tree_list([], _), do: :ok
   defp tree_list([_ | _], n) when n >= 64, do: fail(:limit)
+
   defp tree_list([v | rest], n) do
     tree(v)
     tree_list(rest, n + 1)
   end
+
   defp tree_list(_, _), do: fail(:invalid_header)
 
   defp whitespace?(<<>>), do: true
@@ -303,9 +324,11 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
   def decode(_), do: fail(:invalid_base64)
   defp base64url?(<<>>), do: true
+
   defp base64url?(<<c, rest::binary>>)
        when c in ?A..?Z or c in ?a..?z or c in ?0..?9 or c in [?-, ?_],
        do: base64url?(rest)
+
   defp base64url?(_), do: false
 
   defp canonical?(v) do
@@ -458,12 +481,14 @@ defmodule RequestSeal.JOSE.JWE.Codec do
           rhs = if rhs < 0, do: rhs + prime, else: rhs
           ensure(xi < prime and yi < prime and rem(yi * yi, prime) == rhs, :invalid_header)
           point = <<4, x::binary, y::binary>>
+
           try do
             :crypto.compute_key(:ecdh, point, <<1::unsigned-big-size(size * 8)>>, curve)
           catch
             :error, :badarg -> fail(:invalid_header)
             :error, {:badarg, _, _} -> fail(:invalid_header)
           end
+
           {:ec, crv, point}
 
         _ ->

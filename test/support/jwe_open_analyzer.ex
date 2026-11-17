@@ -1,10 +1,26 @@
 defmodule RequestSeal.Test.JWEOpenAnalyzer do
   @moduledoc false
-  alias RequestSeal.JOSE.JWE.{Bounds, Codec, Coordinator, Guard, Open, Preflight, Resolver, Unwrap, Worker}
+  alias RequestSeal.JOSE.JWE.{
+    Bounds,
+    Codec,
+    Coordinator,
+    Guard,
+    Open,
+    Preflight,
+    Resolver,
+    Unwrap,
+    Worker
+  }
 
   @library [Guard, Coordinator, Preflight, Worker, Bounds, Codec]
-  @roles %{Guard => :guard, Coordinator => :library, Preflight => :library,
-    Worker => :library, Resolver => :caller_code, Unwrap => :caller_code}
+  @roles %{
+    Guard => :guard,
+    Coordinator => :library,
+    Preflight => :library,
+    Worker => :library,
+    Resolver => :caller_code,
+    Unwrap => :caller_code
+  }
 
   # Exact OTP operations, with the reason each may run without invoking caller code.
   @allowed %{
@@ -39,7 +55,8 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
     {:erlang, :error, 1} => "library exception contained at role entry",
     {:erlang, :error, 2} => "library exception contained at role entry",
     {:erlang, :throw, 1} => "closed preflight or codec refusal",
-    {:erts_debug, :flat_size, 1} => "exact size only after the budget-limited walk, or scalar integer size",
+    {:erts_debug, :flat_size, 1} =>
+      "exact size only after the budget-limited walk, or scalar integer size",
     {:maps, :get, 2} => "bounded local state lookup",
     {:maps, :get, 3} => "bounded local state lookup with default",
     {:maps, :put, 3} => "cap-bounded local state update",
@@ -75,24 +92,50 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
 
   def check do
     forms = Map.new([Open, Resolver, Unwrap | @library], &{&1, forms(&1)})
-    sites = for {m, fs} <- forms, {:function, _, f, a, body} <- fs,
-      call <- calls(body), spawn?(call), do: {m, f, a, call}
+
+    sites =
+      for {m, fs} <- forms,
+          {:function, _, f, a, body} <- fs,
+          call <- calls(body),
+          spawn?(call),
+          do: {m, f, a, call}
+
     roots = Enum.map(sites, fn {_, _, _, call} -> spawn_target!(call) end)
-    expected = [{Guard, :run, 9}, {Coordinator, :run, 10}, {Preflight, :run, 5},
-      {Worker, :run, 9}, {Resolver, :run, 8}, {Unwrap, :run, 8}]
+
+    expected = [
+      {Guard, :run, 9},
+      {Coordinator, :run, 10},
+      {Preflight, :run, 5},
+      {Worker, :run, 9},
+      {Resolver, :run, 8},
+      {Unwrap, :run, 8}
+    ]
+
     if Enum.sort(roots) != Enum.sort(expected), do: raise("spawn roots differ: #{inspect(roots)}")
     Enum.each(@library, fn m -> inspect_module(m, forms[m], forms) end)
-    exits = for {module, fs} <- forms, module in [Guard, Coordinator],
-      {:function, _, function, arity, body} <- fs,
-      {:call, _, {:remote, _, {:atom, _, :erlang}, {:atom, _, :exit}}, [_, _]} <- calls(body),
-      do: {module, function, arity}
-    expected_exits = [{Guard, :kill, 3}, {Guard, :sweep, 3},
-      {Coordinator, :receive_one, 1}, {Coordinator, :resolved, 3},
-      {Coordinator, :expire_positions, 2}, {Coordinator, :summary, 3},
-      {Coordinator, :dead_positions, 4}, {Coordinator, :drain_preflight, 2},
-      {Coordinator, :kill_registered, 1}]
+
+    exits =
+      for {module, fs} <- forms,
+          module in [Guard, Coordinator],
+          {:function, _, function, arity, body} <- fs,
+          {:call, _, {:remote, _, {:atom, _, :erlang}, {:atom, _, :exit}}, [_, _]} <- calls(body),
+          do: {module, function, arity}
+
+    expected_exits = [
+      {Guard, :kill, 3},
+      {Guard, :sweep, 3},
+      {Coordinator, :receive_one, 1},
+      {Coordinator, :resolved, 3},
+      {Coordinator, :expire_positions, 2},
+      {Coordinator, :summary, 3},
+      {Coordinator, :dead_positions, 4},
+      {Coordinator, :drain_preflight, 2},
+      {Coordinator, :kill_registered, 1}
+    ]
+
     unless Enum.sort(exits) == Enum.sort(expected_exits),
       do: raise("JWE kill site inventory differs: #{inspect(exits)}")
+
     wiring!(forms)
     inventory!()
     %{roots: roots, roles: @roles, allowlist: @allowed, sites: sites}
@@ -103,8 +146,11 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
       {:ok, {^module, [abstract_code: {:raw_abstract_v1, forms}]}} ->
         if Enum.any?(forms, &match?({:attribute, _, :on_load, _}, &1)),
           do: raise("on_load is forbidden: #{module}")
+
         forms
-      _ -> raise "missing abstract code: #{module}"
+
+      _ ->
+        raise "missing abstract code: #{module}"
     end
   end
 
@@ -113,82 +159,192 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
   defp inspect_module(module, fs, modules) do
     if Enum.any?(fs, &match?({:attribute, _, :on_load, _}, &1)),
       do: raise("on_load is forbidden")
+
     Enum.each(fs, fn
       {:function, _, _, _, body} ->
         validate_forms!(body)
+
         Enum.each(calls(body), fn
           {:call, _, {:remote, _, {:atom, _, m}, {:atom, _, f}}, args} ->
             arity = length(args)
+
             cond do
               m in @library ->
                 unless Enum.any?(modules[m], &match?({:function, _, ^f, ^arity, _}, &1)),
                   do: raise("undefined library call #{inspect({m, f, arity})}")
-              Map.has_key?(@allowed, {m, f, arity}) -> :ok
-              m == :erlang and {f, arity} in basic_bifs() -> :ok
-              true -> raise "caller code reachable: #{inspect({module, m, f, arity})}"
+
+              Map.has_key?(@allowed, {m, f, arity}) ->
+                :ok
+
+              m == :erlang and {f, arity} in basic_bifs() ->
+                :ok
+
+              true ->
+                raise "caller code reachable: #{inspect({module, m, f, arity})}"
             end
+
           {:call, _, {:atom, _, f}, args} ->
             arity = length(args)
+
             unless {f, arity} in basic_bifs() or
-                Enum.any?(fs, &match?({:function, _, ^f, ^arity, _}, &1)),
-              do: raise("undefined local call")
-          call -> raise "dynamic caller code: #{inspect(call)}"
+                     Enum.any?(fs, &match?({:function, _, ^f, ^arity, _}, &1)),
+                   do: raise("undefined local call")
+
+          call ->
+            raise "dynamic caller code: #{inspect(call)}"
         end)
-      _ -> :ok
+
+      _ ->
+        :ok
     end)
   end
 
   defp basic_bifs do
-    [is_atom: 1, is_binary: 1, is_bitstring: 1, is_boolean: 1, is_float: 1,
-      is_function: 1, is_function: 2, is_integer: 1, is_list: 1, is_map: 1,
-      is_map_key: 2, is_number: 1, is_pid: 1, is_reference: 1, is_tuple: 1,
-      map_size: 1, tuple_size: 1, byte_size: 1, bit_size: 1, map_get: 2,
-      element: 2, length: 1, hd: 1, tl: 1, min: 2, max: 2,
-      get_module_info: 1, get_module_info: 2]
+    [
+      is_atom: 1,
+      is_binary: 1,
+      is_bitstring: 1,
+      is_boolean: 1,
+      is_float: 1,
+      is_function: 1,
+      is_function: 2,
+      is_integer: 1,
+      is_list: 1,
+      is_map: 1,
+      is_map_key: 2,
+      is_number: 1,
+      is_pid: 1,
+      is_reference: 1,
+      is_tuple: 1,
+      map_size: 1,
+      tuple_size: 1,
+      byte_size: 1,
+      bit_size: 1,
+      map_get: 2,
+      element: 2,
+      length: 1,
+      hd: 1,
+      tl: 1,
+      min: 2,
+      max: 2,
+      self: 0,
+      get_module_info: 1,
+      get_module_info: 2
+    ]
   end
 
   # Refuse unknown abstract forms rather than silently skipping their children.
   def validate_forms!(xs) when is_list(xs), do: Enum.each(xs, &validate_forms!/1)
-  def validate_forms!({tag, _, _}) when tag in [:atom, :integer, :float, :char, :string, :var], do: :ok
+
+  def validate_forms!({tag, _, _}) when tag in [:atom, :integer, :float, :char, :string, :var],
+    do: :ok
+
   def validate_forms!({nil, _}), do: :ok
+
   def validate_forms!({:clause, _, patterns, guards, body}),
     do: validate_forms!([patterns, guards, body])
+
   def validate_forms!({:call, _, {:remote, _, {:atom, _, m}, {:atom, _, f}}, [fun | rest]})
       when {m, f} in [{:lists, :all}, {:lists, :any}, {:ets, :foldl}] do
     literal_fun!(fun)
     validate_forms!(rest)
   end
-  def validate_forms!({:call, _, {:remote, _, {:atom, _, :json}, {:atom, _, :decode}}, [bytes, acc, {:map, _, fields}]}) do
+
+  def validate_forms!(
+        {:call, _, {:remote, _, {:atom, _, :json}, {:atom, _, :decode}},
+         [bytes, acc, {:map, _, fields}]}
+      ) do
     validate_forms!([bytes, acc])
+
     Enum.each(fields, fn
-      {:map_field_assoc, _, {:atom, _, key}, fun} when key in [:object_push, :array_push] -> literal_fun!(fun)
-      field -> validate_forms!(field)
+      {:map_field_assoc, _, {:atom, _, key}, fun} when key in [:object_push, :array_push] ->
+        literal_fun!(fun)
+
+      field ->
+        validate_forms!(field)
     end)
   end
+
   def validate_forms!({:call, _, {:remote, _, {:atom, _, _}, {:atom, _, _}}, args}),
     do: validate_arguments!(args)
+
   def validate_forms!({:call, _, {:atom, _, _}, args}), do: validate_arguments!(args)
   def validate_forms!({:call, _, _, _}), do: raise("dynamic callee")
   def validate_forms!({:fun, _, _}), do: raise("unapproved fun value")
+
   def validate_forms!({:bin_element, _, value, size, types}) do
     validate_forms!(value)
     if size != :default, do: validate_forms!(size)
-    unless types == :default or Enum.all?(types, &(is_atom(&1) or match?({:unit, n} when is_integer(n), &1))),
-      do: raise("unknown binary type")
+
+    unless types == :default or
+             Enum.all?(types, &(is_atom(&1) or match?({:unit, n} when is_integer(n), &1))),
+           do: raise("unknown binary type")
   end
-  def validate_forms!({:op, _, op, value}) when op in [:+, :-, :bnot, :not], do: validate_forms!(value)
-  def validate_forms!({:op, _, op, a, b}) when op in [:+, :-, :*, :/, :div, :rem, :"==", :"/=", :"=:=", :"=/=",
-      :"<", :">", :"=<", :">=", :and, :or, :xor, :andalso, :orelse, :++, :--, :!, :band, :bor, :bxor, :bsl, :bsr],
-    do: validate_forms!([a, b])
+
+  def validate_forms!({:op, _, op, value}) when op in [:+, :-, :bnot, :not],
+    do: validate_forms!(value)
+
+  def validate_forms!({:op, _, op, a, b})
+      when op in [
+             :+,
+             :-,
+             :*,
+             :/,
+             :div,
+             :rem,
+             :==,
+             :"/=",
+             :"=:=",
+             :"=/=",
+             :<,
+             :>,
+             :"=<",
+             :>=,
+             :and,
+             :or,
+             :xor,
+             :andalso,
+             :orelse,
+             :++,
+             :--,
+             :!,
+             :band,
+             :bor,
+             :bxor,
+             :bsl,
+             :bsr
+           ],
+      do: validate_forms!([a, b])
+
   def validate_forms!(node) when is_tuple(node) do
     tag = elem(node, 0)
-    if tag in [:cons, :tuple, :map, :map_field_assoc, :map_field_exact, :match,
-      :block, :case, :if, :receive, :try, :bin, :lc, :bc, :mc, :generate, :b_generate, :m_generate] do
+
+    if tag in [
+         :cons,
+         :tuple,
+         :map,
+         :map_field_assoc,
+         :map_field_exact,
+         :match,
+         :block,
+         :case,
+         :if,
+         :receive,
+         :try,
+         :bin,
+         :lc,
+         :bc,
+         :mc,
+         :generate,
+         :b_generate,
+         :m_generate
+       ] do
       node |> Tuple.to_list() |> Enum.drop(2) |> validate_forms!()
     else
       raise "unknown or forbidden abstract form: #{inspect(tag)}"
     end
   end
+
   def validate_forms!(_), do: raise("unknown abstract term")
   defp literal_fun!({:fun, _, {:clauses, clauses}}), do: validate_forms!(clauses)
   defp literal_fun!(_), do: raise("callback must be a literal library fun")
@@ -201,9 +357,12 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
 
   defp spawn?({:call, _, {:remote, _, {:atom, _, :erlang}, {:atom, _, f}}, _}),
     do: f in [:spawn_opt, :spawn_link, :spawn, :spawn_monitor]
+
   defp spawn?(_), do: false
+
   defp spawn_target!({:call, _, _, [{:atom, _, m}, {:atom, _, f}, args | _]}),
     do: {m, f, list_length!(args)}
+
   defp spawn_target!(call), do: raise("nonliteral spawn target: #{inspect(call)}")
   defp list_length!({nil, _}), do: 0
   defp list_length!({:cons, _, _, tail}), do: 1 + list_length!(tail)
@@ -214,12 +373,17 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
   defp inventory! do
     directory = :code.which(Open) |> List.to_string() |> Path.dirname()
     files = Path.wildcard(Path.join(directory, "Elixir.RequestSeal*.beam"))
-    outside = for file <- files,
-      module = file |> Path.basename(".beam") |> String.to_atom(),
-      not String.starts_with?(Atom.to_string(module), "Elixir.RequestSeal.Test."),
-      module not in [Open, Resolver, Unwrap | @library],
-      {:function, _, function, arity, body} <- forms(module),
-      call <- calls(body), process_site?(call), do: {module, function, arity, site_name(call)}
+
+    outside =
+      for file <- files,
+          module = file |> Path.basename(".beam") |> String.to_atom(),
+          not String.starts_with?(Atom.to_string(module), "Elixir.RequestSeal.Test."),
+          module not in [Open, Resolver, Unwrap | @library],
+          {:function, _, function, arity, body} <- forms(module),
+          call <- calls(body),
+          process_site?(call),
+          do: {module, function, arity, site_name(call)}
+
     expected = [
       {RequestSeal.Custody, :run_worker, 2, :spawn_monitor},
       {RequestSeal.Custody, :watch_owner, 4, :spawn_link},
@@ -236,26 +400,43 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
       {RequestSeal.Discovery.Cache, :pending, 6, :spawn_opt},
       {RequestSeal.Discovery.Cache, :stop_flight, 1, :exit}
     ]
+
     unless Enum.sort(outside) == Enum.sort(expected),
       do: raise("process site inventory differs: #{inspect(outside)}")
   end
+
   defp process_site?(call), do: spawn?(call) or site_name(call) == :exit
+
   defp site_name({:call, _, {:remote, _, {:atom, _, m}, {:atom, _, f}}, args})
-      when m in [:erlang, Process] and f in [:spawn, :spawn_opt, :spawn_monitor, :spawn_link] and is_list(args), do: f
+       when m in [:erlang, Process] and f in [:spawn, :spawn_opt, :spawn_monitor, :spawn_link] and
+              is_list(args), do: f
+
   defp site_name({:call, _, {:remote, _, {:atom, _, m}, {:atom, _, :exit}}, [_, _]})
-      when m in [:erlang, Process], do: :exit
+       when m in [:erlang, Process], do: :exit
+
   defp site_name(_), do: nil
 
   defp wiring!(forms) do
-    resolver = for {:function, _, :start_child, _, body} <- forms[Coordinator],
-      call <- calls(body), spawn?(call), spawn_target!(call) == {Resolver, :run, 8}, do: call
+    resolver =
+      for {:function, _, :start_child, _, body} <- forms[Coordinator],
+          call <- calls(body),
+          spawn?(call),
+          spawn_target!(call) == {Resolver, :run, 8},
+          do: call
+
     if length(resolver) != 1, do: raise("coordinator must spawn the production resolver entry")
     worker_source = File.read!("lib/request_seal/jose/jwe/worker.ex")
+
     unless worker_source =~ "{:ok, algorithm, %KeyHandle{} = handle, digest}" and
-      worker_source =~ "when is_atom(refusal)", do: raise("range answer must match only bounded shape")
-    deletes = for {m, fs} <- forms, {:function, _, f, _, body} <- fs,
-      {:call, _, {:remote, _, {:atom, _, :ets}, {:atom, _, :delete}}, [_]} <- calls(body),
-      do: {m, f}
+             worker_source =~ "when is_atom(refusal)",
+           do: raise("range answer must match only bounded shape")
+
+    deletes =
+      for {m, fs} <- forms,
+          {:function, _, f, _, body} <- fs,
+          {:call, _, {:remote, _, {:atom, _, :ets}, {:atom, _, :delete}}, [_]} <- calls(body),
+          do: {m, f}
+
     unless Enum.sort(deletes) == Enum.sort([{Guard, :receive_one}, {Open, :drain}]),
       do: raise("notice deletion inventory differs: #{inspect(deletes)}")
   end

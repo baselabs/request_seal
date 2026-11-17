@@ -1,13 +1,12 @@
 --- a/lib/request_seal/jose/jwe/preflight.ex
 +++ b/lib/request_seal/jose/jwe/preflight.ex
-@@ -18,7 +18,9 @@
-         :atomics.put(flag, 1, 1)
-         send(parent, {tag, :preflight, {:outer, reason, layer}})
-         :done
--      _, _ -> exit(:internal_failure)
-+      _, _ ->
-+        send(parent, {tag, :preflight, {:outer, :invalid_policy, :input}})
-+        :done
-     end
+@@ -22,7 +22,8 @@
+           :done
+
+         _, _ ->
+-          exit(:internal_failure)
++          send(parent, {tag, :preflight, {:outer, :invalid_policy, :input}})
++          :done
+       end
 
      case validated do

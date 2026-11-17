@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/preflight.ex
 +++ b/lib/request_seal/jose/jwe/preflight.ex
-@@ -74,6 +74,6 @@
+@@ -94,6 +94,6 @@
      after
        Bounds.remaining(d) ->
          Codec.unit(flag, d)

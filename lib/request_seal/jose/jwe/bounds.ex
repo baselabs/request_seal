@@ -40,6 +40,8 @@ defmodule RequestSeal.JOSE.JWE.Bounds do
   defp walk([], words, bytes), do: {:ok, words, bytes}
   defp walk([[] | rest], words, bytes), do: walk(rest, words, bytes)
 
+  defp walk([[h] | rest], words, bytes), do: walk([h | rest], words - 2, bytes)
+
   defp walk([[h | t] | rest], words, bytes),
     do: walk([h, t | rest], words - 2, bytes)
 
@@ -78,6 +80,7 @@ defmodule RequestSeal.JOSE.JWE.Bounds do
   defp walk([_ | rest], words, bytes), do: walk(rest, words, bytes)
 
   defp fun_walk([], rest, words, bytes), do: walk(rest, words, bytes)
+
   defp fun_walk([value | env], rest, words, bytes) do
     case walk([value], words - 1, bytes) do
       {:ok, left, remaining_bytes} -> fun_walk(env, rest, left, remaining_bytes)
@@ -87,11 +90,14 @@ defmodule RequestSeal.JOSE.JWE.Bounds do
 
   defp map_walk(iterator, rest, words, bytes) when words >= 0 do
     case :maps.next(iterator) do
-      :none -> walk(rest, words, bytes)
-      {k, v, next} -> case walk([k, v], words - 2, bytes) do
-        {:ok, left, remaining_bytes} -> map_walk(next, rest, left, remaining_bytes)
-        :over -> :over
-      end
+      :none ->
+        walk(rest, words, bytes)
+
+      {k, v, next} ->
+        case walk([k, v], words - 2, bytes) do
+          {:ok, left, remaining_bytes} -> map_walk(next, rest, left, remaining_bytes)
+          :over -> :over
+        end
     end
   end
 

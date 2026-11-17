@@ -1,15 +1,16 @@
 --- a/lib/request_seal/custody/sink.ex
 +++ b/lib/request_seal/custody/sink.ex
-@@ -35,10 +35,8 @@
+@@ -35,11 +35,8 @@
    def deliver(%__MODULE__{address: address, tag: tag, widths: widths}, index, outcome) do
      case :maps.find(index, widths) do
        {:ok, bits} ->
--        normalized = case outcome do
--          {:ok, cek} when is_binary(cek) and bit_size(cek) == bits -> {:ok, cek}
--          _ -> :error
--        end
+-        normalized =
+-          case outcome do
+-            {:ok, cek} when is_binary(cek) and bit_size(cek) == bits -> {:ok, cek}
+-            _ -> :error
+-          end
 +        _ = bits
 +        normalized = outcome
+
          case address do
            routes when is_map(routes) ->
-             {route, route_tag} = :maps.get(index, routes)

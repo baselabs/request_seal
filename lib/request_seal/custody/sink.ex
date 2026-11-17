@@ -35,18 +35,25 @@ defmodule RequestSeal.Custody.Sink do
   def deliver(%__MODULE__{address: address, tag: tag, widths: widths}, index, outcome) do
     case :maps.find(index, widths) do
       {:ok, bits} ->
-        normalized = case outcome do
-          {:ok, cek} when is_binary(cek) and bit_size(cek) == bits -> {:ok, cek}
-          _ -> :error
-        end
+        normalized =
+          case outcome do
+            {:ok, cek} when is_binary(cek) and bit_size(cek) == bits -> {:ok, cek}
+            _ -> :error
+          end
+
         case address do
           routes when is_map(routes) ->
             {route, route_tag} = :maps.get(index, routes)
             send(route, {route_tag, index, normalized})
-          alias when is_reference(alias) -> send(alias, {tag, index, normalized})
+
+          alias when is_reference(alias) ->
+            send(alias, {tag, index, normalized})
         end
-      :error -> :ok
+
+      :error ->
+        :ok
     end
+
     :ok
   end
 
@@ -54,7 +61,14 @@ defmodule RequestSeal.Custody.Sink do
   def routed(routes, %Context{deadline: deadline, owner: owner}) do
     widths = :maps.map(fn _, {_, _, bits} -> bits end, routes)
     addresses = :maps.map(fn _, {address, tag, _} -> {address, tag} end, routes)
-    %__MODULE__{owner: owner, address: addresses, tag: make_ref(), widths: widths, deadline: deadline}
+
+    %__MODULE__{
+      owner: owner,
+      address: addresses,
+      tag: make_ref(),
+      widths: widths,
+      deadline: deadline
+    }
   end
 
   @doc false

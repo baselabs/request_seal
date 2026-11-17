@@ -1,9 +1,9 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -5,5 +5,6 @@
+@@ -4,5 +4,6 @@
+   alias RequestSeal.JOSE.JWE.{Bounds, Preflight, Resolver, Unwrap, Worker}
+
    def run(tag, guard, caller, notice, address, flag, mode, r, d, unwrap) do
-     :erlang.process_flag(:trap_exit, true)
 +    :erlang.spawn_opt(:erlang, :hibernate, [__MODULE__, :run, []], [])
+     :erlang.process_flag(:trap_exit, true)
      :erlang.process_flag(:message_queue_data, :off_heap)
-     reason = try do
-       registry = receive do

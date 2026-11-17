@@ -1,11 +1,11 @@
 --- a/lib/request_seal/jose/jwe/resolver.ex
 +++ b/lib/request_seal/jose/jwe/resolver.ex
-@@ -20,7 +20,7 @@
+@@ -23,7 +23,7 @@
            end
        end
      catch
 -      _, _ -> exit(:internal_failure)
 +      kind, reason -> :erlang.raise(kind, reason, __STACKTRACE__)
      end
+
      exit(:normal)
-   end

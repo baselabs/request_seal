@@ -1,8 +1,8 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -125,7 +125,7 @@
-   defp wait(s) do
+@@ -253,7 +253,7 @@
      at = s.f + Bounds.teardown(:atomics.get(s.flag, 2))
+
      cond do
 -      Bounds.now() >= at -> {Codec.error(:deadline_exceeded, :crypto), s}
 +      false -> {Codec.error(:deadline_exceeded, :crypto), s}

@@ -1,7 +1,7 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -72,7 +72,7 @@
-         Codec.error(reason, layer)
+@@ -118,7 +118,7 @@
+
        _, _ ->
          cancel(s)
 -        Codec.error(:internal_failure, :internal)

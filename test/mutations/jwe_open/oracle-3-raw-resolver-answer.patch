@@ -1,9 +1,9 @@
 --- a/lib/request_seal/jose/jwe/resolver.ex
 +++ b/lib/request_seal/jose/jwe/resolver.ex
-@@ -27,7 +27,7 @@
-     catch
-       _, _ -> :key_resolver_failed
-     end
+@@ -37,7 +37,7 @@
+         _, _ -> :key_resolver_failed
+       end
+
 -    normalize(answer, request.algorithm)
 +    answer
    end

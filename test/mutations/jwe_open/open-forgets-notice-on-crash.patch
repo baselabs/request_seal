@@ -1,12 +1,13 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -68,12 +68,12 @@
+@@ -113,13 +113,13 @@
        answer
      catch
        :throw, {:jose_error, reason, layer} ->
 -        cancel(s)
 +        :ok
          Codec.error(reason, layer)
+
        _, _ ->
 -        cancel(s)
 +        :ok

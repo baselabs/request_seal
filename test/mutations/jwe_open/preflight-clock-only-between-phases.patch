@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/codec.ex
 +++ b/lib/request_seal/jose/jwe/codec.ex
-@@ -124,7 +124,7 @@
+@@ -137,7 +137,7 @@
    end
 
    def unit(flag, deadline) do

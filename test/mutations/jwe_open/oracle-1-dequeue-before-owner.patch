@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -45,6 +45,7 @@
+@@ -75,6 +75,7 @@
    end
 
    defp loop(s) do
@@ -8,10 +8,10 @@
      s = check(s)
 
      cond do
-@@ -53,5 +54,13 @@
-       s.anchor != nil and s.ended_at == nil and
-           Bounds.now() >= s.anchor + Bounds.teardown(Bounds.max_tokens()) -> reason(s)
-       true -> receive_one(s)
+@@ -90,5 +91,13 @@
+
+       true ->
+         receive_one(s)
 +    end
 +  end
 +

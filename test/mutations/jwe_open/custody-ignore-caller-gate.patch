@@ -1,9 +1,9 @@
 --- a/lib/request_seal/jose/jwe/unwrap.ex
 +++ b/lib/request_seal/jose/jwe/unwrap.ex
-@@ -14,7 +14,7 @@
-     context = %Context{owner: caller, deadline: Bounds.milliseconds(u)}
+@@ -17,7 +17,7 @@
      {items, routes, contributors} = combine(:maps.to_list(contributions), [], %{}, [])
      sink = Sink.routed(routes, context)
+
 -    if :ets.info(notice, :owner) == caller and Bounds.now() < u do
 +    if Bounds.now() < u do
        kind =

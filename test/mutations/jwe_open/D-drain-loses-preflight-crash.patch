@@ -1,11 +1,11 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -389,7 +389,7 @@
-       {^tag, :preflight, :deadline} -> drain_preflight(%{s | preflight_final: true}, at)
-       {^tag, :preflight, {:outer, _, _}} -> drain_preflight(%{s | preflight_final: true}, at)
-       {^tag, :handed_off} -> drain_preflight(%{s | preflight_final: true}, at)
--      {:EXIT, ^pid, _} -> if s.preflight_final, do: %{s | preflight: nil}, else: :failed
-+      {:EXIT, ^pid, _} -> %{s | preflight: nil}
+@@ -655,7 +655,7 @@
+         drain_preflight(%{s | preflight_final: true}, at)
+
+       {:EXIT, ^pid, _} ->
+-        if map_get(:preflight_final, s), do: %{s | preflight: nil}, else: :failed
++        %{s | preflight: nil}
+
        {:EXIT, ^guard, _} ->
-         :ets.foldl(fn row, acc -> kill_registered(row); acc end, :ok, s.registry)
-         :overrun
+         :ets.foldl(

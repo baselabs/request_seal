@@ -1,9 +1,9 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -121,6 +121,7 @@
+@@ -165,6 +165,7 @@
      receive do
-       {:'ETS-TRANSFER', tid, from, {^tag, :slot, slot}} ->
-         :ets.insert(s.ended, {slot, from})
+       {:"ETS-TRANSFER", tid, from, {^tag, :slot, slot}} ->
+         :ets.insert(map_get(:ended, s), {slot, from})
 +        :erlang.put(:ended_acc, :maps.put(slot, from, :erlang.get(:ended_acc) || %{}))
          :ets.delete(tid)
 

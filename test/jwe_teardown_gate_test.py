@@ -166,7 +166,7 @@ class JWETeardownGateTest(unittest.TestCase):
     def test_final_report_requires_the_observers_actual_off_heap_flag(self):
         report = self.report()
         source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
-        self.assertIn("[:monitor, {:message_queue_data, :off_heap}])", source)
+        self.assertRegex(source, r"\[:monitor, \{:message_queue_data, :off_heap\}\]\s*\)")
         self.assertIn("Process.info(observer, :message_queue_data)", source)
         self.assertIn("final_report_observer_queue: observer_queue", source)
         report["final_report_observer_queue"] = "on_heap"

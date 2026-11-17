@@ -1,10 +1,10 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -83,6 +83,7 @@
+@@ -122,6 +122,7 @@
    defp cause(s, _), do: s
 
    defp kill(s, cause, anchor) do
-+    :ets.foldl(fn _, n -> n + 1 end, 0, s.registry)
-     :erlang.exit(s.coordinator, :kill)
++    :ets.foldl(fn _, n -> n + 1 end, 0, map_get(:registry, s))
+     :erlang.exit(map_get(:coordinator, s), :kill)
      %{s | cause: cause, anchor: anchor}
    end

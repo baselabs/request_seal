@@ -1,5 +1,6 @@
 defmodule RequestSeal.JOSE.JWE.Guard do
   @moduledoc false
+  import :erlang, only: [map_get: 2]
   alias RequestSeal.JOSE.JWE.{Bounds, Coordinator}
 
   def run(tag, caller, address, flag, mode, r, d, f, unwrap) do
@@ -15,19 +16,43 @@ defmodule RequestSeal.JOSE.JWE.Guard do
 
           coordinator =
             :erlang.spawn_link(Coordinator, :run, [
-              tag, self(), caller, notice, address, flag, mode, r, d, unwrap
+              tag,
+              self(),
+              caller,
+              notice,
+              address,
+              flag,
+              mode,
+              r,
+              d,
+              unwrap
             ])
 
           :ets.give_away(registry, coordinator, {tag, :registry})
           :erlang.send_after(Bounds.milliseconds(f), self(), {tag, :f}, abs: true)
 
           loop(%{
-            tag: tag, caller_notice: notice, ended: ended, registry: registry,
-            coordinator: coordinator, flag: flag, d: d, f: f, ended_at: nil,
-            exit_seen: false, awaiting: 0, stop_at: nil, anchor: nil, cause: nil
+            tag: tag,
+            caller_notice: notice,
+            ended: ended,
+            registry: registry,
+            coordinator: coordinator,
+            flag: flag,
+            d: d,
+            f: f,
+            ended_at: nil,
+            exit_seen: false,
+            awaiting: 0,
+            stop_at: nil,
+            anchor: nil,
+            cause: nil
           })
-        :deadline -> :deadline
-        false -> :normal
+
+        :deadline ->
+          :deadline
+
+        false ->
+          :normal
       end
     catch
       _, _ -> :internal_failure
@@ -53,11 +78,18 @@ defmodule RequestSeal.JOSE.JWE.Guard do
     s = check(s)
 
     cond do
-      s.ended_at != nil and s.awaiting == 0 and s.exit_seen -> reason(s)
-      s.stop_at != nil and Bounds.now() >= s.stop_at -> reason(s)
-      s.anchor != nil and s.ended_at == nil and
-          Bounds.now() >= s.anchor + Bounds.teardown(Bounds.max_tokens()) -> reason(s)
-      true -> receive_one(s)
+      map_get(:ended_at, s) != nil and map_get(:awaiting, s) == 0 and map_get(:exit_seen, s) ->
+        reason(s)
+
+      map_get(:stop_at, s) != nil and Bounds.now() >= map_get(:stop_at, s) ->
+        reason(s)
+
+      map_get(:anchor, s) != nil and map_get(:ended_at, s) == nil and
+          Bounds.now() >= map_get(:anchor, s) + Bounds.teardown(Bounds.max_tokens()) ->
+        reason(s)
+
+      true ->
+        receive_one(s)
     end
   end
 
@@ -65,10 +97,12 @@ defmodule RequestSeal.JOSE.JWE.Guard do
   defp check(%{ended_at: nil} = s) do
     now = Bounds.now()
 
-    if :ets.info(s.registry, :owner) == self() do
-      anchor = if s.anchor == nil, do: min(now, s.d), else: s.anchor
-      stop_at = stop_at(anchor, :atomics.get(s.flag, 2))
-      awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, s.registry)
+    if :ets.info(map_get(:registry, s), :owner) == self() do
+      anchor =
+        if map_get(:anchor, s) == nil, do: min(now, map_get(:d, s)), else: map_get(:anchor, s)
+
+      stop_at = stop_at(anchor, :atomics.get(map_get(:flag, s), 2))
+      awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, map_get(:registry, s))
       %{s | ended_at: now, anchor: anchor, stop_at: stop_at, awaiting: awaiting}
     else
       cause(s, now)
@@ -79,8 +113,8 @@ defmodule RequestSeal.JOSE.JWE.Guard do
 
   defp cause(%{cause: nil} = s, now) do
     cond do
-      :ets.info(s.caller_notice, :owner) == self() -> kill(s, :caller_gone, now)
-      now >= s.f -> kill(s, :deadline, s.f)
+      :ets.info(map_get(:caller_notice, s), :owner) == self() -> kill(s, :caller_gone, now)
+      now >= map_get(:f, s) -> kill(s, :deadline, map_get(:f, s))
       true -> s
     end
   end
@@ -88,7 +122,7 @@ defmodule RequestSeal.JOSE.JWE.Guard do
   defp cause(s, _), do: s
 
   defp kill(s, cause, anchor) do
-    :erlang.exit(s.coordinator, :kill)
+    :erlang.exit(map_get(:coordinator, s), :kill)
     %{s | cause: cause, anchor: anchor}
   end
 
@@ -103,11 +137,14 @@ defmodule RequestSeal.JOSE.JWE.Guard do
   end
 
   defp sweep({slot, pid, :caller}, s, n) do
-    case :ets.lookup(s.ended, slot) do
-      [{^slot, ^pid}] -> n
+    case :ets.lookup(map_get(:ended, s), slot) do
+      [{^slot, ^pid}] ->
+        n
+
       [{^slot, _}] ->
         :erlang.monitor(:process, pid)
         n + 1
+
       [] ->
         :erlang.exit(pid, :kill)
         n + 1
@@ -115,51 +152,65 @@ defmodule RequestSeal.JOSE.JWE.Guard do
   end
 
   defp receive_one(s) do
-    tag = s.tag
-    coordinator = s.coordinator
-    target = cond do
-      s.stop_at != nil -> s.stop_at
-      s.anchor != nil -> s.anchor + Bounds.teardown(Bounds.max_tokens())
-      true -> s.f
-    end
+    tag = map_get(:tag, s)
+    coordinator = map_get(:coordinator, s)
+
+    target =
+      cond do
+        map_get(:stop_at, s) != nil -> map_get(:stop_at, s)
+        map_get(:anchor, s) != nil -> map_get(:anchor, s) + Bounds.teardown(Bounds.max_tokens())
+        true -> map_get(:f, s)
+      end
 
     receive do
-      {:'ETS-TRANSFER', tid, from, {^tag, :slot, slot}} ->
-        :ets.insert(s.ended, {slot, from})
+      {:"ETS-TRANSFER", tid, from, {^tag, :slot, slot}} ->
+        :ets.insert(map_get(:ended, s), {slot, from})
         :ets.delete(tid)
 
         s =
-          if s.ended_at == nil do
-            if s.cause == nil, do: send(coordinator, {tag, :ended, slot})
+          if map_get(:ended_at, s) == nil do
+            if map_get(:cause, s) == nil, do: send(coordinator, {tag, :ended, slot})
             s
           else
-            case :ets.lookup(s.registry, slot) do
-              [{^slot, ^from, :caller}] -> %{s | awaiting: s.awaiting - 1}
+            case :ets.lookup(map_get(:registry, s), slot) do
+              [{^slot, ^from, :caller}] ->
+                %{s | awaiting: map_get(:awaiting, s) - 1}
+
               [{^slot, pid, :caller}] ->
                 :erlang.monitor(:process, pid)
                 s
-              _ -> s
+
+              _ ->
+                s
             end
           end
 
         loop(s)
 
-      {:EXIT, ^coordinator, _atom} -> loop(%{s | exit_seen: true})
-      {:DOWN, _, :process, _, _atom} -> loop(%{s | awaiting: s.awaiting - 1})
-      _ -> loop(s)
+      {:EXIT, ^coordinator, _atom} ->
+        loop(%{s | exit_seen: true})
+
+      {:DOWN, _, :process, _, _atom} ->
+        loop(%{s | awaiting: map_get(:awaiting, s) - 1})
+
+      _ ->
+        loop(s)
     after
       Bounds.remaining(target) -> loop(s)
     end
   end
 
   defp reason(s) do
-    case :ets.lookup(s.registry, :outcome) do
-      [{:outcome, :replied}] -> :replied
-      _ -> case s.cause do
-        :caller_gone -> :normal
-        :deadline -> :deadline
-        _ -> :internal_failure
-      end
+    case :ets.lookup(map_get(:registry, s), :outcome) do
+      [{:outcome, :replied}] ->
+        :replied
+
+      _ ->
+        case map_get(:cause, s) do
+          :caller_gone -> :normal
+          :deadline -> :deadline
+          _ -> :internal_failure
+        end
     end
   end
 end

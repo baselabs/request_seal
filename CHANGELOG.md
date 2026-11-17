@@ -2,6 +2,9 @@
 
 ## Unreleased 2.0.0
 
+- Keep the JWE library process tree on native map operations and preserve
+  algorithm-mismatch and malformed-capability refusals at resolver ingress.
+  Bound shared-list traversal without redundant terminal-list visits.
 - Report broken JWE library lifecycles as `:internal_failure`, retain caller
   notices through exception cleanup, and join registered children before return.
   Preflight cannot send a validation verdict after successful admission; final

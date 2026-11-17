@@ -1,9 +1,10 @@
 --- a/lib/request_seal/jose/jwe/codec.ex
 +++ b/lib/request_seal/jose/jwe/codec.ex
-@@ -159,6 +159,5 @@
+@@ -176,7 +176,6 @@
+
    defp names([x | xs], seen, flag, deadline) when is_binary(x) and length(seen) < 64 do
      unit(flag, deadline)
 -    ensure(byte_size(x) <= Bounds.permitted_name_bytes(), :invalid_policy)
+
      ensure(
        utf8?(x) and not :lists.member(x, seen) and not :lists.member(x, @reserved),
-       :invalid_policy

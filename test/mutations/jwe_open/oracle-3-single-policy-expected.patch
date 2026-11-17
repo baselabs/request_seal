@@ -1,12 +1,16 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -145,7 +145,8 @@
-     guard = s.guard
+@@ -197,7 +197,12 @@
+
      receive do
        {^tag, :preflight, pid} ->
 -        send(pid, {tag, :policy, p})
-+        sent_policy = if s.mode == :single, do: :maps.put(:protected, :maps.put(:expected, expected, p.protected), p), else: p
++        sent_policy =
++          if s.mode == :single,
++            do: :maps.put(:protected, :maps.put(:expected, expected, p.protected), p),
++            else: p
++
 +        send(pid, {tag, :policy, sent_policy})
          send(pid, {tag, :count, count})
+
          cond do
-           count in [:over_cap, :improper] -> :ok

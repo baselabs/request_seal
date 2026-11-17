@@ -1,10 +1,12 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -61,6 +61,7 @@
-   defp loop(s) do
-     now = Bounds.now()
-     cond do
-+      now >= s.r and not s.handed_off -> reply(s, {:outer, :deadline_exceeded, :crypto})
-       now >= s.d -> deadline(s)
-       s.n != nil and s.settled == s.n and s.handed_off -> reply(s, :ok)
-       true ->
+@@ -141,6 +141,9 @@
+       now >= map_get(:d, s) ->
+         deadline(s)
+
++      now >= map_get(:r, s) and not map_get(:handed_off, s) ->
++        reply(s, {:outer, :deadline_exceeded, :crypto})
++
+       map_get(:n, s) != nil and map_get(:settled, s) == map_get(:n, s) and
+           map_get(:handed_off, s) ->
+         reply(s, :ok)

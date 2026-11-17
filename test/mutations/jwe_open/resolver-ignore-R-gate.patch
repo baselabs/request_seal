@@ -1,11 +1,10 @@
 --- a/lib/request_seal/jose/jwe/resolver.ex
 +++ b/lib/request_seal/jose/jwe/resolver.ex
-@@ -11,7 +11,7 @@
-       end
+@@ -13,6 +13,6 @@
+
        receive do
          {^tag, :request, request, callback} ->
 -          if :ets.info(notice, :owner) == caller and Bounds.now() < r do
 +          if :ets.info(notice, :owner) == caller and is_integer(r) do
              answer = resolve(callback, request)
              send(worker, {tag, :answer, i, answer})
-             receive do

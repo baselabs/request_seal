@@ -1,10 +1,9 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -145,6 +145,7 @@
-     guard = s.guard
+@@ -197,5 +197,6 @@
+
      receive do
        {^tag, :preflight, pid} ->
 +        send(s.guard, {tag, :caller_sized_input, input})
          send(pid, {tag, :policy, p})
          send(pid, {tag, :count, count})
-         cond do

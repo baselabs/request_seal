@@ -1,17 +1,17 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -115,8 +115,12 @@
+@@ -250,8 +250,12 @@
    end
 
-   defp cardinality(%{n: nil} = s, n, tc) when tc < s.d do
--    :atomics.put(s.flag, 2, n)
+   defp cardinality(%{n: nil} = s, n, tc) when tc < map_get(:d, s) do
+-    :atomics.put(map_get(:flag, s), 2, n)
 -    %{s | n: n, admissions_left: n}
-+    if Bounds.now() < s.d do
-+      :atomics.put(s.flag, 2, n)
++    if Bounds.now() < map_get(:d, s) do
++      :atomics.put(map_get(:flag, s), 2, n)
 +      %{s | n: n, admissions_left: n}
 +    else
 +      s
 +    end
    end
+
    defp cardinality(s, _, _), do: s
-   defp worker_count(0), do: 0

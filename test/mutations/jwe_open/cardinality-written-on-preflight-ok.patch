@@ -1,18 +1,17 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -86,6 +86,7 @@
-       {^tag, :cardinality, n, tc} when is_integer(n) and n >= 0 and n <= 10_000 ->
+@@ -190,6 +190,7 @@
          loop(cardinality(s, n, tc))
+
        {^tag, :preflight, :ok} ->
-+        :atomics.put(s.flag, 2, s.n)
-         if Bounds.now() < s.d, do: loop(start_workers(s, 0, worker_count(s.n))), else: deadline(s)
-       {^tag, :preflight, {:outer, reason, layer}} ->
-         if Bounds.now() < s.d, do: reply(%{s | preflight_final: true}, {:outer, reason, layer}), else: deadline(s)
-@@ -115,7 +116,6 @@
++        :atomics.put(map_get(:flag, s), 2, map_get(:n, s))
+         if Bounds.now() < map_get(:d, s),
+           do: loop(start_workers(s, 0, worker_count(map_get(:n, s)))),
+           else: deadline(s)
+@@ -250,6 +251,5 @@
    end
 
-   defp cardinality(%{n: nil} = s, n, tc) when tc < s.d do
--    :atomics.put(s.flag, 2, n)
+   defp cardinality(%{n: nil} = s, n, tc) when tc < map_get(:d, s) do
+-    :atomics.put(map_get(:flag, s), 2, n)
      %{s | n: n, admissions_left: n}
    end
-   defp cardinality(s, _, _), do: s

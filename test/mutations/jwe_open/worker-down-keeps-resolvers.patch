@@ -1,10 +1,10 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -350,7 +350,6 @@
-   defp dead_positions(i, hi, s, _) when i > hi, do: s
+@@ -589,7 +589,6 @@
+
    defp dead_positions(i, hi, s, reason) do
-     p = :maps.get(i, s.positions)
--    if p.resolver != nil, do: :erlang.exit(p.resolver, :kill)
-     failure = if reason == :normal, do: {:decryption_failed, :crypto, nil},
-       else: {:internal_failure, :internal, nil}
-     s = if p.result == nil and (reason != :normal or p.phase in [:resolved, :refused, :width]),
+     p = :maps.get(i, map_get(:positions, s))
+-    if map_get(:resolver, p) != nil, do: :erlang.exit(map_get(:resolver, p), :kill)
+
+     failure =
+       if reason == :normal,

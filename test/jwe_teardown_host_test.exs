@@ -16,16 +16,22 @@ defmodule RequestSeal.JWETeardownHostTest do
     # OTP's JSON encoder serializes nil as the string "nil"; rejected windows
     # must retain JSON null so the independent Python replay sees None.
     assert source =~ "steal: if(steal == nil, do: :null, else: steal)"
-    assert :json.encode(%{steal: :null}) |> IO.iodata_to_binary() |> :json.decode() == %{"steal" => :null}
+
+    assert :json.encode(%{steal: :null}) |> IO.iodata_to_binary() |> :json.decode() == %{
+             "steal" => :null
+           }
+
     assert source =~ "if host_admitted?(result, steal) do"
     assert source =~ "host_sample(fun, online, attempts - 1, seen)"
   end
 
   test "host admission uses available logical processors with scheduler fallback" do
-    expected = case :erlang.system_info(:logical_processors_available) do
-      n when is_integer(n) and n > 0 -> n
-      _ -> System.schedulers_online()
-    end
+    expected =
+      case :erlang.system_info(:logical_processors_available) do
+        n when is_integer(n) and n > 0 -> n
+        _ -> System.schedulers_online()
+      end
+
     assert Gate.host_cpus() == expected
   end
 end

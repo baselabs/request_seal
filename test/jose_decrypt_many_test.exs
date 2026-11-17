@@ -397,6 +397,7 @@ defmodule RequestSeal.JOSEDecryptManyTest do
     bad_kw = %{b | token: RequestSeal.JOSEVectors.replace(b.token, 1, Support.b64(<<0::256>>))}
     bad_direct = %{token: RequestSeal.JOSEVectors.replace(direct, 1, "AA"), expected: %{}}
     task = Task.async(fn -> JWE.decrypt_many([a, bad_kw, bad_direct, c], p) end)
+
     for _ <- 1..2 do
       assert_receive {:resolved, resolver, "A256KW"}
       send(resolver, :continue)
@@ -468,13 +469,21 @@ defmodule RequestSeal.JOSEDecryptManyTest do
   test "telemetry runs in the caller after all library children end", %{items: xs, p: p} do
     observer = self()
     id = make_ref()
-    :telemetry.attach(id, [:request_seal, :jose, :content_authentication], fn _, _, _, _ ->
-      send(observer, {:handler_owner, self()})
-    end, nil)
+
+    :telemetry.attach(
+      id,
+      [:request_seal, :jose, :content_authentication],
+      fn _, _, _, _ ->
+        send(observer, {:handler_owner, self()})
+      end,
+      nil
+    )
+
     try do
       task = Task.async(fn -> JWE.decrypt_many(xs, p) end)
       assert {:ok, results} = Task.await(task)
       assert Enum.all?(results, &match?({:ok, _}, &1))
+
       for _ <- xs do
         assert_receive {:handler_owner, pid}
         assert pid == task.pid
@@ -485,7 +494,9 @@ defmodule RequestSeal.JOSEDecryptManyTest do
   end
 
   test "batch admission unfinished at R has input layer", %{items: [item | _], p: p} do
-    assert {:ok, results} = JWE.decrypt_many(List.duplicate(item, 10_000), %{p | resolve_timeout: 1})
+    assert {:ok, results} =
+             JWE.decrypt_many(List.duplicate(item, 10_000), %{p | resolve_timeout: 1})
+
     assert Enum.any?(results, &(&1 == {:error, Error.new(:deadline_exceeded, :input)}))
   end
 
@@ -556,6 +567,7 @@ defmodule RequestSeal.JOSEDecryptManyTest do
 
   test "malformed range item does not stop its neighbours", %{p: p, items: [item | _]} do
     previous = :erlang.system_flag(:schedulers_online, 1)
+
     try do
       assert {:ok, [{:ok, _}, bad, {:ok, _}]} = JWE.decrypt_many([item, nil, item], p)
       failure(bad, :invalid_serialization)
@@ -564,14 +576,33 @@ defmodule RequestSeal.JOSEDecryptManyTest do
     end
   end
 
-  test "one real range resets the success flag even when fallback authenticates", %{items: [item | _], handle: handle} do
+  test "one real range resets the success flag even when fallback authenticates", %{
+    items: [item | _],
+    handle: handle
+  } do
     [protected, ek, iv, ct, tag] = Support.compact(item.token, 5)
     {:ok, [{:ok, cek}]} = Custody.unwrap(handle, [{Support.decode(ek), %{}, 256}])
-    token = %{h: Header.parse(protected), alg: "A256KW", enc: "A256GCM", protected: protected,
-      iv: Support.decode(iv), ct: Support.decode(ct), tag: Support.decode(tag), width_valid: true}
+
+    token = %{
+      h: Header.parse(protected),
+      alg: "A256KW",
+      enc: "A256GCM",
+      protected: protected,
+      iv: Support.decode(iv),
+      ct: Support.decode(ct),
+      tag: Support.decode(tag),
+      width_valid: true
+    }
+
     for valid <- [true, false, true] do
-      {result, outcome} = RequestSeal.JOSE.JWE.Worker.authenticate(%{token | width_valid: valid},
-        {:ok, cek}, {:ok, cek}, %{content: :binary})
+      {result, outcome} =
+        RequestSeal.JOSE.JWE.Worker.authenticate(
+          %{token | width_valid: valid},
+          {:ok, cek},
+          {:ok, cek},
+          %{content: :binary}
+        )
+
       if valid do
         assert {:ok, _} = result
         assert outcome == :ok

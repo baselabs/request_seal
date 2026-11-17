@@ -1,8 +1,9 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -53,5 +53,5 @@
+@@ -82,6 +82,6 @@
        Bounds.remaining(at) ->
-         if Bounds.now() < at, do: take_notice(s, input, p, expected),
+         if Bounds.now() < at,
+           do: take_notice(s, input, p, expected),
 -          else: expire_notice(s.guard, s.tag)
 +          else: Codec.error(:deadline_exceeded, :crypto)
      end

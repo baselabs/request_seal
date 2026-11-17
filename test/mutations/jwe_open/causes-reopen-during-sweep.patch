@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -70,7 +70,7 @@
+@@ -109,7 +109,7 @@
      end
    end
 

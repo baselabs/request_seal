@@ -1,11 +1,11 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -367,7 +367,7 @@
+@@ -620,7 +620,7 @@
      case s do
        :overrun -> :internal_failure
        :failed -> :internal_failure
 -      %{n: nil} -> reply(s, {:outer, :deadline_exceeded, :crypto})
 +      %{n: nil} -> reply(fill_deadline(0, 1, %{s | n: 1, admissions_left: 1}), :ok)
-       _ -> reply(fill_deadline(0, s.n, s), :ok)
+       _ -> reply(fill_deadline(0, map_get(:n, s), s), :ok)
      end
    end

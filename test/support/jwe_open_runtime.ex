@@ -4,15 +4,29 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   alias RequestSeal.JOSE.JWE.Bounds
 
   def policy(handle, extra \\ %{}) do
-    Map.merge(%{algorithms: ["A256KW"], encryption: ["A256GCM"], max_plaintext: 1_048_576,
-      max_tokens: 10_000, max_total_input: 67_108_864, max_total_plaintext: 67_108_864,
-      timeout: 30_000, resolve_timeout: 20_000, unwrap_timeout: 5_000,
-      protected: %{permitted: []},
-      key_resolver: fn %{algorithm: a} -> {:ok, %{algorithm: a, key: handle}} end}, extra)
+    Map.merge(
+      %{
+        algorithms: ["A256KW"],
+        encryption: ["A256GCM"],
+        max_plaintext: 1_048_576,
+        max_tokens: 10_000,
+        max_total_input: 67_108_864,
+        max_total_plaintext: 67_108_864,
+        timeout: 30_000,
+        resolve_timeout: 20_000,
+        unwrap_timeout: 5_000,
+        protected: %{permitted: []},
+        key_resolver: fn %{algorithm: a} -> {:ok, %{algorithm: a, key: handle}} end
+      },
+      extra
+    )
   end
 
-  def single(p, expected \\ %{}), do: p |> Map.drop([:max_tokens, :max_total_input, :max_total_plaintext])
-    |> Map.put(:protected, %{expected: expected, permitted: p.protected.permitted})
+  def single(p, expected \\ %{}),
+    do:
+      p
+      |> Map.drop([:max_tokens, :max_total_input, :max_total_plaintext])
+      |> Map.put(:protected, %{expected: expected, permitted: p.protected.permitted})
 
   # Select a valid JSON tree close to W_item using the running VM's word size.
   # Empty strings keep aggregate encoded input below the public 64 MiB limit.
@@ -20,6 +34,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     Enum.reduce_while(1..334, %{}, fn count, previous ->
       maps = List.duplicate(%{"" => ""}, count)
       value = %{"pad" => Enum.chunk_every(maps, 32)}
+
       if :erts_debug.flat_size(value) > Bounds.item_words() or
            not Bounds.within?(value, Bounds.item_words()) do
         {:halt, previous}
@@ -44,90 +59,202 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
 
   def with_peer(fun, schedulers \\ :online) do
     paths = Enum.flat_map(:code.get_path(), fn p -> [~c"-pa", p] end)
-    scheduler_args = if schedulers == :online, do: [], else: [~c"+S", String.to_charlist("#{schedulers}:#{schedulers}")]
+
+    scheduler_args =
+      if schedulers == :online,
+        do: [],
+        else: [~c"+S", String.to_charlist("#{schedulers}:#{schedulers}")]
+
     {:ok, peer, _} = :peer.start_link(%{connection: :standard_io, args: scheduler_args ++ paths})
+
     try do
       :ok = :peer.call(peer, :application, :ensure_started, [:crypto])
+      :ok = :peer.call(peer, __MODULE__, :load_trace_modules, [])
       {:module, module} = :erlang.fun_info(fun, :module)
+
       case :persistent_term.get({__MODULE__, :test_beam, module}, nil) do
-        nil -> :ok
+        nil ->
+          :ok
+
         binary ->
-          {:module, ^module} = :peer.call(peer, :code, :load_binary,
-            [module, ~c"peer-test", binary])
+          {:module, ^module} =
+            :peer.call(peer, :code, :load_binary, [module, ~c"peer-test", binary])
       end
+
       :peer.call(peer, __MODULE__, :invoke, [fun], 600_000)
     after
       :peer.stop(peer)
     end
   end
+
   def invoke(fun), do: fun.()
+
+  def load_trace_modules do
+    # Install patterns only after loading their targets. Load OTP helpers here
+    # too: loader replies contain file paths and are not JWE control messages.
+    for module <- [
+          :ets,
+          :atomics,
+          :lists,
+          :maps,
+          :binary,
+          :base64,
+          :json,
+          RequestSeal.JOSE.JWE.Bounds,
+          RequestSeal.JOSE.JWE.Codec,
+          RequestSeal.JOSE.JWE.Guard,
+          RequestSeal.JOSE.JWE.Coordinator,
+          RequestSeal.JOSE.JWE.Open,
+          RequestSeal.JOSE.JWE.Preflight,
+          RequestSeal.JOSE.JWE.Worker,
+          RequestSeal.JOSE.JWE.Resolver,
+          RequestSeal.JOSE.JWE.Unwrap,
+          RequestSeal.Custody
+        ] do
+      {:module, ^module} = :code.ensure_loaded(module)
+    end
+
+    :ok
+  end
 
   def launch(n, topology, options \\ []) do
     {handle, token} = real_key()
     observer = self()
     :persistent_term.put({RequestSeal.Test.JWEOpenBlockingCustodian, :observer}, observer)
+
     resolver = fn %{algorithm: a} ->
       send(observer, {:resolver_entered, self()})
+
       receive do
         :continue -> :ok
       end
-      selected = if topology == :custody do
-        ref = handle.ref
-        id = self()
-        %{handle | ref: fn -> send(observer, {:custody_ref_used, id}); ref.() end,
-          custodian: RequestSeal.Test.JWEOpenBlockingCustodian}
-      else
-        handle
-      end
+
+      selected =
+        if topology == :custody do
+          ref = handle.ref
+          id = self()
+
+          %{
+            handle
+            | ref: fn ->
+                send(observer, {:custody_ref_used, id})
+                ref.()
+              end,
+              custodian: RequestSeal.Test.JWEOpenBlockingCustodian
+          }
+        else
+          handle
+        end
+
       {:ok, %{algorithm: a, key: selected}}
     end
+
     p = policy(handle, %{key_resolver: resolver})
     p = Map.merge(p, Keyword.get(options, :policy, %{}))
-    expected = Keyword.get(options, :expected, if(Keyword.get(options, :near_cap, false), do: near_cap(), else: %{}))
+
+    expected =
+      Keyword.get(
+        options,
+        :expected,
+        if(Keyword.get(options, :near_cap, false), do: near_cap(), else: %{})
+      )
+
     # Include the expectation in a real authenticated token, with real AES-KW.
     plaintext = Keyword.get(options, :plaintext, "payload")
     header = [{"alg", "A256KW"}, {"enc", "A256GCM"}]
     header = if expected == %{}, do: header, else: header ++ [{"pad", expected["pad"]}]
-    token = if expected == %{} and plaintext == "payload", do: token,
-      else: elem(JWE.encrypt(header, plaintext, handle), 1)
+
+    token =
+      if expected == %{} and plaintext == "payload",
+        do: token,
+        else: elem(JWE.encrypt(header, plaintext, handle), 1)
+
     items = Keyword.get(options, :items, List.duplicate(%{token: token, expected: expected}, n))
     single = Keyword.get(options, :single, false)
     p = if single, do: single(p, expected), else: p
     hold_caller = Keyword.get(options, :hold_caller, false)
-    {caller, monitor} = spawn_monitor(fn ->
-      receive do
-        :go ->
-          result = if single, do: JWE.decrypt(token, p), else: JWE.decrypt_many(items, p)
-          send(observer, {:returned, self(), result})
-          if hold_caller, do: (receive do :release -> :ok end)
-      end
-    end)
-    :erlang.trace(caller, true, [:procs, :set_on_spawn, :send, :receive, :call, :monotonic_timestamp, {:tracer, observer}])
+
+    {caller, monitor} =
+      spawn_monitor(fn ->
+        receive do
+          :go ->
+            result = if single, do: JWE.decrypt(token, p), else: JWE.decrypt_many(items, p)
+            send(observer, {:returned, self(), result})
+
+            if hold_caller,
+              do:
+                (receive do
+                   :release -> :ok
+                 end)
+        end
+      end)
+
+    :erlang.trace(caller, true, [
+      :procs,
+      :set_on_spawn,
+      :send,
+      :receive,
+      :call,
+      :monotonic_timestamp,
+      {:tracer, observer}
+    ])
+
     baseline_tables = :erlang.system_info(:ets_count)
     baseline_processes = :erlang.system_info(:process_count)
     send(caller, :go)
-    s = %{caller: caller, monitor: monitor, handle: handle, n: n, topology: topology,
-      pids: %{}, refs: %{}, remaining: 0, guard_ended: false, guard: nil, coordinator: nil, preflight: nil, resolvers: [],
-      custody: [], messages: [], events: [], peak: 0, peak_tables: 0,
-      baseline_tables: baseline_tables, baseline_processes: baseline_processes, return: nil}
+
+    s = %{
+      caller: caller,
+      monitor: monitor,
+      handle: handle,
+      n: n,
+      topology: topology,
+      pids: %{},
+      refs: %{},
+      remaining: 0,
+      guard_ended: false,
+      guard: nil,
+      coordinator: nil,
+      preflight: nil,
+      resolvers: [],
+      custody: [],
+      messages: [],
+      events: [],
+      peak: 0,
+      peak_tables: 0,
+      baseline_tables: baseline_tables,
+      baseline_processes: baseline_processes,
+      return: nil
+    }
+
     s
   end
 
   def start(n, topology, options \\ []) do
     s = launch(n, topology, options)
-    s = collect_until(s, fn s -> length(s.resolvers) == n and
-      Enum.count(s.pids, fn {_, role} -> role == :resolver end) == n end)
-    s = case topology do
-      :resolvers -> s
-      :queued ->
-        true = :erlang.suspend_process(s.guard)
-        Enum.each(s.resolvers, &send(&1, :continue))
-        await(fn -> info(s.guard, :message_queue_len) >= n end)
-        s
-      :custody ->
-        Enum.each(s.resolvers, &send(&1, :continue))
-        collect_until(s, fn s -> length(s.custody) == n end)
-    end
+
+    s =
+      collect_until(s, fn s ->
+        length(s.resolvers) == n and
+          Enum.count(s.pids, fn {_, role} -> role == :resolver end) == n
+      end)
+
+    s =
+      case topology do
+        :resolvers ->
+          s
+
+        :queued ->
+          true = :erlang.suspend_process(s.guard)
+          Enum.each(s.resolvers, &send(&1, :continue))
+          await(fn -> info(s.guard, :message_queue_len) >= n end)
+          s
+
+        :custody ->
+          Enum.each(s.resolvers, &send(&1, :continue))
+          collect_until(s, fn s -> length(s.custody) == n end)
+      end
+
     s
   rescue
     error ->
@@ -139,6 +266,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     stamp = Bounds.now()
     {before_vm, _} = :erlang.statistics(:exact_reductions)
     before_guard = info(s.guard, :reductions)
+
     case trigger do
       :caller -> Process.exit(s.caller, :kill)
       {:caller_reason, reason} -> Process.exit(s.caller, reason)
@@ -147,20 +275,29 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       :u -> :ok
       :coordinator -> Process.exit(s.coordinator, :kill)
     end
+
     if s.topology == :queued, do: :erlang.resume_process(s.guard)
     s = collect_until(s, fn s -> s.guard_ended end)
     s = delivered(s) |> drain_observations()
     {after_vm, _} = :erlang.statistics(:exact_reductions)
-    %{s | events: [{:measurement, stamp, Bounds.now(), before_guard, after_vm - before_vm} | s.events]}
+
+    %{
+      s
+      | events: [
+          {:measurement, stamp, Bounds.now(), before_guard, after_vm - before_vm} | s.events
+        ]
+    }
   end
 
   def delivered(s) do
     ref = :erlang.trace_delivered(:all)
+
     receive do
       {:trace_delivered, :all, ^ref} -> s
       event -> delivered_wait(observe(s, event), ref)
     end
   end
+
   defp delivered_wait(s, ref) do
     receive do
       {:trace_delivered, :all, ^ref} -> s
@@ -172,9 +309,15 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     Process.exit(s.caller, :kill)
     s = delivered(s) |> drain_observations()
     ref = if is_pid(s.guard), do: Process.monitor(s.guard), else: nil
+
     for pid <- [s.guard, s.coordinator], is_pid(pid) do
-      try do :erlang.resume_process(pid) catch _, _ -> :ok end
+      try do
+        :erlang.resume_process(pid)
+      catch
+        _, _ -> :ok
+      end
     end
+
     if ref != nil do
       receive do
         {:DOWN, ^ref, :process, _, _} -> :ok
@@ -182,12 +325,23 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
         5_000 -> Process.exit(s.guard, :kill)
       end
     end
+
     for pid <- Map.keys(s.pids) ++ [s.caller] do
       monitor = Process.monitor(pid)
-      try do :erlang.resume_process(pid) catch _, _ -> :ok end
+
+      try do
+        :erlang.resume_process(pid)
+      catch
+        _, _ -> :ok
+      end
+
       Process.exit(pid, :kill)
-      receive do {:DOWN, ^monitor, :process, ^pid, _} -> :ok end
+
+      receive do
+        {:DOWN, ^monitor, :process, ^pid, _} -> :ok
+      end
     end
+
     for {monitor, _} <- s.refs, do: Process.demonitor(monitor, [:flush])
     if ref != nil, do: Process.demonitor(ref, [:flush])
     Custody.release(s.handle)
@@ -215,46 +369,77 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       receive do
         event -> collect_until(observe(s, event), predicate, timeout)
       after
-        timeout -> raise "placement/end markers missing: #{inspect({s.n, length(s.resolvers), length(s.custody), s.return})}"
+        timeout ->
+          raise "placement/end markers missing: #{inspect({s.n, length(s.resolvers), length(s.custody), s.return})}"
       end
     end
   end
 
   def observe(s, {:trace_ts, parent, :spawn, pid, {module, function, args}, stamp} = event) do
     ref = Process.monitor(pid)
-    role = case module do
-      RequestSeal.JOSE.JWE.Guard -> :guard
-      RequestSeal.JOSE.JWE.Coordinator -> :coordinator
-      RequestSeal.JOSE.JWE.Preflight -> :preflight
-      RequestSeal.JOSE.JWE.Worker -> :worker
-      RequestSeal.JOSE.JWE.Resolver -> :resolver
-      RequestSeal.JOSE.JWE.Unwrap -> :custody
-      _ -> :other
-    end
-    s = %{s | pids: Map.put(s.pids, pid, role), refs: Map.put(s.refs, ref, false),
-      events: [{:spawn, parent, pid, module, function, args, stamp} | s.events],
-      remaining: s.remaining + 1}
+
+    role =
+      case module do
+        RequestSeal.JOSE.JWE.Guard -> :guard
+        RequestSeal.JOSE.JWE.Coordinator -> :coordinator
+        RequestSeal.JOSE.JWE.Preflight -> :preflight
+        RequestSeal.JOSE.JWE.Worker -> :worker
+        RequestSeal.JOSE.JWE.Resolver -> :resolver
+        RequestSeal.JOSE.JWE.Unwrap -> :custody
+        _ -> :other
+      end
+
+    s = %{
+      s
+      | pids: Map.put(s.pids, pid, role),
+        refs: Map.put(s.refs, ref, false),
+        events: [{:spawn, parent, pid, module, function, args, stamp} | s.events],
+        remaining: s.remaining + 1
+    }
+
     s = if role in [:guard, :coordinator, :preflight], do: Map.put(s, role, pid), else: s
     # The isolated peer has no unrelated workload. A VM count avoids making the
     # observer's own setup quadratic; the traced pid map proves the role and
     # lifetime inventories independently, and each pid still has an end monitor.
     alive = max(0, :erlang.system_info(:process_count) - s.baseline_processes)
-    %{s | peak: max(s.peak, alive), peak_tables: max(s.peak_tables,
-      :erlang.system_info(:ets_count) - s.baseline_tables), messages: [event | s.messages]}
+
+    %{
+      s
+      | peak: max(s.peak, alive),
+        peak_tables:
+          max(
+            s.peak_tables,
+            :erlang.system_info(:ets_count) - s.baseline_tables
+          ),
+        messages: [event | s.messages]
+    }
   end
+
   def observe(s, {:trace_ts, pid, :receive, message, _} = event) do
-    messages = if pid in [s.guard, s.coordinator, s.caller], do: [event | s.messages], else: s.messages
+    messages =
+      if pid in [s.guard, s.coordinator, s.caller], do: [event | s.messages], else: s.messages
+
     %{s | messages: messages, events: [{:received, pid, message} | s.events]}
   end
+
   def observe(s, {:trace_ts, _, :send, _, _, _} = event),
     do: %{s | messages: [event | s.messages], events: [event | s.events]}
+
   def observe(s, {:resolver_entered, pid}), do: %{s | resolvers: [pid | s.resolvers]}
   def observe(s, {:custody_entered, pid}), do: %{s | custody: [pid | s.custody]}
+
   def observe(s, {:DOWN, ref, :process, pid, reason}) do
     if :maps.get(ref, s.refs, true) == false,
-      do: %{s | refs: Map.put(s.refs, ref, true), remaining: s.remaining - 1, guard_ended: s.guard_ended or pid == s.guard, events: [{:end, pid, Bounds.now(), reason} | s.events]},
+      do: %{
+        s
+        | refs: Map.put(s.refs, ref, true),
+          remaining: s.remaining - 1,
+          guard_ended: s.guard_ended or pid == s.guard,
+          events: [{:end, pid, Bounds.now(), reason} | s.events]
+      },
       else: s
   end
+
   def observe(s, {:returned, _, result}), do: %{s | return: result}
   def observe(s, event), do: %{s | events: [event | s.events]}
 
@@ -272,11 +457,20 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       nil -> nil
     end
   end
+
   def await(fun, attempts \\ 10_000)
   def await(_, 0), do: raise("placement unavailable")
+
   def await(fun, attempts) do
-    if fun.(), do: :ok, else: (Process.sleep(1); await(fun, attempts - 1))
+    if fun.(),
+      do: :ok,
+      else:
+        (
+          Process.sleep(1)
+          await(fun, attempts - 1)
+        )
   end
+
   defp flush do
     receive do
       _ -> flush()
@@ -295,11 +489,17 @@ defmodule RequestSeal.Test.JWEOpenBlockingCustodian do
     send(context.owner, {:custody_entry, self()})
     observer = :persistent_term.get({__MODULE__, :observer})
     send(observer, {:custody_entered, self()})
+
     receive do
       :continue -> RequestSeal.Custody.Local.unwrap(ref, algorithm, items, sink, context)
     end
   end
+
   def sign(_, _, _, _), do: {:error, :unsupported_operation}
+
+  def wrap(ref, algorithm, cek, context),
+    do: RequestSeal.Custody.Local.wrap(ref, algorithm, cek, context)
+
   def public_key(ref), do: RequestSeal.Custody.Local.public_key(ref)
   def identity(ref), do: RequestSeal.Custody.Local.identity(ref)
   def release(ref, context), do: RequestSeal.Custody.Local.release(ref, context)

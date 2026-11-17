@@ -1,11 +1,11 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -216,7 +216,7 @@
-     {g, %{s | groups: :maps.put(g, %{group | members: group.members + 1, workers: counts}, s.groups)}}
+@@ -401,7 +401,7 @@
+     {g, %{s | groups: :maps.put(g, group, map_get(:groups, s))}}
    end
 
 -  def result_phase?(phase), do: phase in [:resolved, :refused, :width]
 +  def result_phase?(phase), do: phase in [:unadmitted, :ready, :resolved, :refused, :width]
 
    defp result(s, i, reason, layer, auth) do
-     case :maps.find(i, s.positions) do
+     case :maps.find(i, map_get(:positions, s)) do

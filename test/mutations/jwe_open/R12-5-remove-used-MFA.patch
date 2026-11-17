@@ -1,6 +1,6 @@
 --- a/test/support/jwe_open_analyzer.ex
 +++ b/test/support/jwe_open_analyzer.ex
-@@ -13,7 +13,6 @@
+@@ -29,7 +29,6 @@
      {:atomics, :put, 3} => "publish accepted cardinality once, or stop preflight input",
      {:ets, :new, 2} => "create registry, ended set or end notice",
      {:ets, :give_away, 3} => "transfer notice or registry ownership",

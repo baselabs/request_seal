@@ -1,26 +1,32 @@
 --- a/lib/request_seal/jose/jwe/preflight.ex
 +++ b/lib/request_seal/jose/jwe/preflight.ex
-@@ -123,12 +123,12 @@
+@@ -176,13 +176,16 @@
      send_policy(rest, tag, flag, d, p)
    end
 
 -  defp send_rows([], _, _, _, _), do: :ok
+-
 -  defp send_rows([{i, row} | rest], tag, flag, d, workers) do
-+  defp send_rows(rows, tag, flag, d, workers) do
-     Codec.unit(flag, d)
+-    Codec.unit(flag, d)
 -    pid = owner(:maps.to_list(workers), i)
 -    send(pid, {tag, :row, i, row})
 -    send_rows(rest, tag, flag, d, workers)
-+    :lists.foreach(fn {_, {lo, hi, pid}} ->
-+      batch = :lists.filter(fn {i, _} -> i >= lo and i <= hi end, rows)
-+      send(pid, {tag, :rows, batch})
-+    end, :maps.to_list(workers))
++  defp send_rows(rows, tag, flag, d, workers) do
++    Codec.unit(flag, d)
++
++    :lists.foreach(
++      fn {_, {lo, hi, pid}} ->
++        batch = :lists.filter(fn {i, _} -> i >= lo and i <= hi end, rows)
++        send(pid, {tag, :rows, batch})
++      end,
++      :maps.to_list(workers)
++    )
    end
 
    defp owner([{_, {lo, hi, pid}} | _], i) when i >= lo and i <= hi, do: pid
 --- a/lib/request_seal/jose/jwe/worker.ex
 +++ b/lib/request_seal/jose/jwe/worker.ex
-@@ -20,6 +20,7 @@
+@@ -36,6 +36,7 @@
      receive do
        {^tag, :policy, policy} -> intake(tag, policy, rows)
        {^tag, :row, i, row} -> intake(tag, p, [{i, row} | rows])

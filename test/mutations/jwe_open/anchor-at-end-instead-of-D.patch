@@ -1,11 +1,11 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -61,7 +61,7 @@
-     now = Bounds.now()
+@@ -99,7 +99,7 @@
 
-     if :ets.info(s.registry, :owner) == self() do
--      anchor = if s.anchor == nil, do: min(now, s.d), else: s.anchor
-+      anchor = if s.anchor == nil, do: now, else: s.anchor
-       stop_at = stop_at(anchor, :atomics.get(s.flag, 2))
-       awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, s.registry)
-       %{s | ended_at: now, anchor: anchor, stop_at: stop_at, awaiting: awaiting}
+     if :ets.info(map_get(:registry, s), :owner) == self() do
+       anchor =
+-        if map_get(:anchor, s) == nil, do: min(now, map_get(:d, s)), else: map_get(:anchor, s)
++        if map_get(:anchor, s) == nil, do: now, else: map_get(:anchor, s)
+
+       stop_at = stop_at(anchor, :atomics.get(map_get(:flag, s), 2))
+       awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, map_get(:registry, s))

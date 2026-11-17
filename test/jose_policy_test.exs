@@ -241,10 +241,17 @@ defmodule RequestSeal.JOSEPolicyTest do
   test "2.6 content handler runs after completion in the caller", %{token: t, p: p} do
     owner = self()
     id = make_ref()
-    :telemetry.attach(id, [:request_seal, :jose, :content_authentication], fn _, _, _, _ ->
-      send(owner, {:handler, self()})
-      Process.sleep(250)
-    end, nil)
+
+    :telemetry.attach(
+      id,
+      [:request_seal, :jose, :content_authentication],
+      fn _, _, _, _ ->
+        send(owner, {:handler, self()})
+        Process.sleep(250)
+      end,
+      nil
+    )
+
     try do
       assert {:ok, _} = JWE.decrypt(t, p)
       assert_receive {:handler, ^owner}
@@ -291,7 +298,7 @@ defmodule RequestSeal.JOSEPolicyTest do
       attach_content()
       task = Task.async(fn -> JWE.decrypt(token, p) end)
 
-      unless failure in [:truncated, :overlong] do
+      unless unquote(failure in [:truncated, :overlong]) do
         assert_receive :kw_resolved
         assert_receive {:batch_holder, holder, _, _, _, 1}
         continue_holder(holder, failure)
@@ -301,7 +308,7 @@ defmodule RequestSeal.JOSEPolicyTest do
       assert_receive {:content, measurements, metadata}
       assert {measurements, metadata} == {%{}, %{outcome: :failed}}
       refute_receive {:content, _, _}
-      if failure in [:truncated, :overlong], do: refute_receive(:kw_resolved)
+      if unquote(failure in [:truncated, :overlong]), do: refute_receive(:kw_resolved)
     end
   end
 

@@ -1,10 +1,10 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -54,6 +54,7 @@
+@@ -127,6 +127,7 @@
+     :ets.insert(map_get(:registry, s), {slot, pid, role})
+
      if role == :caller do
-       :ets.give_away(notice, pid, {s.tag, :slot, slot})
-       :erlang.unlink(pid)
 +      :erlang.monitor(:process, pid)
+       :ets.give_away(notice, pid, {tag, :slot, slot})
+       :erlang.unlink(pid)
      end
-     pid
-   end
