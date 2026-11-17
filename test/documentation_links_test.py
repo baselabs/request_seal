@@ -132,6 +132,32 @@ end
         self.assertIn("--docs-output", captured.getvalue())
         self.assertEqual(scratch_before, set(Path(tempfile.gettempdir()).glob("requestseal-docs-*")))
 
+    def test_every_approved_document_gets_content_and_fence_checks(self):
+        configuration = docs.public_configuration(ROOT)
+        relative = "test/fixtures/web_bot_auth/PROVENANCE.md"
+        approved = configuration["documents"] | docs.SOURCE_DOCUMENTS
+        self.assertIn(relative, approved)
+        self.assertNotIn(relative, docs.link_scan_paths(docs.public_paths(ROOT), configuration))
+        path = ROOT / relative
+        original = path.read_bytes()
+        target = "https://hexdocs.pm/request_seal/2.0.0-dev/missing.html"
+        with temporary_directory(prefix="requestseal-approved-docs-") as directory:
+            output = Path(directory) / "docs"
+            run(["mix", "docs", "--warnings-as-errors", "--output", output], cwd=ROOT,
+                extra_env={"MIX_ENV": "dev"}, timeout=900)
+            try:
+                path.write_bytes(original + (
+                    "\nfile:///home/person/key\ninternal planning records\n"
+                    "```elixir\n:ok\n```\n" + target + "\n").encode())
+                checked, errors = docs.check(ROOT, docs_output=output)
+            finally:
+                path.write_bytes(original)
+        self.assertEqual(approved, checked)
+        for reason in ("machine or private file URL", "internal process material", "Elixir fences require"):
+            with self.subTest(reason=reason):
+                self.assertTrue(any(error.startswith(relative + ":") and reason in error for error in errors), errors)
+        self.assertFalse(any(target in error for error in errors), errors)
+
     def test_scan_set_uses_mix_package_docs_and_repository_publication_sources(self):
         with temporary_directory(prefix="requestseal-tracked-links-") as directory:
             root = Path(directory)

@@ -378,7 +378,7 @@ def first_party_link_errors(root, relative, url, version, published, references)
     return []
 
 
-def content_errors(root, relative, source, paths, version=None, published=None, references=None):
+def content_errors(root, relative, source, paths, version=None, published=None, references=None, *, check_links=True):
     root = root.resolve()
     errors = []
     path = root / relative
@@ -388,6 +388,8 @@ def content_errors(root, relative, source, paths, version=None, published=None, 
     if INTERNAL_PROCESS.search(source):
         errors.append(f"{relative}: internal process material is not public documentation")
     errors.extend(release_errors(relative, source, version))
+    if not check_links:
+        return errors
     for offset, target, ambiguous in extract_destinations(source):
         if ambiguous:
             line = 1 + source.count("\n", 0, offset)
@@ -600,11 +602,12 @@ def check(root=ROOT, docs_output=None):
                 cwd=root, extra_env={"MIX_ENV": "dev"}, timeout=900)
         references = {"WORKTREE": (configuration, {p: "100644" for p in paths}), "DOCS_OUTPUT": docs_output}
         references[("hexdocs", configuration["version"])] = documentation_inventory(Path(docs_output), configuration["version"])
-        for relative in sorted(approved & scan_paths):
+        for relative in sorted(approved):
             path = root / relative
             if path.is_file() and not path.is_symlink():
                 source = path.read_bytes().decode("utf-8")
-                errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"], references))
+                errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"], references,
+                                             check_links=relative in scan_paths))
                 errors.extend(fence_errors(root, relative, source))
         errors.extend(tracked_link_errors(root, paths, configuration["version"], configuration["documents"], references,
                                          approved, configuration))

@@ -1,5 +1,6 @@
 """Release safety checks against real Git repositories and artifact metadata."""
-from contextlib import contextmanager, redirect_stdout
+from contextlib import closing, contextmanager, redirect_stdout
+from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from email.utils import formatdate
 import io
@@ -396,7 +397,7 @@ class ReleaseIdentityTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not an ancestor"):
             release.verify_published_destinations(body, "2.3.4", "workflow_dispatch", self.root)
 
-    def test_current_hex_package_is_a_future_destination_without_network_requests(self):
+    def test_prepublication_current_hex_package_requires_no_network_requests(self):
         # Audit the real code in a separate interpreter so the observer is removed
         # with the process. No HTTP client or classifier is replaced.
         self.identity("1.0.0")
@@ -414,7 +415,6 @@ notes = release.release_notes(source, "1.0.0")
 sources = {name: (root / name).read_text() for name in ("mix.exs", "corpus/index.json")}
 sources["CHANGELOG.md"] = source
 assert check.corpus_release_errors(sources) == []
-release.verify_published_destinations(notes, "1.0.0", "workflow_dispatch", root)
 assert check_docs.first_party_link_errors(root, "README.md", target, "1.0.0", set(), {}) == []
 print("NETWORK_EVENTS=" + json.dumps(requests))
 '''
@@ -426,11 +426,20 @@ print("NETWORK_EVENTS=" + json.dumps(requests))
             with self.subTest(target=target), self.assertRaisesRegex(ValueError, "canonical|version 1.0.0"):
                 release.release_destinations(target, "1.0.0")
 
+    def test_dispatch_and_push_fetch_the_current_hex_package_page_live(self):
+        self.identity("1.0.0")
+        target = "https://hex.pm/packages/request_seal/1.0.0"
+        for event in ("workflow_dispatch", "push"):
+            output = io.StringIO()
+            with self.subTest(event=event), redirect_stdout(output):
+                release.verify_published_destinations(target, "1.0.0", event, self.root, deadline_seconds=20)
+            self.assertIn("HTTP 200 " + target, output.getvalue())
+
 
 class DestinationRegressionTest(unittest.TestCase):
     def test_bare_url_candidates_include_quotes_backticks_and_non_ascii(self):
         target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
-        for suffix in ("'s", '"', "`", "\N{NO-BREAK SPACE}next"):
+        for suffix in ("'s", '"s', "`", "\N{NO-BREAK SPACE}next"):
             with self.subTest(suffix=suffix):
                 candidate = target + suffix
                 self.assertEqual([candidate], [value for _, value, _ in release.extract_destinations(candidate)])
@@ -438,6 +447,10 @@ class DestinationRegressionTest(unittest.TestCase):
                                  lambda value: release.validate_destination(value, "2.3.4")):
                     with self.assertRaisesRegex(ValueError, "canonical form: https://request-seal.hexdocs.pm/"):
                         classify(candidate)
+        for quote in ("'", '"'):
+            with self.subTest(quote=quote):
+                body = quote + target + quote
+                self.assertEqual([target], release.release_destinations(body, "2.3.4"))
 
     def test_code_spans_cannot_pair_across_block_boundaries(self):
         target = "https://request-seal.hexdocs.pm/2.3.4/missing.html"
@@ -458,6 +471,40 @@ class DestinationRegressionTest(unittest.TestCase):
         # Within a span a backslash does not escape its closing delimiter.
         self.assertEqual([target], release.release_destinations(f"`code\\` {target}", "2.3.4"))
 
+    def test_only_the_first_backtick_of_an_escaped_run_is_escaped(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/missing.html"
+        body = f"- \\``a` {target} `b`"
+        self.assertEqual([target], release.release_destinations(body, "2.3.4"))
+        self.assertEqual([], release.release_destinations(f"\\```{target}``", "2.3.4"))
+
+    def test_code_spans_cannot_pair_across_table_cells(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/missing.html"
+        for header, delimiter in ((f"| `x | {target} | `y |", "|---|---|---|"),
+                                  (f"`x | {target} | `y", "---|---|---")):
+            body = header + "\n" + delimiter + "\n| a | b | c |"
+            with self.subTest(header=header):
+                self.assertEqual([target], release.release_destinations(body, "2.3.4"))
+
+    def test_code_spans_cannot_pair_across_table_rows(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/missing.html"
+        for body in (f"| a `x | b |\n|---|---|\n| {target} | `y |",
+                     f"| a | b |\n|---|---|\n| `x | a |\n| {target} | `y |",
+                     f"`x\n:-\n{target}\n`y"):
+            with self.subTest(body=body):
+                self.assertEqual([target], release.release_destinations(body, "2.3.4"))
+
+    def test_escaped_table_pipes_and_ordinary_prose_preserve_code_spans(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        for body in (f"| `a\\| {target}` | b |\n|---|---|\n| a | b |",
+                     f"`a | {target} | b`", f"`a |\n{target}\n| b`"):
+            with self.subTest(body=body):
+                self.assertEqual([], release.release_destinations(body, "2.3.4"))
+        visible = "https://request-seal.hexdocs.pm/2.3.4/missing.html"
+        for slashes in ("\\", "\\\\", "\\\\\\"):
+            body = f"| `a{slashes}| {target}` | `x |\n|---|---|\n| {visible} | `y |"
+            with self.subTest(slashes=slashes):
+                self.assertEqual([visible], release.release_destinations(body, "2.3.4"))
+
     def test_whitespace_separates_shortcuts_from_full_references(self):
         for separator in (" ", "\n"):
             body = "[RFC 9421]" + separator + "[section 2]"
@@ -470,6 +517,12 @@ class DestinationRegressionTest(unittest.TestCase):
                 self.assertEqual(targets, release.release_destinations(body + "\n\n" + definitions, "2.3.4"))
         with self.assertRaisesRegex(ValueError, "reference 'b' requires a definition"):
             release.release_destinations("[a][b]", "2.3.4")
+
+    def test_literal_label_before_an_inline_link_does_not_form_a_full_reference(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        self.assertEqual([target], release.release_destinations(f"[a][b]({target})", "2.3.4"))
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            release.release_destinations("[a][b](https://hexdocs.pm/request_seal/2.3.4/readme.html)", "2.3.4")
 
     def test_hyphenated_paths_are_first_party_and_require_canonical_spelling(self):
         for target, canonical in (
@@ -491,10 +544,25 @@ class DestinationRegressionTest(unittest.TestCase):
         self.assertEqual([target, "https://example.com"], release.release_destinations(body, "2.3.4"))
 
     def test_heading_end_is_a_valid_reference_definition_boundary(self):
-        for heading in ("### Links", "Links\n====", "Links\n----"):
+        for heading in ("### Links", "Links\n====", "Links\n----", "`Links`\n===="):
             with self.subTest(heading=heading):
                 self.assertEqual(["https://example.com"], release.release_destinations(
                     heading + "\n[g]: https://example.com\n\nUse [g].", "2.3.4"))
+
+    def test_setext_underline_requires_a_preceding_paragraph_line(self):
+        for prefix in ("Para\n\n===", "===", "Para\n\n--", "### Heading\n===",
+                       "[other]: https://example.com\n===", "```text\ncode\n```\n==="):
+            body = prefix + "\n[g]: https://example.com\n\nUse [g]."
+            with self.subTest(prefix=prefix), self.assertRaisesRegex(ValueError, "ambiguous reference definition"):
+                release.release_destinations(body, "2.3.4")
+        # A standalone thematic break remains a real block boundary.
+        self.assertEqual(["https://example.com"], release.release_destinations(
+            "Para\n\n---\n[g]: https://example.com\n\nUse [g].", "2.3.4"))
+
+    def test_footnote_definitions_can_interrupt_a_paragraph(self):
+        target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        self.assertEqual([], release.release_destinations("Note[^1].\n[^1]: text", "2.3.4"))
+        self.assertEqual([target], release.release_destinations(f"Note[^1].\n[^1]: See {target}", "2.3.4"))
 
     def test_footnotes_require_unique_section_local_definitions(self):
         self.assertEqual([], release.release_destinations("- Note[^one].\n\n[^one]: Explanation.", "2.3.4"))
@@ -518,11 +586,9 @@ class DestinationRegressionTest(unittest.TestCase):
         self.assertEqual("github", release.validate_destination(
             "https://github.com/baselabs/request_seal/blob/v2.3.4/mix.exs#L1", "2.3.4"))
 
-    def test_scheme_and_host_case_require_the_canonical_form(self):
-        for target in ("HTTPS://request-seal.hexdocs.pm/2.3.4/readme.html",
-                       "https://REQUEST-SEAL.HEXDOCS.PM/2.3.4/readme.html"):
-            with self.subTest(target=target), self.assertRaisesRegex(ValueError, "canonical form: https://request-seal.hexdocs.pm/"):
-                release.classify_destination(target)
+    def test_scheme_case_requires_the_canonical_form(self):
+        with self.assertRaisesRegex(ValueError, "canonical form: https://request-seal.hexdocs.pm/"):
+            release.classify_destination("HTTPS://request-seal.hexdocs.pm/2.3.4/readme.html")
 
     def test_redirect_failure_does_not_skip_the_next_target(self):
         output = io.StringIO()
@@ -549,6 +615,19 @@ class DestinationRegressionTest(unittest.TestCase):
                 release.verify_http_destinations([base + "/drip#missing"], deadline_seconds=0.15)
             self.assertLess(time.monotonic() - started, 1)
             self.assertEqual(["/drip"], requests)
+
+    def test_body_reads_refresh_the_public_connection_socket_timeout(self):
+        with local_http({"/body": [(200, {"Content-Length": "2"}, b"ok")]}) as (base, requests):
+            url = release.urlsplit(base)
+            with closing(HTTPConnection(url.hostname, url.port, timeout=10)) as connection:
+                connection.request("GET", "/body")
+                sock = connection.sock
+                with connection.getresponse() as response:
+                    self.assertEqual(b"ok", release.read_response_body(
+                        response, sock, time.monotonic() + 0.5, collect=True))
+                self.assertGreater(sock.gettimeout(), 0)
+                self.assertLessEqual(sock.gettimeout(), 0.5)
+            self.assertEqual(["/body"], requests)
 
     def test_truncated_body_is_a_transport_failure_and_is_retried(self):
         with local_http({"/truncated": [(200, {"Content-Length": "20"}, b"partial"), 200]}) as (base, requests):
@@ -726,14 +805,22 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_gfm_bare_destinations_strip_only_extended_autolink_suffixes(self):
         target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"
-        for suffix in ("?", "!", ".", ",", ":", "*", "_", "~", ")", "&copy;", "&123;", "&#123;", "&#xAB;", "**)."):
+        for suffix in ("?", "!", ".", ",", ":", "*", "_", "~", "'", '"', ";", ")", "&copy;", "&ABC;", "**).", "';&copy;\""):
             with self.subTest(suffix=suffix):
                 self.assertEqual([target], release.release_destinations(target + suffix, "2.3.4"))
         for wrapper in ("**{}**", "_{}_", "~~{}~~", "<{}>"):
             self.assertEqual([target], release.release_destinations(wrapper.format(target), "2.3.4"))
         self.assertEqual([target], release.release_destinations(target + "<", "2.3.4"))
         self.assertEqual("https://example.com/a(b)", release.bare_destination("https://example.com/a(b))"))
-        self.assertEqual("https://example.com/a;", release.bare_destination("https://example.com/a;"))
+        self.assertEqual("https://example.com/a", release.bare_destination("https://example.com/a;"))
+        for suffix in ("&123;", "&abc123;", "&abc_foo;", "&#123;", "&#39;", "&#x27;", "&#xAB;"):
+            candidate = target + suffix[:-1]
+            with self.subTest(suffix=suffix):
+                self.assertEqual([candidate], [value for _, value, _ in release.extract_destinations(target + suffix)])
+                self.assertEqual([candidate], release.release_destinations(target + suffix, "2.3.4"))
+        self.assertEqual(target + "&é", release.bare_destination(target + "&é;"))
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            release.release_destinations(target + "&é;", "2.3.4")
 
     def test_visible_links_accept_emphasis_own_url_text_and_shortcut_references(self):
         target = "https://request-seal.hexdocs.pm/2.3.4/readme.html"

@@ -3,7 +3,7 @@
 import argparse
 import datetime
 import hashlib
-from http.client import HTTPException, IncompleteRead
+from http.client import HTTPConnection, HTTPSConnection, HTTPException, IncompleteRead
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from html import unescape
@@ -17,8 +17,6 @@ import subprocess
 import time
 import uuid
 from urllib.parse import unquote, urljoin, urlsplit
-from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 from processes import install_signal_handlers, run
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,16 +97,64 @@ def escaped(source, offset):
 
 def inline_blocks(source):
     """Inline parsing cannot pair delimiters across paragraph/container boundaries."""
+    def cells(text):
+        # cmark-gfm ext_scanners.re: _scan_table_cell keeps a backslash-pipe
+        # together, even when another backslash precedes the escaping one.
+        pipes = [match.start() for match in re.finditer(r"\|", text)
+                 if not match.start() or text[match.start() - 1] != "\\"]
+        bounds = [-1, *pipes, len(text)]
+        spans = [(left + 1, right) for left, right in zip(bounds, bounds[1:])]
+        if pipes and not text[:pipes[0]].strip():
+            spans.pop(0)
+        if pipes and not text[pipes[-1] + 1:].strip():
+            spans.pop()
+        return spans
+
+    lines = source.splitlines(keepends=True)
     start = offset = 0
     previous_quote = None
-    for line in source.splitlines(keepends=True):
+    table_quote = None
+    delimiter_row = False
+    paragraph = False
+    for index, line in enumerate(lines):
         text = line.rstrip("\r\n")
         quote = re.match(r" {0,3}(?:>[ \t]*)*", text)[0]
         content = text[len(quote):]
         item = re.match(r"[ \t]*(?:[-+*]|[0-9]{1,9}[.)])[ \t]+", content)
         heading = re.match(r" {0,3}#{1,6}(?:[ \t]|$)", content)
+        if not content.strip() or item or heading or quote.count(">") != table_quote:
+            table_quote = None
+        # cmark-gfm table.c: try_opening_table_header requires equal column
+        # counts; row_from_string/contains_inlines give each cell its own parse.
+        header = False
+        if table_quote is None and content.strip() and not heading and index + 1 < len(lines):
+            next_text = lines[index + 1].rstrip("\r\n")
+            next_quote = re.match(r" {0,3}(?:>[ \t]*)*", next_text)[0]
+            delimiter = next_text[len(next_quote):]
+            columns = cells(delimiter)
+            if (quote.count(">") == next_quote.count(">") and ("|" in delimiter or ":" in delimiter)
+                    and columns and len(cells(content)) == len(columns)
+                    and all(re.fullmatch(r"[ \t]*:?-+:?[ \t]*", delimiter[a:b]) for a, b in columns)):
+                table_quote = quote.count(">")
+                delimiter_row = False
+                header = True
+        if table_quote is not None:
+            if start < offset:
+                yield start, offset
+            if not delimiter_row:
+                for left, right in cells(content):
+                    yield offset + len(quote) + left, offset + len(quote) + right
+            delimiter_row = header
+            offset += len(line)
+            start = offset
+            previous_quote = quote.count(">")
+            paragraph = False
+            continue
+        # cmark-gfm blocks.c: open_new_blocks accepts setext only while a
+        # paragraph is open; a standalone === line starts paragraph text.
+        setext = paragraph and re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", content)
         ending = (not content.strip() or heading or
-                  re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", content) or
+                  setext or
                   re.fullmatch(r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})", content))
         if (item or heading or quote.count(">") != previous_quote or not content.strip()) and start < offset:
             yield start, offset
@@ -118,12 +164,13 @@ def inline_blocks(source):
             yield start, offset
             start = offset
         previous_quote = quote.count(">")
+        paragraph = not ending
     if start < offset:
         yield start, offset
 
 
-def masked_code(source):
-    """Keep offsets and newlines while hiding code blocks and matched code spans."""
+def masked_code(source, *, spans=True):
+    """Keep offsets/newlines while hiding blocks and optionally matched spans."""
     chars = list(source)
 
     def hide(start, end):
@@ -158,29 +205,39 @@ def masked_code(source):
         blank = not text.strip()
         offset += len(line)
     visible = "".join(chars)
+    if not spans:
+        return visible
     for beginning, finish in inline_blocks(visible):
         runs = list(re.finditer(r"`+", visible[beginning:finish]))
         cursor = 0
         while cursor < len(runs):
             opening = runs[cursor]
             cursor += 1
-            if escaped(visible, beginning + opening.start()):
+            # cmark-gfm inlines.c: handle_backslash consumes one backtick;
+            # handle_backticks can then open with the rest of the run.
+            opening_start = opening.start() + int(escaped(visible, beginning + opening.start()))
+            length = opening.end() - opening_start
+            if not length:
                 continue
             closing = next((index for index in range(cursor, len(runs))
-                            if len(runs[index][0]) == len(opening[0])), None)
+                            if len(runs[index][0]) == length), None)
             if closing is not None:
-                hide(beginning + opening.start(), beginning + runs[closing].end())
+                hide(beginning + opening_start, beginning + runs[closing].end())
                 cursor = closing + 1
     return "".join(chars)
 
 
 def bare_destination(target):
     """GFM extended-autolink trailing punctuation, parentheses, and entities."""
+    # cmark-gfm extensions/autolink.c: autolink_delim trims quotes and ';'.
+    # Its cmark_isalpha scan removes only &[A-Za-z]+;, not digits or '#'.
     while True:
-        trimmed = target.rstrip("?!.,:*_~")
+        trimmed = target.rstrip("?!.,:*_~'\"")
         if trimmed.endswith(")") and trimmed.count(")") > trimmed.count("("):
             trimmed = trimmed[:-1]
-        trimmed = re.sub(r"&(?:[A-Za-z0-9]+|#[0-9]+|#[xX][0-9A-Fa-f]+);$", "", trimmed)
+        if trimmed.endswith(";"):
+            entity = re.search(r"&[A-Za-z]+;$", trimmed)
+            trimmed = trimmed[:entity.start()] if entity else trimmed[:-1]
         if trimmed == target:
             return target
         target = trimmed
@@ -218,17 +275,23 @@ def extract_destinations(source, strict=False, markdown=True):
             candidate = visible[start.end():].split("\n", 1)[0].split(")", 1)[0]
             add(openings.get(start.start(), start.start()), match.end() if match else start.end(),
                 match[1] if match else candidate, match is None)
-        previous_definition, previous_boundary = False, True
+        previous_definition, previous_boundary, paragraph = False, True, False
         offset = 0
-        for original, line in zip(source.splitlines(keepends=True), visible.splitlines(keepends=True)):
+        # Code spans still count as paragraph content for a setext heading;
+        # fenced/indented code does not. Keep that block view before masking spans.
+        block_lines = masked_code(source, spans=False).splitlines(keepends=True)
+        for original, line, block_line in zip(source.splitlines(keepends=True), visible.splitlines(keepends=True), block_lines):
             definition = REFERENCE_START.search(line)
             if definition:
                 prefix = line[:definition.start()]
-                valid = prefix in ("", " ", "  ", "   ") and (previous_boundary or previous_definition)
+                # cmark-gfm blocks.c: open_new_blocks permits footnote
+                # definitions to interrupt a paragraph, unlike link references.
+                footnote = definition[1].startswith("^")
+                valid = prefix in ("", " ", "  ", "   ") and (footnote or previous_boundary or previous_definition)
                 match = REFERENCE.match(line.rstrip("\r\n"), definition.end())
                 if strict and not valid:
                     raise ValueError(f"line {1 + source.count(chr(10), 0, offset)}: ambiguous reference definition {original.strip()!r}")
-                if definition[1].startswith("^"):
+                if footnote:
                     # Footnote bodies are prose, not link destinations. Their URLs
                     # still pass through the ordinary inline/autolink scan below.
                     previous_definition = valid
@@ -238,9 +301,14 @@ def extract_destinations(source, strict=False, markdown=True):
                     previous_definition = valid and match is not None
             else:
                 previous_definition = False
-            previous_boundary = (not original.strip() or
-                                 re.match(r" {0,3}#{1,6}(?:[ \t]|$)", line) is not None or
-                                 re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", line.rstrip("\r\n")) is not None)
+            # cmark-gfm blocks.c: open_new_blocks requires an open paragraph
+            # before scan_setext_heading_line can create a heading.
+            setext = paragraph and re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", block_line.rstrip("\r\n")) is not None
+            previous_boundary = (not block_line.strip() or
+                                 re.match(r" {0,3}#{1,6}(?:[ \t]|$)", block_line) is not None or
+                                 setext or
+                                 re.fullmatch(r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})", block_line.rstrip("\r\n")) is not None)
+            paragraph = bool(block_line.strip()) and not previous_boundary and not previous_definition
             offset += len(line)
     for match in URL_ATTRIBUTE.finditer(visible):
         add(match.start(), match.end(), unescape(next(value for value in match.groups() if value is not None)))
@@ -458,7 +526,9 @@ def release_destinations(body, version, first_line=1, all_reference_labels=None)
                 raise ValueError(f"CHANGELOG.md:{line}: footnote {label!r} requires a definition inside the released section")
             continue
         following = re.match(r"\[([^\[\]\n]*)\]", rest)
-        explicit = following is not None
+        # cmark-gfm inlines.c: handle_close_bracket resolves [b](url) as an
+        # inline link first, leaving the preceding [a] as a shortcut or literal.
+        explicit = following is not None and not rest[following.end():].startswith("(")
         if explicit:
             label = reference_label(following[1] or match[1])
             cursor += following.end()
@@ -549,33 +619,34 @@ def retry_after_seconds(value):
             return 0
 
 
-def read_response_body(response, deadline, collect=False):
+def read_response_body(response, sock, deadline, collect=False):
     """Check the budget between reads, including bodies arriving a byte at a time."""
     body = bytearray()
+    received = 0
+    try:
+        expected = int(response.getheader("Content-Length", ""))
+    except ValueError:
+        expected = None
+    if response.getheader("Transfer-Encoding", "").lower() == "chunked":
+        expected = None
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("destination deadline exceeded while reading response body")
-        # HTTPResponse exposes no timeout setter. Its SocketIO owns the real
-        # socket, also for HTTPS; update it before every single buffered read.
-        if response.fp is not None:
-            response.fp.raw._sock.settimeout(min(15, remaining))
+        if not response.isclosed():
+            sock.settimeout(min(15, remaining))
         chunk = response.read1(65536)
         if not chunk:
-            if response.length:
-                raise IncompleteRead(bytes(body), response.length)
+            if expected is not None and received < expected:
+                raise IncompleteRead(bytes(body), expected - received)
             return bytes(body)
+        received += len(chunk)
         if collect:
             body.extend(chunk)
 
 
 def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
     """No redirects; budget retries/body reads. DNS has no stdlib time bound."""
-    class NoRedirect(HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
-
-    opener = build_opener(NoRedirect())
     pending = set(targets)
     all_targets = pending.copy()
     failures = {target: "not requested before deadline" for target in pending}
@@ -593,32 +664,44 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
             retry_after = 0
             redirect = ""
             status = None
+            connection = None
             try:
-                with opener.open(Request(target, headers={"User-Agent": "RequestSeal-release"}), timeout=min(15, remaining)) as response:
+                authored = urlsplit(target)
+                connection_type = HTTPSConnection if authored.scheme == "https" else HTTPConnection
+                connection = connection_type(authored.hostname, authored.port, timeout=min(15, remaining))
+                path = authored.path or "/"
+                if authored.query:
+                    path += "?" + authored.query
+                connection.request("GET", path, headers={"User-Agent": "RequestSeal-release", "Connection": "close"})
+                # getresponse may detach a closing connection's socket. Retain
+                # the public sock before that, while its response owns the fd.
+                sock = connection.sock
+                with connection.getresponse() as response:
                     status = response.status
-                    fragment = urlsplit(target).fragment
-                    data = read_response_body(response, deadline, collect=bool(fragment))
-                    ids = page_ids(data.decode("utf-8")) if status == 200 and fragment else None
-            except HTTPError as error:
-                status = error.code
-                retry_after = retry_after_seconds(error.headers.get("Retry-After")) if status == 429 else 0
-                destination = urljoin(target, error.headers.get("Location", ""))
-                authored, resolved = urlsplit(target), urlsplit(destination)
-                issue = re.fullmatch(r"/baselabs/request_seal/issues/([1-9][0-9]*)", authored.path)
-                if (300 <= status < 400 and issue and resolved.hostname == "github.com"
-                        and resolved.path == "/baselabs/request_seal/pull/" + issue[1]):
-                    redirect = "; this number is a pull request; use https://github.com" + resolved.path
-                error.close()
+                    ids = None
+                    if status == 200:
+                        data = read_response_body(response, sock, deadline, collect=bool(authored.fragment))
+                        ids = page_ids(data.decode("utf-8")) if authored.fragment else None
+                    else:
+                        retry_after = retry_after_seconds(response.getheader("Retry-After")) if status == 429 else 0
+                        resolved = urlsplit(urljoin(target, response.getheader("Location", "")))
+                        issue = re.fullmatch(r"/baselabs/request_seal/issues/([1-9][0-9]*)", authored.path)
+                        if (300 <= status < 400 and issue and resolved.hostname == "github.com"
+                                and resolved.path == "/baselabs/request_seal/pull/" + issue[1]):
+                            redirect = "; this number is a pull request; use https://github.com" + resolved.path
             except UnicodeError as error:
                 outcome = f"HTTP {status}; " if status is not None else ""
                 failures[target] = outcome + f"response decode error: {type(error).__name__}: {error}"
                 pending.remove(target)
                 final = True
                 continue
-            except (HTTPException, ssl.SSLError, OSError, URLError) as error:
+            except (HTTPException, ssl.SSLError, OSError) as error:
                 failures[target] = f"transport error: {type(error).__name__}: {error}"
                 due[target] = time.monotonic() + backoff
                 continue
+            finally:
+                if connection is not None:
+                    connection.close()
             print(f"HTTP {status} {target}", flush=True)
             if status == 200:
                 pending.remove(target)
@@ -692,13 +775,7 @@ def verify_published_destinations(body, version, event="push", root=ROOT, deadli
         if not link:
             continue
         errors = []
-        if (event == "workflow_dispatch" and link["kind"] == "hex_package"
-                and link["version"] == package_version((root / "mix.exs").read_text())
-                and not ref_exists(root, "refs/tags/v" + link["version"])):
-            # The release classifier already binds the package and version.
-            # This page is created by Hex publication, before the tag push.
-            continue
-        elif event == "workflow_dispatch" and link["kind"] == "github_compare":
+        if event == "workflow_dispatch" and link["kind"] == "github_compare":
             errors = compare_errors(root, link["ref"])
         elif link["kind"] in ("github", "github_raw"):
             ref = "HEAD" if event == "workflow_dispatch" else "refs/tags/" + link["ref"]

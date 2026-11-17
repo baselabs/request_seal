@@ -100,13 +100,14 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    python3 scripts/release.py --check-destinations --for-version "$VERSION" --destination-event workflow_dispatch
    ```
 
-   Before the tag exists, this mode checks HexDocs by real HTTP GET and tagged
-   source and raw-asset paths as regular files in the checked-out commit's HEAD
-   tree. Step 7 checks that same commit, which step 8 will tag. No future GitHub
-   tag URL is requested. The prepublication guard validates authored targets
-   without requesting future URLs. The current version's Hex package page is also
-   a future destination: prepublication checks and dispatch validate its package
-   name and version without fetching it. Inspect registry checksums and optional metadata.
+   Before the tag exists, this mode checks HexDocs and the current version's Hex
+   package page by real HTTP GET, and tagged source and raw-asset paths as regular
+   files in the checked-out commit's HEAD tree. Step 7 checks that same commit,
+   which step 8 will tag. No future GitHub tag URL is requested. The prepublication
+   guard validates authored targets without requesting future URLs, including the
+   current version's Hex package
+   page. Dispatch runs after Hex publication, so that page must already exist.
+   Inspect registry checksums and optional metadata.
    After the tag push, use `--destination-event push` to GET every first-party
    destination. Each real HTTP GET must return 200; redirects fail immediately
    without following them. HTTP 404, 5xx and transport errors retry with 1, 2, 4,
@@ -251,9 +252,10 @@ and every query string fail there. Canonical forms are:
 - `https://github.com/baselabs/request_seal/compare/v<base>...v<version>`:
   dispatch verifies that the base tag exists and is an ancestor of HEAD, and
   push checks the URL live;
-- `https://hex.pm/packages/request_seal/<version>`: prepublication checks and
-  dispatch validate this package and the version in `mix.exs` without requesting
-  the future page; push checks it live. Historical versions are always checked live.
+- `https://hex.pm/packages/request_seal/<version>`: prepublication checks validate
+  this package and the version in `mix.exs` without requesting the future page;
+  dispatch and push check it live, after Hex publication. Historical versions are
+  always checked live.
 
 Public advisory permalinks are also checked live. External standards retain their
 authored URLs. A HexDocs fragment must name an actual HTML `id` in real ExDoc output
