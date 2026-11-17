@@ -4,6 +4,7 @@ import argparse
 import datetime
 import hashlib
 from html import unescape
+from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
@@ -62,7 +63,7 @@ def source_url(source):
 
 
 # CommonMark 0.31.2 §§4.6 and 6.6. Keep token boundaries and source offsets:
-# HTMLParser normalizes attributes, which would lose the original delimiters.
+# Keep the original tag spelling when the HTML tokenizer supplies boundaries.
 HTML_SPACE = r"[ \t\n\r]"
 HTML_NAME = r"[A-Za-z_:][A-Za-z0-9_.:-]*"
 HTML_VALUE = r'''(?:"[^"]*"|'[^']*'|[^ \t\n\r"'=<>`]+)'''
@@ -276,26 +277,28 @@ def pin_markdown_links(body, version, repository_url):
         return repository_url.rstrip("/") + ("/raw/v" if image else "/blob/v") + version + "/" + target
 
     def pin_html(start, end):
+        source = visible[start:end]
+        line_starts = [0] + [match.end() for match in re.finditer("\n", source)]
         attributes = re.compile(r"[ \t\r\n]+(" + HTML_NAME + r")[ \t\r\n]*=[ \t\r\n]*(" + HTML_VALUE + ")")
-        rawtext = None
-        for token in HTML_TOKEN.finditer(visible, start, end):
-            text = token[0]
-            if rawtext:
-                if re.fullmatch(r"</" + rawtext + r"[ \t\r\n]*>", text, re.I):
-                    rawtext = None
-                continue
-            if not re.match(r"<[A-Za-z]", text):
-                continue
-            for attr in attributes.finditer(text):
-                if attr[1].lower() not in ("href", "src"):
-                    continue
-                a, b = token.start() + attr.start(2), token.start() + attr.end(2)
-                if body[a] in "\"'":
-                    a, b = a + 1, b - 1
-                replacements.append((a, b, pinned(body[a:b], attr[1].lower() == "src", html=True)))
-            tag = re.match(r"<(script|style|textarea)\b", text, re.I)
-            if tag:
-                rawtext = tag[1]
+
+        class Attributes(HTMLParser):
+            # Browser raw-text elements cannot contain nested HTML attributes.
+            CDATA_CONTENT_ELEMENTS = ("script", "style", "textarea")
+
+            def handle_starttag(self, tag, attrs):
+                line, column = self.getpos()
+                offset = start + line_starts[line - 1] + column
+                for attr in attributes.finditer(self.get_starttag_text()):
+                    if attr[1].lower() not in ("href", "src"):
+                        continue
+                    a, b = offset + attr.start(2), offset + attr.end(2)
+                    if body[a] in "\"'":
+                        a, b = a + 1, b - 1
+                    replacements.append((a, b, pinned(body[a:b], attr[1].lower() == "src", html=True)))
+
+        parser = Attributes(convert_charrefs=False)
+        parser.feed(source)
+        parser.close()
 
     # Block HTML has no Markdown inlines, even when it contains Markdown fences.
     for start, end, block in blocks:

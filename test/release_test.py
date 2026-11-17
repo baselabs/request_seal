@@ -370,7 +370,10 @@ class ReleaseIdentityTest(unittest.TestCase):
         # §4.6 types 1–7, their different endings, and §6.6 inline raw HTML.
         opaque = (
             "<script>\n[t](docs/a.md)\n\n<img src='literal.png'>\n</script>",
-            "<!--\n[t](docs/a.md)\n-->", "<?\n[t](docs/a.md)\n?>",
+            "<!--\n[t](docs/a.md)\n-->",
+            "<!--\n<img src='literal.png'>",
+            "<?\n<img src='literal.png'>",
+            "<![CDATA[\n<img src='literal.png'>", "<?\n[t](docs/a.md)\n?>",
             "<!DOCTYPE\n[t](docs/a.md)\n>", "<![CDATA[\n[t](docs/a.md)\n]]>",
             "<div>\n[t](docs/a.md)\n</div>", "<custom>\n[t](docs/a.md)\n</custom>",
             "text <!-- [t](docs/a.md) --> end", "text <? [t](docs/a.md) ?> end",
