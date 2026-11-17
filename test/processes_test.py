@@ -82,6 +82,28 @@ class ProcessGroupTest(unittest.TestCase):
     def runtime_identity(self, pid, owner):
         return runtime_identity(pid, owner)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "pidfds bind Linux process identity")
+    def test_pidfd_binds_identity_before_ancestry_reads(self):
+        with processes.command(["sleep", "60"]) as child:
+            observed = []
+
+            def observe(frame, event, operation):
+                if event == "c_call" and operation is os.pidfd_open:
+                    observed.append("pidfd")
+                elif event == "call" and frame.f_code in (linux_process.__code__, subprocess.run.__code__):
+                    observed.append("ancestry")
+
+            sys.setprofile(observe)
+            try:
+                _, _, pidfd = self.runtime_identity(child.pid, os.getpid())
+            finally:
+                sys.setprofile(None)
+            try:
+                self.assertEqual("pidfd", observed[0])
+                self.assertIn("ancestry", observed)
+            finally:
+                os.close(pidfd)
+
     def test_closed_inherited_cleanup_descriptor_does_not_break_a_new_runner(self):
         # Popen closes descriptors by default, while environment variables pass
         # through. Exercise that actual exec boundary, as a test runner does.
