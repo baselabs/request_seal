@@ -30,7 +30,9 @@ the first handler's exception keeps precedence.
 Child outcomes emit no such line. Signals name the signal, without a traceback.
 Once main() chooses an outcome, further owner signals cannot change its status
 or interrupt its report, including through CLI exit and interpreter shutdown.
-In-process callers regain their previous signal mask when main() returns.
+For in-process calls, main() restores the caller's mask after leaving the
+protected owner body. Signals pending then reach the caller's handlers and may
+raise instead of returning the chosen status, after its report is complete.
 As with shell commands, a child can itself choose a reserved status; the prefix
 distinguishes an owner outcome in merged output. Child stdin is /dev/null;
 owner stdin carries only owner commands.
@@ -72,6 +74,11 @@ def _report(message, *, file=None, flush=False):
           file=sys.stderr if file is None else file, flush=flush)
 
 
+def _report_exception(error):
+    message = str(error)
+    _report(f"{type(error).__name__}: {message}" if message else type(error).__name__)
+
+
 def _deliver_pending(pending, original, delivery):
     if isinstance(original, (KeyboardInterrupt, SystemExit)):
         pending.clear()
@@ -90,13 +97,13 @@ def _deliver_pending(pending, original, delivery):
                 error.__context__ = original
             if delivery["failure"] is None:
                 delivery["failure"] = error
+                if original is not None and isinstance(error, SystemExit):
+                    _report_exception(original)
             else:
-                _report(f"{type(error).__name__}: {error}")
+                _report_exception(error)
         delivery["active"] = False
     failure = delivery["failure"]
     if failure is not None:
-        if original is not None and isinstance(failure, SystemExit):
-            _report(f"{type(original).__name__}: {original}")
         raise failure
 
 
@@ -154,10 +161,10 @@ def _install_cleanup_handlers():
             current = frame
             while current is not None:
                 # The owner has already finished resource cleanup. Protect its
-                # selected outcome through reporting and main's final return,
+                # selected outcome through reporting and the body's return,
                 # including signals already scheduled before a mask could act.
                 # An except binding selects failure before its first statement.
-                if (current.f_code is main.__code__
+                if (current.f_code is _owner_main.__code__
                         and (current.f_locals.get("outcome", {}).get("chosen", False)
                              or "error" in current.f_locals)):
                     return
@@ -626,9 +633,19 @@ class _OwnerParser(argparse.ArgumentParser):
 
 
 def main(*, restore_signal_mask=True):
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    try:
+        return _owner_main()
+    finally:
+        # The protected frame must be gone before unmasking: pending signals
+        # belong to an in-process caller, whose handlers may raise here.
+        if restore_signal_mask:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+
+def _owner_main():
     global _report_prefix
     previous_prefix = _report_prefix
-    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
     outcome = {"chosen": False}
     try:
         _report_prefix = "requestseal-owner: "
@@ -715,8 +732,6 @@ def main(*, restore_signal_mask=True):
         return 128 + signum
     finally:
         _report_prefix = previous_prefix
-        if restore_signal_mask:
-            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
 if __name__ == "__main__":

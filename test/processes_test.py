@@ -846,7 +846,7 @@ with cleanup_on_exit(cleanup):
         result = processes.run([sys.executable, "-B", "-c", source], timeout=10,
                                capture_output=True, check=False)
         self.assertEqual(143, result.returncode, result.stderr)
-        self.assertEqual(b"KeyboardInterrupt: \n", result.stderr)
+        self.assertEqual(b"KeyboardInterrupt\n", result.stderr)
 
     def test_interrupt_during_termination_delivery_keeps_exit_143(self):
         source = '''import os, signal, sys
@@ -885,7 +885,7 @@ except SystemExit:
                 result = processes.run([sys.executable, "-B", "-c", source, window], timeout=10,
                                        capture_output=True, check=False)
                 self.assertEqual(143, result.returncode, result.stderr)
-                self.assertEqual(b"KeyboardInterrupt: \n" if window == "handler" else b"", result.stderr)
+                self.assertEqual(b"KeyboardInterrupt\n" if window == "handler" else b"", result.stderr)
 
     def test_distinct_pending_signals_use_class_then_arrival_order(self):
         source = '''import os, signal, sys
@@ -988,6 +988,31 @@ raise SystemExit(processes.main())
             b"requestseal-owner: EOFError: command owner closed stdin",
             b"requestseal-owner: received SIGTERM",
         ], result.stderr.splitlines())
+
+    def test_original_exception_is_reported_before_a_dropped_pending_handler(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+import processes
+processes.install_signal_handlers()
+original = ValueError(sys.argv[1])
+def cleanup():
+    os.kill(os.getpid(), signal.SIGINT)
+    os.kill(os.getpid(), signal.SIGTERM)
+try:
+    with processes.cleanup_on_exit(cleanup):
+        raise original
+except SystemExit as error:
+    assert error.code == 143, error
+    assert error.__context__ is original, repr(error.__context__)
+    raise
+'''
+        for message in ("original failure", ""):
+            with self.subTest(message=message):
+                result = processes.run([sys.executable, "-B", "-c", source, message], timeout=10,
+                                       capture_output=True, check=False)
+                self.assertEqual(143, result.returncode, result.stderr)
+                first = b"ValueError: original failure" if message else b"ValueError"
+                self.assertEqual(first + b"\nKeyboardInterrupt\n", result.stderr)
 
     def test_in_flight_terminating_exceptions_keep_precedence(self):
         source = '''import os, signal, sys
@@ -1238,7 +1263,7 @@ else:
 sys.path.insert(0, "scripts")
 import processes
 outcome, window = sys.argv[1:]
-lines, start = inspect.getsourcelines(processes.main)
+lines, start = inspect.getsourcelines(processes._owner_main)
 classification = next(start + index for index, line in enumerate(lines)
                       if line.strip() == "if isinstance(error, KeyboardInterrupt):")
 catching = next(start + index + 1 for index, line in enumerate(lines)
@@ -1267,14 +1292,14 @@ def line(code, number):
 sys.monitoring.use_tool_id(tool, "owner-signals")
 sys.monitoring.register_callback(tool, events.PY_START, entering)
 sys.monitoring.register_callback(tool, events.LINE, line)
-sys.monitoring.set_local_events(tool, processes.main.__code__, events.LINE)
+sys.monitoring.set_local_events(tool, processes._owner_main.__code__, events.LINE)
 sys.monitoring.set_local_events(tool, processes.ProcessEvents.select.__code__, events.PY_START)
 sys.monitoring.set_local_events(tool, processes._report.__code__, events.PY_START)
 sys.argv = ["processes.py", "--timeout", "1", "--", "sleep", "60"]
 try:
-    status = processes.main()
+    status = processes.main(restore_signal_mask=False)
 finally:
-    for code in (processes.main.__code__, processes.ProcessEvents.select.__code__, processes._report.__code__):
+    for code in (processes._owner_main.__code__, processes.ProcessEvents.select.__code__, processes._report.__code__):
         sys.monitoring.set_local_events(tool, code, 0)
     sys.monitoring.free_tool_id(tool)
 assert second, "second signal was not injected in the chosen outcome path"
@@ -1413,6 +1438,55 @@ processes._report("neutral reporter")
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertEqual(b"neutral reporter", result.stderr.splitlines()[-1])
                 self.assertEqual(1, result.stderr.count(b"requestseal-owner:"))
+
+    def test_in_process_owner_delivers_reporting_signals_to_its_caller_after_the_status_line(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+import processes
+signum = getattr(signal, sys.argv[1])
+previous = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+injected = False
+tool = sys.monitoring.DEBUGGER_ID
+events = sys.monitoring.events
+def reporting(code, offset):
+    global injected
+    if not injected:
+        injected = True
+        os.kill(os.getpid(), signum)
+        assert signum in signal.sigpending(), "reporting signal was not blocked"
+sys.monitoring.use_tool_id(tool, "caller-signals")
+sys.monitoring.register_callback(tool, events.PY_START, reporting)
+sys.monitoring.set_local_events(tool, processes._report.__code__, events.PY_START)
+sys.argv = ["processes.py", "--timeout", "1", "--", "sleep", "60"]
+try:
+    try:
+        processes.main()
+    except (KeyboardInterrupt, SystemExit) as error:
+        assert injected, "signal was not injected during reporting"
+        if signum == signal.SIGINT:
+            assert isinstance(error, KeyboardInterrupt), repr(error)
+        else:
+            assert isinstance(error, SystemExit) and error.code == 143, repr(error)
+        traceback = error.__traceback__
+        while traceback is not None:
+            assert traceback.tb_frame.f_code is not processes._owner_main.__code__
+            traceback = traceback.tb_next
+        assert signal.pthread_sigmask(signal.SIG_BLOCK, set()) == previous
+        processes._report("caller received " + type(error).__name__)
+    else:
+        raise AssertionError("main swallowed the caller's reporting signal")
+finally:
+    sys.monitoring.set_local_events(tool, processes._report.__code__, 0)
+    sys.monitoring.free_tool_id(tool)
+'''
+        for name, exception in (("SIGINT", b"KeyboardInterrupt"), ("SIGTERM", b"SystemExit")):
+            with self.subTest(signal=name):
+                result = subprocess.run([sys.executable, "-B", "-c", source, name], cwd=ROOT,
+                                        input=b"stop\n", capture_output=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(b"", result.stdout)
+                self.assertEqual(b"requestseal-owner: command stopped\ncaller received "
+                                 + exception + b"\n", result.stderr)
 
     def test_child_stdin_is_eof_while_the_owner_command_channel_still_works(self):
         source = 'import sys,time; assert sys.stdin.buffer.read() == b""; print("EOF",flush=True); time.sleep(60)'

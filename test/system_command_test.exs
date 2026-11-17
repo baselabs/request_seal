@@ -327,6 +327,94 @@ defmodule RequestSeal.SystemCommandTest do
     end
   end
 
+  test "writes to closed owner stdin report and retain the real port exit" do
+    for request <- [:stop, :terminate, :stop_signal, :continue_signal, :idle] do
+      dir = agent_directory()
+      {owner, pid, port, owner_pid} = closed_stdin_agent(dir)
+      monitor = Process.monitor(owner)
+      expected = {:error, "agent owner port exited: :epipe"}
+
+      try do
+        close_owner_stdin(dir, owner, port, owner_pid)
+        :erlang.trace(owner, true, [:receive])
+
+        case request do
+          :stop ->
+            assert ^expected = SystemCommand.stop_agent(owner)
+
+          :terminate ->
+            assert ^expected = SystemCommand.signal_agent(owner, :terminate)
+
+          :stop_signal ->
+            assert ^expected = SystemCommand.signal_agent(owner, :stop)
+
+          :continue_signal ->
+            assert ^expected = SystemCommand.signal_agent(owner, :continue)
+
+          :idle ->
+            # No request is pending: the loop itself must retain the VM's EXIT.
+            assert Port.command(port, "stop\n")
+        end
+
+        # This is emitted by the VM after its real write fails, never injected
+        # as an Elixir message. The linked owner must survive that same EXIT.
+        assert_receive {:trace, ^owner, :receive, {:EXIT, ^port, :epipe}}, 1_000
+
+        if request in [:stop_signal, :continue_signal, :idle] do
+          assert eventually(fn -> terminal_agent?(owner) end)
+          assert Process.alive?(owner)
+          assert ^expected = SystemCommand.signal_agent(owner, :stop)
+          assert ^expected = SystemCommand.signal_agent(owner, :continue)
+
+          if request == :continue_signal do
+            assert ^expected = SystemCommand.signal_agent(owner, :terminate)
+          else
+            assert ^expected = SystemCommand.stop_agent(owner)
+          end
+        end
+
+        assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}, 1_000
+        assert eventually(fn -> Port.info(port) == nil end)
+        assert :ok = SystemCommand.stop_agent(owner)
+      after
+        release_closed_stdin_agent(dir, owner, pid, owner_pid)
+      end
+    end
+  end
+
+  test "an owner retaining a port exit still exits when its caller dies" do
+    dir = agent_directory()
+    parent = self()
+
+    {caller, caller_monitor} =
+      spawn_monitor(fn ->
+        send(parent, {:closed_stdin_agent, closed_stdin_agent(dir)})
+
+        receive do
+          :finish -> :ok
+        end
+      end)
+
+    assert_receive {:closed_stdin_agent, {owner, pid, port, owner_pid}}, 15_000
+    monitor = Process.monitor(owner)
+
+    try do
+      close_owner_stdin(dir, owner, port, owner_pid)
+      assert Port.command(port, "stop\n")
+      assert eventually(fn -> terminal_agent?(owner) end)
+      assert {:error, "agent owner port exited: :epipe"} =
+               SystemCommand.signal_agent(owner, :continue)
+
+      send(caller, :finish)
+      assert_receive {:DOWN, ^caller_monitor, :process, ^caller, :normal}
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
+      assert eventually(fn -> Port.info(port) == nil end)
+    after
+      if Process.alive?(caller), do: Process.exit(caller, :kill)
+      release_closed_stdin_agent(dir, owner, pid, owner_pid)
+    end
+  end
+
   test "an idle successful exit can be stopped twice" do
     dir = agent_directory()
     socket = Path.join(dir, "agent")
@@ -456,6 +544,71 @@ defmodule RequestSeal.SystemCommandTest do
     case System.cmd("ps", ["-p", pid, "-o", "stat="]) do
       {state, 0} -> String.starts_with?(String.trim(state), "T")
       _ -> false
+    end
+  end
+
+  defp closed_stdin_agent(dir) do
+    runner = Path.join(dir, "owner.py")
+
+    # Exercise the real owner and ssh-agent, adding only a signal-controlled
+    # pause with stdin closed. Suspending the BEAM receiver cannot suspend the
+    # spawn driver's independent reaping and EOF handling after an OS exit;
+    # this hook makes the no-reader/no-exit-status window deterministic instead.
+    File.write!(runner, """
+    import os, signal, sys, time
+    from pathlib import Path
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, #{inspect(Path.expand("../scripts", __DIR__))})
+    import processes
+    closed = Path(#{inspect(Path.join(dir, "stdin-closed"))})
+    release = Path(#{inspect(Path.join(dir, "release"))})
+    def close_stdin(signum, frame):
+        os.close(0)
+        closed.touch()
+        deadline = time.monotonic() + 5
+        while not release.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        # End through the real owner's cleanup even if the test was killed.
+        raise EOFError("command owner closed stdin")
+    signal.signal(signal.SIGUSR1, close_stdin)
+    raise SystemExit(processes.main(restore_signal_mask=False))
+    """)
+
+    {owner, pid} = SystemCommand.agent(Path.join(dir, "agent"), runner: runner)
+    [port] = Enum.filter(Port.list(), &(Port.info(&1, :connected) == {:connected, owner}))
+    {:os_pid, owner_pid} = Port.info(port, :os_pid)
+    {owner, pid, port, owner_pid}
+  end
+
+  defp close_owner_stdin(dir, owner, port, owner_pid) do
+    :erlang.suspend_process(owner)
+
+    try do
+      assert {_, 0} = System.cmd("kill", ["-USR1", to_string(owner_pid)])
+      assert eventually(fn -> File.exists?(Path.join(dir, "stdin-closed")) end)
+      assert Port.info(port) != nil
+      {:messages, messages} = Process.info(owner, :messages)
+      refute Enum.any?(messages, &match?({^port, {:exit_status, _}}, &1))
+    after
+      :erlang.resume_process(owner)
+    end
+  end
+
+  defp release_closed_stdin_agent(dir, owner, pid, owner_pid) do
+    File.write!(Path.join(dir, "release"), "+")
+
+    try do
+      SystemCommand.stop_agent(owner)
+    after
+      try do
+        assert eventually(fn ->
+                 match?({_, 1}, System.cmd("ps", ["-p", to_string(owner_pid), "-o", "pid="]))
+               end)
+
+        assert {_, 1} = System.cmd("ps", ["-p", pid, "-o", "pid="])
+      after
+        File.rm_rf!(dir)
+      end
     end
   end
 
