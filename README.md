@@ -36,7 +36,7 @@ Add optional dependencies for the integrations you use. The table is a reference
 | Dependency | Requirement | Use |
 | --- | --- | --- |
 | `:plug` | `~> 1.20.3` | Plug pipelines, also used by Phoenix |
-| `:bandit` | `~> 1.14` | To run the example receiver |
+| `:bandit` | `~> 1.15` | To run the example receiver |
 | `:phoenix` | `~> 1.8.15` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.24.0 and < 0.25.0` | Finch transport and caller-started pools |
@@ -53,7 +53,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.24.0 and < 0.25.0"},
   {:plug, "~> 1.20.3"},
-  {:bandit, "~> 1.14"},
+  {:bandit, "~> 1.15"},
   {:jason, "~> 1.0"}
 ]
 ```

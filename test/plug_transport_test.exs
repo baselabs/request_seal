@@ -707,10 +707,17 @@ defmodule RequestSeal.PlugTransportTest do
   test "Bandit compression invalidates covered bytes; disabling compression preserves them", %{
     handle: h
   } do
-    for compress <- [true, false] do
+    # Bandit skips compressing bodies under `compress_threshold` bytes (300 by
+    # default); the threshold is zero here so the small test body is compressed.
+    for http_options <- [
+          [compress: true, compress_threshold: 0, log_protocol_errors: false],
+          [compress: false, log_protocol_errors: false]
+        ] do
+      compress = Keyword.fetch!(http_options, :compress)
+
       {origin, _} =
         T.start([sign: %{T.spec(T.response_components()) | label: "res"}, signer: h],
-          http_options: [compress: compress]
+          http_options: http_options
         )
 
       assert {:ok, req} =

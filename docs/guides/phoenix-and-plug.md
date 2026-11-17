@@ -136,7 +136,7 @@ defmodule WebhookApp.ResponseSignature do
 end
 ```
 
-Cover the final bytes: disable server compression after signing. File and chunked bodies cannot establish retained body integrity. Pending `resp_cookies` prevent signing `set-cookie`, because Plug merges cookies after callbacks; use explicit final response headers when signing cookies. Application plugs that modify captured private state are trusted server code.
+Cover the final bytes: disable server compression after signing. Bandit compresses only bodies of at least its `compress_threshold` (300 bytes by default), so a small signed response can verify while a larger one fails; set `compress: false` rather than relying on the threshold. File and chunked bodies cannot establish retained body integrity. Pending `resp_cookies` prevent signing `set-cookie`, because Plug merges cookies after callbacks; use explicit final response headers when signing cookies. Application plugs that modify captured private state are trusted server code.
 
 ## Origin and transport options
 

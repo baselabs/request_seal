@@ -25,7 +25,7 @@ defmodule RequestSeal.ReadmeTest do
           {:req, "~> 0.7.4"},
           {:finch, ">= 0.24.0 and < 0.25.0"},
           {:plug, "~> 1.20.3"},
-          {:bandit, "~> 1.14"},
+          {:bandit, "~> 1.15"},
           {:jason, "~> 1.0"}
         ]
         ''',

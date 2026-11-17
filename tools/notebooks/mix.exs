@@ -14,7 +14,7 @@ defmodule RequestSealNotebooks.MixProject do
         {:aws_credentials, "~> 1.1.1", override: true, runtime: false},
         # Override upstream application pins with advisory-fixed releases.
         # This tooling executes importer/exporter only; every override is lockfile-audited.
-        {:bandit, "~> 1.14", override: true, runtime: false},
+        {:bandit, "~> 1.15", override: true, runtime: false},
         # Livebook 0.19.10 pins ecto 3.13.6 (EEF-CVE-2026-118391); 3.14.3 is the fixed release.
         {:ecto, "~> 3.14.3", override: true, runtime: false},
         {:phoenix, "~> 1.8.15", override: true, runtime: false},
@@ -33,7 +33,9 @@ defmodule RequestSealNotebooks.MixProject do
 
   defp latest_elixir do
     ~r/^elixir\s+(.+)$/m
-    |> Regex.run(File.read!(Path.expand("../../.tool-versions", __DIR__)), capture: :all_but_first)
+    |> Regex.run(File.read!(Path.expand("../../.tool-versions", __DIR__)),
+      capture: :all_but_first
+    )
     |> hd()
     |> String.split()
     |> Enum.map(&(&1 |> String.split("-otp-") |> hd() |> Version.parse!()))

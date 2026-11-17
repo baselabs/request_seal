@@ -40,6 +40,10 @@
   `:pool_not_available` before their connection is ready, directly and through
   Req. CI now compiles and tests a fresh consumer at every published
   dependency floor.
+- Document Bandit 1.15.0 or later for the example receiver; it fixes
+  GHSA-j9wq-h5xx-5qx5. Bandit 1.15 skips compressing bodies under 300 bytes, so
+  an enabled compressor breaks covered bytes only for larger responses; keep
+  `compress: false` on signed responses.
 
 ## 1.0.0 - 2026-11-11
 
