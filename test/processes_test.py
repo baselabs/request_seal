@@ -104,13 +104,17 @@ class ProcessGroupTest(unittest.TestCase):
                     fcntl.flock(handle, fcntl.LOCK_UN)
             finally:
                 if parent.poll() is None:
-                    parent.kill()
-                parent.communicate()
-                if ready.exists():
+                    parent.terminate()  # Let the real runner clean up its group.
+                if ready.exists() and ready.read_text().strip():
                     try:
                         os.kill(int(ready.read_text()), signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+                try:
+                    parent.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    parent.kill()
+                    parent.communicate(timeout=10)
 
     def test_timeout_kills_runtime_even_after_its_launcher_exits_on_term(self):
         self.assert_tree_stopped()
