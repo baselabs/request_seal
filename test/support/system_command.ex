@@ -122,13 +122,10 @@ defmodule RequestSeal.SystemCommand do
   defp agent_loop(port, monitor) do
     receive do
       {:stop, from, ref} ->
-        finish_stop(port)
-        send(from, {ref, :ok})
+        send(from, {ref, stop_port(port)})
 
       {{:signal, :terminate}, from, ref} ->
-        true = Port.command(port, "signal SIGTERM\n")
-
-        case await_exit(port, @shutdown_timeout) do
+        case command_exit(port, "signal SIGTERM\n") do
           {:ok, status} -> send(from, {ref, status})
           {:error, message} -> raise message
         end
@@ -173,33 +170,31 @@ defmodule RequestSeal.SystemCommand do
   end
 
   defp stop_port(port) do
+    case command_exit(port, "stop\n") do
+      {:ok, 0} -> :ok
+      {:ok, status} -> {:error, "agent owner shutdown failed: #{status}"}
+      {:error, message} -> {:error, message}
+    end
+  end
+
+  defp command_exit(port, command) do
     # A caller's DOWN may precede an already queued port status. Consume that
     # terminal state before attempting to write to the command channel.
     receive do
-      {^port, {:exit_status, _status}} -> :ok
+      {^port, {:exit_status, status}} -> {:ok, status}
     after
       0 ->
         if Port.info(port) do
           try do
-            true = Port.command(port, "stop\n")
-
-            case await_exit(port, @shutdown_timeout) do
-              {:ok, 0} -> :ok
-              {:ok, status} -> {:error, "agent owner shutdown failed: #{status}"}
-              {:error, message} -> {:error, message}
-            end
+            true = Port.command(port, command)
           rescue
-            error ->
-              # Port death can race the command write after the initial check.
-              receive do
-                {^port, {:exit_status, _status}} -> :ok
-              after
-                0 -> {:error, "agent owner shutdown failed: " <> Exception.message(error)}
-              end
+            # Port death can race the write. Its real status still arrives on
+            # the exit-status channel; a closed port is not a successful stop.
+            ArgumentError -> :ok
           end
-        else
-          :ok
         end
+
+        await_exit(port, @shutdown_timeout)
     end
   end
 

@@ -2,7 +2,7 @@
 
 ## Context
 
-OBSERVED in the scaffold: Elixir 1.20.4 and Erlang/OTP 29.1.1 are exact development pins, with an OTP 29 config assertion. Required developer platforms are macOS and Linux; Windows developers use WSL2 through the Linux path. CI runs on Linux only. OBSERVED in the Hex dependency metadata recorded in the two lockfiles: root ExDoc 0.40.4 requires `earmark_parser ~> 1.4.46`, while the Livebook 0.19.10 Hex release requires `earmark_parser 1.4.44`; the notebook tool also has older exact transitives with advisories requiring inspection. These are separate dependency domains, not a reason to loosen either graph silently.
+OBSERVED in the scaffold: Elixir 1.20.4 and Erlang/OTP 29.1.1 are exact development pins, with an OTP 29 config assertion. Required developer platforms are macOS and Linux; Windows developers use WSL2 through the Linux path. CI runs the full gate on Linux and Python process-ownership tests on macOS. OBSERVED in the Hex dependency metadata recorded in the two lockfiles: root ExDoc 0.40.4 requires `earmark_parser ~> 1.4.46`, while the Livebook 0.19.10 Hex release requires `earmark_parser 1.4.44`; the notebook tool also has older exact transitives with advisories requiring inspection. These are separate dependency domains, not a reason to loosen either graph silently.
 
 ## Decision
 
@@ -26,7 +26,8 @@ Two lockfiles and two audit surfaces are maintained. Development identity is una
 The root config checks the OTP floor; Mix checks `:json` because consumers do not load library config.
 `.tool-versions` selects exact development and compatibility-test identities;
 notebook tooling retains its own exact Elixir/OTP assertions.
-macOS and Linux use the same commands; Windows uses WSL2. CI runs on Linux.
+macOS and Linux use the same commands; Windows uses WSL2. CI runs the full gate
+on Linux and Python process-ownership tests on macOS.
 CI actions require immutable commit SHAs.
 Public-key encoders try ASN.1 term parameters, then DER where the runtime requires it,
 without predicting encoder support from an OTP version string.

@@ -2,6 +2,11 @@
 
 Entry points must call install_signal_handlers() before acquiring resources.
 Importing this module does not change signal handlers.
+Protected calls also wrap current handlers on entry from the main thread.
+For standalone cleanup, a KeyboardInterrupt or SystemExit visible through
+sys.exc_info() keeps precedence, including in a finally block. An ordinary
+handled exception does not suppress signals; Python supplies implicit chaining.
+Context managers use their own __exit__ exception arguments instead.
 
 CLI outcome                              Status
 Child exit                               The child's status
@@ -11,9 +16,11 @@ Owner failure or command-channel EOF      125
 Usage error                              2 (with usage text)
 Owner signaled (TERM, HUP, INT)           128 + N, after group cleanup
 Explicit stop or help                    0
+Exception interrupted by owner signal    128 + N, plus original-exception report
 
-Every owner outcome emits one stderr line beginning ``requestseal-owner:``;
-child outcomes emit no such line. Signals name the signal, without a traceback.
+Every owner outcome emits one stderr line beginning ``requestseal-owner:``.
+An interrupted ordinary exception adds one prefixed type-and-message report.
+Child outcomes emit no such line. Signals name the signal, without a traceback.
 As with shell commands, a child can itself choose a reserved status; the prefix
 distinguishes an owner outcome in merged output. Child stdin is /dev/null;
 owner stdin carries only owner commands.
@@ -33,6 +40,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 SIGNALS = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
@@ -46,59 +54,83 @@ CLEANUP_SECONDS = 5
 # hangup precede interrupt; an in-flight KeyboardInterrupt or SystemExit wins.
 # These command-line owners are single-threaded.
 _pending_signals = {}
+_report_prefix = ""
 
 
-def _deliver_pending(pending, original):
+def _report(message, *, file=None, flush=False):
+    print(_report_prefix + " ".join(str(message).splitlines()),
+          file=sys.stderr if file is None else file, flush=flush)
+
+
+def _deliver_pending(pending, original, delivery):
     if isinstance(original, (KeyboardInterrupt, SystemExit)):
+        pending.clear()
         return
-    failure = None
-    for handler, signum, frame in sorted(
-            pending, key=lambda item: item[1] == signal.SIGINT):
+    while pending:
+        # Keep new signals queued until a handler's raised exception has been
+        # recorded. The queue remains live while handlers themselves execute.
+        delivery["active"] = True
+        pending.sort(key=lambda item: item[1] == signal.SIGINT)
+        handler, signum, frame = pending.pop(0)
+        delivery["seen"].add(signum)
         try:
             handler(signum, frame)
         except BaseException as error:
             if original is not None:
                 error.__context__ = original
-            if failure is None:
-                failure = error
+            if delivery["failure"] is None:
+                delivery["failure"] = error
+        delivery["active"] = False
+    failure = delivery["failure"]
     if failure is not None:
         if original is not None and isinstance(failure, SystemExit):
-            message = " ".join(str(original).splitlines())
-            print(f"{type(original).__name__}: {message}", file=sys.stderr)
+            _report(f"{type(original).__name__}: {original}")
         raise failure
 
 
 def _cleanup_call(function):
     @wraps(function)
     def protected(*args, **kwargs):
-        # A surrounding except block is not an exception crossing this cleanup.
-        original = args[2] if function.__name__ == "__exit__" else None
+        original = sys.exc_info()[1]
+        if function.__name__ == "__exit__":
+            original = args[2]
+        elif function.__name__ == "__enter__" or not isinstance(original, (KeyboardInterrupt, SystemExit)):
+            original = None
         finished = False
+        delivery = {"active": False, "failure": None, "seen": set()}
         try:
-            result = function(*args, **kwargs)
-            if function.__name__ == "__exit__" and result:
-                original = None  # The manager suppressed the body exception.
-            finished = True
-            _deliver_pending(_pending_signals.pop(id(sys._getframe()), []), original)
-            return result
-        except BaseException as error:
-            original = error
-            finished = False
+            _install_cleanup_handlers()
             try:
-                # Python does not call __exit__ when __enter__ raises after yield.
-                if function.__name__ == "__enter__" and args[0].entered:
-                    args[0].manager.__exit__(*sys.exc_info())
-            except BaseException as cleanup_error:
-                original = cleanup_error
-                raise
-            finally:
+                result = function(*args, **kwargs)
+                if function.__name__ == "__exit__" and result:
+                    original = None  # The manager suppressed the body exception.
+                pending = _pending_signals.setdefault(id(sys._getframe()), [])
                 finished = True
-                _deliver_pending(_pending_signals.pop(id(sys._getframe()), []), original)
-            raise
+                _deliver_pending(pending, original, delivery)
+                return result
+            except BaseException as error:
+                original = error
+                finished = False
+                try:
+                    # Python does not call __exit__ when __enter__ raises after yield.
+                    if function.__name__ == "__enter__" and args[0].entered:
+                        args[0].manager.__exit__(*sys.exc_info())
+                except BaseException as cleanup_error:
+                    original = cleanup_error
+                    raise
+                finally:
+                    pending = _pending_signals.setdefault(id(sys._getframe()), [])
+                    finished = True
+                    _deliver_pending(pending, original, delivery)
+                raise
+        finally:
+            _pending_signals.pop(id(sys._getframe()), None)
     return protected
 
 
 def _install_cleanup_handlers():
+    if threading.current_thread() is not threading.main_thread():
+        return
     for signum in SIGNALS:
         handler = signal.getsignal(signum)
         if not callable(handler) or getattr(handler, "_cleanup_dispatcher", False):
@@ -110,14 +142,18 @@ def _install_cleanup_handlers():
             current = frame
             while current is not None:
                 if current.f_code is _CleanupContext.__exit__.__code__:
+                    delivery = current.f_locals.get("delivery", {})
                     terminating |= isinstance(current.f_locals.get("original"),
                                               (KeyboardInterrupt, SystemExit))
-                    if not current.f_locals.get("finished", False):
+                    terminating |= isinstance(delivery.get("failure"), (KeyboardInterrupt, SystemExit))
+                    if (not current.f_locals.get("finished", False) or delivery.get("active")
+                            or _pending_signals.get(id(current))):
                         protected = current
                 current = current.f_back
             if protected is not None:
                 pending = _pending_signals.setdefault(id(protected), [])
-                if all(item[1] != signum for item in pending):
+                seen = protected.f_locals.get("delivery", {}).get("seen", ())
+                if signum not in seen and all(item[1] != signum for item in pending):
                     pending.append((handler, signum, frame))
             elif not terminating:
                 handler(signum, frame)
@@ -524,6 +560,11 @@ def maximum_timeout():
         scale = 1_000_000_000
         maximum = min((1 << (struct.calcsize("q") * 8 - 1)) - 1,
                       ((1 << (struct.calcsize("l") * 8 - 1)) - 1) * scale)
+        # XNU's kevent_legacy_get_deadline calls timespec_is_valid, which
+        # rejects tv_sec > INT32_MAX (bsd/kern/kern_time.c):
+        # https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_event.c
+        # https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_time.c
+        maximum = min(maximum, ((1 << 31) - 1) * scale)
     seconds = maximum / scale
     numerator, denominator = seconds.as_integer_ratio()
     if numerator * scale > maximum * denominator:
@@ -542,15 +583,18 @@ def command_timeout(value):
 class _OwnerParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        self.exit(2, f"requestseal-owner: {message}\n")
+        _report(message)
+        self.exit(2)
 
     def exit(self, status=0, message=None):
         if status == 0:
-            print("requestseal-owner: help requested", file=sys.stderr)
+            _report("help requested")
         super().exit(status, message)
 
 
 def main():
+    global _report_prefix
+    _report_prefix = "requestseal-owner: "
     try:
         install_signal_handlers()
         parser = _OwnerParser(description=__doc__)
@@ -588,21 +632,25 @@ def main():
                             if signum not in (signal.SIGSTOP, signal.SIGCONT, signal.SIGTERM):
                                 raise ValueError("unsupported agent signal")
                             # The leader is unreaped here, so its PID is still ours.
-                            os.kill(process.pid, signum)
-                            print(f"requestseal-owner: signal {signal.Signals(signum).name}", flush=True)
+                            if signum == signal.SIGTERM:
+                                signal_group(process, signum)
+                                signal_group(process, signal.SIGCONT)
+                            else:
+                                os.kill(process.pid, signum)
+                            _report(f"signal {signal.Signals(signum).name}", file=sys.stdout, flush=True)
                         else:
                             raise ValueError("invalid owner command")
                     if len(incoming) > 128:
                         raise ValueError("owner command too long")
         if stopping:
-            print("requestseal-owner: command stopped", file=sys.stderr)
+            _report("command stopped")
             return 0
         return 128 - process.returncode if process.returncode < 0 else process.returncode
     except subprocess.TimeoutExpired as error:
-        print(f"requestseal-owner: command deadline exceeded after {error.timeout}s", file=sys.stderr)
+        _report(f"command deadline exceeded after {error.timeout}s")
         return 124
     except Exception as error:
-        print("requestseal-owner: " + " ".join(str(error).splitlines()), file=sys.stderr)
+        _report(error)
         return 125
     except (KeyboardInterrupt, SystemExit) as error:
         if isinstance(error, KeyboardInterrupt):
@@ -611,7 +659,7 @@ def main():
             signum = error.code - 128 if isinstance(error.code, int) else None
         if signum not in SIGNALS:
             raise
-        print(f"requestseal-owner: received {signal.Signals(signum).name}", file=sys.stderr)
+        _report(f"received {signal.Signals(signum).name}")
         return 128 + signum
 
 

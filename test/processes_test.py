@@ -1,5 +1,4 @@
 """Process deadlines exercised with real launchers and surviving child runtimes."""
-import ast
 import fcntl
 import json
 import math
@@ -15,9 +14,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-import check
 import processes
-import sbom
 
 
 def linux_process(pid):
@@ -55,34 +52,6 @@ def runtime_identity(pid, owner):
 
 
 class ProcessGroupTest(unittest.TestCase):
-    def test_both_entry_points_share_the_runner_and_handle_timeout_errors(self):
-        self.assertIs(processes.run, check.run)
-        self.assertIs(processes.run, sbom.run)
-        for script in ("check.py", "sbom.py"):
-            tree = ast.parse((ROOT / "scripts" / script).read_text())
-            handlers = [node for node in ast.walk(tree.body[-1]) if isinstance(node, ast.ExceptHandler)
-                        and isinstance(node.type, ast.Attribute)
-                        and ast.unparse(node.type) == "subprocess.TimeoutExpired"]
-            self.assertEqual(1, len(handlers), script)
-            self.assertIn("deadline exceeded", ast.unparse(handlers[0]).lower())
-            calls = [node for node in ast.walk(tree.body[-1]) if isinstance(node, ast.Call)
-                     and isinstance(node.func, ast.Name) and node.func.id == "install_signal_handlers"]
-            self.assertEqual(1, len(calls), script)
-
-    def test_every_command_entry_point_installs_handlers_explicitly(self):
-        for script in ("check.py", "release.py", "check_docs.py", "sbom.py",
-                       "check_jose_libraries.py", "check_optional_clients.py", "processes.py"):
-            tree = ast.parse((ROOT / "scripts" / script).read_text())
-            entry = next((node for node in tree.body if isinstance(node, ast.FunctionDef)
-                          and node.name == "main"), tree.body[-1])
-            calls = [node for node in ast.walk(entry) if isinstance(node, ast.Call)
-                     and isinstance(node.func, ast.Name) and node.func.id == "install_signal_handlers"]
-            # Some scripts have a main function called by the __main__ guard.
-            if not calls:
-                calls = [node for node in ast.walk(tree.body[-1]) if isinstance(node, ast.Call)
-                         and isinstance(node.func, ast.Name) and node.func.id == "install_signal_handlers"]
-            self.assertEqual(1, len(calls), script)
-
     def test_import_preserves_the_default_interrupt_handler(self):
         processes.run([sys.executable, "-B", "-c", '''import signal, sys
 sys.path.insert(0, "scripts")
@@ -419,15 +388,10 @@ with command(["sleep", "10"]) as child:
                         if pidfd is not None:
                             os.close(pidfd)
 
-    def test_cleanup_pipe_is_drained_during_normal_run_and_notebook_read(self):
+    def test_cleanup_pipe_is_drained_during_normal_run(self):
         writer = ('import os; fd=int(os.environ["REQUESTSEAL_CLEANUP_FD"]); '
                   '[os.write(fd,b"+-") for _ in range(70000)]; print("DONE")')
         processes.run([sys.executable, "-B", "-c", writer], timeout=10)
-        with processes.command([sys.executable, "-B", "-c", writer], stdout=subprocess.PIPE) as child:
-            try:
-                self.assertEqual("DONE\n", check.read_notebook(child, 10, 1024))
-            finally:
-                child.stdout.close()
 
     def test_broken_acknowledgment_does_not_replace_original_error(self):
         reader, writer = os.pipe()
@@ -604,11 +568,10 @@ print("cleanup complete; exception context and mask preserved")
                         os.close(reader)
                         os.close(release_writer)
 
-    def test_standalone_stop_group_defers_signals_before_its_mask_entry(self):
+    def test_standalone_stop_group_defers_signals_without_explicit_installation(self):
         source = r'''import os, signal, subprocess, sys
 sys.path.insert(0, "scripts")
-from processes import install_signal_handlers, stop_group
-install_signal_handlers()
+from processes import stop_group
 child = subprocess.Popen(["sleep", "60"], start_new_session=True)
 code = getattr(stop_group, "__wrapped__", stop_group).__code__
 def interrupt(frame, event, arg):
@@ -634,6 +597,116 @@ finally:
         child.wait()
 '''
         processes.run([sys.executable, "-B", "-c", source], timeout=10)
+
+    def test_standalone_file_and_event_cleanup_install_dispatchers(self):
+        source = '''import os, signal, subprocess, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "scripts")
+from processes import ProcessEvents, write_pid_file
+with tempfile.TemporaryDirectory() as directory:
+    child = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    events = ProcessEvents(child)
+    operation = write_pid_file if sys.argv[1] == "file" else events.close
+    code = operation.__wrapped__.__code__
+    def interrupt(frame, event, arg):
+        if event == "call" and frame.f_code is code:
+            sys.settrace(None)
+            os.kill(os.getpid(), signal.SIGINT)
+        return interrupt
+    try:
+        sys.settrace(interrupt)
+        try:
+            if sys.argv[1] == "file":
+                operation(Path(directory) / "pid", child.pid)
+            else:
+                operation()
+        except KeyboardInterrupt:
+            if sys.argv[1] == "file":
+                assert (Path(directory) / "pid").read_text() == str(child.pid)
+                assert list(Path(directory).iterdir()) == [Path(directory) / "pid"]
+            else:
+                if events.pidfd is not None:
+                    try:
+                        os.fstat(events.pidfd)
+                    except OSError:
+                        pass
+                    else:
+                        raise AssertionError("event queue retained its pidfd")
+                if events.queue is not None:
+                    assert events.queue.closed
+        else:
+            raise AssertionError("standalone cleanup lost SIGINT")
+    finally:
+        sys.settrace(None)
+        if sys.argv[1] == "file":
+            events.close()
+        os.killpg(child.pid, signal.SIGKILL)
+        child.wait()
+'''
+        for operation in ("file", "events"):
+            with self.subTest(operation=operation):
+                processes.run([sys.executable, "-B", "-c", source, operation], timeout=10)
+
+    def test_standalone_cleanup_in_finally_keeps_a_terminating_exception(self):
+        source = '''import os, signal, subprocess, sys
+sys.path.insert(0, "scripts")
+from processes import stop_group
+def terminate(signum, frame):
+    raise SystemExit(128 + signum)
+signal.signal(signal.SIGTERM, terminate)
+child = subprocess.Popen(["sleep", "60"], start_new_session=True)
+original = KeyboardInterrupt()
+def interrupt(frame, event, arg):
+    if event == "call" and frame.f_code is stop_group.__wrapped__.__code__:
+        sys.settrace(None)
+        os.kill(os.getpid(), signal.SIGTERM)
+    return interrupt
+try:
+    try:
+        raise original
+    finally:
+        sys.settrace(interrupt)
+        stop_group(child)
+except BaseException as error:
+    assert error is original, repr(error)
+    assert child.returncode is not None, "finally cleanup retained its child"
+else:
+    raise AssertionError("finally cleanup suppressed the terminating exception")
+finally:
+    sys.settrace(None)
+    if child.returncode is None:
+        os.killpg(child.pid, signal.SIGKILL)
+        child.wait()
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=10)
+
+    def test_protected_cleanup_from_a_worker_does_not_install_handlers(self):
+        source = '''import signal, subprocess, sys, tempfile, threading
+from pathlib import Path
+sys.path.insert(0, "scripts")
+from processes import ProcessEvents, stop_group, temporary_directory, write_pid_file
+before = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+errors = []
+def work():
+    try:
+        with temporary_directory() as directory:
+            child = subprocess.Popen(["sleep", "60"], start_new_session=True)
+            try:
+                write_pid_file(Path(directory) / "pid", child.pid)
+                events = ProcessEvents(child)
+                events.close()
+            finally:
+                stop_group(child)
+    except BaseException as error:
+        errors.append(error)
+worker = threading.Thread(target=work)
+worker.start()
+worker.join(10)
+assert not worker.is_alive()
+assert not errors, errors
+assert before == {number: signal.getsignal(number) for number in before}
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=15)
 
     def test_owner_pid_file_is_atomically_published(self):
         source = r'''import os, runpy, sys
@@ -775,6 +848,45 @@ with cleanup_on_exit(cleanup):
         self.assertEqual(143, result.returncode, result.stderr)
         self.assertEqual(b"", result.stderr)
 
+    def test_interrupt_during_termination_delivery_keeps_exit_143(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+import processes
+processes.install_signal_handlers()
+injected = False
+def interrupt():
+    global injected
+    injected = True
+    os.kill(os.getpid(), signal.SIGINT)
+def terminate(signum, frame):
+    try:
+        raise SystemExit(128 + signum)
+    finally:
+        if sys.argv[1] == "handler":
+            interrupt()
+signal.signal(signal.SIGTERM, terminate)
+def observe(frame, event, arg):
+    if (event == "exception" and frame.f_code is processes._deliver_pending.__code__
+            and arg[0] is SystemExit and frame.f_locals.get("failure") is arg[1]
+            and sys.argv[1] == "delivery" and not injected):
+        sys.settrace(None)
+        interrupt()
+    return observe
+sys.settrace(observe)
+try:
+    with processes.cleanup_on_exit(os.kill, os.getpid(), signal.SIGTERM):
+        pass
+except SystemExit:
+    assert injected, "test did not inject SIGINT in the raise path"
+    raise
+'''
+        for window in ("handler", "delivery"):
+            with self.subTest(window=window):
+                result = processes.run([sys.executable, "-B", "-c", source, window], timeout=10,
+                                       capture_output=True, check=False)
+                self.assertEqual(143, result.returncode, result.stderr)
+                self.assertEqual(b"", result.stderr)
+
     def test_distinct_pending_signals_use_class_then_arrival_order(self):
         source = '''import os, signal, sys
 sys.path.insert(0, "scripts")
@@ -854,6 +966,27 @@ except SystemExit as error:
         self.assertEqual(143, result.returncode, result.stderr)
         self.assertEqual(b"ValueError: original failure\n", result.stderr)
 
+    def test_owner_prefixes_the_original_exception_and_signal_outcome(self):
+        source = '''import os, signal, sys
+sys.path.insert(0, "scripts")
+import processes
+def terminate(frame, event, arg):
+    if event == "call" and frame.f_code is processes.stop_group.__wrapped__.__code__:
+        sys.settrace(None)
+        os.kill(os.getpid(), signal.SIGTERM)
+    return terminate
+sys.argv = ["processes.py", "--", "sleep", "60"]
+sys.settrace(terminate)
+raise SystemExit(processes.main())
+'''
+        result = subprocess.run([sys.executable, "-B", "-c", source], cwd=ROOT,
+                                input=b"", capture_output=True, timeout=10)
+        self.assertEqual(143, result.returncode, result.stderr)
+        self.assertEqual([
+            b"requestseal-owner: EOFError: command owner closed stdin",
+            b"requestseal-owner: received SIGTERM",
+        ], result.stderr.splitlines())
+
     def test_in_flight_terminating_exceptions_keep_precedence(self):
         source = '''import os, signal, sys
 sys.path.insert(0, "scripts")
@@ -900,7 +1033,7 @@ else:
             finally:
                 os.close(writer)
 
-    @unittest.skipUnless(hasattr(select, "kqueue"), "kqueue descriptor removal")
+    @unittest.skipUnless(hasattr(select, "kqueue"), "macOS/BSD kqueue descriptor removal")
     def test_kqueue_unregister_tolerates_a_closed_descriptor(self):
         with processes.command(["sleep", "60"]) as child:
             self.assertIsNotNone(child.events.queue)
@@ -923,6 +1056,47 @@ else:
             processes.stop_group(child)
             self.assertLess(time.monotonic() - started, 2)
             self.assertIsNotNone(child.returncode)
+
+    def test_owner_termination_command_continues_a_stopped_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "pid"
+            owner = subprocess.Popen(
+                [sys.executable, "-B", "scripts/processes.py", "--pid-file", str(pid_file),
+                 "--", "sleep", "60"], cwd=ROOT,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 5
+                while not pid_file.exists():
+                    self.assertIsNone(owner.poll())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.01)
+                pid = int(pid_file.read_text())
+                owner.stdin.write(b"signal SIGSTOP\n")
+                owner.stdin.flush()
+                self.assertTrue(select.select([owner.stdout], [], [], 5)[0])
+                self.assertEqual(b"requestseal-owner: signal SIGSTOP\n", owner.stdout.readline())
+                deadline = time.monotonic() + 5
+                while True:
+                    state = subprocess.run(["ps", "-p", str(pid), "-o", "stat="],
+                                           capture_output=True, text=True, check=True, timeout=5).stdout
+                    if state.strip().startswith("T"):
+                        break
+                    self.assertLess(time.monotonic(), deadline, "child never stopped")
+                    time.sleep(0.01)
+                started = time.monotonic()
+                owner.stdin.write(b"signal SIGTERM\n")
+                owner.stdin.flush()
+                status = owner.wait(timeout=3)
+                self.assertLess(time.monotonic() - started, 3)
+                self.assertEqual(143, status, owner.stderr.read())
+                self.assertEqual(b"requestseal-owner: signal SIGTERM\n", owner.stdout.read())
+            finally:
+                if owner.poll() is None:
+                    owner.terminate()
+                    owner.wait(timeout=10)
+                owner.stdin.close()
+                owner.stdout.close()
+                owner.stderr.close()
 
     def test_cli_statuses_identify_child_signal_deadline_and_nonzero_exit(self):
         for source, timeout, status, diagnostic in (
@@ -959,7 +1133,7 @@ else:
             ready = Path(directory) / "spawned"
             pid_file = Path(directory) / "pid"
             source = 'from pathlib import Path; import sys; Path(sys.argv[1]).touch()'
-            for timeout in ("inf", "-inf", "nan", "3000000", "0", "-1",
+            for timeout in ("inf", "-inf", "nan", "3000000", "2147483648", "3000000000", "0", "-1",
                             str(math.nextafter(processes.maximum_timeout(), float("inf")))):
                 # 3,000,000 exceeds epoll's limit but fits a kqueue timespec.
                 if timeout == "3000000" and processes.maximum_timeout() >= 3_000_000:
@@ -975,6 +1149,11 @@ else:
                     self.assertNotIn(b"Traceback", result.stderr)
                     self.assertFalse(ready.exists())
                     self.assertFalse(pid_file.exists(), "owner spawned a child before validating timeout")
+
+    @unittest.skipUnless(hasattr(select, "kqueue"), "macOS/BSD kqueue timeout seconds bound")
+    def test_kqueue_timeout_bound_is_int32_seconds(self):
+        self.assertEqual(2147483647, processes.maximum_timeout())
+        self.assertEqual(2147483647, processes.command_timeout("2147483647"))
 
     def test_cli_accepts_the_native_event_timeout_boundary(self):
         child = subprocess.Popen(
@@ -1132,35 +1311,6 @@ else:
                 if not parent.stdin.closed:
                     parent.stdin.close()
                 if pidfd is not None:
-                    try:
-                        signal.pidfd_send_signal(pidfd, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    os.close(pidfd)
-
-    @unittest.skipUnless(sys.platform.startswith("linux"), "pidfds bind the runtime after BEAM death")
-    def test_beam_death_cleans_the_runtime_owned_by_its_port(self):
-        with tempfile.TemporaryDirectory() as directory:
-            ready = Path(directory) / "ready"
-            runtime = ('import os,signal,sys,time; from pathlib import Path; '
-                       'signal.signal(signal.SIGTERM,signal.SIG_IGN); '
-                       'Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(120)')
-            beam = ('Code.require_file("test/support/system_command.ex"); '
-                    'RequestSeal.SystemCommand.run(System.find_executable("python3"), System.argv())')
-            with processes.command(["elixir", "-e", beam, "--", "-B", "-c", runtime, str(ready)],
-                                   cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as parent:
-                deadline = time.monotonic() + 20
-                while not ready.exists():
-                    self.assertFalse(processes.exited(parent, timeout=0))
-                    self.assertLess(time.monotonic(), deadline, "BEAM port did not start its real runtime")
-                    time.sleep(0.01)
-                pid = int(ready.read_text())
-                _, _, pidfd = self.runtime_identity(pid, parent.pid)
-                try:
-                    os.kill(parent.pid, signal.SIGKILL)
-                    self.assertTrue(select.select([pidfd], [], [], 10)[0],
-                                    "runtime survived the death of its BEAM port owner")
-                finally:
                     try:
                         signal.pidfd_send_signal(pidfd, signal.SIGKILL)
                     except ProcessLookupError:

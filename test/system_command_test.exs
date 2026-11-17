@@ -107,6 +107,91 @@ defmodule RequestSeal.SystemCommandTest do
     end
   end
 
+  test "termination consumes a queued real agent exit without writing to a closed port" do
+    dir = agent_directory()
+    socket = Path.join(dir, "agent")
+    {owner, pid} = SystemCommand.agent(socket)
+    monitor = Process.monitor(owner)
+    [port] = Enum.filter(Port.list(), &(Port.info(&1, :connected) == {:connected, owner}))
+    ref = make_ref()
+
+    try do
+      :erlang.suspend_process(owner)
+
+      try do
+        send(owner, {{:signal, :terminate}, self(), ref})
+        assert {_, 0} = System.cmd("kill", ["-TERM", pid])
+
+        assert eventually(fn ->
+                 {:messages, messages} = Process.info(owner, :messages)
+                 Enum.any?(messages, &match?({^port, {:exit_status, 2}}, &1))
+               end)
+
+        assert Port.info(port) == nil
+      after
+        :erlang.resume_process(owner)
+      end
+
+      assert_receive {^ref, 2}, 1_000
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}, 1_000
+      refute File.exists?(socket)
+    after
+      SystemCommand.stop_agent(owner)
+      File.rm_rf!(dir)
+    end
+  end
+
+  test "termination continues a stopped real agent before waiting for its status" do
+    dir = agent_directory()
+    socket = Path.join(dir, "agent")
+    {owner, pid} = SystemCommand.agent(socket)
+    monitor = Process.monitor(owner)
+
+    try do
+      assert :ok = SystemCommand.signal_agent(owner, :stop)
+      assert eventually(fn -> stopped?(pid) end)
+      started = System.monotonic_time(:millisecond)
+      assert 2 = SystemCommand.signal_agent(owner, :terminate)
+      assert System.monotonic_time(:millisecond) - started < 3_000
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}, 1_000
+      refute File.exists?(socket)
+    after
+      SystemCommand.stop_agent(owner)
+      File.rm_rf!(dir)
+    end
+  end
+
+  test "stop reports a queued real agent crash as an error" do
+    dir = agent_directory()
+    socket = Path.join(dir, "agent")
+    {owner, pid} = SystemCommand.agent(socket)
+    monitor = Process.monitor(owner)
+    [port] = Enum.filter(Port.list(), &(Port.info(&1, :connected) == {:connected, owner}))
+    ref = make_ref()
+
+    try do
+      :erlang.suspend_process(owner)
+
+      try do
+        send(owner, {:stop, self(), ref})
+        assert {_, 0} = System.cmd("kill", ["-KILL", pid])
+
+        assert eventually(fn ->
+                 {:messages, messages} = Process.info(owner, :messages)
+                 Enum.any?(messages, &match?({^port, {:exit_status, 137}}, &1))
+               end)
+      after
+        :erlang.resume_process(owner)
+      end
+
+      assert_receive {^ref, {:error, "agent owner shutdown failed: 137"}}, 1_000
+      assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}, 1_000
+    after
+      SystemCommand.stop_agent(owner)
+      File.rm_rf!(dir)
+    end
+  end
+
   test "caller death queued during termination cannot start a second shutdown" do
     dir = agent_directory()
     socket = Path.join(dir, "agent")
@@ -125,20 +210,48 @@ defmodule RequestSeal.SystemCommandTest do
 
     assert_receive {:agent_owner, owner}
     monitor = Process.monitor(owner)
+    [port] = Enum.filter(Port.list(), &(Port.info(&1, :connected) == {:connected, owner}))
+    {:os_pid, owner_pid} = Port.info(port, :os_pid)
 
     try do
-      # Queue both the real termination request and the caller's DOWN before
-      # the owner can read any port status. No synthetic exit messages are used.
-      :erlang.suspend_process(owner)
+      # Stop the real Python owner so it cannot read its command or exit yet.
+      # A premature reply now fails regardless of the value it carries.
+      assert {_, 0} = System.cmd("kill", ["-STOP", to_string(owner_pid)])
 
       try do
-        send(caller, :terminate)
-        assert_receive {:DOWN, ^caller_monitor, :process, ^caller, :normal}
-        {:messages, messages} = Process.info(owner, :messages)
-        assert Enum.any?(messages, &match?({{:signal, :terminate}, ^parent, ^ref}, &1))
-        assert Enum.any?(messages, &match?({:DOWN, _, :process, ^caller, :normal}, &1))
+        assert eventually(fn -> stopped?(to_string(owner_pid)) end)
+        :erlang.suspend_process(owner)
+
+        try do
+          send(caller, :terminate)
+          assert_receive {:DOWN, ^caller_monitor, :process, ^caller, :normal}
+
+          assert eventually(fn ->
+                   {:messages, messages} = Process.info(owner, :messages)
+
+                   Enum.any?(messages, &match?({{:signal, :terminate}, ^parent, ^ref}, &1)) and
+                     Enum.any?(messages, &match?({:DOWN, _, :process, ^caller, :normal}, &1))
+                 end)
+        after
+          :erlang.resume_process(owner)
+        end
+
+        assert eventually(fn ->
+                 case Process.info(owner, :current_function) do
+                   {:current_function, {SystemCommand, :await_exit, 2}} -> true
+                   nil -> true
+                   _ -> false
+                 end
+               end)
+
+        refute_receive {^ref, _}, 150
+        assert Process.alive?(owner)
       after
-        :erlang.resume_process(owner)
+        # Resume before any terminal status can release this process identity,
+        # including when an assertion fails while the Python owner is stopped.
+        if Port.info(port) do
+          assert {_, 0} = System.cmd("kill", ["-CONT", to_string(owner_pid)])
+        end
       end
 
       assert_receive {^ref, 2}, 8_000
@@ -149,6 +262,31 @@ defmodule RequestSeal.SystemCommandTest do
       if Process.alive?(caller), do: Process.exit(caller, :kill)
       SystemCommand.stop_agent(owner)
       File.rm_rf!(dir)
+    end
+  end
+
+  defp stopped?(pid) do
+    case System.cmd("ps", ["-p", pid, "-o", "stat="]) do
+      {state, 0} -> String.starts_with?(String.trim(state), "T")
+      _ -> false
+    end
+  end
+
+  defp eventually(condition) do
+    poll(condition, System.monotonic_time(:millisecond) + 5_000)
+  end
+
+  defp poll(condition, deadline) do
+    cond do
+      condition.() ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
+      true ->
+        Process.sleep(10)
+        poll(condition, deadline)
     end
   end
 
