@@ -345,7 +345,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/check.py"), "--help"], capture_output=True, text=True, check=True, timeout=30)
         for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only", "--notebooks-only"):
             self.assertRegex(result.stdout, r"(?m)^  " + flag + r"\s+")
-            option = re.search(r"(?m)^  " + flag + r"[ \t]+(.*(?:\n {3,}[^\n]*)*)", result.stdout)[1]
+            option = re.search(r"(?m)^  " + flag + r"\s+([\s\S]*?)(?=\n  --|\Z)", result.stdout)[1]
             help_text = " ".join(option.split())
             if flag == "--notebooks-only":
                 self.assertIn("cannot combine with focused check flags", help_text)
