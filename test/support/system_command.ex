@@ -48,8 +48,12 @@ defmodule RequestSeal.SystemCommand do
         Process.demonitor(monitor, [:flush])
         result
 
-      {:DOWN, ^monitor, :process, ^owner, reason} when request == :stop and reason in [:normal, :noproc] -> :ok
-      {:DOWN, ^monitor, :process, ^owner, reason} -> raise "agent owner exited: #{inspect(reason)}"
+      {:DOWN, ^monitor, :process, ^owner, reason}
+      when request == :stop and reason in [:normal, :noproc] ->
+        :ok
+
+      {:DOWN, ^monitor, :process, ^owner, reason} ->
+        raise "agent owner exited: #{inspect(reason)}"
     after
       10_000 -> raise "ssh-agent owner response deadline exceeded"
     end
@@ -103,9 +107,14 @@ defmodule RequestSeal.SystemCommand do
         send(from, {ref, :ok})
         agent_loop(port, monitor)
 
-      {:DOWN, ^monitor, :process, _, _} -> stop_port(port)
-      {^port, {:exit_status, _}} -> :ok
-      {^port, {:data, _}} -> agent_loop(port, monitor)
+      {:DOWN, ^monitor, :process, _, _} ->
+        stop_port(port)
+
+      {^port, {:exit_status, _}} ->
+        :ok
+
+      {^port, {:data, _}} ->
+        agent_loop(port, monitor)
     end
   end
 
@@ -120,7 +129,8 @@ defmodule RequestSeal.SystemCommand do
           await_signal(port, name, output)
         end
 
-      {^port, {:exit_status, status}} -> raise "agent owner exited during signal: #{status}"
+      {^port, {:exit_status, status}} ->
+        raise "agent owner exited during signal: #{status}"
     after
       5_000 -> raise "ssh-agent signal deadline exceeded"
     end
@@ -152,7 +162,9 @@ defmodule RequestSeal.SystemCommand do
 
   defp await_agent(port, socket, pid_file, deadline) do
     case agent_ready(socket, pid_file) do
-      {:ok, pid} -> pid
+      {:ok, pid} ->
+        pid
+
       :retry ->
         receive do
           {^port, {:exit_status, status}} -> raise "ssh-agent exited before readiness: #{status}"

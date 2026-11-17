@@ -228,13 +228,15 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
     assert {:ok, handle} = SSHAgent.new("ed25519", ctx.socket, public_file(file))
     :ok = RequestSeal.SystemCommand.signal_agent(ctx.agent_owner, :stop)
+
     try do
-    start = System.monotonic_time(:millisecond)
-    assert_error(Custody.sign(handle, @vector["base"], timeout: 60), :deadline_exceeded)
-    assert System.monotonic_time(:millisecond) - start < 1_000
+      start = System.monotonic_time(:millisecond)
+      assert_error(Custody.sign(handle, @vector["base"], timeout: 60), :deadline_exceeded)
+      assert System.monotonic_time(:millisecond) - start < 1_000
     after
       :ok = RequestSeal.SystemCommand.signal_agent(ctx.agent_owner, :continue)
     end
+
     assert {:ok, signature} = Custody.sign(handle, @vector["base"])
     assert signature == Base.decode64!(@vector["signature"])
     Process.sleep(30)
@@ -249,29 +251,31 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
     baseline = socket_ports()
     :ok = RequestSeal.SystemCommand.signal_agent(ctx.agent_owner, :stop)
+
     try do
-    caller = Task.async(fn -> Custody.sign(handle, @vector["base"], timeout: 5_000) end)
-    assert eventually(fn -> length(socket_ports()) > length(baseline) end)
-    opened = socket_ports() -- baseline
+      caller = Task.async(fn -> Custody.sign(handle, @vector["base"], timeout: 5_000) end)
+      assert eventually(fn -> length(socket_ports()) > length(baseline) end)
+      opened = socket_ports() -- baseline
 
-    for port <- opened do
-      assert {:ok, [packet_size: 1_048_576]} = :inet.getopts(port, [:packet_size])
-      assert {:ok, [packet: 4]} = :inet.getopts(port, [:packet])
-    end
+      for port <- opened do
+        assert {:ok, [packet_size: 1_048_576]} = :inet.getopts(port, [:packet_size])
+        assert {:ok, [packet: 4]} = :inet.getopts(port, [:packet])
+      end
 
-    owners =
-      Enum.map(opened, fn port ->
-        {:connected, pid} = Port.info(port, :connected)
-        pid
-      end)
+      owners =
+        Enum.map(opened, fn port ->
+          {:connected, pid} = Port.info(port, :connected)
+          pid
+        end)
 
-    monitors = Enum.map(owners, &Process.monitor/1)
-    Task.shutdown(caller, :brutal_kill)
-    for monitor <- monitors, do: assert_receive({:DOWN, ^monitor, :process, _, _}, 1_000)
-    assert eventually(fn -> socket_ports() == baseline end)
+      monitors = Enum.map(owners, &Process.monitor/1)
+      Task.shutdown(caller, :brutal_kill)
+      for monitor <- monitors, do: assert_receive({:DOWN, ^monitor, :process, _, _}, 1_000)
+      assert eventually(fn -> socket_ports() == baseline end)
     after
       :ok = RequestSeal.SystemCommand.signal_agent(ctx.agent_owner, :continue)
     end
+
     assert {:ok, _} = Custody.sign(handle, @vector["base"])
     :ok = RequestSeal.SystemCommand.signal_agent(ctx.agent_owner, :terminate)
     assert eventually(fn -> not File.exists?(ctx.socket) end)

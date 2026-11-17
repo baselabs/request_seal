@@ -859,32 +859,33 @@ defmodule RequestSeal.ClientAdaptersTest do
 
     assert {:ok, handle} = RequestSeal.Custody.SSHAgent.new("ed25519", socket, public)
     :ok = RequestSeal.SystemCommand.signal_agent(agent_owner, :stop)
+
     try do
-    {origin, task} = Peer.start([%{}], h)
+      {origin, task} = Peer.start([%{}], h)
 
-    req =
-      Req.new(url: origin <> "/confidential-path", finch: [name: __MODULE__.Pool], retry: false)
+      req =
+        Req.new(url: origin <> "/confidential-path", finch: [name: __MODULE__.Pool], retry: false)
 
-    assert {:ok, req} =
-             RequestSeal.Req.attach(req,
-               sign: %{Peer.spec("()") | algorithm: "ed25519", digest: nil},
-               signer: handle,
-               signing_timeout: 60,
-               verify: :none
-             )
+      assert {:ok, req} =
+               RequestSeal.Req.attach(req,
+                 sign: %{Peer.spec("()") | algorithm: "ed25519", digest: nil},
+                 signer: handle,
+                 signing_timeout: 60,
+                 verify: :none
+               )
 
-    started = System.monotonic_time(:millisecond)
+      started = System.monotonic_time(:millisecond)
 
-    assert {:error,
-            %Error{
-              reason: :signing_failed,
-              source: %RequestSeal.Custody.Error{reason: :deadline_exceeded}
-            }} = Req.request(req)
+      assert {:error,
+              %Error{
+                reason: :signing_failed,
+                source: %RequestSeal.Custody.Error{reason: :deadline_exceeded}
+              }} = Req.request(req)
 
-    assert System.monotonic_time(:millisecond) - started < 1_000
+      assert System.monotonic_time(:millisecond) - started < 1_000
 
-    assert_receive :no_connection, 1_500
-    Peer.finish(task)
+      assert_receive :no_connection, 1_500
+      Peer.finish(task)
     after
       :ok = RequestSeal.SystemCommand.signal_agent(agent_owner, :continue)
     end

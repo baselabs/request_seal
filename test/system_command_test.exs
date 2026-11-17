@@ -7,7 +7,11 @@ defmodule RequestSeal.SystemCommandTest do
     assert {"", 7} = SystemCommand.run(python, ["-B", "-c", "raise SystemExit(7)"])
 
     assert {"", 143} =
-             SystemCommand.run(python, ["-B", "-c", "import os,signal; os.kill(os.getpid(),signal.SIGTERM)"])
+             SystemCommand.run(python, [
+               "-B",
+               "-c",
+               "import os,signal; os.kill(os.getpid(),signal.SIGTERM)"
+             ])
 
     assert {diagnostic, 124} =
              SystemCommand.run(python, ["-B", "-c", "import time; time.sleep(60)"],
@@ -19,7 +23,12 @@ defmodule RequestSeal.SystemCommandTest do
   end
 
   test "a bound Unix socket without a listener is not ready" do
-    dir = Path.join(System.tmp_dir!(), "agent-bound-" <> Integer.to_string(System.unique_integer([:positive])))
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "agent-bound-" <> Integer.to_string(System.unique_integer([:positive]))
+      )
+
     File.mkdir!(dir)
     path = Path.join(dir, "socket")
     {:ok, socket} = :socket.open(:local, :stream)
@@ -36,7 +45,12 @@ defmodule RequestSeal.SystemCommandTest do
   end
 
   test "real agent is listening with a numeric identity and teardown reaps both owners" do
-    dir = Path.join(System.tmp_dir!(), "agent-owner-" <> Integer.to_string(System.unique_integer([:positive])))
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "agent-owner-" <> Integer.to_string(System.unique_integer([:positive]))
+      )
+
     File.mkdir!(dir)
     socket = Path.join(dir, "agent")
     {owner, pid} = SystemCommand.agent(socket)
@@ -48,12 +62,17 @@ defmodule RequestSeal.SystemCommandTest do
       assert {number, ""} = Integer.parse(pid)
       assert number > 0
       assert {:ok, ^pid} = SystemCommand.agent_ready(socket, socket <> ".pid")
+
       for contents <- ["", "invalid", "0", "-1", pid <> "extra"] do
         File.write!(socket <> ".pid", contents)
         assert :retry = SystemCommand.agent_ready(socket, socket <> ".pid")
       end
+
       File.write!(socket <> ".pid", pid)
-      assert {:ok, connection} = :gen_tcp.connect({:local, socket}, 0, [:binary, active: false], 100)
+
+      assert {:ok, connection} =
+               :gen_tcp.connect({:local, socket}, 0, [:binary, active: false], 100)
+
       assert :ok = :gen_tcp.close(connection)
       assert :ok = SystemCommand.signal_agent(owner, :stop)
       assert :ok = SystemCommand.signal_agent(owner, :continue)
