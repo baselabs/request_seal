@@ -402,6 +402,7 @@ defmodule RequestSeal.SystemCommandTest do
       close_owner_stdin(dir, owner, port, owner_pid)
       assert Port.command(port, "stop\n")
       assert eventually(fn -> terminal_agent?(owner) end)
+
       assert {:error, "agent owner port exited: :epipe"} =
                SystemCommand.signal_agent(owner, :continue)
 
