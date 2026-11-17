@@ -18,6 +18,7 @@ class DocumentationLinksTest(unittest.TestCase):
         with temporary_directory(prefix="requestseal-main-test-") as directory:
             root = Path(directory)
             run(["git", "init", "--quiet", "--initial-branch=candidate"], cwd=root)
+            (root / ".tool-versions").write_bytes((ROOT / ".tool-versions").read_bytes())
             (root / "mix.exs").write_text('''defmodule LinkFixture.MixProject do
   use Mix.Project
   def project do
