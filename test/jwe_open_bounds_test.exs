@@ -4,6 +4,7 @@ defmodule RequestSeal.JWEOpenBoundsTest do
   alias RequestSeal.Custody.{Context, Sink}
   alias RequestSeal.JOSE.JWE.{Bounds, Codec, Resolver}
   alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
+  @after_compile Runtime
 
   setup do
     {handle, token} = Runtime.real_key()
@@ -12,16 +13,21 @@ defmodule RequestSeal.JWEOpenBoundsTest do
   end
 
   test "bounded word walk counts shared occurrences and closure environments", %{p: p} do
-    shared = Enum.reduce(1..25, [0], fn _, acc -> [acc, acc] end)
-    :erlang.trace_pattern({Bounds, :walk, 3}, true, [:call_count])
+    Runtime.with_peer(fn ->
+      shared = Enum.reduce(1..25, [0], fn _, acc -> [acc, acc] end)
+      :erlang.trace_pattern({Bounds, :walk, 3}, true, [:call_count])
+      :erlang.trace_pattern({Bounds, :walk, 3}, :restart, [:call_count])
 
-    try do
-      refute Bounds.within?(shared, Bounds.item_words()), "walk must stop at W_item"
-      {:call_count, steps} = :erlang.trace_info({Bounds, :walk, 3}, :call_count)
-      assert steps <= Bounds.item_words() + 8, "walk must stop at W_item"
-    after
-      :erlang.trace_pattern({Bounds, :walk, 3}, false, [:call_count])
-    end
+      try do
+        refute Bounds.within?(shared, Bounds.item_words()), "walk must stop at W_item"
+        {:call_count, steps} = :erlang.trace_info({Bounds, :walk, 3}, :call_count)
+        assert steps <= Bounds.item_words() + 8, "walk must stop at W_item"
+      after
+        :erlang.trace_pattern({Bounds, :walk, 3}, false, [:call_count])
+      end
+    end)
+
+    shared = Enum.reduce(1..25, [0], fn _, acc -> [acc, acc] end)
 
     large = List.duplicate(0, 2_500)
 

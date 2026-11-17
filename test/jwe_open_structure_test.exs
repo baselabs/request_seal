@@ -58,8 +58,10 @@ defmodule RequestSeal.JWEOpenStructureTest do
   test "reaction reads owners before dequeue and closes causes at the flip" do
     source = File.read!("lib/request_seal/jose/jwe/guard.ex")
     assert source =~ "s = check(s)", "guard must check owners before dequeue"
+
     assert source =~ ":ets.info(map_get(:registry, s), :owner) == self()",
            "registry owner is the end marker"
+
     assert source =~ "defp check(s), do: s", "causes must close at coordinator end"
 
     assert source =~ "stop_at(anchor, :atomics.get(map_get(:flag, s), 2))",

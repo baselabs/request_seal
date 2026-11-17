@@ -20,7 +20,12 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
     end)
   end
 
-  defp complete(s), do: Runtime.collect_until(s, & &1.guard_ended) |> Runtime.delivered()
+  defp complete(s) do
+    Runtime.collect_until(s, & &1.guard_ended)
+    |> Runtime.delivered()
+    |> Runtime.collect_ends()
+    |> Runtime.delivered()
+  end
 
   defp all_ended(s) do
     assert Enum.all?(Map.keys(s.pids), &(not Process.alive?(&1))),
@@ -152,282 +157,262 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
   end
 
   test "9b second triggers retain the first anchor and reason during sweep" do
-    Runtime.with_peer(fn ->
-      old = Process.flag(:priority, :high)
-      :erlang.trace_pattern({Guard, :sweep, 3}, true, [:local])
-      :erlang.trace_pattern({Guard, :stop_at, 2}, [{:_, [], [{:return_trace}]}], [:local])
-      :erlang.trace_pattern({Guard, :kill, 3}, true, [:local])
+    Runtime.with_peer(
+      fn ->
+        old = Process.flag(:priority, :max)
+        :erlang.trace_pattern({Guard, :sweep, 3}, true, [:local])
+        :erlang.trace_pattern({Guard, :stop_at, 2}, [{:_, [], [{:return_trace}]}], [:local])
+        :erlang.trace_pattern({Guard, :kill, 3}, true, [:local])
 
-      try do
-        for first <- [:caller, :d] do
-          placed(40, fn ->
-            s =
-              Runtime.start(1_000, :resolvers,
-                policy: %{timeout: 700, resolve_timeout: 500, unwrap_timeout: 100}
-              )
-
-            try do
-              [_, _, _, _, _, _, d, f, _] = arguments(s)
-
-              if first == :caller do
-                Process.exit(s.caller, :kill)
-              else
-                true = :erlang.suspend_process(s.coordinator)
-                Process.sleep(Bounds.remaining(d))
-                :erlang.resume_process(s.coordinator)
-              end
-
+        try do
+          for first <- [:caller, :d] do
+            placed(40, fn ->
               s =
-                Runtime.collect_until(s, fn current ->
-                  Enum.any?(current.events, fn
-                    {:trace_ts, _, :call, {Guard, :sweep, _}, _} -> true
-                    _ -> false
+                Runtime.start(1_000, :resolvers,
+                  policy: %{timeout: 700, resolve_timeout: 500, unwrap_timeout: 100}
+                )
+
+              try do
+                [_, _, _, _, _, _, d, f, _] = arguments(s)
+
+                if first == :caller do
+                  Process.exit(s.caller, :kill)
+                else
+                  true = :erlang.suspend_process(s.coordinator)
+                  Process.sleep(Bounds.remaining(d))
+                  :erlang.resume_process(s.coordinator)
+                end
+
+                s =
+                  Runtime.collect_until(s, fn current ->
+                    Enum.any?(current.events, fn
+                      {:trace_ts, _, :call, {Guard, :sweep, _}, _} -> true
+                      _ -> false
+                    end)
                   end)
-                end)
 
-              if pause(s.guard) do
-                if first == :caller,
-                  do: Process.sleep(Bounds.remaining(f) + 1),
-                  else: Process.exit(s.caller, :kill)
+                if pause(s.guard) do
+                  if first == :caller,
+                    do: Process.sleep(Bounds.remaining(f) + 1),
+                    else: Process.exit(s.caller, :kill)
 
-                :erlang.resume_process(s.guard)
-                result = complete(s)
+                  :erlang.resume_process(s.guard)
+                  result = complete(s)
 
-                stops =
-                  for {:trace_ts, pid, :return_from, {Guard, :stop_at, 2}, at, _} <- result.events,
-                      pid == s.guard,
-                      do: at
+                  stops =
+                    for {:trace_ts, pid, :return_from, {Guard, :stop_at, 2}, at, _} <-
+                          result.events,
+                        pid == s.guard,
+                        do: at
 
-                assert length(stops) == 1, "second trigger must not reset stop_at"
+                  assert length(stops) == 1, "second trigger must not reset stop_at"
 
-                kills =
-                  for {:trace_ts, pid, :call, {Guard, :kill, _}, _} <- result.events,
-                      pid == s.guard,
-                      do: pid
+                  kills =
+                    for {:trace_ts, pid, :call, {Guard, :kill, _}, _} <- result.events,
+                        pid == s.guard,
+                        do: pid
 
-                assert length(kills) == if(first == :caller, do: 1, else: 0),
-                       "second trigger must not reopen causes"
+                  assert length(kills) == if(first == :caller, do: 1, else: 0),
+                         "second trigger must not reopen causes"
 
-                assert end_reason(result, s.guard) ==
-                         if(first == :caller, do: :normal, else: :replied)
+                  assert end_reason(result, s.guard) ==
+                           if(first == :caller, do: :normal, else: :replied)
 
-                all_ended(result)
-              else
-                :retry
+                  all_ended(result)
+                else
+                  :retry
+                end
+              after
+                Runtime.cleanup(s)
               end
-            after
-              Runtime.cleanup(s)
-            end
-          end)
-        end
-      after
-        Process.flag(:priority, old)
+            end)
+          end
+        after
+          Process.flag(:priority, old)
 
-        for {f, a} <- [sweep: 3, stop_at: 2, kill: 3],
-            do: :erlang.trace_pattern({Guard, f, a}, false, [:local])
-      end
-    end)
+          for {f, a} <- [sweep: 3, stop_at: 2, kill: 3],
+              do: :erlang.trace_pattern({Guard, f, a}, false, [:local])
+        end
+      end,
+      1
+    )
   end
 
   test "causes close after replied even when F or caller death arrives during sweep" do
-    Runtime.with_peer(fn ->
-      :erlang.trace_pattern({Guard, :sweep, 3}, true, [:local])
-      :erlang.trace_pattern({Guard, :kill, 3}, true, [:local])
+    Runtime.with_peer(
+      fn ->
+        old = Process.flag(:priority, :max)
+        :erlang.trace_pattern({Guard, :sweep, 3}, true, [:local])
+        :erlang.trace_pattern({Guard, :kill, 3}, true, [:local])
 
-      try do
-        for second <- [:f, :caller] do
-          placed(40, fn ->
-            s =
-              Runtime.start(1_000, :resolvers,
-                policy: %{timeout: 2_000, resolve_timeout: 1_500, unwrap_timeout: 100}
-              )
-
-            try do
-              [_, _, _, _, _, _, _, f, _] = arguments(s)
-              Enum.each(s.resolvers, &send(&1, :continue))
-
+        try do
+          for second <- [:f, :caller] do
+            placed(40, fn ->
               s =
-                Runtime.collect_until(s, fn current ->
-                  Enum.any?(current.events, fn
-                    {:trace_ts, _, :call, {Guard, :sweep, _}, _} -> true
-                    _ -> false
-                  end)
-                end)
+                Runtime.start(10_000, :resolvers,
+                  policy: %{timeout: 2_000, resolve_timeout: 1_500, unwrap_timeout: 100}
+                )
 
-              if pause(s.guard) do
-                if second == :f,
-                  do: Process.sleep(Bounds.remaining(f) + 1),
-                  else: Process.exit(s.caller, :kill)
+              try do
+                [_, _, _, _, _, _, _, f, _] = arguments(s)
+                Enum.each(s.resolvers, &send(&1, :continue))
 
-                :erlang.resume_process(s.guard)
-                result = complete(s)
-                assert end_reason(result, s.guard) == :replied, "causes must close after replied"
-
-                refute Enum.any?(result.events, fn
-                         {:trace_ts, _, :call, {Guard, :kill, _}, _} -> true
-                         _ -> false
-                       end),
-                       "causes must close after replied"
-
-                if second == :f do
-                  result = Runtime.collect_return(result, f + Bounds.teardown(1_000))
-                  assert match?({:ok, _}, result.return), "post reply F must retain the reply"
-                end
-
-                all_ended(result)
-              else
-                :retry
-              end
-            after
-              Runtime.cleanup(s)
-            end
-          end)
-        end
-      after
-        :erlang.trace_pattern({Guard, :sweep, 3}, false, [:local])
-        :erlang.trace_pattern({Guard, :kill, 3}, false, [:local])
-      end
-    end)
-  end
-
-  defp registry(s) do
-    Enum.find(:ets.all(), fn table ->
-      :ets.info(table, :name) == :registry and :ets.info(table, :heir) == s.guard
-    end)
-  end
-
-  test "outcome row precedes reply at both F kill placements" do
-    Runtime.with_peer(fn ->
-      old = Process.flag(:priority, :high)
-      :erlang.trace_pattern({:ets, :insert, 2}, [{:_, [], [{:return_trace}]}], [])
-      :erlang.trace_pattern({Coordinator, :finish, 1}, true, [:local])
-
-      try do
-        for point <- [:before_send, :after_send] do
-          placed(40, fn ->
-            s =
-              Runtime.launch(0, :resolvers,
-                policy: %{timeout: 300, resolve_timeout: 200, unwrap_timeout: 50}
-              )
-
-            try do
-              s =
-                Runtime.collect_until(s, fn current ->
-                  Enum.any?(current.events, fn
-                    {:trace_ts, pid, :call, {:ets, :insert, [_, {:outcome, :replied}]}, _} ->
-                      point == :before_send and pid == current.coordinator
-
-                    {:trace_ts, pid, :call, {Coordinator, :finish, [:replied]}, _} ->
-                      point == :after_send and pid == current.coordinator
-
-                    _ ->
-                      false
-                  end)
-                end)
-
-              if pause(s.coordinator) do
-                s = Runtime.delivered(s)
-                table = registry(s)
-
-                replied =
-                  Enum.any?(s.messages, fn
-                    {:trace_ts, pid, :send, {_, :reply, _, _, _}, _, _} -> pid == s.coordinator
-                    _ -> false
+                s =
+                  Runtime.collect_until(s, fn current ->
+                    Enum.any?(current.events, fn
+                      {:trace_ts, _, :call, {Guard, :sweep, _}, _} -> true
+                      _ -> false
+                    end)
                   end)
 
-                if table != nil and :ets.lookup(table, :outcome) == [{:outcome, :replied}] and
-                     replied == (point == :after_send) do
-                  [_, _, _, _, _, _, _, f, _] = arguments(s)
+                if pause(s.guard) do
+                  if second == :f,
+                    do: Process.sleep(Bounds.remaining(f) + 1),
+                    else: Process.exit(s.caller, :kill)
 
-                  result =
-                    Runtime.collect_return(s, f + Bounds.teardown(0) + 10_000) |> complete()
+                  :erlang.resume_process(s.guard)
+                  result = complete(s)
 
                   assert end_reason(result, s.guard) == :replied,
-                         "outcome row must survive the F kill"
+                         "causes must close after replied"
 
-                  if point == :before_send do
-                    assert match?({:error, %{reason: :deadline_exceeded}}, result.return),
-                           "missing reply must end by F plus B"
-                  else
-                    assert result.return == {:ok, []}, "sent reply must survive the F kill"
+                  refute Enum.any?(result.events, fn
+                           {:trace_ts, _, :call, {Guard, :kill, _}, _} -> true
+                           _ -> false
+                         end),
+                         "causes must close after replied"
+
+                  if second == :f do
+                    result = Runtime.collect_return(result, f + Bounds.teardown(10_000))
+                    assert match?({:ok, _}, result.return), "post reply F must retain the reply"
                   end
 
                   all_ended(result)
                 else
-                  {:retry, {point, :reply_placement, table != nil, replied}}
+                  :retry
                 end
-              else
-                {:retry, {point, :coordinator_ended}}
+              after
+                Runtime.cleanup(s)
               end
-            after
-              Runtime.cleanup(s)
-            end
-          end)
+            end)
+          end
+        after
+          Process.flag(:priority, old)
+          :erlang.trace_pattern({Guard, :sweep, 3}, false, [:local])
+          :erlang.trace_pattern({Guard, :kill, 3}, false, [:local])
         end
-      after
-        Process.flag(:priority, old)
-        :erlang.trace_pattern({:ets, :insert, 2}, false, [])
-        :erlang.trace_pattern({Coordinator, :finish, 1}, false, [:local])
+      end,
+      1
+    )
+  end
+
+  test "outcome row precedes reply and F preserves a completed reply" do
+    # A trace notification cannot suspend a process between two adjacent BIFs.
+    # Prove the exact boundary in the shipped BEAM, then place F on each side
+    # of the reply using the real process tree.
+    forms = RequestSeal.Test.JWEOpenAnalyzer.forms(Coordinator)
+    {:function, _, :reply, 2, body} = Enum.find(forms, &match?({:function, _, :reply, 2, _}, &1))
+
+    markers =
+      for call <- RequestSeal.Test.JWEOpenAnalyzer.calls(body),
+          marker = reply_marker(call),
+          marker != nil,
+          do: marker
+
+    assert markers == [:outcome, :reply], "outcome row must precede reply"
+
+    Runtime.with_peer(fn ->
+      for replied <- [false, true] do
+        s =
+          Runtime.start(1, :resolvers,
+            hold_caller: true,
+            policy: %{timeout: 500, resolve_timeout: 300, unwrap_timeout: 100}
+          )
+
+        try do
+          [_, _, _, _, _, _, _, f, _] = arguments(s)
+
+          result =
+            if replied do
+              Enum.each(s.resolvers, &send(&1, :continue))
+              result = Runtime.collect_until(s, &(&1.return != nil)) |> complete()
+              Process.sleep(Bounds.remaining(f))
+              result
+            else
+              true = :erlang.suspend_process(s.coordinator)
+              Runtime.collect_return(s, f + Bounds.teardown(1) + 10_000) |> complete()
+            end
+
+          if replied do
+            assert end_reason(result, s.guard) == :replied, "outcome row must survive F"
+            assert match?({:ok, [{:ok, _}]}, result.return), "sent reply must survive F"
+          else
+            assert end_reason(result, s.guard) == :deadline
+
+            assert match?({:error, %{reason: :deadline_exceeded}}, result.return),
+                   "missing reply must end by F plus B"
+          end
+
+          all_ended(result)
+        after
+          Runtime.cleanup(s)
+        end
       end
     end)
   end
 
-  test "10 coordinator death before registry intake and between birth and registration" do
+  defp reply_marker(
+         {:call, _, {:remote, _, {:atom, _, :ets}, {:atom, _, :insert}},
+          [_, {:tuple, _, [{:atom, _, :outcome}, {:atom, _, :replied}]}]}
+       ),
+       do: :outcome
+
+  defp reply_marker(
+         {:call, _, {:remote, _, {:atom, _, :erlang}, {:atom, _, :send}},
+          [_, {:tuple, _, [_, {:atom, _, :reply} | _]}]}
+       ),
+       do: :reply
+
+  defp reply_marker(_), do: nil
+
+  test "10 birth links cover coordinator death and registration failure" do
     Runtime.with_peer(fn ->
-      old = Process.flag(:priority, :high)
+      for point <- [:registry, :registration] do
+        tag = make_ref()
+        flag = :atomics.new(2, [])
+        notice = :ets.new(:birth_caller, [:private])
+        registry = :ets.new(:birth_registry, [:protected])
+        d = Bounds.now() + 1_000_000
+        args = [tag, self(), self(), notice, self(), flag, :batch, d - 100_000, d, 50_000]
+        {pid, ref} = spawn_monitor(Coordinator, :run, args)
+        :erlang.trace(pid, true, [:procs, :set_on_spawn, {:tracer, self()}])
 
-      try do
-        for point <- [:registry, :registration] do
-          placed(40, fn ->
-            s = Runtime.launch(1, :resolvers)
+        try do
+          Runtime.await(fn -> Runtime.info(pid, :status) == :waiting end)
+          assert Runtime.info(pid, :links) == []
 
-            try do
-              s =
-                Runtime.collect_until(s, fn current ->
-                  current.coordinator != nil and (point == :registry or current.preflight != nil)
-                end)
-
-              if pause(s.coordinator) do
-                s = Runtime.delivered(s)
-                table = registry(s)
-
-                intake =
-                  Enum.any?(s.messages, fn
-                    {:trace_ts, pid, :receive, {:"ETS-TRANSFER", _, _, {_, :registry}}, _} ->
-                      pid == s.coordinator
-
-                    _ ->
-                      false
-                  end)
-
-                verified =
-                  if point == :registry do
-                    not intake
-                  else
-                    table != nil and :ets.lookup(table, :preflight) == [] and
-                      Process.alive?(s.preflight)
-                  end
-
-                if verified do
-                  result = Runtime.trigger(s, :coordinator)
-                  all_ended(result)
-                  result = Runtime.collect_return(result, Bounds.now() + 1_000_000)
-
-                  assert match?({:error, %{reason: :internal_failure}}, result.return),
-                         "coordinator crash must return internal failure"
-                else
-                  {:retry, {point, :birth_placement, intake, table != nil}}
-                end
-              else
-                {:retry, {point, :coordinator_ended}}
-              end
-            after
-              Runtime.cleanup(s)
-            end
-          end)
+          if point == :registry do
+            Process.exit(pid, :kill)
+            assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+            refute_receive {:trace, ^pid, :spawn, _, _}, 0
+          else
+            # Fault at the real registration operation: the test retains write
+            # ownership, so ETS refuses the first insert after the real spawn.
+            # The preflight is linked at birth and must die without a slot row.
+            send(pid, {:"ETS-TRANSFER", registry, self(), {tag, :registry}})
+            assert_receive {:trace, ^pid, :spawn, child, {_, :run, _}}
+            child_ref = Process.monitor(child)
+            assert_receive {:DOWN, ^ref, :process, ^pid, :internal_failure}
+            assert_receive {:DOWN, ^child_ref, :process, ^child, _}
+            assert :ets.tab2list(registry) == []
+            refute Process.alive?(child), "birth link must cover failed registration"
+          end
+        after
+          Process.exit(pid, :kill)
+          Process.demonitor(ref, [:flush])
+          :ets.delete(registry)
+          :ets.delete(notice)
         end
-      after
-        Process.flag(:priority, old)
       end
     end)
   end
@@ -509,7 +494,11 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
                   ]
 
                 :nested_object ->
-                  [plaintext: "{\"x\":{\"a\":{\"b\":{\"c\":0}}}}", policy: %{content: :object}]
+                  [
+                    plaintext:
+                      "{\"x\":{\"a\":{\"b\":{\"c\":\"" <> :binary.copy("x", 16_384) <> "\"}}}}",
+                    policy: %{content: :object}
+                  ]
               end
 
             s =
@@ -532,7 +521,7 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
                 case scenario do
                   :prefix -> [:json_serialization?]
                   :tree -> [:tree, :tree_pairs, :tree_list]
-                  _ -> [:object, :tree, :depth]
+                  _ -> [:object, :tree, :depth, :utf8?]
                 end
 
               if pause_codec(targets, functions, Bounds.now() + 1_000_000) do

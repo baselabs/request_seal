@@ -1,5 +1,14 @@
 --- a/lib/request_seal/jose/jwe/unwrap.ex
 +++ b/lib/request_seal/jose/jwe/unwrap.ex
+@@ -4,7 +4,7 @@
+   alias Custody.{Context, Sink}
+   alias RequestSeal.JOSE.JWE.Bounds
+
+-  def run(tag, g, u, count, parent, slot, caller, notice) do
++  def run(tag, g, u, count, parent, slot, caller, _notice) do
+     :erlang.process_flag(:sensitive, true)
+
+     receive do
 @@ -17,7 +17,7 @@
      {items, routes, contributors} = combine(:maps.to_list(contributions), [], %{}, [])
      sink = Sink.routed(routes, context)

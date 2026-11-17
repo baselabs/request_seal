@@ -299,6 +299,12 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     end
   end
 
+  defp json_serialization?(<<a, b, c, d, e, f, g, h, rest::binary>>)
+       when a in [32, 9, 10, 13] and b in [32, 9, 10, 13] and c in [32, 9, 10, 13] and
+              d in [32, 9, 10, 13] and e in [32, 9, 10, 13] and f in [32, 9, 10, 13] and
+              g in [32, 9, 10, 13] and h in [32, 9, 10, 13],
+       do: json_serialization?(rest)
+
   defp json_serialization?(<<b, rest::binary>>) when b in [32, 9, 10, 13],
     do: json_serialization?(rest)
 

@@ -6,7 +6,7 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
   @after_compile Runtime
   @moduletag timeout: 600_000
 
-  defp controlled(timeout \\ 100_000, mode \\ :batch) do
+  defp controlled(timeout \\ 100_000, mode \\ :batch, resolve_before \\ 10_000) do
     {handle, _} = Runtime.real_key()
     tag = make_ref()
     address = :erlang.alias()
@@ -17,7 +17,17 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
       :erlang.spawn_opt(
         Guard,
         :run,
-        [tag, self(), address, flag, mode, d - 10_000, d, d + Bounds.finalization(), 1_000],
+        [
+          tag,
+          self(),
+          address,
+          flag,
+          mode,
+          d - resolve_before,
+          d,
+          d + Bounds.finalization(),
+          1_000
+        ],
         [:monitor, {:message_queue_data, :off_heap}]
       )
 
@@ -484,19 +494,69 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
   end
 
   test "17 R during bootstrap preserves every accepted position" do
-    s = controlled(150_000)
+    s = controlled(500_000, :batch, 300_000)
     tag = s.tag
 
     try do
       send(s.preflight, {tag, :policy, Runtime.policy(s.handle)})
       send(s.preflight, {tag, :count, 2})
       Runtime.await(fn -> :atomics.get(s.flag, 2) == 2 end)
-      Process.sleep(Bounds.remaining(s.d - 5_000))
+      Process.sleep(Bounds.remaining(s.d - 299_000))
+      # Wake the shipped loop after R while preflight still awaits its items.
+      # Without this dequeue the broken R branch can sleep until D unobserved.
+      send(s.coordinator, {tag, :cardinality, 2, Bounds.now()})
+
+      refute_receive {^tag, :reply, _, _, _},
+                     100,
+                     "R must not return before bootstrap ends"
+
       assert_receive {^tag, :reply, :ok, 2, 0}, 1_000, "R must not return before bootstrap ends"
       assert length(drain_settled(tag, [])) == 2
     after
       dispose(s)
     end
+  end
+
+  test "an early resolution barrier keeps U when its notices arrive after R" do
+    Runtime.with_peer(fn ->
+      s =
+        Runtime.start(1, :queued,
+          policy: %{timeout: 1_000, resolve_timeout: 500, unwrap_timeout: 50}
+        )
+
+      try do
+        [_, _, _, _, _, r | _] =
+          Enum.find_value(s.events, fn
+            {:spawn, _, _, Guard, :run, args, _} -> args
+            _ -> nil
+          end)
+
+        # Resolution is accepted before R, while its real end notice remains
+        # queued at the guard. Joining that notice cannot grant a fresh U.
+        s =
+          Runtime.collect_until(s, fn current ->
+            Enum.any?(current.messages, fn
+              {:trace_ts, pid, :receive, {_, :resolved, 0, {:ok, _}}, _} ->
+                pid == current.coordinator
+
+              _ ->
+                false
+            end)
+          end)
+
+        Process.sleep(Bounds.remaining(r + 1_000))
+        :erlang.resume_process(s.guard)
+        result = Runtime.collect_until(s, &(&1.return != nil)) |> Runtime.delivered()
+
+        assert match?({:ok, [{:error, %{reason: :decryption_failed}}]}, result.return),
+               "joining late notices must not extend U"
+
+        refute Enum.any?(result.pids, fn {_, role} -> role == :custody end),
+               "expired U must start no custody process"
+      after
+        Runtime.cleanup(s)
+      end
+    end)
   end
 
   test "21 R12-7 terminal map retains input key and crypto layers" do
@@ -623,7 +683,6 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
         u = Bounds.now() + 100_000
         pid = spawn(Unwrap, :run, [tag, 0, u, 1, self(), {:custody, 0}, owner, notice])
         ref = Process.monitor(pid)
-        :erlang.trace_pattern({Custody, :unwrap, 4}, true, [:call_count])
 
         try do
           :ets.give_away(table, pid, {tag, :slot, {:custody, 0}})
@@ -643,13 +702,12 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
 
           :erlang.resume_process(pid)
 
-          Runtime.await(fn ->
-            not Process.alive?(pid) or
-              :erlang.trace_info({Custody, :unwrap, 4}, :call_count) != {:call_count, 0}
-          end)
-
-          assert :erlang.trace_info({Custody, :unwrap, 4}, :call_count) == {:call_count, 0},
-                 "custody callback must not start past its gate"
+          # Sensitive processes suppress call tracing. The shipped summary is
+          # sent only after entering the guarded custody block, even when the
+          # downstream Custody boundary also refuses a dead owner or expired U.
+          refute_receive {^tag, :unwrap_summary, 0, _},
+                         100,
+                         "custody callback must not start past its gate"
 
           refute_receive :custody_callback_started,
                          20,
@@ -657,7 +715,6 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
 
           assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
         after
-          :erlang.trace_pattern({Custody, :unwrap, 4}, false, [:call_count])
           Process.exit(pid, :kill)
           if owner != self(), do: Process.exit(owner, :kill)
           Process.demonitor(ref, [:flush])

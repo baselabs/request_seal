@@ -87,7 +87,10 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     end
   end
 
-  def invoke(fun), do: fun.()
+  def invoke(fun) do
+    :erlang.process_flag(:message_queue_data, :off_heap)
+    fun.()
+  end
 
   def load_trace_modules do
     # Install patterns only after loading their targets. Load OTP helpers here
@@ -189,15 +192,17 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
         end
       end)
 
-    :erlang.trace(caller, true, [
+    flags = [
       :procs,
       :set_on_spawn,
-      :send,
       :receive,
       :call,
       :monotonic_timestamp,
       {:tracer, observer}
-    ])
+    ]
+
+    flags = if Keyword.get(options, :trace_input, true), do: [:send | flags], else: flags
+    :erlang.trace(caller, true, flags)
 
     baseline_tables = :erlang.system_info(:ets_count)
     baseline_processes = :erlang.system_info(:process_count)
@@ -209,6 +214,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       handle: handle,
       n: n,
       topology: topology,
+      trace_input: Keyword.get(options, :trace_input, true),
       pids: %{},
       refs: %{},
       remaining: 0,
@@ -217,7 +223,10 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       coordinator: nil,
       preflight: nil,
       resolvers: [],
+      resolver_count: 0,
+      resolver_spawns: 0,
       custody: [],
+      custody_count: 0,
       messages: [],
       events: [],
       peak: 0,
@@ -235,8 +244,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
 
     s =
       collect_until(s, fn s ->
-        length(s.resolvers) == n and
-          Enum.count(s.pids, fn {_, role} -> role == :resolver end) == n
+        s.resolver_count == n and s.resolver_spawns == n
       end)
 
     s =
@@ -252,7 +260,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
 
         :custody ->
           Enum.each(s.resolvers, &send(&1, :continue))
-          collect_until(s, fn s -> length(s.custody) == n end)
+          collect_until(s, fn s -> s.custody_count == n end)
       end
 
     s
@@ -278,7 +286,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
 
     if s.topology == :queued, do: :erlang.resume_process(s.guard)
     s = collect_until(s, fn s -> s.guard_ended end)
-    s = delivered(s) |> drain_observations()
+    s = delivered(s) |> collect_ends() |> delivered() |> drain_observations()
     {after_vm, _} = :erlang.statistics(:exact_reductions)
 
     %{
@@ -362,6 +370,18 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     end
   end
 
+  def collect_ends(s, at \\ Bounds.now() + 1_000_000) do
+    if s.remaining == 0 or Bounds.now() >= at do
+      s
+    else
+      receive do
+        event -> collect_ends(observe(s, event), at)
+      after
+        Bounds.remaining(at) -> s
+      end
+    end
+  end
+
   def collect_until(s, predicate, timeout \\ 60_000) do
     if predicate.(s) do
       s
@@ -370,7 +390,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
         event -> collect_until(observe(s, event), predicate, timeout)
       after
         timeout ->
-          raise "placement/end markers missing: #{inspect({s.n, length(s.resolvers), length(s.custody), s.return})}"
+          raise "placement/end markers missing: #{inspect({s.n, s.resolver_count, s.custody_count, s.return})}"
       end
     end
   end
@@ -389,12 +409,23 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
         _ -> :other
       end
 
+    # Timed runs omit caller input sends. Coordinator control sends remain
+    # observable before the blocked resolvers are released into the barrier.
+    if role == :coordinator and not s.trace_input do
+      try do
+        :erlang.trace(pid, true, [:send])
+      catch
+        :error, :badarg -> :ok
+      end
+    end
+
     s = %{
       s
       | pids: Map.put(s.pids, pid, role),
         refs: Map.put(s.refs, ref, false),
         events: [{:spawn, parent, pid, module, function, args, stamp} | s.events],
-        remaining: s.remaining + 1
+        remaining: s.remaining + 1,
+        resolver_spawns: s.resolver_spawns + if(role == :resolver, do: 1, else: 0)
     }
 
     s = if role in [:guard, :coordinator, :preflight], do: Map.put(s, role, pid), else: s
@@ -425,8 +456,11 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   def observe(s, {:trace_ts, _, :send, _, _, _} = event),
     do: %{s | messages: [event | s.messages], events: [event | s.events]}
 
-  def observe(s, {:resolver_entered, pid}), do: %{s | resolvers: [pid | s.resolvers]}
-  def observe(s, {:custody_entered, pid}), do: %{s | custody: [pid | s.custody]}
+  def observe(s, {:resolver_entered, pid}),
+    do: %{s | resolvers: [pid | s.resolvers], resolver_count: s.resolver_count + 1}
+
+  def observe(s, {:custody_entered, pid}),
+    do: %{s | custody: [pid | s.custody], custody_count: s.custody_count + 1}
 
   def observe(s, {:DOWN, ref, :process, pid, reason}) do
     if :maps.get(ref, s.refs, true) == false,

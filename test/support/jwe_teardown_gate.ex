@@ -251,6 +251,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
     s =
       Runtime.start(@cap, topology,
+        trace_input: false,
         near_cap: true,
         policy: %{timeout: 30_000, resolve_timeout: 20_000, unwrap_timeout: 5_000}
       )

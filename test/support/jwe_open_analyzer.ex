@@ -47,10 +47,9 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
     {:erlang, :self, 0} => "local identity",
     {:erlang, :make_ref, 0} => "opaque call or route tag",
     {:erlang, :alias, 0} => "revocable delivery route",
-    {:erlang, :unalias, 1} => "revoke route before draining",
+    {:erlang, :unalias, 1} => "revoke routed deliveries",
     {:erlang, :system_info, 1} => "bound range count by online schedulers",
     {:erlang, :fun_info, 2} => "bounded walk includes closure environment",
-    {:erlang, :tuple_to_list, 1} => "tuple already checked against word budget",
     {:erlang, :iolist_to_binary, 1} => "bounded JSON serialization",
     {:erlang, :error, 1} => "library exception contained at role entry",
     {:erlang, :error, 2} => "library exception contained at role entry",
@@ -409,7 +408,8 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
 
   defp site_name({:call, _, {:remote, _, {:atom, _, m}, {:atom, _, f}}, args})
        when m in [:erlang, Process] and f in [:spawn, :spawn_opt, :spawn_monitor, :spawn_link] and
-              is_list(args), do: f
+              is_list(args),
+       do: f
 
   defp site_name({:call, _, {:remote, _, {:atom, _, m}, {:atom, _, :exit}}, [_, _]})
        when m in [:erlang, Process], do: :exit

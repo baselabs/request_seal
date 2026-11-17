@@ -9,4 +9,4 @@
 +      map_get(:n, s) != nil and map_get(:settled, s) == map_get(:n, s) ->
          reply(s, :ok)
 
-       true ->
+       map_get(:rprime, s) == nil and not map_get(:expired_r, s) and

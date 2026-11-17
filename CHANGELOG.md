@@ -4,7 +4,12 @@
 
 - Keep the JWE library process tree on native map operations and preserve
   algorithm-mismatch and malformed-capability refusals at resolver ingress.
-  Bound shared-list traversal without redundant terminal-list visits.
+  Count every shared-list occurrence against the traversal budget and build
+  bounded tuple work lists without append operations.
+- Recheck JWE completion after deadline transitions, preserve an early unwrap
+  deadline when resolver notices arrive late, and keep worker group intake and
+  route revocation linear. Reserve receive-timeout rounding within the existing
+  caller wait bound and scan leading serialization whitespace in bounded chunks.
 - Report broken JWE library lifecycles as `:internal_failure`, retain caller
   notices through exception cleanup, and join registered children before return.
   Preflight cannot send a validation verdict after successful admission; final

@@ -250,7 +250,9 @@ defmodule RequestSeal.JOSE.JWE.Open do
   defp shape(_), do: {:not_item, nil, nil}
 
   defp wait(s) do
-    at = s.f + Bounds.teardown(:atomics.get(s.flag, 2))
+    # Receive timeouts round up to milliseconds. Reserve that rounding quantum
+    # inside the caller's upper bound so wait-end itself is stamped by F + B.
+    at = s.f + Bounds.teardown(:atomics.get(s.flag, 2)) - 1_000
 
     cond do
       Bounds.now() >= at -> {Codec.error(:deadline_exceeded, :crypto), s}

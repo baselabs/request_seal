@@ -23,6 +23,7 @@ defmodule RequestSeal.JOSE.JWE.Worker do
         p: p,
         positions: positions,
         groups: %{},
+        u: nil,
         routes: %{}
       })
     catch
@@ -78,9 +79,9 @@ defmodule RequestSeal.JOSE.JWE.Worker do
   end
 
   defp loop(s) do
-    s = expire(:maps.to_list(map_get(:groups, s)), s)
+    s = expire(s)
     tag = map_get(:tag, s)
-    wait = nearest(:maps.to_list(map_get(:groups, s)), map_get(:d, s))
+    wait = if map_get(:u, s) == nil, do: map_get(:d, s), else: min(map_get(:d, s), map_get(:u, s))
 
     if Bounds.now() < map_get(:d, s) do
       receive do
@@ -200,16 +201,27 @@ defmodule RequestSeal.JOSE.JWE.Worker do
             pid: pid,
             u: u,
             count: count,
+            received: 0,
             members: [],
             sent: false,
             route: map_get(:route, position)
           })
 
-        group = %{group | members: [i | map_get(:members, group)]}
-        position = %{position | group: g}
-        s = %{s | positions: :maps.put(i, position, map_get(:positions, s))}
+        group = %{
+          group
+          | members: [i | map_get(:members, group)],
+            received: map_get(:received, group) + 1
+        }
 
-        if length(map_get(:members, group)) == count and not map_get(:sent, group) do
+        position = %{position | group: g}
+
+        s = %{
+          s
+          | positions: :maps.put(i, position, map_get(:positions, s)),
+            u: u
+        }
+
+        if map_get(:received, group) == count and not map_get(:sent, group) do
           members = map_get(:members, group)
           positions = map_get(:positions, s)
           contributions = contributions(members, positions, [])
@@ -280,18 +292,9 @@ defmodule RequestSeal.JOSE.JWE.Worker do
     end
   end
 
-  defp revoke({address, tag}) do
-    :erlang.unalias(address)
-    drain(tag)
-  end
-
-  defp drain(tag) do
-    receive do
-      {^tag, _, _} -> drain(tag)
-    after
-      0 -> :ok
-    end
-  end
+  # The main receive discards queued outcomes for removed positions. A receive
+  # per revoked route would rescan the remaining mailbox once for every group.
+  defp revoke({address, _tag}), do: :erlang.unalias(address)
 
   defp finish_members([], s, _), do: s
 
@@ -323,15 +326,18 @@ defmodule RequestSeal.JOSE.JWE.Worker do
     %{s | positions: :maps.remove(i, map_get(:positions, s))}
   end
 
-  defp expire([], s), do: s
+  # Every group in a call shares the coordinator's one U. Check it in constant
+  # time between messages, then visit each remaining group once at expiry.
+  defp expire(%{u: nil} = s), do: s
 
-  defp expire([{g, group} | rest], s) do
-    s = if Bounds.now() >= map_get(:u, group), do: close(s, g, :timeout), else: s
-    expire(rest, s)
+  defp expire(s) do
+    if Bounds.now() >= map_get(:u, s),
+      do: expire_groups(:maps.to_list(map_get(:groups, s)), %{s | u: nil}),
+      else: s
   end
 
-  defp nearest([], d), do: d
-  defp nearest([{_, group} | rest], d), do: nearest(rest, min(d, map_get(:u, group)))
+  defp expire_groups([], s), do: s
+  defp expire_groups([{g, _} | rest], s), do: expire_groups(rest, close(s, g, :timeout))
 
   def fallback(token) do
     width = Codec.width(map_get(:enc, token))

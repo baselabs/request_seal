@@ -264,6 +264,7 @@ defmodule RequestSeal.JWEOpenOraclesTest do
         policy: %{timeout: 300, resolve_timeout: 200, unwrap_timeout: 50}
       )
 
+    {:module, Open} = :code.ensure_loaded(Open)
     :erlang.trace_pattern({Open, :wait_end, 1}, [{:_, [], [{:return_trace}]}], [:local])
     :erlang.trace(s.caller, true, [:call])
     true = :erlang.suspend_process(s.guard)
@@ -351,24 +352,6 @@ defmodule RequestSeal.JWEOpenOraclesTest do
           ] do
         arity = if function == :worker_down, do: 3, else: 1
 
-        :erlang.trace_pattern(
-          {Coordinator, function, arity},
-          [{:_, [], [{:message, {:process_dump}}]}],
-          [:local]
-        )
-
-        :erlang.trace_pattern(
-          {Coordinator, :loop, 1},
-          [{:_, [], [{:message, {:process_dump}}]}],
-          [:local]
-        )
-
-        :erlang.trace_pattern(
-          {Coordinator, :finish, 1},
-          [{:_, [], [{:message, {:process_dump}}]}],
-          [:local]
-        )
-
         try do
           samples =
             for n <- [1, 1_000, 10_000] do
@@ -378,6 +361,24 @@ defmodule RequestSeal.JWEOpenOraclesTest do
                 )
 
               :erlang.trace(s.coordinator, true, [:call, :arity])
+
+              :erlang.trace_pattern(
+                {Coordinator, function, arity},
+                [{:_, [], [{:message, {:process_dump}}]}],
+                [:local]
+              )
+
+              :erlang.trace_pattern(
+                {Coordinator, :loop, 1},
+                [{:_, [], [{:message, {:process_dump}}]}],
+                [:local]
+              )
+
+              :erlang.trace_pattern(
+                {Coordinator, :finish, 1},
+                [{:_, [], [{:message, {:process_dump}}]}],
+                [:local]
+              )
 
               try do
                 if function == :expire_u do
@@ -391,14 +392,12 @@ defmodule RequestSeal.JWEOpenOraclesTest do
                   Process.exit(pid, :kill)
                 end
 
-                observed =
-                  Runtime.collect_until(s, fn current ->
-                    pass_interval(current.events, function) != nil
-                  end)
-
-                work = pass_interval(observed.events, function)
+                work = pass_interval(s, function, nil, Bounds.now() + 30_000_000)
                 {n, work}
               after
+                :erlang.trace_pattern({Coordinator, function, arity}, false, [:local])
+                :erlang.trace_pattern({Coordinator, :loop, 1}, false, [:local])
+                :erlang.trace_pattern({Coordinator, :finish, 1}, false, [:local])
                 Runtime.cleanup(s)
               end
             end
@@ -417,21 +416,25 @@ defmodule RequestSeal.JWEOpenOraclesTest do
     end)
   end
 
-  defp pass_interval(events, function) do
-    events
-    |> Enum.reverse()
-    |> Enum.reduce({nil, nil}, fn
-      {:trace_ts, _, :call, {Coordinator, ^function, _}, dump, _}, {nil, _} ->
-        {reductions(dump), nil}
+  defp pass_interval(s, function, start, at) do
+    receive do
+      event ->
+        current = Runtime.observe(s, event)
 
-      {:trace_ts, _, :call, {Coordinator, next, _}, dump, _}, {start, nil}
-      when is_integer(start) and next in [:loop, :finish] ->
-        {start, reductions(dump) - start}
+        case event do
+          {:trace_ts, _, :call, {Coordinator, ^function, _}, dump, _} when start == nil ->
+            pass_interval(current, function, reductions(dump), at)
 
-      _, acc ->
-        acc
-    end)
-    |> elem(1)
+          {:trace_ts, _, :call, {Coordinator, next, _}, dump, _}
+          when is_integer(start) and next in [:loop, :finish] ->
+            reductions(dump) - start
+
+          _ ->
+            pass_interval(current, function, start, at)
+        end
+    after
+      Bounds.remaining(at) -> flunk("coordinator pass endpoints missing: #{function}")
+    end
   end
 
   test "29 caller death during D settlement and reply sends ends every child" do

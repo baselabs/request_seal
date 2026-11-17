@@ -145,27 +145,25 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
           map_get(:handed_off, s) ->
         reply(s, :ok)
 
-      true ->
-        s =
-          if not map_get(:expired_r, s) and now >= map_get(:r, s) and map_get(:handed_off, s),
-            do: expire_r(s),
-            else: s
+      map_get(:rprime, s) == nil and not map_get(:expired_r, s) and
+          now >= map_get(:r, s) and map_get(:handed_off, s) ->
+        loop(expire_r(s))
 
+      true ->
         s = barrier(s, now)
 
-        s =
-          if map_get(:rprime, s) != nil and map_get(:resolver_pending, s) == 0 and
-               not map_get(:started_groups, s),
-            do: start_groups(s),
-            else: s
+        cond do
+          map_get(:rprime, s) != nil and map_get(:resolver_pending, s) == 0 and
+              not map_get(:started_groups, s) ->
+            loop(start_groups(s))
 
-        s =
-          if map_get(:u, s) != nil and not map_get(:expired_u, s) and
-               Bounds.now() >= map_get(:u, s),
-            do: expire_u(s),
-            else: s
+          map_get(:u, s) != nil and not map_get(:expired_u, s) and
+              Bounds.now() >= map_get(:u, s) ->
+            loop(expire_u(s))
 
-        receive_one(s)
+          true ->
+            receive_one(s)
+        end
     end
   end
 
@@ -599,8 +597,8 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
     s =
       if map_get(:result, p) == nil and
            (reason != :normal or map_get(:phase, p) in [:resolved, :refused, :width]),
-        do: put(s, i, %{p | phase: :refused, result: failure}, 0),
-        else: s
+         do: put(s, i, %{p | phase: :refused, result: failure}, 0),
+         else: s
 
     dead_positions(i + 1, hi, s, reason)
   end

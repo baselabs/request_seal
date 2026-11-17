@@ -25,7 +25,12 @@ precedes the reply send and determines the guard's final reason.
 
 R ends admission and resolution. U is the accepted resolution barrier plus the
 unwrap budget. D ends content work. F = D + 100 ms independently ends a stalled
-coordinator. Callback children check caller-notice ownership and their deadline
+coordinator. An early resolution barrier retains its original U even if its end
+notices arrive after R. Every range shares that U; group intake counts members
+directly and expiry visits each remaining group once. Revoking a route prevents
+new deliveries; the main worker receive discards queued outcomes for removed
+positions without a separate mailbox scan per route.
+Callback children check caller-notice ownership and their deadline
 immediately before entering caller code. After the registry flips, teardown ends
 by anchor + B(n), where B(n) = 20 ms + 15 microseconds × n. The anchor is the
 first caller-death observation, F, or min(now, D) for an otherwise uncaused end.
@@ -33,7 +38,9 @@ The caller stamps wait-end by F + B(n), before cleanup and telemetry handlers.
 The accepted cardinality is published once in a second atomics cell; before
 acceptance n = 0. The guard reads it once at the owner flip. Between a cause and
 that flip it uses B(10,000). Absolute timers and receive waits round upward to
-milliseconds from internal monotonic microseconds.
+milliseconds from internal monotonic microseconds. The caller reserves one
+millisecond of receive rounding inside F + B(n), so its wait-end stamp remains
+inside that upper bound.
 
 The caller walks input without bulk copying and sends one bounded item per
 message, checking D and the stop flag first. Preflight checks each bounded unit
@@ -76,6 +83,10 @@ Final report measurements send the production row, count and control envelopes
 from a sensitive process with an off-heap mailbox to an off-heap observer.
 The report records the observer's actual queue flag. The consumer independently
 recomputes the longest unit + maximum report send + maximum preflight exit.
+Timed topology samples keep the observer mailbox off heap and omit caller input
+send traces, whose copies would make the observer retain the entire batch.
+Coordinator control traces and a monitor for every observed birth remain active.
+The observer consumes each event once without selective scans for end notices.
 
 Samples require Linux load average at most available host logical CPUs
 (falling back to the main node's online schedulers when availability is unknown) and aggregate CPU

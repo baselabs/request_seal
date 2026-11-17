@@ -40,8 +40,6 @@ defmodule RequestSeal.JOSE.JWE.Bounds do
   defp walk([], words, bytes), do: {:ok, words, bytes}
   defp walk([[] | rest], words, bytes), do: walk(rest, words, bytes)
 
-  defp walk([[h] | rest], words, bytes), do: walk([h | rest], words - 2, bytes)
-
   defp walk([[h | t] | rest], words, bytes),
     do: walk([h, t | rest], words - 2, bytes)
 
@@ -63,7 +61,7 @@ defmodule RequestSeal.JOSE.JWE.Bounds do
   defp walk([v | rest], words, bytes) when is_tuple(v) do
     if tuple_size(v) + 1 > words,
       do: :over,
-      else: walk(:erlang.tuple_to_list(v) ++ rest, words - tuple_size(v) - 1, bytes)
+      else: walk(tuple_items(v, tuple_size(v), rest), words - tuple_size(v) - 1, bytes)
   end
 
   defp walk([v | rest], words, bytes) when is_function(v) do
@@ -78,6 +76,9 @@ defmodule RequestSeal.JOSE.JWE.Bounds do
   # These leaves cannot expand. The final flat-size check supplies their exact
   # architecture-dependent size, including references, ports and floats.
   defp walk([_ | rest], words, bytes), do: walk(rest, words, bytes)
+
+  defp tuple_items(_, 0, rest), do: rest
+  defp tuple_items(tuple, i, rest), do: tuple_items(tuple, i - 1, [elem(tuple, i - 1) | rest])
 
   defp fun_walk([], rest, words, bytes), do: walk(rest, words, bytes)
 

@@ -428,7 +428,12 @@ defmodule RequestSeal.JWEOpenFailuresTest do
     prepared = :binary.copy(<<0>>, 32)
 
     assert_raise FunctionClauseError, fn ->
-      Worker.authenticate(%{enc: :invalid}, {:ok, prepared}, :error, %{})
+      Worker.authenticate(
+        %{enc: :invalid, iv: "", ct: "", protected: "", tag: ""},
+        {:ok, prepared},
+        :error,
+        %{}
+      )
     end
 
     assert_raise KeyError, fn ->
@@ -546,7 +551,10 @@ defmodule RequestSeal.JWEOpenFailuresTest do
         send(worker, {tag, :resolver, 0, {:invalid_destination}})
         result = Runtime.collect_until(s, &(&1.return != nil)) |> Runtime.delivered()
 
-        assert {:ok, [{:error, %{reason: :internal_failure, layer: :internal}}]} = result.return,
+        assert match?(
+                 {:ok, [{:error, %{reason: :internal_failure, layer: :internal}}]},
+                 result.return
+               ),
                "worker internal crash must remain an internal failure"
 
         assert Enum.all?(Map.keys(result.pids), &(not Process.alive?(&1)))
