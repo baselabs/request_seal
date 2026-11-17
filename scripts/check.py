@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 import subprocess
 import sys
-from release import package_version
+from release import development_snapshot, package_version, release_notes, source_url
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -184,11 +184,16 @@ def corpus_release_errors(sources):
         release = None
     if release != "v" + version:
         return [f"corpus/index.json: elixir_release must be v{version} to match mix.exs"]
+    if not development_snapshot(version):
+        try:
+            release_notes(sources.get("CHANGELOG.md", ""), version, source_url(sources["mix.exs"]))
+        except ValueError as error:
+            return [str(error)]
     return []
 
 
 def check_corpus_release():
-    errors = corpus_release_errors({path: (ROOT / path).read_text() for path in ("mix.exs", "corpus/index.json")})
+    errors = corpus_release_errors({path: (ROOT / path).read_text() for path in ("mix.exs", "corpus/index.json", "CHANGELOG.md")})
     if errors:
         raise ValueError("\n".join(errors))
     print("PASS: corpus/index.json elixir_release matches the package version")
@@ -327,12 +332,16 @@ def notebooks():
         extra_env={"REQUESTSEAL_PYTHON": sys.executable})
 
 if __name__ == "__main__":
+    class SelectCheck(argparse.Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            selected = getattr(namespace, self.dest) or []
+            setattr(namespace, self.dest, [*selected, option_string])
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--notebooks-only", action="store_true")
-    parser.add_argument("--ci-actions-only", action="store_true")
-    parser.add_argument("--corpus-release-only", action="store_true")
-    parser.add_argument("--package-only", action="store_true")
-    parser.add_argument("--sbom-only", action="store_true")
+    choice = parser.add_mutually_exclusive_group()
+    choice.add_argument("--notebooks-only", action="store_true")
+    choice.add_argument("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only",
+                        dest="focused_checks", action=SelectCheck, nargs=0)
     parser.add_argument("--execute-notebook", nargs=2, metavar=("SCRIPT", "COMPLETION"))
     parser.add_argument("--notebook-timeout", type=float, default=300)
     args = parser.parse_args()
@@ -342,14 +351,14 @@ if __name__ == "__main__":
             print(output, end="")
             raise SystemExit(0)
         focused = [
-            (args.ci_actions_only, check_ci_actions),
-            (args.corpus_release_only, check_corpus_release),
-            (args.package_only, check_package),
-            (args.sbom_only, check_sbom),
+            ("--ci-actions-only", check_ci_actions),
+            ("--corpus-release-only", check_corpus_release),
+            ("--package-only", check_package),
+            ("--sbom-only", check_sbom),
         ]
-        if any(selected for selected, _ in focused):
-            for selected, operation in focused:
-                if selected:
+        if args.focused_checks:
+            for flag, operation in focused:
+                if flag in args.focused_checks:
                     operation()
             raise SystemExit(0)
         check_ci_actions()

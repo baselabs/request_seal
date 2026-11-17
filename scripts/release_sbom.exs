@@ -11,24 +11,117 @@ defmodule RequestSeal.ReleaseSBOM do
     lock
   end
 
-  def reject_paths!(value) when is_map(value) do
-    Enum.each(value, fn {_key, item} -> reject_paths!(item) end)
+  def scopes(dependencies, lock) do
+    roots =
+      dependencies
+      |> Enum.map(fn
+        {app, options} when is_list(options) -> {app, options}
+        {app, _requirement} -> {app, []}
+        {app, _requirement, options} -> {app, options}
+      end)
+      |> Enum.filter(fn {_app, options} ->
+        :prod in List.wrap(Keyword.get(options, :only, :prod))
+      end)
+
+    prod = closure(Enum.map(roots, &elem(&1, 0)), lock, MapSet.new())
+
+    required =
+      roots
+      |> Enum.reject(fn {_app, options} -> Keyword.get(options, :optional, false) end)
+      |> Enum.map(&elem(&1, 0))
+      |> closure(lock, MapSet.new())
+
+    Map.new(prod, &{&1, if(MapSet.member?(required, &1), do: "required", else: "optional")})
   end
 
-  def reject_paths!(value) when is_list(value), do: Enum.each(value, &reject_paths!/1)
+  defp closure([], _lock, visited), do: visited
 
-  def reject_paths!(value) when is_binary(value) do
-    value = Regex.replace(~r{https?://[^\s<>"']+}i, value, "")
+  defp closure([app | rest], lock, visited) do
+    if MapSet.member?(visited, app) do
+      closure(rest, lock, visited)
+    else
+      {:hex, _name, _version, _checksum, _managers, edges, _repo, _outer} = Map.fetch!(lock, app)
 
-    if Regex.match?(
-         ~r{(?:^|[^A-Za-z0-9_.~/-])(?:/|[A-Za-z]:[\\/]|\\\\|~[^/\\\s]*[/\\])|file://|\$(?:HOME|TMPDIR)\b|\$\{(?:HOME|TMPDIR)\}|%USERPROFILE%|(?:^|[\s/\\])(?:home|tmp|temp|runner|_work)(?:[/\\]|$)}i,
-         value
-       ) do
-      Mix.raise("Release SBOM contains a filesystem path")
+      children =
+        for {child, _requirement, options} <- edges,
+            not Keyword.get(options, :optional, false),
+            do: child
+
+      closure(children ++ rest, lock, MapSet.put(visited, app))
     end
   end
 
-  def reject_paths!(_value), do: :ok
+  def components!(bom, scopes) do
+    components = Map.new(bom["components"], &{&1["name"], &1})
+    expected = MapSet.new(scopes, fn {app, _} -> Atom.to_string(app) end)
+    actual = components |> Map.keys() |> MapSet.new()
+
+    unless actual == expected and map_size(components) == length(bom["components"]) do
+      Mix.raise(
+        "Release SBOM dependency mismatch: missing=#{inspect(MapSet.difference(expected, actual))} " <>
+          "extra=#{inspect(MapSet.difference(actual, expected))}; components must be unique"
+      )
+    end
+
+    components
+  end
+
+  def rewrite_scopes!(bom, scopes) do
+    components!(bom, scopes)
+    by_name = Map.new(scopes, fn {app, scope} -> {Atom.to_string(app), scope} end)
+
+    Map.update!(bom, "components", fn components ->
+      Enum.map(components, &Map.put(&1, "scope", Map.fetch!(by_name, &1["name"])))
+    end)
+  end
+
+  def verify_scopes!(bom, scopes) do
+    components = components!(bom, scopes)
+
+    for {app, scope} <- scopes do
+      name = Atom.to_string(app)
+
+      unless components[name]["scope"] == scope,
+        do: Mix.raise("Release SBOM scope mismatch for #{name}: expected #{scope}")
+    end
+
+    :ok
+  end
+
+  def reject_paths!(value, path \\ "")
+
+  def reject_paths!(value, path) when is_map(value) do
+    Enum.each(value, fn {key, item} ->
+      reject_paths!(item, if(path == "", do: key, else: path <> "." <> key))
+    end)
+  end
+
+  def reject_paths!(value, path) when is_list(value) do
+    value
+    |> Enum.with_index()
+    |> Enum.each(fn {item, index} -> reject_paths!(item, "#{path}[#{index}]") end)
+  end
+
+  def reject_paths!(value, path) when is_binary(value) do
+    # A URI's path is public protocol data unless it uses the file scheme.
+    candidate =
+      Regex.replace(
+        ~r{\b(?!file:|[a-z]:[\\/])[a-z][a-z0-9+.-]*:[^\s<>"']+}i,
+        value,
+        ""
+      )
+
+    if Regex.match?(
+         ~r{(?:^|[^A-Za-z0-9_.~/-])(?:/|[A-Za-z]:[\\/]|\\\\|~[^/\\\s]*[/\\])|\bfile:|\$(?:HOME|TMPDIR)\b|\$\{(?:HOME|TMPDIR)\}|%USERPROFILE%}i,
+         candidate
+       ) do
+      Mix.raise("Release SBOM contains a filesystem path at #{path}: #{inspect(value)}")
+    end
+
+    :ok
+  end
+
+  def reject_paths!(_value, _path), do: :ok
 end
 
 unless Mix.env() == :prod, do: Mix.raise("Release SBOM requires MIX_ENV=prod")
@@ -43,6 +136,12 @@ case System.argv() do
 
     dependencies = Mix.Project.deps_paths()
 
+    scopes =
+      RequestSeal.ReleaseSBOM.scopes(Mix.Project.config()[:deps], RequestSeal.ReleaseSBOM.lock!())
+
+    unless MapSet.new(Map.keys(dependencies)) == MapSet.new(Map.keys(scopes)),
+      do: Mix.raise("Release SBOM prod closure disagrees with Mix dependencies")
+
     # A library's lockfile also contains developer tools. Supply the generator
     # with the package bytes and Mix's resolved production closure, including
     # every optional integration, at the versions selected by this release.
@@ -53,6 +152,15 @@ case System.argv() do
     for {app, path} <- dependencies do
       File.ln_s!(path, Path.join([directory, "deps", Atom.to_string(app)]))
     end
+
+  ["--rewrite-scopes", path] ->
+    scopes =
+      RequestSeal.ReleaseSBOM.scopes(Mix.Project.config()[:deps], RequestSeal.ReleaseSBOM.lock!())
+
+    bom =
+      path |> File.read!() |> :json.decode() |> RequestSeal.ReleaseSBOM.rewrite_scopes!(scopes)
+
+    File.write!(path, :json.encode(bom))
 
   ["--verify", path] ->
     bom = path |> File.read!() |> :json.decode()
@@ -71,21 +179,12 @@ case System.argv() do
       Mix.raise("Release SBOM must describe this library and version in CycloneDX 1.6")
     end
 
-    components = Map.new(bom["components"], &{&1["name"], &1})
-    dependencies = Mix.Project.deps_paths()
-    expected = MapSet.new(dependencies, fn {app, _} -> Atom.to_string(app) end)
-    actual = components |> Map.keys() |> MapSet.new()
-
-    unless actual == expected and map_size(components) == length(bom["components"]) do
-      Mix.raise(
-        "Release SBOM dependency mismatch: missing=#{inspect(MapSet.difference(expected, actual))} " <>
-          "extra=#{inspect(MapSet.difference(actual, expected))}; components must be unique"
-      )
-    end
-
     lock = RequestSeal.ReleaseSBOM.lock!()
+    scopes = RequestSeal.ReleaseSBOM.scopes(config[:deps], lock)
+    components = RequestSeal.ReleaseSBOM.components!(bom, scopes)
+    RequestSeal.ReleaseSBOM.verify_scopes!(bom, scopes)
 
-    for {app, _} <- dependencies do
+    for {app, _} <- scopes do
       name = Atom.to_string(app)
       version = lock |> Map.fetch!(app) |> elem(2)
 
@@ -101,14 +200,11 @@ case System.argv() do
         do: Mix.raise("Release SBOM contains an unresolved dependency reference")
     end
 
-    unless components["telemetry"]["scope"] == "required",
-      do: Mix.raise("Release SBOM must retain required telemetry")
-
     IO.puts("PASS: release SBOM matches the complete locked prod dependency set")
 
     for {name, component} <- Enum.sort(components),
         do: IO.puts("#{name} #{component["version"]} #{component["scope"]}")
 
   _ ->
-    Mix.raise("Expected --prepare DIRECTORY or --verify SBOM")
+    Mix.raise("Expected --prepare DIRECTORY, --rewrite-scopes SBOM or --verify SBOM")
 end

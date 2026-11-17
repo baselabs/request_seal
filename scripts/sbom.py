@@ -30,14 +30,14 @@ def generate(output, tarball=None):
 
     def run(*args):
         print("RUN " + " ".join(map(str, args)), flush=True)
-        subprocess.run(list(map(str, args)), cwd=ROOT, env=environment, check=True)
+        subprocess.run(list(map(str, args)), cwd=ROOT, env=environment, check=True, timeout=900)
 
     with tempfile.TemporaryDirectory(prefix="requestseal-sbom-") as directory:
         scratch = Path(directory)
         # Burrito's extracted runtime belongs to this invocation, like the binary.
         environment["MIX_SBOM_INSTALL_DIR"] = str(scratch / "runtime")
         binary = scratch / "mix_sbom"
-        run("curl", "--fail", "--location", "--silent", "--show-error", "--retry", "3",
+        run("curl", "--fail", "--location", "--silent", "--show-error", "--retry", "3", "--max-time", "120",
             "--output", binary, TOOL_URL)
         verify_tool(binary)
         binary.chmod(0o700)
@@ -56,6 +56,7 @@ def generate(output, tarball=None):
         run(binary, "cyclonedx", package, "--output", bom, "--schema", "1.6", "--format", "json",
             "--only", "prod", "--classification", "library", "--exclude-system-dependencies",
             "--no-enhance-metadata", "--no-vulnerabilities", "--force")
+        run("mix", "run", "--no-start", "scripts/release_sbom.exs", "--rewrite-scopes", bom)
         normalize_sbom(bom, tarball)
         run("mix", "run", "--no-start", "scripts/release_sbom.exs", "--verify", bom)
         output.write_bytes(bom.read_bytes())
@@ -69,5 +70,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     try:
         generate(args.output.resolve(), args.tarball.resolve() if args.tarball else None)
+    except subprocess.TimeoutExpired as error:
+        raise SystemExit(f"SBOM command deadline exceeded after {error.timeout}s: {error.cmd}")
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         raise SystemExit(str(error))

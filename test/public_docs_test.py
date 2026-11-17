@@ -454,7 +454,7 @@ class EvaluatedFenceTest(unittest.TestCase):
 
 class CorpusReleasePinTest(unittest.TestCase):
     def test_actual_corpus_release_matches_the_package_version(self):
-        sources = {path: (ROOT / path).read_text() for path in ("mix.exs", "corpus/index.json")}
+        sources = {path: (ROOT / path).read_text() for path in ("mix.exs", "corpus/index.json", "CHANGELOG.md")}
         self.assertEqual([], gate.corpus_release_errors(sources))
 
     def test_stale_or_missing_corpus_release_is_rejected(self):
@@ -463,7 +463,11 @@ class CorpusReleasePinTest(unittest.TestCase):
             with self.subTest(index=index):
                 errors = gate.corpus_release_errors({"mix.exs": mix, "corpus/index.json": index})
                 self.assertTrue(any("elixir_release" in error for error in errors))
-        self.assertEqual([], gate.corpus_release_errors({"mix.exs": mix, "corpus/index.json": '{"elixir_release":"v0.5.0"}'}))
+        self.assertEqual([], gate.corpus_release_errors({
+            "mix.exs": mix + '\nsource_url: "https://github.com/example/library",\n',
+            "corpus/index.json": '{"elixir_release":"v0.5.0"}',
+            "CHANGELOG.md": '## 0.5.0 - 2026-11-17\n\n- Released.\n',
+        }))
 
     def test_generated_doc_links_resolve_to_a_file_and_anchor(self):
         with tempfile.TemporaryDirectory() as directory:

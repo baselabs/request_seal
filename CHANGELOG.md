@@ -6,7 +6,11 @@
   to publish to Hex. Release source links and install requirements follow the version.
 - Each GitHub release carries the verified Hex tarball, corpus archive and checksum,
   and a CycloneDX 1.6 SBOM, with build provenance and an SBOM attestation.
-  Verify them using the commands in the [release runbook](https://github.com/baselabs/request_seal/blob/main/docs/operations/releases.md).
+  Optional integrations and their dependencies carry scope `optional`; required
+  dependency paths carry scope `required`.
+  Verify them using the commands in the [release runbook](docs/operations/releases.md).
+- Hex publishing and the release gate require a dated, nonempty CHANGELOG section.
+  GitHub release notes pin relative documentation links to the released tag.
 - Security fixes cover the latest minor of the latest stable major and, for
   6 months after its first stable release, the latest minor of the previous major.
 

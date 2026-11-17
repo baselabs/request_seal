@@ -32,7 +32,7 @@ class ReleaseIdentityTest(unittest.TestCase):
         return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True, text=True)
 
     def identity(self, version):
-        (self.root / "mix.exs").write_text(f'@version "{version}"\nversion: @version,\n')
+        (self.root / "mix.exs").write_text(f'@version "{version}"\nversion: @version,\nsource_url: "https://github.com/example/library",\n')
         (self.root / "corpus/index.json").write_text(json.dumps({"elixir_release": "v" + version}))
         (self.root / "CHANGELOG.md").write_text(f"# Changelog\n\n## {version} - 2026-11-17\n\n- Release behavior.\n")
 
@@ -77,7 +77,7 @@ class ReleaseIdentityTest(unittest.TestCase):
                     self.assertEqual(version, self.verify())
                     self.git("tag", "v" + version)
                     self.assertEqual(version, self.verify("push", "refs/tags/v" + version))
-                sources = {path: (self.root / path).read_text() for path in ("mix.exs", "corpus/index.json")}
+                sources = {path: (self.root / path).read_text() for path in ("mix.exs", "corpus/index.json", "CHANGELOG.md")}
                 self.assertEqual([], gate.corpus_release_errors(sources))
 
     def test_changelog_release_notes(self):
@@ -104,6 +104,33 @@ class ReleaseIdentityTest(unittest.TestCase):
             for version in ("2.1.0-dev", "3.0.0-dev"):
                 self.assertTrue(docs.release_errors(path, source, version))
 
+    def test_release_gate_requires_cut_notes_for_all_release_versions(self):
+        for version in ("2.3.4", "2.3.4-rc.1", "2.3.4-dev"):
+            self.identity(version)
+            sources = {path: (self.root / path).read_text() for path in ("mix.exs", "corpus/index.json", "CHANGELOG.md")}
+            self.assertEqual([], gate.corpus_release_errors(sources))
+            sources["CHANGELOG.md"] = "## Unreleased " + version + "\n\n- Pending.\n"
+            self.assertEqual(release.development_snapshot(version), not gate.corpus_release_errors(sources))
+
+    def test_release_notes_normalize_crlf_and_ignore_fenced_headings(self):
+        for fence in ("```", "~~~~"):
+            body = f"- Released.\n\n{fence}markdown\n## 2.3.4 - 2026-11-17\n## Example\n{fence}\n\n- Still this release.\n"
+            source = f"## 2.3.4 - 2026-11-17\n\n{body}\n## 2.3.3 - 2026-11-16\n\n- Older.\n"
+            self.assertEqual(body, release.release_notes(source, "2.3.4"))
+            self.assertEqual(body, release.release_notes(source.replace("\n", "\r\n"), "2.3.4"))
+
+    def test_release_notes_pin_relative_inline_and_reference_links(self):
+        body = ('[Guide](docs/guide.md) [Title](./docs/title.md "Title")\n'
+                '[Angle](<docs/angle.md>) [Reference][guide]\n'
+                '[guide]: docs/guide.md#section "Guide"\n'
+                '[Web](https://example.com/docs) [Mail](mailto:team@example.com)\n'
+                '[Anchor](#section) [Network](//example.com/docs)\n'
+                '```markdown\n[Example](docs/example.md)\n```\n')
+        expected = body
+        for path in ("docs/guide.md", "./docs/title.md", "docs/angle.md"):
+            expected = expected.replace(path, "https://github.com/example/library/blob/v2.3.4/" + path.removeprefix("./"))
+        self.assertEqual(expected, release.release_notes("## 2.3.4 - 2026-11-17\n\n" + body, "2.3.4", "https://github.com/example/library"))
+
     def test_stale_corpus_and_unexpected_event_are_refused(self):
         (self.root / "corpus/index.json").write_text('{"elixir_release":"v2.3.3"}')
         with self.assertRaisesRegex(ValueError, "elixir_release"):
@@ -124,7 +151,7 @@ class ReleaseIdentityTest(unittest.TestCase):
         for version, expected in (("0.7.4-dev", "~> 0.7.4"), ("2.3.4-dev", "~> 2.3"), ("3.2.1", "~> 3.2")):
             self.assertEqual(expected, release.install_requirement(version))
             self.identity(version)
-            sources = {path: (self.root / path).read_text() for path in ("mix.exs", "corpus/index.json")}
+            sources = {path: (self.root / path).read_text() for path in ("mix.exs", "corpus/index.json", "CHANGELOG.md")}
             self.assertEqual([], gate.corpus_release_errors(sources))
 
     def test_dynamic_runbook_install_requires_the_shared_derivation(self):
@@ -142,6 +169,19 @@ class ReleaseIdentityTest(unittest.TestCase):
 
 
 class ReleaseWorkflowTest(unittest.TestCase):
+    def test_notebook_and_focused_modes_are_mutually_exclusive(self):
+        for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only"):
+            for flags in (("--notebooks-only", flag), (flag, "--notebooks-only")):
+                result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/check.py"), *flags], capture_output=True, text=True, timeout=30)
+                self.assertEqual(2, result.returncode)
+                self.assertIn("not allowed with argument", result.stderr)
+
+    def test_existing_assets_are_compared_before_either_attestation(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        publish = workflow.split("\n  publish:\n")[1]
+        self.assertLess(publish.index('cmp "$asset"'), publish.index("uses: actions/attest@"))
+        self.assertLess(publish.rindex("uses: actions/attest@"), publish.index("gh release upload"))
+
     def test_release_actions_use_immutable_commits(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         required = {"actions/checkout", "erlef/setup-beam", "actions/setup-python",
@@ -205,6 +245,17 @@ class ReleaseWorkflowTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "checksum mismatch"):
                 sbom.verify_tool(path)
             self.assertEqual(0, path.stat().st_mode & 0o111)
+
+    def test_malformed_sbom_reports_a_clear_cli_error_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sbom.json"
+            path.write_text('{"bomFormat":"CycloneDX","specVersion":"1.6"}')
+            tarball = Path(directory) / "package.tar"
+            tarball.write_bytes(b"package bytes")
+            result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/release.py"), "--normalize-sbom", str(path), "--tarball", str(tarball)], capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("Malformed release SBOM", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":

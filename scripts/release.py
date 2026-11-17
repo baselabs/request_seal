@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import uuid
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 SEMVER = re.compile(
@@ -51,16 +52,63 @@ def source_ref(version):
     return "main" if development_snapshot(version) else "v" + version
 
 
-def release_notes(source, version):
+def source_url(source):
+    matches = re.findall(r'^\s*source_url: "([^"]+)"', source, re.MULTILINE)
+    if len(matches) != 1 or urlsplit(matches[0]).scheme not in ("https", "http"):
+        raise ValueError("mix.exs requires one public source_url")
+    return matches[0].rstrip("/")
+
+
+def markdown_lines(source):
+    """Yield lines with fenced blocks marked, including their delimiters."""
+    fence = None
+    for line in source.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        fenced = fence is not None or marker is not None
+        if marker:
+            run, rest = marker.groups()
+            if fence is None:
+                fence = run
+            elif run[0] == fence[0] and len(run) >= len(fence) and not rest.strip():
+                fence = None
+        yield line, fenced
+
+
+def release_notes(source, version, repository_url=None):
     """Return only the body of one dated release section, never Unreleased."""
-    heading = re.compile(r"^## " + re.escape(version) + r" - (\d{4}-\d{2}-\d{2})[ \t]*$", re.MULTILINE)
-    matches = list(heading.finditer(source))
+    source = source.replace("\r\n", "\n")
+    sections = []
+    offset = 0
+    for line, fenced in markdown_lines(source):
+        if not fenced and line.startswith("## "):
+            sections.append((offset, offset + len(line), line.rstrip("\n")))
+        offset += len(line)
+    heading = re.compile(r"## " + re.escape(version) + r" - (\d{4}-\d{2}-\d{2})[ \t]*$")
+    matches = [(index, heading.fullmatch(section[2])) for index, section in enumerate(sections)
+               if heading.fullmatch(section[2])]
     if len(matches) != 1:
         raise ValueError("CHANGELOG.md requires one dated section for " + version)
-    datetime.date.fromisoformat(matches[0][1])
-    body = re.split(r"^## ", source[matches[0].end():], maxsplit=1, flags=re.MULTILINE)[0].strip()
+    index, match = matches[0]
+    datetime.date.fromisoformat(match[1])
+    end = sections[index + 1][0] if index + 1 < len(sections) else len(source)
+    body = source[sections[index][1]:end].strip()
     if not body or not re.sub(r"(?m)^#{3,6}[^\n]*$", "", body).strip():
         raise ValueError("CHANGELOG.md release section is empty for " + version)
+
+    if repository_url is None:
+        repository_url = source_url((ROOT / "mix.exs").read_text())
+
+    def pin(match):
+        target = match["target"]
+        if target.startswith(("#", "//")) or urlsplit(target).scheme:
+            return match[0]
+        return match["prefix"] + repository_url.rstrip("/") + "/blob/v" + version + "/" + target.removeprefix("./")
+
+    # Inline destinations (with optional titles) and reference-link definitions.
+    links = r"(?P<prefix>\]\(<?)(?P<target>[^\s<>]+?)(?=>?(?:\s+[\"'].*?[\"'])?\))"
+    references = r"^(?P<prefix> {0,3}\[[^\]]+\]:\s*<?)(?P<target>[^\s<>]+)"
+    body = "".join(line if fenced else re.sub(references, pin, re.sub(links, pin, line))
+                   for line, fenced in markdown_lines(body))
     return body + "\n"
 
 
@@ -68,7 +116,7 @@ def verify_identity(root, event, ref):
     version = package_version((root / "mix.exs").read_text())
     if development_snapshot(version):
         raise ValueError("release verification refuses development snapshots")
-    release_notes((root / "CHANGELOG.md").read_text(), version)
+    release_notes((root / "CHANGELOG.md").read_text(), version, source_url((root / "mix.exs").read_text()))
     tag = "v" + version
     index = json.loads((root / "corpus/index.json").read_text())
     if index.get("elixir_release") != tag:
@@ -94,6 +142,13 @@ def verify_identity(root, event, ref):
 
 def normalize_sbom(path, tarball):
     """Bind a deterministic CycloneDX serial to package identity and exact bytes."""
+    try:
+        _normalize_sbom(path, tarball)
+    except (KeyError, TypeError, AttributeError) as error:
+        raise ValueError("Malformed release SBOM: missing or invalid CycloneDX metadata or graph") from error
+
+
+def _normalize_sbom(path, tarball):
     bom = json.loads(path.read_text())
     if bom.get("bomFormat") != "CycloneDX" or bom.get("specVersion") != "1.6":
         raise ValueError("release SBOM must use CycloneDX 1.6")
@@ -115,6 +170,7 @@ if __name__ == "__main__":
     choice.add_argument("--install-requirement", action="store_true")
     choice.add_argument("--verify", action="store_true")
     choice.add_argument("--normalize-sbom", type=Path)
+    choice.add_argument("--release-notes", action="store_true")
     parser.add_argument("--tarball", type=Path)
     parser.add_argument("--notes-file", type=Path)
     parser.add_argument("--for-version")
@@ -124,6 +180,10 @@ if __name__ == "__main__":
             if not args.tarball:
                 parser.error("--normalize-sbom requires --tarball")
             normalize_sbom(args.normalize_sbom, args.tarball)
+        elif args.release_notes:
+            version = args.for_version or package_version((ROOT / "mix.exs").read_text())
+            parse_version(version)
+            print(release_notes((ROOT / "CHANGELOG.md").read_text(), version), end="")
         elif args.verify:
             version = verify_identity(ROOT, os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"])
             if args.notes_file:

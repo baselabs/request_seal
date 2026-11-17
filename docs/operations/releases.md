@@ -17,11 +17,13 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    Match `corpus/index.json`'s `elixir_release` to `v<version>`, including `-dev`
    between releases; the gate and release workflow enforce this identity.
    Update `test/support/conformance_pin.ex` whenever the index digest changes.
-   In this release commit, rename `## Unreleased 2.0.0` to
-   `## 2.0.0 - YYYY-MM-DD` (substitute the version and actual release date), and
+   In this release commit, rename `## Unreleased <version>` to
+   `## <version> - YYYY-MM-DD` (substitute the version and actual release date), and
    finish the release and migration guidance beneath it. This dated, nonempty
-   section becomes the GitHub release notes. Verification rejects a missing,
-   undated, or empty section before a tag exists.
+   section becomes the GitHub release notes, with relative links pinned to the
+   released tag. Both `mix hex.publish` and the release gate reject a missing,
+   undated, or empty section before publishing or tagging. Publishing requires
+   `python3` for this shared validation.
    Confirm the explicit public document inventory and supported profiles.
 2. Use the latest Elixir/OTP pair and Node pin from `.tool-versions`.
    Run the release gate and inspect generated docs in a browser separately:
@@ -124,8 +126,12 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    pointing at another commit.
    It rebuilds the package and compares it byte for byte with the published Hex
    tarball before attestation or publication of release assets. Inspect the
-   CycloneDX 1.6 SBOM: telemetry and optional integrations are included, development
-   and test tools are excluded. `python3 scripts/sbom.py` downloads upstream's
+   CycloneDX 1.6 SBOM: telemetry has scope `required`; optional integrations and
+   dependencies reached only through them have scope `optional`. A dependency
+   reachable through any required dependency path has scope `required`.
+   Development and test tools are excluded. Every scope is derived from the
+   package's prod dependencies and non-optional lock edges and verified before
+   publication. `python3 scripts/sbom.py` downloads upstream's
    prebuilt binary, verifies its checksum before execution, and reads the unpacked
    package with Mix's locked production dependency closure, including all optional
    integrations. The binary version and digest live in `scripts/sbom.py`.
@@ -148,7 +154,8 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    title and notes match the version and dated CHANGELOG section.
    Its read-only verification job repeats
    the dry run, including the Hex byte comparison. Only its tag-only publishing
-   job receives release and attestation write permissions. It attests build
+   job receives release and attestation write permissions. It compares every
+   existing release asset before creating any attestations. It attests build
    provenance for the package tarball, corpus archive, and SBOM, and binds a
    CycloneDX SBOM attestation to the package tarball before uploading assets.
    Verify the downloaded artifacts and both predicate types:

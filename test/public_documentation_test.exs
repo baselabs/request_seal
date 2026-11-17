@@ -106,12 +106,23 @@ defmodule RequestSeal.PublicDocumentationTest do
       if development? do
         assert_raise Mix.Error, ~r/development versions cannot publish/, fn -> guard.([]) end
       else
-        if Version.match?(System.version(), ">= 1.20.0") do
-          assert guard.([]) == nil
-        else
-          assert_raise Mix.Error, ~r/Publishing RequestSeal requires Elixir 1.20 or newer/, fn ->
-            guard.([])
-          end
+        dated? = String.contains?(File.read!("CHANGELOG.md"), "\n## #{version} - ")
+
+        cond do
+          not dated? ->
+            assert_raise Mix.Error,
+                         ~r/Publishing RequestSeal requires valid release notes.*dated section/s,
+                         fn -> guard.([]) end
+
+          Version.match?(System.version(), ">= 1.20.0") ->
+            assert guard.([]) == nil
+
+          true ->
+            assert_raise Mix.Error,
+                         ~r/Publishing RequestSeal requires Elixir 1.20 or newer/,
+                         fn ->
+                           guard.([])
+                         end
         end
       end
 

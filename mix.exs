@@ -32,6 +32,7 @@ defmodule RequestSeal.MixProject do
     "docs/reference/corpus-format.md",
     "docs/reference/glossary.md",
     "docs/reference/standards.md",
+    "docs/operations/releases.md",
     "livebooks/overview.md",
     "livebooks/environment.livemd",
     "livebooks/rfc-ed25519.livemd",
@@ -94,7 +95,8 @@ defmodule RequestSeal.MixProject do
             "CONTRIBUTING.md",
             "SECURITY.md",
             "docs/guides/getting-started.md",
-            "docs/guides/testing.md"
+            "docs/guides/testing.md",
+            "docs/operations/releases.md"
           ]
         ],
         groups_for_modules: [
@@ -146,6 +148,22 @@ defmodule RequestSeal.MixProject do
       Mix.raise(
         "Publishing RequestSeal requires a release version; development versions cannot publish."
       )
+    end
+
+    python =
+      System.find_executable("python3") ||
+        Mix.raise(
+          "Publishing RequestSeal requires python3 to validate the dated CHANGELOG section."
+        )
+
+    case System.cmd(python, ["scripts/release.py", "--release-notes", "--for-version", @version],
+           stderr_to_stdout: true
+         ) do
+      {_notes, 0} ->
+        :ok
+
+      {error, _status} ->
+        Mix.raise("Publishing RequestSeal requires valid release notes: #{error}")
     end
 
     unless Version.match?(System.version(), ">= 1.20.0") do
