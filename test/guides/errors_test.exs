@@ -3,6 +3,7 @@ defmodule RequestSeal.GuideErrorsTest do
   alias RequestSeal.DocsExamples, as: E
 
   test "documented examples execute against real cryptography" do
+    on_exit(fn -> :telemetry.detach("request-seal-ops") end)
     binding = []
 
     binding =
@@ -27,15 +28,21 @@ defmodule RequestSeal.GuideErrorsTest do
     binding =
       E.eval(
         ~S'''
-        :telemetry.detach("request-seal-ops")
-
-        :telemetry.attach_many("request-seal-ops", [
-          [:request_seal, :verify, :stop]
-        ], fn _event, _measurements, metadata, _config ->
-          send(self(), {:verified, metadata.outcome})
-        end, nil)
+        defmodule MyApp.RequestSealTelemetry do
+          def handle_event(event, %{duration: duration}, metadata, destination) do
+            send(destination, {:seal_event, event, duration, metadata})
+          end
+        end
 
         :telemetry.detach("request-seal-ops")
+
+        :ok =
+          :telemetry.attach_many(
+            "request-seal-ops",
+            RequestSeal.Telemetry.events(),
+            &MyApp.RequestSealTelemetry.handle_event/4,
+            self()
+          )
         ''',
         binding,
         "docs/guides/errors.md",
@@ -148,6 +155,16 @@ defmodule RequestSeal.GuideErrorsTest do
         "docs/guides/errors.md",
         4
       )
+
+    # The documented handler receives the bounded events of the verifications above.
+    assert_received {:seal_event, [:request_seal, :verify, :stop], duration,
+                     %{outcome: :error, reason: :invalid_signature, layer: :crypto}}
+
+    assert is_integer(duration)
+    assert_received {:seal_event, [:request_seal, :replay, :claim], _, %{outcome: :claimed}}
+
+    assert_received {:seal_event, [:request_seal, :replay, :claim], _,
+                     %{outcome: :already_claimed}}
 
     binding =
       E.eval(

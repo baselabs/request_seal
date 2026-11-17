@@ -237,6 +237,52 @@ def normalize_exdoc_inventory(output, project_root=ROOT):
         inventory.write_text("".join(entry + "\n" for entry in entries))
 
 
+def doc_link_errors(output):
+    # Every relative link in generated HTML must reach an existing file and,
+    # when it names a fragment, an element id in that file. A summary copied
+    # onto another page keeps its module-local links, which break there.
+    from html import unescape
+    from html.parser import HTMLParser
+    from urllib.parse import unquote, urlsplit
+
+    class Collector(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.ids, self.hrefs = set(), []
+
+        def handle_starttag(self, tag, attrs):
+            for name, value in attrs:
+                if name == "id" and value is not None:
+                    self.ids.add(unescape(value))
+                elif name == "href" and tag == "a" and value is not None:
+                    self.hrefs.append(value)
+
+    pages = {}
+    for page in sorted(output.rglob("*.html")):
+        collector = Collector()
+        collector.feed(page.read_text())
+        pages[page.resolve()] = collector
+    errors = []
+    for page, collector in pages.items():
+        for href in collector.hrefs:
+            parts = urlsplit(href)
+            if parts.scheme or parts.netloc or href.startswith("//"):
+                continue
+            target = (page.parent / unquote(parts.path)).resolve() if parts.path else page
+            if not target.is_relative_to(output.resolve()) or not target.is_file():
+                errors.append(f"{page.relative_to(output.resolve()).as_posix()}: {href} has no target")
+                continue
+            fragment = unquote(parts.fragment)
+            if fragment and target.suffix == ".html" and fragment not in pages[target].ids:
+                errors.append(f"{page.relative_to(output.resolve()).as_posix()}: {href} has no target")
+    return errors
+
+
+def check_doc_links(output):
+    errors = doc_link_errors(output)
+    if errors:
+        raise ValueError("Generated documentation has broken links:\n" + "\n".join(errors))
+
 def notebooks():
     tooling = ROOT / "tools/notebooks"
     run(["mix", "deps.get", "--check-locked"], tooling)
@@ -271,6 +317,7 @@ if __name__ == "__main__":
             run([sys.executable, "scripts/check_docs.py"])
             run(["mix", "docs", "--warnings-as-errors"])
             normalize_exdoc_inventory(ROOT / "doc")
+            check_doc_links(ROOT / "doc")
             run(["mix", "hex.audit"])
             check_package()
         notebooks()

@@ -98,12 +98,21 @@ The result states facts about the signature. `authorization: :not_evaluated` is 
 Every verification entry point emits a versioned telemetry event with only low-cardinality outcome, reason, and layer atoms plus a duration — never labels, key IDs, or bytes (`RequestSeal.Telemetry` documents the contract):
 
 ```elixir
+defmodule NotebookTelemetry do
+  def handle_event(_event, _measurements, metadata, destination) do
+    send(destination, {:verified, metadata.outcome, metadata.reason})
+  end
+end
+
 :telemetry.detach("notebook-verify")
 
-events =
-  :telemetry.attach_many("notebook-verify", [[:request_seal, :verify, :stop]], fn _event, _measurements, metadata, _config ->
-    send(self(), {:verified, metadata.outcome, metadata.reason})
-  end, nil)
+:ok =
+  :telemetry.attach_many(
+    "notebook-verify",
+    [[:request_seal, :verify, :stop]],
+    &NotebookTelemetry.handle_event/4,
+    self()
+  )
 
 {:ok, _} = RequestSeal.verify(signed, policy, label: "sig")
 {:error, _} = RequestSeal.verify(signed, policy, label: "absent")

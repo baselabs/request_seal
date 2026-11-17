@@ -422,6 +422,25 @@ class CorpusReleasePinTest(unittest.TestCase):
                 self.assertTrue(any("elixir_release" in error for error in errors))
         self.assertEqual([], gate.corpus_release_errors({"mix.exs": mix, "corpus/index.json": '{"elixir_release":"v0.5.0"}'}))
 
+    def test_generated_doc_links_resolve_to_a_file_and_anchor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "Mod.html").write_text('<h2 id="same?/2">same?/2</h2><a href="#same?/2">self</a>')
+            (output / "api-reference.html").write_text(
+                '<a href="Mod.html#same?/2">ok</a><a href="https://example.org/#x">external</a>'
+            )
+            self.assertEqual([], gate.doc_link_errors(output))
+            (output / "api-reference.html").write_text(
+                '<a href="#same?/2">summary</a><a href="Gone.html">gone</a><a href="Mod.html#nope">nope</a>'
+            )
+            self.assertEqual(
+                [
+                    "api-reference.html: #same?/2 has no target",
+                    "api-reference.html: Gone.html has no target",
+                    "api-reference.html: Mod.html#nope has no target",
+                ],
+                gate.doc_link_errors(output),
+            )
 
 if __name__ == "__main__":
     unittest.main()

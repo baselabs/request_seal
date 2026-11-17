@@ -19,7 +19,6 @@ defmodule RequestSeal.Telemetry do
   | `[:request_seal, :web_bot_auth, :verify, :stop]` | `RequestSeal.WebBotAuth.verify/3` | as above |
   | `[:request_seal, :replay, :claim]` | the required-replay commit shared by every profile | `:outcome` (`:claimed`, `:already_claimed`, or `:error`), `:reason` (atom or nil) |
   | `[:request_seal, :custody, :sign, :stop]` | the shared custody signing path of both `RequestSeal.sign/4` forms | `:outcome` (`:ok` or `:error`), `:reason` (a bounded `RequestSeal.Custody.Error` reason atom or nil) |
-
   | `[:request_seal, :custody, :wrap]` | `RequestSeal.Custody.wrap/3` | `:outcome` (`:ok` or `:failed`) only |
   | `[:request_seal, :custody, :unwrap]` | `RequestSeal.Custody.unwrap/3` | empty; no per-item outcome |
 
@@ -36,12 +35,23 @@ defmodule RequestSeal.Telemetry do
 
   ## Examples
 
-      iex> :telemetry.attach_many("ops-verify", [
-      ...>   [:request_seal, :verify, :stop]
-      ...> ], fn _m, _me, md, _c ->
-      ...>   send(self(), {:verified, md.outcome})
-      ...> end, nil)
-      ...> :telemetry.detach("ops-verify")
+  Attach a named module function, not an anonymous function; `:telemetry`
+  calls a function capture without the penalty it documents for anonymous
+  handlers.
+
+      iex> defmodule MyApp.SealEvents do
+      ...>   def handle_event(event, %{duration: _}, metadata, destination) do
+      ...>     send(destination, {event, metadata})
+      ...>   end
+      ...> end
+      ...> :telemetry.attach_many(
+      ...>   "my-app-seal-events",
+      ...>   RequestSeal.Telemetry.events(),
+      ...>   &MyApp.SealEvents.handle_event/4,
+      ...>   self()
+      ...> )
+      :ok
+      iex> :telemetry.detach("my-app-seal-events")
       :ok
   """
 

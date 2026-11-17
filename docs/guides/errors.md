@@ -39,18 +39,24 @@ Do not log `verification.signature.parameters`, `verification.signature.keyid`, 
 
 ## Observe with telemetry
 
-RequestSeal emits a versioned `:telemetry` contract (`RequestSeal.Telemetry` documents every event name and key): a stop event for `RequestSeal.verify/3` and Web Bot Auth verification with `outcome`, `reason`, `layer`, and `detail`, plus a claim event for every replay commitment and a stop event for the shared custody signing path. Metadata carries only closed reason and layer atoms — never labels, key IDs, URLs, or bytes — so a handler can record it unredacted:
+RequestSeal emits a versioned `:telemetry` contract (`RequestSeal.Telemetry` documents every event name and key): a stop event for `RequestSeal.verify/3` and Web Bot Auth verification with `outcome`, `reason`, `layer`, and `detail`, plus a claim event for every replay commitment and a stop event for the shared custody signing path. Metadata carries only closed reason and layer atoms — never labels, key IDs, URLs, or bytes — so a handler can record it unredacted. Attach a named module function; `:telemetry` warns that anonymous handlers carry a performance penalty:
 
 ```elixir
-:telemetry.detach("request-seal-ops")
-
-:telemetry.attach_many("request-seal-ops", [
-  [:request_seal, :verify, :stop]
-], fn _event, _measurements, metadata, _config ->
-  send(self(), {:verified, metadata.outcome})
-end, nil)
+defmodule MyApp.RequestSealTelemetry do
+  def handle_event(event, %{duration: duration}, metadata, destination) do
+    send(destination, {:seal_event, event, duration, metadata})
+  end
+end
 
 :telemetry.detach("request-seal-ops")
+
+:ok =
+  :telemetry.attach_many(
+    "request-seal-ops",
+    RequestSeal.Telemetry.events(),
+    &MyApp.RequestSealTelemetry.handle_event/4,
+    self()
+  )
 ```
 
 Resource exhaustion is observable the same way: a `:limit` reason marks a documented bound. An `:internal` reason at layer `:internal` marks an unexpected internal fault, not a property of the input; its `detail` is the exception class, and the correlation token pairs it with your logs.

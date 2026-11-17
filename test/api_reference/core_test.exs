@@ -4,4 +4,5 @@ defmodule RequestSeal.APIReference.CoreTest do
   doctest RequestSeal.Policy
   doctest RequestSeal.AcceptSignature
   doctest RequestSeal.SignatureBase
+  doctest RequestSeal.Telemetry
 end
