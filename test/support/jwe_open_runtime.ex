@@ -395,6 +395,52 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     end
   end
 
+  # Match each new event once. Scanning the accumulated history after every
+  # message makes a placement quadratic before its marker can even arrive.
+  def collect_event(s, predicate, timeout \\ 60_000) do
+    if Enum.any?(s.events, predicate),
+      do: s,
+      else: receive_event(s, predicate, Bounds.now() + timeout * 1_000)
+  end
+
+  defp receive_event(s, predicate, at) do
+    receive do
+      event ->
+        current = observe(s, event)
+
+        if predicate.(event),
+          do: current,
+          else: receive_event(current, predicate, at)
+    after
+      Bounds.remaining(at) -> raise "placement event missing"
+    end
+  end
+
+  # Advance to a production deadline while continuing to consume trace/end
+  # events. The absolute clock, rather than a sleep interval, decides arrival.
+  def until(s, at) do
+    if Bounds.now() >= at do
+      s
+    else
+      receive do
+        event -> until(observe(s, event), at)
+      after
+        Bounds.remaining(at) -> until(s, at)
+      end
+    end
+  end
+
+  def registry(s) do
+    Enum.find_value(s.events, fn
+      {:received, pid, {:"ETS-TRANSFER", table, _, {_, :registry}}}
+      when pid == s.coordinator ->
+        table
+
+      _ ->
+        nil
+    end)
+  end
+
   def observe(s, {:trace_ts, parent, :spawn, pid, {module, function, args}, stamp} = event) do
     ref = Process.monitor(pid)
 

@@ -146,7 +146,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
         reply(s, :ok)
 
       map_get(:rprime, s) == nil and not map_get(:expired_r, s) and
-          now >= map_get(:r, s) and map_get(:handed_off, s) ->
+        now >= map_get(:r, s) and map_get(:handed_off, s) ->
         loop(expire_r(s))
 
       true ->

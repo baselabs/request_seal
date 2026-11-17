@@ -3,6 +3,9 @@ defmodule RequestSeal.JOSEPolicyTest do
   alias RequestSeal.{Custody, PublicKey}
   alias RequestSeal.JOSE.{Error, JWE, JWS, Support}
   alias RequestSeal.Test.JOSEBatchCustodian
+  alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
+  alias RequestSeal.JOSE.JWE.Bounds
+  @after_compile Runtime
   import RequestSeal.JOSEVectors, only: [fixture: 1, replace: 3, header: 2]
 
   setup do
@@ -233,9 +236,68 @@ defmodule RequestSeal.JOSEPolicyTest do
   end
 
   test "2.6 admission unfinished at R reports deadline_exceeded input", %{p: p} do
+    # A completed scan can legitimately refuse this protected segment before R.
+    # Its byte count must not stand in for a minimum execution time.
     token = String.duplicate(" ", 1_048_566) <> ".a.b.c.d"
-    error(JWE.decrypt(token, %{p | resolve_timeout: 1}), :deadline_exceeded, :input)
+    error(JWE.decrypt(token, p), :limit)
+
+    result =
+      Runtime.with_peer(
+        fn ->
+          old = Process.flag(:priority, :max)
+
+          try do
+            admission_after_r(40)
+          after
+            Process.flag(:priority, old)
+          end
+        end,
+        1
+      )
+
+    error(result, :deadline_exceeded, :input)
     refute_receive {:resolved, _}
+  end
+
+  defp admission_after_r(0), do: flunk("no verified pre-admission placement")
+
+  defp admission_after_r(attempts) do
+    s =
+      Runtime.launch(1, :resolvers,
+        single: true,
+        trace_input: false,
+        policy: %{timeout: 300, resolve_timeout: 200, unwrap_timeout: 50}
+      )
+
+    s = Runtime.collect_until(s, &(&1.preflight != nil))
+    true = :erlang.suspend_process(s.coordinator)
+    s = Runtime.delivered(s)
+
+    result =
+      try do
+        # The coordinator cannot accept admission while suspended. Verify no
+        # range was born before the suspension; otherwise discard the race.
+        if Enum.any?(s.pids, fn {_, role} -> role == :worker end) do
+          :retry
+        else
+          [_, _, _, _, _, r, d, f, _] =
+            Enum.find_value(s.events, fn
+              {:spawn, _, _, RequestSeal.JOSE.JWE.Guard, :run, args, _} -> args
+              _ -> nil
+            end)
+
+          s = Runtime.until(s, r)
+          assert Bounds.now() < d, "admission placement must cross R before D"
+          :erlang.resume_process(s.coordinator)
+          s = Runtime.collect_return(s, f + Bounds.teardown(1))
+          assert s.resolver_count == 0, "expired admission must not start resolution"
+          s.return
+        end
+      after
+        Runtime.cleanup(s)
+      end
+
+    if result == :retry, do: admission_after_r(attempts - 1), else: result
   end
 
   test "2.6 content handler runs after completion in the caller", %{token: t, p: p} do

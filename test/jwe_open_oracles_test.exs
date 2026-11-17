@@ -5,8 +5,8 @@ defmodule RequestSeal.JWEOpenOraclesTest do
   @after_compile Runtime
   @moduletag timeout: 600_000
 
-  defp trace_guard do
-    for function <- [:check, :kill, :receive_one, :finish] do
+  defp trace_guard(functions) do
+    for function <- functions do
       arity = if function == :kill, do: 3, else: 1
 
       :erlang.trace_pattern(
@@ -39,14 +39,50 @@ defmodule RequestSeal.JWEOpenOraclesTest do
 
   test "oracle 1 constant guard reaction before kill with queued notices" do
     Runtime.with_peer(fn ->
-      trace_guard()
+      samples =
+        for n <- [1, 10_000], topology <- [:resolvers, :queued] do
+          s = Runtime.start(n, topology, trace_input: false)
+          if topology != :queued, do: :erlang.suspend_process(s.guard)
 
-      try do
-        samples =
-          for n <- [1, 10_000], topology <- [:resolvers, :queued] do
-            s = Runtime.start(n, topology)
+          try do
+            assert Runtime.info(s.guard, :current_function) == {Guard, :receive_one, 1},
+                   "reaction must start from the same blocked receive"
+
+            # Join caller death before resuming the guard. Otherwise it may
+            # legitimately process any number of notices before the trigger.
+            Process.exit(s.caller, :kill)
+
+            s =
+              Runtime.collect_event(s, fn
+                {:DOWN, ref, :process, pid, _} -> ref == s.monitor and pid == s.caller
+                _ -> false
+              end)
+
+            notice =
+              Enum.find_value(s.events, fn
+                {:received, pid, {:"ETS-TRANSFER", table, _, {_, :caller}}}
+                when pid == s.caller ->
+                  table
+
+                _ ->
+                  nil
+              end)
+
+            assert :ets.info(notice, :owner) == s.guard,
+                   "reaction must begin after the caller notice owner flip"
+
+            trace_guard([:kill])
+            # This entry follows kill's return, before another dequeue or
+            # owner read. Matching the state excludes the later sweep.
+            :erlang.trace_pattern(
+              {Guard, :receive_one, 1},
+              [
+                {[%{cause: :caller_gone, ended_at: nil}], [], [{:message, {:process_dump}}]}
+              ],
+              [:local]
+            )
+
             :erlang.trace(s.guard, true, [:call])
-            if topology != :queued, do: :erlang.suspend_process(s.guard)
 
             :erlang.trace_pattern(
               {Guard, :kill, 3},
@@ -55,45 +91,42 @@ defmodule RequestSeal.JWEOpenOraclesTest do
             )
 
             before_trigger = Runtime.info(s.guard, :reductions)
+            result = Runtime.trigger(%{s | topology: :queued}, :d)
+            kills = guard_calls(result.events, s.guard, :kill)
+            receives = guard_calls(result.events, s.guard, :receive_one)
 
-            try do
-              result = Runtime.trigger(%{s | topology: :queued}, :caller)
-              checks = guard_calls(result.events, s.guard, :check)
-              kills = guard_calls(result.events, s.guard, :kill)
-              receives = guard_calls(result.events, s.guard, :receive_one)
+            assert :erlang.trace_info({Guard, :kill, 3}, :call_count) == {:call_count, 1},
+                   "one trigger causes exactly one kill"
 
-              assert :erlang.trace_info({Guard, :kill, 3}, :call_count) == {:call_count, 1},
-                     "one trigger causes exactly one kill"
-
-              :erlang.trace_pattern({Guard, :kill, 3}, false, [:call_count])
-              assert kills != [] and receives != [], "reaction interval must include a kill"
-              before_kill = List.last(Enum.filter(checks, &(&1 <= hd(kills))))
-              after_kill = Enum.find(receives, &(&1 >= hd(kills)))
-              assert is_integer(before_kill) and is_integer(after_kill)
-              {n, topology, after_kill - before_trigger}
-            after
-              Runtime.cleanup(s)
-            end
+            :erlang.trace_pattern({Guard, :kill, 3}, false, [:call_count])
+            assert kills != [], "reaction interval must include a kill"
+            after_kill = Enum.find(receives, &(&1 >= hd(kills)))
+            assert is_integer(after_kill), "reaction must end before the sweep"
+            {n, topology, after_kill - before_trigger}
+          after
+            :erlang.trace_pattern({Guard, :kill, 3}, false, [:call_count])
+            untrace_guard()
+            Runtime.cleanup(s)
           end
-
-        for topology <- [:resolvers, :queued] do
-          [{_, _, a}, {_, _, b}] = Enum.filter(samples, &(elem(&1, 1) == topology))
-          assert a == b, "guard reaction must be constant before kill"
         end
-      after
-        untrace_guard()
+
+      for topology <- [:resolvers, :queued] do
+        [{_, _, a}, {_, _, b}] = Enum.filter(samples, &(elem(&1, 1) == topology))
+        assert a == b, "guard reaction must be constant before kill"
       end
     end)
   end
 
   test "oracle 2 complete topology and linear teardown in isolated peer" do
     Runtime.with_peer(fn ->
-      trace_guard()
-
       for topology <- [:resolvers, :queued, :custody] do
         samples =
           for n <- [1, 1_000, 10_000] do
-            s = Runtime.start(n, topology)
+            s = Runtime.start(n, topology, trace_input: false)
+            # Setup has already reached P2/P3. Only the two measured endpoints
+            # need dumps; dumping every check while 10,000 notices are queued
+            # would measure the tracer's work as part of the topology.
+            trace_guard([:kill, :finish])
             :erlang.trace(s.guard, true, [:call])
 
             try do
@@ -118,6 +151,7 @@ defmodule RequestSeal.JWEOpenOraclesTest do
               {:measurement, _, _, _, vm} = hd(result.events)
               {n, vm, guard_work}
             after
+              untrace_guard()
               Runtime.cleanup(s)
             end
           end
@@ -129,8 +163,6 @@ defmodule RequestSeal.JWEOpenOraclesTest do
           assert guard_work - guard_base <= 32 * (n - 1), "guard teardown must fit a + 32n"
         end
       end
-
-      untrace_guard()
     end)
   end
 
@@ -259,37 +291,47 @@ defmodule RequestSeal.JWEOpenOraclesTest do
   end
 
   test "caller bound holds with guard suspended" do
-    s =
-      Runtime.start(1, :resolvers,
-        policy: %{timeout: 300, resolve_timeout: 200, unwrap_timeout: 50}
-      )
+    Runtime.with_peer(fn ->
+      # Install the boundary trace before launch, not after observing a
+      # callback whose entry can be delivered after the caller's deadline.
+      :erlang.trace_pattern({Open, :wait_end, 1}, true, [:local])
+      :erlang.trace_pattern({Open, :cleanup, 1}, true, [:local])
 
-    {:module, Open} = :code.ensure_loaded(Open)
-    :erlang.trace_pattern({Open, :wait_end, 1}, [{:_, [], [{:return_trace}]}], [:local])
-    :erlang.trace(s.caller, true, [:call])
-    true = :erlang.suspend_process(s.guard)
+      s =
+        Runtime.start(1, :resolvers,
+          policy: %{timeout: 300, resolve_timeout: 200, unwrap_timeout: 50}
+        )
 
-    try do
-      s = Runtime.collect_return(s, Bounds.now() + 1_000_000) |> Runtime.delivered()
+      true = :erlang.suspend_process(s.guard)
 
-      assert {:error, %{reason: :deadline_exceeded}} = s.return,
-             "caller wait must be bounded with guard suspended"
+      try do
+        s = Runtime.collect_return(s, Bounds.now() + 1_000_000) |> Runtime.delivered()
 
-      [_, _, _, _, _, _, _, f, _] =
-        Enum.find_value(s.events, fn
-          {:spawn, _, _, Guard, :run, args, _} -> args
-          _ -> nil
-        end)
+        assert {:error, %{reason: :deadline_exceeded}} = s.return,
+               "caller wait must be bounded with guard suspended"
 
-      assert Enum.any?(s.events, fn
-               {:trace_ts, _, :call, {Open, :wait_end, [at]}, _} -> at <= f + Bounds.teardown(1)
-               _ -> false
-             end),
-             "wait end must be stamped before cleanup"
-    after
-      :erlang.trace_pattern({Open, :wait_end, 1}, false, [:local])
-      Runtime.cleanup(s)
-    end
+        [_, _, _, _, _, _, _, f, _] =
+          Enum.find_value(s.events, fn
+            {:spawn, _, _, Guard, :run, args, _} -> args
+            _ -> nil
+          end)
+
+        boundaries =
+          for {:trace_ts, pid, :call, {Open, function, args}, _} <- Enum.reverse(s.events),
+              pid == s.caller and function in [:wait_end, :cleanup],
+              do: {function, args}
+
+        assert [{:wait_end, [at]}, {:cleanup, _} | _] = boundaries,
+               "wait end must be stamped before cleanup"
+
+        assert at <= f + Bounds.teardown(1),
+               "wait end must be stamped before cleanup: #{inspect({at, f + Bounds.teardown(1)})}"
+      after
+        :erlang.trace_pattern({Open, :wait_end, 1}, false, [:local])
+        :erlang.trace_pattern({Open, :cleanup, 1}, false, [:local])
+        Runtime.cleanup(s)
+      end
+    end)
   end
 
   test "notices freed at P3 and resolver custody phases do not overlap" do

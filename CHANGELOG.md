@@ -5,7 +5,10 @@
 - Keep the JWE library process tree on native map operations and preserve
   algorithm-mismatch and malformed-capability refusals at resolver ingress.
   Count every shared-list occurrence against the traversal budget and build
-  bounded tuple work lists without append operations.
+  bounded tuple work lists and batch policy keys without append operations.
+- Synchronize JWE deadline and cancellation checks with real process end and
+  registry ownership markers. Observe placement events once and isolate
+  reduction measurements from topology setup and the later registry sweep.
 - Recheck JWE completion after deadline transitions, preserve an early unwrap
   deadline when resolver notices arrive late, and keep worker group intake and
   route revocation linear. Reserve receive-timeout rounding within the existing

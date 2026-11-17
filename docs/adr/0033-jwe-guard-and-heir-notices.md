@@ -76,9 +76,16 @@ notices avoid copying caller-sized exit reasons. The inherited registry remains
 complete even when the coordinator stops between process creation and handoff.
 
 The committed reduction oracles and 69 distinct reversing mutations check constant reaction,
-linear complete teardown, queue bounds, guard heap and caller wait-end. A release
-gate measures the absolute bound and derives K_pf from byte units, report send
-and preflight exit. Constants come from Bounds; no baseline ratio replaces them.
+linear complete teardown, queue bounds, guard heap and caller wait-end. A
+reaction sample pauses the guard at its receive and joins caller death before
+resuming it; the receive entry after the kill ends the measured interval before
+another dequeue or the registry sweep. Topology samples install only the kill
+and finish reduction dumps after placement, so setup does not trace every queued
+end notice.
+Placement collectors match each new event once. A second trigger during a sweep
+requires both a verified registry owner flip and a guard still paused in the sweep.
+A release gate measures the absolute bound and derives K_pf from byte units,
+report send and preflight exit. Constants come from Bounds; no baseline ratio replaces them.
 Final report measurements send the production row, count and control envelopes
 from a sensitive process with an off-heap mailbox to an off-heap observer.
 The report records the observer's actual queue flag. The consumer independently

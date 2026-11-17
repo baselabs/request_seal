@@ -29,7 +29,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       :protected
     ]
 
-    keys = if batch, do: keys ++ [:max_tokens, :max_total_input, :max_total_plaintext], else: keys
+    keys = if batch, do: [:max_tokens, :max_total_input, :max_total_plaintext | keys], else: keys
     unit(flag, deadline)
     ensure(is_map(p) and not is_map_key(p, :__struct__) and map_size(p) <= 12, :invalid_policy)
 
