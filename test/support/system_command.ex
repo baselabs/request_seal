@@ -6,12 +6,19 @@ defmodule RequestSeal.SystemCommand do
   terminate request reports it. Other signals report it without consuming it.
   After reporting the status to stop or terminate, the owner exits; a later
   stop returns `:ok` because the earlier caller already received the outcome.
+
+  Stop returns `:ok` or `{:error, message}`. Stop and continue signals return
+  `:ok` or `{:error, message}`; terminate returns the integer terminal status
+  or `{:error, message}`. Errors include a port exit reason and, for stop or
+  terminate, `"ssh-agent owner shutdown deadline exceeded"`. A nonzero status
+  is an error for `stop_agent/1`. Stop and continue signals report any retained
+  terminal status as an error. Request deadlines and unexpected owner exits
+  raise in the caller.
   """
   @runner Path.expand("../../scripts/processes.py", __DIR__)
   @readiness_timeout 10_000
   @shutdown_timeout 7_000
   @signal_timeout 5_000
-  @port_exit_timeout 100
   @response_margin 1_000
   @caller_readiness_timeout @readiness_timeout + @shutdown_timeout + @response_margin
   @caller_response_timeout max(@signal_timeout, @shutdown_timeout) + @response_margin
@@ -53,13 +60,29 @@ defmodule RequestSeal.SystemCommand do
   end
 
   @doc """
-  Stops an agent, returning an error for a nonzero status or a port exit reason.
+  Stops an agent, returning `:ok` for status zero or an already stopped owner.
+
+  Returns `{:error, message}` for a nonzero status, a port exit reason, or
+  `"ssh-agent owner shutdown deadline exceeded"`. An unexpected owner exit or
+  a response deadline raises in the caller.
 
   Reporting that status completes the owner's lifetime. A later stop returns
   `:ok`, including after a crash was reported to stop or terminate.
   """
   def stop_agent(owner), do: agent_request(owner, :stop)
 
+  @doc """
+  Sends stop, continue, or terminate to the agent through its owner.
+
+  Stop and continue return `:ok` after acknowledgement, or `{:error, message}`
+  naming a retained terminal status or port exit reason. Terminate waits for
+  shutdown and returns its integer status, or `{:error, message}` for a port
+  exit reason or `"ssh-agent owner shutdown deadline exceeded"`.
+
+  Terminate completes the owner's lifetime; stop and continue retain terminal
+  outcomes for a later stop or terminate. Signal acknowledgement deadlines,
+  response deadlines, and unexpected owner exits raise in the caller.
+  """
   def signal_agent(owner, signal) when signal in [:stop, :continue, :terminate] do
     agent_request(owner, {:signal, signal})
   end
@@ -86,13 +109,18 @@ defmodule RequestSeal.SystemCommand do
   end
 
   defp own_agent(caller, ref, socket, runner) do
-    # OTP-29.1.1, OTP-28.5.0.7 and OTP-27.3.4:
+    # This holds for every OTP release in .tool-versions:
     # erts/emulator/sys/unix/sys_drivers.c output() fails writev(EPIPE) through
-    # driver_failure_posix, bypassing port_inp_failure's driver_report_exit.
-    # erts/emulator/beam/io.c driver_failure_term() delivers the linked port
-    # exit and tears the driver down; a child status is not guaranteed after it.
-    # https://github.com/erlang/otp/blob/OTP-29.1.1/erts/emulator/sys/unix/sys_drivers.c
-    # https://github.com/erlang/otp/blob/OTP-29.1.1/erts/emulator/beam/io.c
+    # driver_failure_posix. In erts/emulator/beam/io.c, driver_failure_term()
+    # calls erts_deliver_port_exit(), invalidating the port. driver_report_exit()
+    # then returns early: no exit_status follows EXIT. Port-to-process signal
+    # ordering puts any earlier status ahead of EXIT, so EXIT is final itself.
+    # https://github.com/erlang/otp/blob/ad05823719d77c8faee87348ea39513d4e2f99c5/erts/emulator/sys/unix/sys_drivers.c
+    # https://github.com/erlang/otp/blob/ad05823719d77c8faee87348ea39513d4e2f99c5/erts/emulator/beam/io.c
+    # https://github.com/erlang/otp/blob/09fb046150ab94104e03ee816b95c8b7e6b04683/erts/emulator/sys/unix/sys_drivers.c
+    # https://github.com/erlang/otp/blob/09fb046150ab94104e03ee816b95c8b7e6b04683/erts/emulator/beam/io.c
+    # https://github.com/erlang/otp/blob/c388a2d1b3f9918652276d4798692dd4d8ef97fc/erts/emulator/sys/unix/sys_drivers.c
+    # https://github.com/erlang/otp/blob/c388a2d1b3f9918652276d4798692dd4d8ef97fc/erts/emulator/beam/io.c
     Process.flag(:trap_exit, true)
     monitor = Process.monitor(caller)
     python = System.find_executable("python3") || raise "python3 is required"
@@ -187,13 +215,15 @@ defmodule RequestSeal.SystemCommand do
         end
 
       {:DOWN, ^monitor, :process, _, _} ->
-        finish_stop(port)
+        # Nobody remains to receive a failure. Finish cleanup and exit normally.
+        stop_port(port)
+        :ok
 
       {^port, {:exit_status, status}} ->
         agent_exited(monitor, {:ok, status})
 
       {:EXIT, ^port, reason} ->
-        agent_exited(monitor, port_exit(port, reason))
+        agent_exited(monitor, port_exit(reason))
 
       {^port, {:data, _}} ->
         agent_loop(port, monitor)
@@ -232,7 +262,7 @@ defmodule RequestSeal.SystemCommand do
         {:exited, {:ok, status}}
 
       {:EXIT, ^port, reason} ->
-        {:exited, port_exit(port, reason)}
+        {:exited, port_exit(reason)}
     after
       max(0, deadline - System.monotonic_time(:millisecond)) ->
         raise "ssh-agent signal deadline exceeded"
@@ -254,21 +284,13 @@ defmodule RequestSeal.SystemCommand do
   defp queued_exit(port) do
     receive do
       {^port, {:exit_status, status}} -> {:ok, status}
-      {:EXIT, ^port, reason} -> port_exit(port, reason)
+      {:EXIT, ^port, reason} -> port_exit(reason)
     after
       0 -> :running
     end
   end
 
-  defp port_exit(port, reason) do
-    # Prefer a status already in transit, but do not wait a shutdown deadline
-    # for a driver failure that destroyed the exit-status channel.
-    receive do
-      {^port, {:exit_status, status}} -> {:ok, status}
-    after
-      @port_exit_timeout -> {:error, "agent owner port exited: #{inspect(reason)}"}
-    end
-  end
+  defp port_exit(reason), do: {:error, "agent owner port exited: #{inspect(reason)}"}
 
   defp command_exit(port, command) do
     # A caller's DOWN may precede an already queued port status. Consume that
@@ -292,17 +314,10 @@ defmodule RequestSeal.SystemCommand do
     end
   end
 
-  defp finish_stop(port) do
-    case stop_port(port) do
-      :ok -> :ok
-      {:error, message} -> raise message
-    end
-  end
-
   defp await_exit(port, timeout) do
     receive do
       {^port, {:exit_status, status}} -> {:ok, status}
-      {:EXIT, ^port, reason} -> port_exit(port, reason)
+      {:EXIT, ^port, reason} -> port_exit(reason)
     after
       timeout -> {:error, "ssh-agent owner shutdown deadline exceeded"}
     end
@@ -330,13 +345,8 @@ defmodule RequestSeal.SystemCommand do
             {:error, "ssh-agent exited before readiness: #{status}", :exited}
 
           {:EXIT, ^port, reason} ->
-            message =
-              case port_exit(port, reason) do
-                {:ok, status} -> "ssh-agent exited before readiness: #{status}"
-                {:error, message} -> "ssh-agent exited before readiness; " <> message
-              end
-
-            {:error, message, :exited}
+            {:error, message} = port_exit(reason)
+            {:error, "ssh-agent exited before readiness; " <> message, :exited}
         after
           10 ->
             if System.monotonic_time(:millisecond) >= deadline do

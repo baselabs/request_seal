@@ -31,8 +31,11 @@ Child outcomes emit no such line. Signals name the signal, without a traceback.
 Once main() chooses an outcome, further owner signals cannot change its status
 or interrupt its report, including through CLI exit and interpreter shutdown.
 For in-process calls, main() restores the caller's mask after leaving the
-protected owner body. Signals pending then reach the caller's handlers and may
-raise instead of returning the chosen status, after its report is complete.
+protected owner body, then re-delivers each distinct signal suppressed by the
+dispatcher once with signal.raise_signal(). Both pending and re-delivered
+signals reach the caller's handlers and may raise instead of returning the
+chosen status, after its report is complete. The CLI drops suppressed signals
+and keeps the mask blocked through exit.
 As with shell commands, a child can itself choose a reserved status; the prefix
 distinguishes an owner outcome in merged output. Child stdin is /dev/null;
 owner stdin carries only owner commands.
@@ -167,6 +170,9 @@ def _install_cleanup_handlers():
                 if (current.f_code is _owner_main.__code__
                         and (current.f_locals.get("outcome", {}).get("chosen", False)
                              or "error" in current.f_locals)):
+                    dropped = current.f_locals["outcome"]["dropped"]
+                    if dropped is not None:
+                        dropped.setdefault(signum, None)
                     return
                 if current.f_code is _CleanupContext.__exit__.__code__:
                     delivery = current.f_locals.get("delivery", {})
@@ -481,10 +487,20 @@ def signal_group(process, signum):
     except ProcessLookupError:
         pass
     except PermissionError as error:
-        # Darwin can deny signaling an exited, unreaped leader. Never wait on
-        # a live leader after EPERM, or disguise that denial as a zero timeout.
-        if sys.platform != "darwin" or not exited(process, timeout=0):
-            raise PermissionError(f"Cannot signal process group {process.pid}: permission denied") from error
+        # XNU killpg1 skips zombies and returns EPERM when it finds no live
+        # member. getpgid's proc_find returns ESRCH during exit, even before a
+        # nonblocking kqueue read observes NOTE_EXIT. Our unreaped PID cannot
+        # have been reused. Neither check waits on a live, denied process.
+        # https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_sig.c
+        # https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_prot.c
+        if sys.platform == "darwin":
+            try:
+                os.getpgid(process.pid)
+            except ProcessLookupError:
+                return
+            if exited(process, timeout=0):
+                return
+        raise PermissionError(f"Cannot signal process group {process.pid}: permission denied") from error
 
 
 @_cleanup_call
@@ -634,19 +650,35 @@ class _OwnerParser(argparse.ArgumentParser):
 
 def main(*, restore_signal_mask=True):
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    outcome = {"chosen": False, "dropped": {} if restore_signal_mask else None}
     try:
-        return _owner_main()
+        return _owner_main(outcome)
     finally:
         # The protected frame must be gone before unmasking: pending signals
         # belong to an in-process caller, whose handlers may raise here.
         if restore_signal_mask:
-            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            failure = None
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            except BaseException as error:
+                failure = error
+            # A handler can raise, including during unmasking. Still re-deliver
+            # every suppressed signal once, keeping the first raised exception.
+            for signum in outcome["dropped"]:
+                try:
+                    signal.raise_signal(signum)
+                except BaseException as error:
+                    if failure is None:
+                        failure = error
+                    else:
+                        _report_exception(error)
+            if failure is not None:
+                raise failure
 
 
-def _owner_main():
+def _owner_main(outcome):
     global _report_prefix
     previous_prefix = _report_prefix
-    outcome = {"chosen": False}
     try:
         _report_prefix = "requestseal-owner: "
         install_signal_handlers()

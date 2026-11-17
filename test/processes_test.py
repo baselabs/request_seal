@@ -17,6 +17,42 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import processes
 
 
+def cleanup_process(process):
+    """Stop a test-owned group before reaping its leader, including on timeout."""
+    if process.returncode is not None:
+        return
+    try:
+        processes.signal_group(process, signal.SIGTERM)
+        processes.signal_group(process, signal.SIGCONT)
+        # The owner needs its full five-second budget to clean separate child
+        # sessions. Keep its identity unreaped and allow propagation overhead.
+        processes.exited(process, timeout=10)
+    finally:
+        processes.signal_group(process, signal.SIGKILL)
+        process.wait(timeout=10)
+
+
+def run_owned_process(argv, *, input=None, stdin=None, capture_output=False, timeout=10, **options):
+    """Collect an owner result without subprocess.run's owner-only timeout kill."""
+    if input is not None:
+        if stdin is not None:
+            raise ValueError("input and stdin are mutually exclusive")
+        stdin = subprocess.PIPE
+    if capture_output:
+        options.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen(argv, stdin=stdin, start_new_session=True, **options)
+    try:
+        output, error = process.communicate(input, timeout=timeout)
+        return subprocess.CompletedProcess(argv, process.returncode, output, error)
+    finally:
+        try:
+            cleanup_process(process)
+        finally:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+
+
 def linux_process(pid):
     # comm may contain spaces and parentheses; the final ')' ends that field.
     fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
@@ -161,17 +197,18 @@ else:
         processes.run([sys.executable, "-B", "-c", intermediary, leaf], timeout=20)
 
     def test_ready_file_pid_cannot_authorize_signaling_an_unrelated_process(self):
-        children = [subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(60)"],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    for _ in range(2)]
+        children = []
         try:
+            for _ in range(2):
+                children.append(subprocess.Popen(
+                    [sys.executable, "-B", "-c", "import time; time.sleep(60)"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
             with self.assertRaisesRegex(AssertionError, "does not belong"):
                 self.runtime_identity(children[1].pid, children[0].pid)
             self.assertIsNone(children[1].poll(), "ownership rejection signaled an unrelated process")
         finally:
             for child in children:
-                child.terminate()
-                child.wait(timeout=10)
+                cleanup_process(child)
 
     def assert_tree_stopped(self, signum=None, startup_delay=0, repeated=False, nested=False, fast=False):
         with tempfile.TemporaryDirectory() as directory:
@@ -248,8 +285,7 @@ else:
                             time.sleep(0.01)
                     fcntl.flock(handle, fcntl.LOCK_UN)
             finally:
-                if parent.poll() is None:
-                    parent.terminate()  # Let the real runner clean up its group.
+                cleanup_process(parent)
                 # pidfds bind the exact runtime on Linux. On macOS verify the
                 # test-owned group and session before signaling a ready-file PID.
                 if runtime_pid is not None:
@@ -263,11 +299,6 @@ else:
                     finally:
                         if pidfd is not None:
                             os.close(pidfd)
-                try:
-                    parent.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    parent.kill()
-                    parent.wait(timeout=10)
                 log.close()
 
     def test_timeout_kills_runtime_even_after_its_launcher_exits_on_term(self):
@@ -317,6 +348,24 @@ with command(["sleep", "10"]) as child:
         denied = False
 '''
         processes.run([sys.executable, "-B", "-c", source], timeout=15)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin group signals can race an unreaped leader's exit")
+    def test_darwin_group_signals_preserve_cleanup_during_the_leaders_exit(self):
+        # TERM followed immediately by CONT covers XNU's transition from a
+        # signalable member to a zombie, while its exit event is being posted.
+        for iteration in range(128):
+            with self.subTest(iteration=iteration):
+                child = subprocess.Popen(["sleep", "60"], start_new_session=True)
+                try:
+                    processes.signal_group(child, signal.SIGTERM)
+                    processes.signal_group(child, signal.SIGCONT)
+                finally:
+                    try:
+                        cleanup_process(child)
+                    finally:
+                        if child.returncode is None:
+                            child.kill()
+                            child.wait(timeout=10)
 
     def test_exit_event_does_not_reap_the_owned_child(self):
         with processes.command([sys.executable, "-B", "-c", "pass"]) as child:
@@ -412,7 +461,7 @@ else:
         environment = dict(os.environ, REQUESTSEAL_CLEANUP_FD=str(writer),
                            REQUESTSEAL_CLEANUP_ID=f"{identity.st_dev}:{identity.st_ino}")
         child = subprocess.Popen([sys.executable, "-B", "-c", source, str(release_reader)],
-                                 cwd=ROOT, env=environment, pass_fds=(writer, release_reader))
+                                 cwd=ROOT, env=environment, pass_fds=(writer, release_reader), start_new_session=True)
         try:
             os.close(writer)
             writer = None
@@ -426,9 +475,7 @@ else:
             for fd in (reader, writer, release_reader, release_writer):
                 if fd is not None:
                     os.close(fd)
-            if child.poll() is None:
-                child.terminate()
-                child.wait(timeout=10)
+            cleanup_process(child)
 
     def test_signal_in_registration_window_still_acknowledges_cleanup(self):
         reader, writer = os.pipe()
@@ -454,16 +501,15 @@ except KeyboardInterrupt:
 '''
         child = subprocess.Popen([sys.executable, "-B", "-c", source], cwd=ROOT, pass_fds=(writer,),
                                  env=dict(os.environ, REQUESTSEAL_CLEANUP_FD=str(writer),
-                                          REQUESTSEAL_CLEANUP_ID=f"{identity.st_dev}:{identity.st_ino}"))
+                                          REQUESTSEAL_CLEANUP_ID=f"{identity.st_dev}:{identity.st_ino}"),
+                                          start_new_session=True)
         os.close(writer)
         try:
             self.assertEqual(0, child.wait(timeout=10))
             self.assertEqual(b"+-", os.read(reader, 4096))
         finally:
             os.close(reader)
-            if child.poll() is None:
-                child.terminate()
-                child.wait(timeout=10)
+            cleanup_process(child)
 
     def test_signals_before_cleanup_entry_preserve_ownership_mask_and_exception_context(self):
         source = r'''import json, os, signal, subprocess, sys
@@ -535,7 +581,7 @@ print("cleanup complete; exception context and mask preserved")
                                               str(ready), str(signum), original, str(release_reader)],
                                              cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                             pass_fds=(writer, release_reader))
+                                             pass_fds=(writer, release_reader), start_new_session=True)
                     os.close(writer)
                     os.close(release_reader)
                     pidfd = None
@@ -555,9 +601,7 @@ print("cleanup complete; exception context and mask preserved")
                         if pidfd is not None:
                             self.assertTrue(select.select([pidfd], [], [], 0)[0])
                     finally:
-                        if child.poll() is None:
-                            child.terminate()
-                            child.wait(timeout=10)
+                        cleanup_process(child)
                         child.stdout.close()
                         if pidfd is not None:
                             try:
@@ -737,14 +781,13 @@ assert list(path.parent.iterdir()) == [path], list(path.parent.iterdir())
 '''
         with tempfile.TemporaryDirectory() as directory:
             child = subprocess.Popen([sys.executable, "-B", "-c", source, str(Path(directory) / "pid")],
-                                     cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                     cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     start_new_session=True)
             try:
                 child.wait(timeout=10)
                 self.assertEqual(0, child.returncode, child.stdout.read().decode())
             finally:
-                if child.poll() is None:
-                    child.terminate()
-                    child.wait(timeout=10)
+                cleanup_process(child)
                 child.stdin.close()
                 child.stdout.close()
 
@@ -981,7 +1024,7 @@ sys.argv = ["processes.py", "--", "sleep", "60"]
 sys.settrace(terminate)
 raise SystemExit(processes.main())
 '''
-        result = subprocess.run([sys.executable, "-B", "-c", source], cwd=ROOT,
+        result = run_owned_process([sys.executable, "-B", "-c", source], cwd=ROOT,
                                 input=b"", capture_output=True, timeout=10)
         self.assertEqual(143, result.returncode, result.stderr)
         self.assertEqual([
@@ -1090,7 +1133,7 @@ else:
             owner = subprocess.Popen(
                 [sys.executable, "-B", "scripts/processes.py", "--pid-file", str(pid_file),
                  "--", "sleep", "60"], cwd=ROOT,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
             try:
                 deadline = time.monotonic() + 5
                 while not pid_file.exists():
@@ -1118,9 +1161,7 @@ else:
                 self.assertEqual(143, status, owner.stderr.read())
                 self.assertEqual(b"requestseal-owner: signal SIGTERM\n", owner.stdout.read())
             finally:
-                if owner.poll() is None:
-                    owner.terminate()
-                    owner.wait(timeout=10)
+                cleanup_process(owner)
                 owner.stdin.close()
                 owner.stdout.close()
                 owner.stderr.close()
@@ -1135,7 +1176,8 @@ else:
             with self.subTest(status=status):
                 child = subprocess.Popen([sys.executable, "-B", "scripts/processes.py", "--timeout", timeout,
                                           "--", sys.executable, "-B", "-c", source], cwd=ROOT,
-                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         start_new_session=True)
                 try:
                     if status == 125:
                         child.stdin.write(b"invalid\n")
@@ -1149,9 +1191,7 @@ else:
                     else:
                         self.assertEqual(b"", output)
                 finally:
-                    if child.poll() is None:
-                        child.terminate()
-                        child.wait(timeout=10)
+                    cleanup_process(child)
                     child.stdin.close()
                     child.stdout.close()
 
@@ -1166,7 +1206,7 @@ else:
                 if timeout == "3000000" and processes.maximum_timeout() >= 3_000_000:
                     continue
                 with self.subTest(timeout=timeout):
-                    result = subprocess.run(
+                    result = run_owned_process(
                         [sys.executable, "-B", "scripts/processes.py", "--timeout=" + timeout,
                          "--pid-file", str(pid_file), "--", sys.executable, "-B", "-c", source, str(ready)],
                         cwd=ROOT, input=b"", capture_output=True, timeout=10)
@@ -1186,16 +1226,14 @@ else:
         child = subprocess.Popen(
             [sys.executable, "-B", "scripts/processes.py", "--timeout", str(processes.maximum_timeout()),
              "--", "sleep", "0.1"], cwd=ROOT,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         try:
             status = child.wait(timeout=10)
             stderr = child.stderr.read()
             self.assertEqual(0, status, stderr)
             self.assertEqual(b"", stderr)
         finally:
-            if child.poll() is None:
-                child.terminate()
-                child.wait(timeout=10)
+            cleanup_process(child)
             child.stdin.close()
             child.stdout.close()
             child.stderr.close()
@@ -1203,7 +1241,7 @@ else:
     def test_cli_usage_errors_and_help_have_owner_diagnostics(self):
         for arguments, status in (([], 2), (["--unknown"], 2), (["--help"], 0)):
             with self.subTest(arguments=arguments):
-                result = subprocess.run([sys.executable, "-B", "scripts/processes.py", *arguments],
+                result = run_owned_process([sys.executable, "-B", "scripts/processes.py", *arguments],
                                         cwd=ROOT, capture_output=True, timeout=10)
                 self.assertEqual(status, result.returncode, result.stderr)
                 self.assertIn(b"usage:", result.stdout + result.stderr)
@@ -1252,7 +1290,7 @@ else:
         for request, status, message in ((b"", 125, b"command owner closed stdin"),
                                          (b"stop\n", 0, b"command stopped")):
             with self.subTest(request=request):
-                result = subprocess.run(
+                result = run_owned_process(
                     [sys.executable, "-B", "scripts/processes.py", "--", "sleep", "60"],
                     cwd=ROOT, input=request, capture_output=True, timeout=10)
                 self.assertEqual(status, result.returncode, result.stderr)
@@ -1314,7 +1352,7 @@ raise SystemExit(status)
                 ("error", "catch", 125, b"command owner closed stdin"),
                 ("error", "report", 125, b"command owner closed stdin")):
             with self.subTest(outcome=outcome, window=window):
-                result = subprocess.run([sys.executable, "-B", "-c", source, outcome, window],
+                result = run_owned_process([sys.executable, "-B", "-c", source, outcome, window],
                                         cwd=ROOT, input=b"", capture_output=True, timeout=10)
                 self.assertEqual(status, result.returncode, result.stderr)
                 self.assertEqual(b"", result.stdout)
@@ -1329,7 +1367,7 @@ raise SystemExit(status)
             for channel in (Path(os.devnull), empty, partial):
                 with self.subTest(channel=channel.name), channel.open("rb") as incoming:
                     pid_file = Path(directory) / "pid"
-                    result = subprocess.run(
+                    result = run_owned_process(
                         [sys.executable, "-B", "scripts/processes.py", "--pid-file", str(pid_file),
                          "--timeout", "1", "--", "sleep", "60"], cwd=ROOT,
                         stdin=incoming, capture_output=True, timeout=10)
@@ -1345,7 +1383,7 @@ raise SystemExit(status)
     def test_owner_closed_fd_zero_is_eof_and_stops_its_child(self):
         with tempfile.TemporaryDirectory() as directory:
             pid_file = Path(directory) / "pid"
-            result = subprocess.run(
+            result = run_owned_process(
                 ["sh", "-c", 'exec 0<&-; exec "$@"', "owner", sys.executable, "-B",
                  "scripts/processes.py", "--timeout", "1", "--pid-file", str(pid_file),
                  "--", "sleep", "60"], cwd=ROOT, capture_output=True, timeout=10)
@@ -1385,7 +1423,7 @@ runpy.run_path("scripts/processes.py", run_name="__main__")
                     owner = subprocess.Popen(
                         [sys.executable, "-B", "-c", source, window, str(reader)], cwd=ROOT,
                         pass_fds=(reader,), stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
                 except BaseException:
                     os.close(writer)
                     raise
@@ -1408,9 +1446,7 @@ runpy.run_path("scripts/processes.py", run_name="__main__")
                     self.assertEqual(b"requestseal-owner: command stopped\n", stderr)
                 finally:
                     os.close(writer)  # Release the hook even when an assertion fails.
-                    if owner.poll() is None:
-                        owner.terminate()
-                        owner.wait(timeout=10)
+                    cleanup_process(owner)
                     owner.stdin.close()
                     owner.stdout.close()
                     owner.stderr.close()
@@ -1433,7 +1469,7 @@ processes._report("neutral reporter")
 '''
         for mode in ("return", "raise"):
             with self.subTest(mode=mode):
-                result = subprocess.run([sys.executable, "-B", "-c", source, mode],
+                result = run_owned_process([sys.executable, "-B", "-c", source, mode],
                                         cwd=ROOT, input=b"stop\n", capture_output=True, timeout=10)
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertEqual(b"neutral reporter", result.stderr.splitlines()[-1])
@@ -1481,18 +1517,179 @@ finally:
 '''
         for name, exception in (("SIGINT", b"KeyboardInterrupt"), ("SIGTERM", b"SystemExit")):
             with self.subTest(signal=name):
-                result = subprocess.run([sys.executable, "-B", "-c", source, name], cwd=ROOT,
+                result = run_owned_process([sys.executable, "-B", "-c", source, name], cwd=ROOT,
                                         input=b"stop\n", capture_output=True, timeout=10)
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertEqual(b"", result.stdout)
                 self.assertEqual(b"requestseal-owner: command stopped\ncaller received "
                                  + exception + b"\n", result.stderr)
 
+    def test_in_process_owner_redelivers_signals_suppressed_before_masking(self):
+        source = '''import inspect, os, signal, sys
+sys.path.insert(0, "scripts")
+import processes
+window = sys.argv[1]
+choose_lines, choose_start = inspect.getsourcelines(processes._choose_owner_outcome)
+blocking = next(choose_start + index for index, line in enumerate(choose_lines)
+                if "signal.pthread_sigmask(" in line)
+owner_lines, owner_start = inspect.getsourcelines(processes._owner_main)
+catching = next(owner_start + index + 1 for index, line in enumerate(owner_lines)
+                if line.strip() == "except Exception as error:")
+target = processes._choose_owner_outcome.__code__ if window == "choose" else processes._owner_main.__code__
+number = blocking if window == "choose" else catching
+injected = False
+previous = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+tool = sys.monitoring.DEBUGGER_ID
+events = sys.monitoring.events
+def inject(code, line):
+    global injected
+    if not injected and line == number:
+        injected = True
+        assert signal.SIGINT not in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+        if window == "catch":
+            frame = sys._getframe(1)
+            assert "error" in frame.f_locals, "exception binding was not entered"
+            assert not frame.f_locals["outcome"]["chosen"]
+        os.kill(os.getpid(), signal.SIGINT)
+sys.monitoring.use_tool_id(tool, "caller-unmasked-signals")
+sys.monitoring.register_callback(tool, events.LINE, inject)
+sys.monitoring.set_local_events(tool, target, events.LINE)
+sys.argv = ["processes.py", "--timeout", "1", "--", "sleep", "60"]
+try:
+    try:
+        processes.main(restore_signal_mask=True)
+    except KeyboardInterrupt as error:
+        assert injected, "signal was not injected in the unmasked window"
+        traceback = error.__traceback__
+        while traceback is not None:
+            assert traceback.tb_frame.f_code is not processes._owner_main.__code__
+            traceback = traceback.tb_next
+        assert signal.pthread_sigmask(signal.SIG_BLOCK, set()) == previous
+        processes._report("caller received KeyboardInterrupt")
+    else:
+        raise AssertionError("main swallowed the signal suppressed before masking")
+finally:
+    sys.monitoring.set_local_events(tool, target, 0)
+    sys.monitoring.free_tool_id(tool)
+'''
+        for window, request, message in (
+                ("choose", b"stop\n", b"command stopped"),
+                ("catch", b"invalid\n", b"invalid owner command")):
+            with self.subTest(window=window):
+                result = run_owned_process([sys.executable, "-B", "-c", source, window], cwd=ROOT,
+                                           input=request, capture_output=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(b"", result.stdout)
+                self.assertEqual(b"requestseal-owner: " + message
+                                 + b"\ncaller received KeyboardInterrupt\n", result.stderr)
+
+    def test_in_process_owner_redelivers_each_distinct_suppressed_signal_once(self):
+        source = '''import inspect, os, signal, sys
+sys.path.insert(0, "scripts")
+import processes
+lines, start = inspect.getsourcelines(processes._choose_owner_outcome)
+blocking = next(start + index for index, line in enumerate(lines) if "signal.pthread_sigmask(" in line)
+received = []
+injected = False
+tool = sys.monitoring.DEBUGGER_ID
+events = sys.monitoring.events
+def inject(code, number):
+    global injected
+    if not injected and number == blocking:
+        injected = True
+        for signum in processes.SIGNALS:
+            signal.signal(signum, lambda number, frame: received.append(number))
+        processes._install_cleanup_handlers()
+        for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGINT):
+            os.kill(os.getpid(), signum)
+        assert received == [], received
+sys.monitoring.use_tool_id(tool, "caller-distinct-signals")
+sys.monitoring.register_callback(tool, events.LINE, inject)
+sys.monitoring.set_local_events(tool, processes._choose_owner_outcome.__code__, events.LINE)
+sys.argv = ["processes.py", "--timeout", "1", "--", "sleep", "60"]
+try:
+    assert processes.main() == 0
+finally:
+    sys.monitoring.set_local_events(tool, processes._choose_owner_outcome.__code__, 0)
+    sys.monitoring.free_tool_id(tool)
+assert injected
+assert received == [signal.SIGHUP, signal.SIGINT, signal.SIGTERM], received
+'''
+        result = run_owned_process([sys.executable, "-B", "-c", source], cwd=ROOT,
+                                   input=b"stop\n", capture_output=True, timeout=10)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(b"", result.stdout)
+        self.assertEqual(b"requestseal-owner: command stopped\n", result.stderr)
+
+    def test_timeout_cleanup_stops_the_owner_group_and_separate_child_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "ready"
+            lock = Path(directory) / "lock"
+            source = ('import fcntl,os,signal,sys,time; from pathlib import Path; '
+                      'signal.signal(signal.SIGTERM,signal.SIG_IGN); '
+                      'handle=open(sys.argv[2],"w"); fcntl.flock(handle,fcntl.LOCK_EX); '
+                      'Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)')
+            owner = None
+            pid = group = session = pidfd = None
+            tool = sys.monitoring.DEBUGGER_ID
+            events = sys.monitoring.events
+
+            def before_communicate(code, offset):
+                nonlocal owner, pid, group, session, pidfd
+                if owner is not None:
+                    return
+                owner = sys._getframe(1).f_locals["self"]
+                deadline = time.monotonic() + 30
+                while not ready.exists() or not ready.read_text():
+                    self.assertIsNone(owner.poll())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.01)
+                pid = int(ready.read_text())
+                group, session, pidfd = self.runtime_identity(pid, owner.pid)
+
+            sys.monitoring.use_tool_id(tool, "owner-timeout-cleanup")
+            sys.monitoring.register_callback(tool, events.PY_START, before_communicate)
+            sys.monitoring.set_local_events(tool, subprocess.Popen.communicate.__code__, events.PY_START)
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    # Monitoring waits for real readiness, then communicate's
+                    # actual zero deadline expires. No startup timer can race it.
+                    run_owned_process(
+                        [sys.executable, "-B", "scripts/processes.py", "--", sys.executable,
+                         "-B", "-c", source, str(ready), str(lock)], cwd=ROOT,
+                        stdin=subprocess.PIPE, capture_output=True, timeout=0)
+                self.assertIsNotNone(owner)
+                self.assertNotEqual(owner.pid, session)
+                self.assertIsNotNone(owner.returncode)
+                with lock.open() as handle:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(handle, fcntl.LOCK_UN)
+                if pidfd is not None:
+                    self.assertTrue(select.select([pidfd], [], [], 0)[0])
+            finally:
+                sys.monitoring.set_local_events(tool, subprocess.Popen.communicate.__code__, 0)
+                sys.monitoring.free_tool_id(tool)
+                try:
+                    if owner is not None:
+                        cleanup_process(owner)
+                finally:
+                    if pid is not None:
+                        try:
+                            if pidfd is not None:
+                                signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                            elif (os.getpgid(pid), os.getsid(pid)) == (group, session):
+                                os.killpg(group, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        finally:
+                            if pidfd is not None:
+                                os.close(pidfd)
+
     def test_child_stdin_is_eof_while_the_owner_command_channel_still_works(self):
         source = 'import sys,time; assert sys.stdin.buffer.read() == b""; print("EOF",flush=True); time.sleep(60)'
         child = subprocess.Popen(
             [sys.executable, "-B", "scripts/processes.py", "--", sys.executable, "-B", "-c", source],
-            cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         try:
             self.assertTrue(select.select([child.stdout], [], [], 5)[0], "child blocked on owner stdin")
             self.assertEqual(b"EOF\n", child.stdout.readline())
@@ -1503,9 +1700,7 @@ finally:
             self.assertEqual(0, status, stderr)
             self.assertEqual(b"requestseal-owner: command stopped\n", stderr)
         finally:
-            if child.poll() is None:
-                child.terminate()
-                child.wait(timeout=10)
+            cleanup_process(child)
             child.stdin.close()
             child.stdout.close()
             child.stderr.close()
@@ -1540,7 +1735,8 @@ finally:
                       'Path(__import__("sys").argv[1]).write_text(str(os.getpid())); time.sleep(120)')
             parent = subprocess.Popen([sys.executable, "-B", "scripts/processes.py", "--timeout", "30", "--",
                                        sys.executable, "-B", "-c", source, str(ready)], cwd=ROOT,
-                                      stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                      stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                      start_new_session=True)
             pidfd = None
             try:
                 deadline = time.monotonic() + 10
@@ -1562,9 +1758,7 @@ finally:
                 if pidfd is not None:
                     self.assertTrue(select.select([pidfd], [], [], 2)[0])
             finally:
-                if parent.poll() is None:
-                    parent.terminate()
-                    parent.wait(timeout=10)
+                cleanup_process(parent)
                 if not parent.stdin.closed:
                     parent.stdin.close()
                 if pidfd is not None:
@@ -1586,7 +1780,8 @@ finally:
             )
             parent = subprocess.Popen([sys.executable, "-B", "-c", source, str(ready)], cwd=ROOT,
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                      preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN))
+                                      preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN),
+                                      start_new_session=True)
             try:
                 deadline = time.monotonic() + 10
                 while not ready.exists():
@@ -1597,8 +1792,7 @@ finally:
                 time.sleep(0.2)
                 self.assertIsNone(parent.poll(), "install_signal_handlers overrode inherited SIG_IGN")
             finally:
-                parent.terminate()
-                parent.wait(timeout=10)
+                cleanup_process(parent)
 
 
 if __name__ == "__main__":

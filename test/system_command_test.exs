@@ -96,7 +96,8 @@ defmodule RequestSeal.SystemCommandTest do
     monitor = Process.monitor(owner)
 
     try do
-      assert 2 = SystemCommand.signal_agent(owner, :terminate)
+      result = SystemCommand.signal_agent(owner, :terminate)
+      assert result == 2, "expected agent status 2, got: #{inspect(result)}"
       assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}
       refute File.exists?(socket)
       assert {_, 1} = System.cmd("ps", ["-p", pid, "-o", "pid="])
@@ -151,7 +152,8 @@ defmodule RequestSeal.SystemCommandTest do
       assert :ok = SystemCommand.signal_agent(owner, :stop)
       assert eventually(fn -> stopped?(pid) end)
       started = System.monotonic_time(:millisecond)
-      assert 2 = SystemCommand.signal_agent(owner, :terminate)
+      result = SystemCommand.signal_agent(owner, :terminate)
+      assert result == 2, "expected agent status 2, got: #{inspect(result)}"
       assert System.monotonic_time(:millisecond) - started < 3_000
       assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}, 1_000
       refute File.exists?(socket)
@@ -337,6 +339,7 @@ defmodule RequestSeal.SystemCommandTest do
       try do
         close_owner_stdin(dir, owner, port, owner_pid)
         :erlang.trace(owner, true, [:receive])
+        started = System.monotonic_time(:millisecond)
 
         case request do
           :stop ->
@@ -354,6 +357,11 @@ defmodule RequestSeal.SystemCommandTest do
           :idle ->
             # No request is pending: the loop itself must retain the VM's EXIT.
             assert Port.command(port, "stop\n")
+        end
+
+        if request != :idle do
+          assert System.monotonic_time(:millisecond) - started < 75,
+                 "port EXIT waited for an exit_status that cannot follow it"
         end
 
         # This is emitted by the VM after its real write fails, never injected
@@ -379,6 +387,63 @@ defmodule RequestSeal.SystemCommandTest do
       after
         release_closed_stdin_agent(dir, owner, pid, owner_pid)
       end
+    end
+  end
+
+  test "caller death ahead of a queued port EXIT finishes normally without a crash report" do
+    dir = agent_directory()
+    parent = self()
+
+    {caller, caller_monitor} =
+      spawn_monitor(fn ->
+        send(parent, {:closed_stdin_agent, closed_stdin_agent(dir)})
+
+        receive do
+          :finish -> :ok
+        end
+      end)
+
+    assert_receive {:closed_stdin_agent, {owner, pid, port, owner_pid}}, 15_000
+    monitor = Process.monitor(owner)
+
+    try do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          close_owner_stdin(dir, owner, port, owner_pid)
+          :erlang.suspend_process(owner)
+
+          try do
+            Process.exit(caller, :kill)
+            assert_receive {:DOWN, ^caller_monitor, :process, ^caller, :killed}
+
+            assert eventually(fn ->
+                     {:messages, messages} = Process.info(owner, :messages)
+                     Enum.any?(messages, &match?({:DOWN, _, :process, ^caller, :killed}, &1))
+                   end)
+
+            assert Port.command(port, "stop\n")
+
+            assert eventually(fn ->
+                     {:messages, messages} = Process.info(owner, :messages)
+                     Enum.any?(messages, &match?({:EXIT, ^port, :epipe}, &1))
+                   end)
+          after
+            :erlang.resume_process(owner)
+          end
+
+          assert_receive {:DOWN, ^monitor, :process, ^owner, :normal}, 1_000
+          assert eventually(fn -> Port.info(port) == nil end)
+          File.write!(Path.join(dir, "release"), "+")
+
+          assert eventually(fn ->
+                   match?({_, 1}, System.cmd("ps", ["-p", pid, "-o", "pid="]))
+                 end)
+        end)
+
+      assert log == ""
+    after
+      if Process.alive?(caller), do: Process.exit(caller, :kill)
+      release_closed_stdin_agent(dir, owner, pid, owner_pid)
     end
   end
 
@@ -566,7 +631,7 @@ defmodule RequestSeal.SystemCommandTest do
     def close_stdin(signum, frame):
         os.close(0)
         closed.touch()
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 60
         while not release.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
         # End through the real owner's cleanup even if the test was killed.
@@ -582,17 +647,11 @@ defmodule RequestSeal.SystemCommandTest do
   end
 
   defp close_owner_stdin(dir, owner, port, owner_pid) do
-    :erlang.suspend_process(owner)
-
-    try do
-      assert {_, 0} = System.cmd("kill", ["-USR1", to_string(owner_pid)])
-      assert eventually(fn -> File.exists?(Path.join(dir, "stdin-closed")) end)
-      assert Port.info(port) != nil
-      {:messages, messages} = Process.info(owner, :messages)
-      refute Enum.any?(messages, &match?({^port, {:exit_status, _}}, &1))
-    after
-      :erlang.resume_process(owner)
-    end
+    assert {_, 0} = System.cmd("kill", ["-USR1", to_string(owner_pid)])
+    assert eventually(fn -> File.exists?(Path.join(dir, "stdin-closed")) end)
+    assert Port.info(port) != nil
+    {:messages, messages} = Process.info(owner, :messages)
+    refute Enum.any?(messages, &match?({^port, {:exit_status, _}}, &1))
   end
 
   defp release_closed_stdin_agent(dir, owner, pid, owner_pid) do
