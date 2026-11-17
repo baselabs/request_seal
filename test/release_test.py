@@ -25,7 +25,7 @@ import check_docs as docs
 from processes import run, temporary_directory
 
 @contextmanager
-def local_http(responses, observed=None, response_delay=0):
+def local_http(responses, observed=None, response_delay=0, tls_context=None):
     requests = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -63,11 +63,14 @@ def local_http(responses, observed=None, response_delay=0):
             pass
 
     with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        if tls_context is not None:
+            server.socket = tls_context.wrap_socket(server.socket, server_side=True)
         server.daemon_threads = False  # server_close joins every request thread.
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05})
         thread.start()
         try:
-            yield f"http://127.0.0.1:{server.server_port}", requests
+            scheme = "https" if tls_context is not None else "http"
+            yield f"{scheme}://127.0.0.1:{server.server_port}", requests
         finally:
             server.shutdown()
             thread.join()
@@ -215,7 +218,7 @@ class ReleaseIdentityTest(unittest.TestCase):
                 '[Query](https://example.com/a%28b%29?q=1&next=2)\n'
                 '[Mail](mailto:security@example.com) [Reference][guide]\n\n'
                 '[guide]: https://request-seal.hexdocs.pm/2.3.4/compatibility.html "Policy"\n'
-                '<!-- [Example](https://example.com/comment) -->\n'
+                '[Example](https://example.com/comment)\n'
                 '```markdown\n[Example](https://example.com/code)\n```\n')
         source = '## Unreleased 2.4.0\n\n[Pending](relative.md)\n\n## 2.3.4 - 2026-11-17\n\n' + body + '\n'
         self.assertEqual(body, release.release_notes(source, "2.3.4"))

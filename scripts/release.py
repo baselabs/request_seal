@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Release identity and reproducible SBOM metadata shared by repository gates."""
 import argparse
+import base64
 import datetime
 import hashlib
 from http.client import HTTPConnection, HTTPSConnection, HTTPException, IncompleteRead
@@ -17,6 +18,7 @@ import subprocess
 import time
 import uuid
 from urllib.parse import unquote, urljoin, urlsplit
+from urllib.request import getproxies, proxy_bypass
 from processes import install_signal_handlers, run
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,21 +97,110 @@ def escaped(source, offset):
     return (offset - start) % 2 == 1
 
 
+def table_cells(text):
+    # cmark-gfm ext_scanners.re: _scan_table_cell keeps backslash-pipe
+    # together, even when another backslash precedes the escaping one.
+    pipes = [match.start() for match in re.finditer(r"\|", text)
+             if not match.start() or text[match.start() - 1] != "\\"]
+    bounds = [-1, *pipes, len(text)]
+    spans = [(left + 1, right) for left, right in zip(bounds, bounds[1:])]
+    if pipes and not text[:pipes[0]].strip():
+        spans.pop(0)
+    if pipes and not text[pipes[-1] + 1:].strip():
+        spans.pop()
+    return spans
+
+
+def table_delimiter(text):
+    # table.c: try_opening_table_block rejects an indented delimiter;
+    # try_opening_table_header requires exactly the header's column count.
+    if len(text.expandtabs(4)) - len(text.expandtabs(4).lstrip()) > 3:
+        return []
+    columns = table_cells(text)
+    return columns if ("|" in text or ":" in text) and columns and all(
+        re.fullmatch(r"[ \t]*:?-+:?[ \t]*", text[a:b]) for a, b in columns) else []
+
+
+def container_content(text):
+    """Recognize prefixes for rejection, without pretending to parse containers."""
+    original = text
+    while prefix := re.match(r"[ \t]*(?:>[ \t]?|(?:[-+*]|[0-9]{1,9}[.)])[ \t]+)", text):
+        text = text[prefix.end():]
+    return text, text != original
+
+
+def markdown_ambiguities(source):
+    """Reject block combinations whose container state is not modeled here."""
+    lines = source.splitlines(keepends=True)
+    blocks = masked_code(source, spans=False).splitlines(keepends=True)
+    container = False
+    footnote = False
+    table_columns = 0
+    offset = 0
+    previous = ""
+    previous_quote = False
+    for index, (original, block) in enumerate(zip(lines, blocks)):
+        text = block.rstrip("\r\n")
+        content, prefixed = container_content(text)
+        raw_content, raw_prefix = container_content(original.rstrip("\r\n"))
+        definition = REFERENCE_START.match(content.lstrip())
+        is_footnote = definition is not None and definition[1].startswith("^")
+        # Container fences cannot be interpreted by the top-level code masker.
+        if text.strip() and raw_prefix and re.match(r"[ \t]*(?:`{3,}|~{3,})", raw_content):
+            yield offset, "ambiguous code fence in a container"
+        if prefixed:
+            container = True
+        elif not previous.strip() and text.strip() and not text[0].isspace():
+            container = False
+        if container and re.fullmatch(r"[ \t]*(?:=+|-+)[ \t]*", content):
+            yield offset, "ambiguous setext heading in a container or lazy continuation"
+        quote = bool(re.match(r" {0,3}>", text))
+        if previous_quote and text.strip() and not quote and previous.strip():
+            yield offset, "ambiguous lazy continuation of a block quote"
+        if quote and len(raw_content.expandtabs(4)) - len(raw_content.expandtabs(4).lstrip()) >= 4:
+            yield offset, "ambiguous indented code in a block quote"
+        if index + 1 < len(lines) and text.strip():
+            following, next_prefix = container_content(lines[index + 1].rstrip("\r\n"))
+            if (container or prefixed or next_prefix or footnote or is_footnote) and table_delimiter(following.lstrip()):
+                yield offset, "ambiguous table in a container (list, block quote, or footnote)"
+        if definition and (prefixed or container):
+            yield offset, f"ambiguous reference definition in a container: {original.strip()!r}"
+        if definition and not is_footnote:
+            if "`" in content:
+                yield offset, "ambiguous backticks in a link reference definition"
+            if index + 1 < len(lines) and lines[index + 1].lstrip().startswith(('"', "'", "(")):
+                yield offset, "ambiguous multiline link reference definition"
+        if is_footnote:
+            body = content.lstrip()[definition.end():].lstrip()
+            _, nested = container_content(body)
+            if nested or REFERENCE_START.match(body):
+                yield offset, "ambiguous nested block in a footnote definition"
+        if footnote and original.strip() and not is_footnote:
+            if previous.strip() or original.startswith(("    ", "\t")):
+                yield offset, f"ambiguous reference definition or footnote continuation: {original.strip()!r}"
+            else:
+                footnote = False
+        if is_footnote:
+            footnote = True
+        if (not text.strip() or prefixed or is_footnote
+                or re.match(r" {0,3}#{1,6}(?:[ \t]|$)", text)
+                or re.fullmatch(r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})", text)):
+            table_columns = 0
+        if table_columns and len(table_cells(text)) > table_columns:
+            yield offset, "ambiguous table row with excess cells"
+        if table_columns and text.strip() and len(text.expandtabs(4)) - len(text.expandtabs(4).lstrip()) >= 4:
+            yield offset, "ambiguous indented code after a table"
+        if not container and not footnote and index + 1 < len(lines) and text.strip():
+            columns = table_delimiter(lines[index + 1].rstrip("\r\n"))
+            if columns and len(table_cells(text)) == len(columns):
+                table_columns = len(columns)
+        previous = original
+        previous_quote = quote
+        offset += len(original)
+
+
 def inline_blocks(source):
     """Inline parsing cannot pair delimiters across paragraph/container boundaries."""
-    def cells(text):
-        # cmark-gfm ext_scanners.re: _scan_table_cell keeps a backslash-pipe
-        # together, even when another backslash precedes the escaping one.
-        pipes = [match.start() for match in re.finditer(r"\|", text)
-                 if not match.start() or text[match.start() - 1] != "\\"]
-        bounds = [-1, *pipes, len(text)]
-        spans = [(left + 1, right) for left, right in zip(bounds, bounds[1:])]
-        if pipes and not text[:pipes[0]].strip():
-            spans.pop(0)
-        if pipes and not text[pipes[-1] + 1:].strip():
-            spans.pop()
-        return spans
-
     lines = source.splitlines(keepends=True)
     start = offset = 0
     previous_quote = None
@@ -118,23 +209,24 @@ def inline_blocks(source):
     paragraph = False
     for index, line in enumerate(lines):
         text = line.rstrip("\r\n")
-        quote = re.match(r" {0,3}(?:>[ \t]*)*", text)[0]
+        quote = re.match(r"(?: {0,3}>[ \t]?)*", text)[0]
         content = text[len(quote):]
         item = re.match(r"[ \t]*(?:[-+*]|[0-9]{1,9}[.)])[ \t]+", content)
         heading = re.match(r" {0,3}#{1,6}(?:[ \t]|$)", content)
-        if not content.strip() or item or heading or quote.count(">") != table_quote:
+        thematic = re.fullmatch(r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})", content)
+        footnote = re.match(r" {0,3}\[\^[^\]\n]+\]:", content)
+        if not content.strip() or item or heading or thematic or footnote or quote.count(">") != table_quote:
             table_quote = None
         # cmark-gfm table.c: try_opening_table_header requires equal column
         # counts; row_from_string/contains_inlines give each cell its own parse.
         header = False
         if table_quote is None and content.strip() and not heading and index + 1 < len(lines):
             next_text = lines[index + 1].rstrip("\r\n")
-            next_quote = re.match(r" {0,3}(?:>[ \t]*)*", next_text)[0]
+            next_quote = re.match(r"(?: {0,3}>[ \t]?)*", next_text)[0]
             delimiter = next_text[len(next_quote):]
-            columns = cells(delimiter)
+            columns = table_delimiter(delimiter)
             if (quote.count(">") == next_quote.count(">") and ("|" in delimiter or ":" in delimiter)
-                    and columns and len(cells(content)) == len(columns)
-                    and all(re.fullmatch(r"[ \t]*:?-+:?[ \t]*", delimiter[a:b]) for a, b in columns)):
+                    and columns and len(table_cells(content)) == len(columns)):
                 table_quote = quote.count(">")
                 delimiter_row = False
                 header = True
@@ -142,7 +234,7 @@ def inline_blocks(source):
             if start < offset:
                 yield start, offset
             if not delimiter_row:
-                for left, right in cells(content):
+                for left, right in table_cells(content):
                     yield offset + len(quote) + left, offset + len(quote) + right
             delimiter_row = header
             offset += len(line)
@@ -155,8 +247,8 @@ def inline_blocks(source):
         setext = paragraph and re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*", content)
         ending = (not content.strip() or heading or
                   setext or
-                  re.fullmatch(r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})", content))
-        if (item or heading or quote.count(">") != previous_quote or not content.strip()) and start < offset:
+                  thematic)
+        if (item or heading or footnote or quote.count(">") != previous_quote or not content.strip()) and start < offset:
             yield start, offset
             start = offset
         offset += len(line)
@@ -209,10 +301,17 @@ def masked_code(source, *, spans=True):
         return visible
     for beginning, finish in inline_blocks(visible):
         runs = list(re.finditer(r"`+", visible[beginning:finish]))
+        urls = list(BARE_URL.finditer(visible, beginning, finish))
         cursor = 0
         while cursor < len(runs):
             opening = runs[cursor]
             cursor += 1
+            absolute = beginning + opening.start()
+            # autolink.c: match/url_match runs during inline parsing, before
+            # handle_backticks can consume a later backtick in the URL. The
+            # postprocess_text pass handles email, not these HTTP autolinks.
+            if any(url.start() < absolute < url.end() and chars[url.start()] != " " for url in urls):
+                continue
             # cmark-gfm inlines.c: handle_backslash consumes one backtick;
             # handle_backticks can then open with the rest of the run.
             opening_start = opening.start() + int(escaped(visible, beginning + opening.start()))
@@ -250,7 +349,14 @@ def extract_destinations(source, strict=False, markdown=True):
     hidden only for Markdown; tracked JSON and other text retain literal URLs.
     """
     visible = masked_code(source) if markdown else source
+    contexts = list(inline_blocks(visible)) if markdown else [(0, len(visible))]
     entries, occupied = [], []
+
+    if markdown:
+        for offset, reason in markdown_ambiguities(source):
+            if strict:
+                raise ValueError(f"line {1 + source.count(chr(10), 0, offset)}: {reason}")
+            entries.append((offset, reason, True))
 
     def add(start, end, target, ambiguous=False):
         entries.append((start, target.removeprefix("<").removesuffix(">"), ambiguous))
@@ -258,7 +364,7 @@ def extract_destinations(source, strict=False, markdown=True):
 
     if markdown:
         openings = {}
-        for beginning, finish in inline_blocks(visible):
+        for beginning, finish in contexts:
             stack = []
             for bracket in re.finditer(r"[\[\]]", visible[beginning:finish]):
                 offset = beginning + bracket.start()
@@ -294,7 +400,8 @@ def extract_destinations(source, strict=False, markdown=True):
                 if footnote:
                     # Footnote bodies are prose, not link destinations. Their URLs
                     # still pass through the ordinary inline/autolink scan below.
-                    previous_definition = valid
+                    # The body opens a paragraph, not a link-definition boundary.
+                    previous_definition = False
                 else:
                     add(offset + definition.start(), offset + len(line),
                         match[1] if match else line[definition.end():].strip(), not valid or match is None)
@@ -312,10 +419,11 @@ def extract_destinations(source, strict=False, markdown=True):
             offset += len(line)
     for match in URL_ATTRIBUTE.finditer(visible):
         add(match.start(), match.end(), unescape(next(value for value in match.groups() if value is not None)))
-    for match in AUTOLINK.finditer(visible):
+    for match in (match for beginning, finish in contexts for match in AUTOLINK.finditer(visible, beginning, finish)):
         if not any(start <= match.start() < end for start, end in occupied):
             add(match.start(), match.end(), match[1])
-    for match in (BARE_URL if markdown else TEXT_URL).finditer(visible):
+    for match in (match for beginning, finish in contexts
+                  for match in (BARE_URL if markdown else TEXT_URL).finditer(visible, beginning, finish)):
         if not any(start <= match.start() < end for start, end in occupied):
             add(match.start(), match.end(), bare_destination(match[0]))
     return sorted(entries)
@@ -526,9 +634,15 @@ def release_destinations(body, version, first_line=1, all_reference_labels=None)
                 raise ValueError(f"CHANGELOG.md:{line}: footnote {label!r} requires a definition inside the released section")
             continue
         following = re.match(r"\[([^\[\]\n]*)\]", rest)
-        # cmark-gfm inlines.c: handle_close_bracket resolves [b](url) as an
-        # inline link first, leaving the preceding [a] as a shortcut or literal.
+        # inlines.c: handle_close_bracket can resolve [a][b] before reaching
+        # (url) when b is defined. Without b, [b](url) is the inline link.
         explicit = following is not None and not rest[following.end():].startswith("(")
+        if following is not None and not explicit and reference_label(following[1]) in known:
+            line = first_line + body.count("\n", 0, match.start())
+            label = reference_label(following[1])
+            if label not in definitions:
+                raise ValueError(f"CHANGELOG.md:{line}: reference {label!r} requires a definition inside the released section")
+            raise ValueError(f"CHANGELOG.md:{line}: ambiguous reference/inline link precedence for {label!r}")
         if explicit:
             label = reference_label(following[1] or match[1])
             cursor += following.end()
@@ -539,6 +653,10 @@ def release_destinations(body, version, first_line=1, all_reference_labels=None)
     if raw:
         line = first_line + body.count("\n", 0, raw.start())
         raise ValueError(f"CHANGELOG.md:{line}: unsupported raw HTML {raw[0]!r}; use Markdown links and images")
+    comment = visible.find("<!--")
+    if comment >= 0:
+        line = first_line + body.count("\n", 0, comment)
+        raise ValueError(f"CHANGELOG.md:{line}: unsupported HTML comment; use prose outside comments")
     return targets
 
 
@@ -652,6 +770,7 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
     failures = {target: "not requested before deadline" for target in pending}
     due = {target: 0 for target in pending}
     deadline = time.monotonic() + deadline_seconds
+    proxies = getproxies()
     backoff = 1
     while pending:
         final = False
@@ -667,12 +786,34 @@ def verify_http_destinations(targets, deadline_seconds=DESTINATION_DEADLINE):
             connection = None
             try:
                 authored = urlsplit(target)
-                connection_type = HTTPSConnection if authored.scheme == "https" else HTTPConnection
-                connection = connection_type(authored.hostname, authored.port, timeout=min(15, remaining))
                 path = authored.path or "/"
                 if authored.query:
                     path += "?" + authored.query
-                connection.request("GET", path, headers={"User-Agent": "RequestSeal-release", "Connection": "close"})
+                headers = {"User-Agent": "RequestSeal-release", "Connection": "close"}
+                proxy = proxies.get(authored.scheme) if not proxy_bypass(authored.netloc) else None
+                if proxy:
+                    route = urlsplit(proxy if "://" in proxy else "http://" + proxy)
+                    if route.scheme not in ("http", "https") or not route.hostname:
+                        raise ValueError("HTTP proxy requires an http:// or https:// endpoint")
+                    proxy_headers = {}
+                    if route.username is not None:
+                        credentials = unquote(route.username) + ":" + unquote(route.password or "")
+                        proxy_headers["Proxy-Authorization"] = "Basic " + base64.b64encode(credentials.encode()).decode("ascii")
+                    if authored.scheme == "https":
+                        if route.scheme != "http":
+                            raise ValueError("HTTPS destinations require an HTTP CONNECT proxy; TLS-to-proxy tunneling is unsupported")
+                        connection = HTTPSConnection(route.hostname, route.port or 80, timeout=min(15, remaining))
+                        connection.set_tunnel(authored.hostname, authored.port or 443, headers=proxy_headers)
+                    else:
+                        connection_type = HTTPSConnection if route.scheme == "https" else HTTPConnection
+                        connection = connection_type(route.hostname, route.port or (443 if route.scheme == "https" else 80),
+                                                     timeout=min(15, remaining))
+                        path = authored._replace(fragment="").geturl()
+                        headers.update(proxy_headers)
+                else:
+                    connection_type = HTTPSConnection if authored.scheme == "https" else HTTPConnection
+                    connection = connection_type(authored.hostname, authored.port, timeout=min(15, remaining))
+                connection.request("GET", path, headers=headers)
                 # getresponse may detach a closing connection's socket. Retain
                 # the public sock before that, while its response owns the fd.
                 sock = connection.sock

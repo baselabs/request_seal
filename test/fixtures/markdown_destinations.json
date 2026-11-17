@@ -1,0 +1,1815 @@
+{
+  "source": "synthetic",
+  "renderer": "GitHub POST /markdown mode=gfm",
+  "specification": "https://github.github.com/gfm/",
+  "href_policy": "Unique authored hrefs; exclude GitHub heading and footnote navigation. www. destinations resolve with http://.",
+  "version": "2.3.4",
+  "samples": [
+    {
+      "name": "paragraph",
+      "construct": "paragraph",
+      "markdown": "See https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "list-items",
+      "construct": "list",
+      "markdown": "- Renamed `a to b\n- See https://request-seal.hexdocs.pm/2.3.4/readme.html for `details`.",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "code",
+        "li"
+      ]
+    },
+    {
+      "name": "list-lazy-prose",
+      "construct": "list",
+      "markdown": "- Intro\nSee https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ]
+    },
+    {
+      "name": "list-indented-paragraph",
+      "construct": "list",
+      "markdown": "- Intro\n\n    [Guide](https://request-seal.hexdocs.pm/2.3.4/readme.html)",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ]
+    },
+    {
+      "name": "list-task",
+      "construct": "list",
+      "markdown": "- [x] See https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ]
+    },
+    {
+      "name": "list-ordered",
+      "construct": "list",
+      "markdown": "1. See https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ]
+    },
+    {
+      "name": "quote",
+      "construct": "block quote",
+      "markdown": "> See https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ]
+    },
+    {
+      "name": "nested-quote",
+      "construct": "block quote",
+      "markdown": "> > See https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ]
+    },
+    {
+      "name": "quote-code",
+      "construct": "block quote",
+      "markdown": "> `hidden https://request-seal.hexdocs.pm/2.3.4/readme.html`",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote",
+        "code"
+      ]
+    },
+    {
+      "name": "quote-lazy",
+      "construct": "lazy continuation",
+      "markdown": "> `x\nhttps://request-seal.hexdocs.pm/2.3.4/readme.html `y",
+      "expected": {
+        "reject": "lazy continuation"
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote",
+        "code"
+      ]
+    },
+    {
+      "name": "list-lazy-setext",
+      "construct": "setext",
+      "markdown": "- foo\n===\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "setext"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "li"
+      ]
+    },
+    {
+      "name": "quote-lazy-setext",
+      "construct": "setext",
+      "markdown": "> foo\n===\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "setext"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ]
+    },
+    {
+      "name": "list-setext",
+      "construct": "setext",
+      "markdown": "- foo\n  ===\n  [g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "setext"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "h1",
+        "li"
+      ]
+    },
+    {
+      "name": "quote-setext",
+      "construct": "setext",
+      "markdown": "> foo\n> ===\n> [g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "setext"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "blockquote",
+        "h1"
+      ]
+    },
+    {
+      "name": "atx",
+      "construct": "heading",
+      "markdown": "### Links\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "destinations": [
+          "https://example.com/g"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "h3"
+      ]
+    },
+    {
+      "name": "setext-equals",
+      "construct": "heading",
+      "markdown": "Links\n====\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "destinations": [
+          "https://example.com/g"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "h1"
+      ]
+    },
+    {
+      "name": "setext-dashes",
+      "construct": "heading",
+      "markdown": "Links\n----\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "destinations": [
+          "https://example.com/g"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "h2"
+      ]
+    },
+    {
+      "name": "setext-code",
+      "construct": "heading",
+      "markdown": "`Links`\n====\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "destinations": [
+          "https://example.com/g"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "code",
+        "h1"
+      ]
+    },
+    {
+      "name": "standalone-setext-0",
+      "construct": "setext",
+      "markdown": "Para\n\n===\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "ambiguous reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "standalone-setext-1",
+      "construct": "setext",
+      "markdown": "===\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "ambiguous reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "standalone-setext-2",
+      "construct": "setext",
+      "markdown": "Para\n\n--\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "ambiguous reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "standalone-setext-3",
+      "construct": "setext",
+      "markdown": "### Heading\n===\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "ambiguous reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "h3"
+      ]
+    },
+    {
+      "name": "standalone-setext-4",
+      "construct": "setext",
+      "markdown": "[other]: https://example.com/other\n===\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "ambiguous reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "standalone-setext-5",
+      "construct": "setext",
+      "markdown": "```text\ncode\n```\n===\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "ambiguous reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "code",
+        "pre"
+      ]
+    },
+    {
+      "name": "thematic-break",
+      "construct": "thematic break",
+      "markdown": "Para\n\n---\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "destinations": [
+          "https://example.com/g"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "table-cells",
+      "construct": "table",
+      "markdown": "| `x | https://example.com/missing | `y |\n|---|---|---|\n| a | b | c |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-without-outer-pipes",
+      "construct": "table",
+      "markdown": "`x | https://example.com/missing | `y\n---|---|---",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-rows",
+      "construct": "table",
+      "markdown": "| a `x | b |\n|---|---|\n| https://example.com/missing | `y |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-body-rows",
+      "construct": "table",
+      "markdown": "| a | b |\n|---|---|\n| `x | a |\n| https://example.com/missing | `y |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-single-column",
+      "construct": "table",
+      "markdown": "`x\n:-\nhttps://example.com/missing\n`y",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-tight-pipes",
+      "construct": "table",
+      "markdown": "| a|https://example.com/missing|c|\n|-|-|-|",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-escaped-pipe-1",
+      "construct": "table",
+      "markdown": "| `a\\| https://request-seal.hexdocs.pm/2.3.4/readme.html` | `x |\n|---|---|\n| https://example.com/missing | `y |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "code",
+        "table"
+      ]
+    },
+    {
+      "name": "table-escaped-pipe-2",
+      "construct": "table",
+      "markdown": "| `a\\\\| https://request-seal.hexdocs.pm/2.3.4/readme.html` | `x |\n|---|---|\n| https://example.com/missing | `y |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "code",
+        "table"
+      ]
+    },
+    {
+      "name": "table-escaped-pipe-3",
+      "construct": "table",
+      "markdown": "| `a\\\\\\| https://request-seal.hexdocs.pm/2.3.4/readme.html` | `x |\n|---|---|\n| https://example.com/missing | `y |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "code",
+        "table"
+      ]
+    },
+    {
+      "name": "table-delimiter-indent-0",
+      "construct": "table",
+      "markdown": "| a | b |\n|---|---|\n| `x | https://example.com/missing `y |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-delimiter-indent-1",
+      "construct": "table",
+      "markdown": "| a | b |\n |---|---|\n| `x | https://example.com/missing `y |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-delimiter-indent-2",
+      "construct": "table",
+      "markdown": "| a | b |\n  |---|---|\n| `x | https://example.com/missing `y |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-delimiter-indent-3",
+      "construct": "table",
+      "markdown": "| a | b |\n   |---|---|\n| `x | https://example.com/missing `y |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-delimiter-indent-4",
+      "construct": "table",
+      "markdown": "| a | b |\n    |---|---|\n| `x | https://example.com/missing `y |",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code"
+      ]
+    },
+    {
+      "name": "table-delimiter-tab",
+      "construct": "table",
+      "markdown": "| a | b |\n\t|---|---|\n| `x | https://example.com/missing `y |",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code"
+      ]
+    },
+    {
+      "name": "table-mismatched-columns",
+      "construct": "table",
+      "markdown": "| a | b |\n|---|---|---|\n| `x | https://example.com/missing `y |",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code"
+      ]
+    },
+    {
+      "name": "table-excess-body-cells",
+      "construct": "table",
+      "markdown": "| a | b |\n|---|---|\n| a | b | https://example.com/missing |",
+      "expected": {
+        "reject": "excess cells"
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-short-body-row",
+      "construct": "table",
+      "markdown": "| a | b |\n|---|---|\n| https://example.com/missing |",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "table-then-list",
+      "construct": "table",
+      "markdown": "| a | b |\n|---|---|\n| `x | c |\n- https://example.com/missing `y",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "li",
+        "table"
+      ]
+    },
+    {
+      "name": "table-then-heading",
+      "construct": "table",
+      "markdown": "| a | b |\n|---|---|\n| `x | c |\n### https://example.com/missing `y",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "h3",
+        "table"
+      ]
+    },
+    {
+      "name": "table-then-thematic",
+      "construct": "table",
+      "markdown": "| a |\n|---|\n| `x |\n***\nhttps://example.com/missing `y",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "table"
+      ]
+    },
+    {
+      "name": "container-table-list",
+      "construct": "container table",
+      "markdown": "- | `x | https://example.com/missing | `y |\n  |---|---|---|",
+      "expected": {
+        "reject": "table in a container"
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "li",
+        "table"
+      ]
+    },
+    {
+      "name": "container-table-ordered",
+      "construct": "container table",
+      "markdown": "1. | `x | https://example.com/missing | `y |\n   |---|---|---|",
+      "expected": {
+        "reject": "table in a container"
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "li",
+        "table"
+      ]
+    },
+    {
+      "name": "container-table-quote",
+      "construct": "container table",
+      "markdown": "> | `x | https://example.com/missing | `y |\n> |---|---|---|",
+      "expected": {
+        "reject": "table in a container"
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "blockquote",
+        "table"
+      ]
+    },
+    {
+      "name": "container-table-nested",
+      "construct": "container table",
+      "markdown": "> - | `x | https://example.com/missing | `y |\n>   |---|---|---|",
+      "expected": {
+        "reject": "table in a container"
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "blockquote",
+        "li",
+        "table"
+      ]
+    },
+    {
+      "name": "container-table-list-paragraph",
+      "construct": "container table",
+      "markdown": "- Intro\n\n  | `x | https://example.com/missing | `y |\n  |---|---|---|",
+      "expected": {
+        "reject": "table in a container"
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [
+        "li",
+        "table"
+      ]
+    },
+    {
+      "name": "footnote-interrupt",
+      "construct": "footnote",
+      "markdown": "Note[^1].\n[^1]: See https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ]
+    },
+    {
+      "name": "footnote-reference-after",
+      "construct": "footnote",
+      "markdown": "[^1]: text\n[g]: https://example.com/g\n\nUse [g] and [^1].",
+      "expected": {
+        "reject": "footnote continuation"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ]
+    },
+    {
+      "name": "footnote-lazy",
+      "construct": "footnote",
+      "markdown": "Note[^1].\n\n[^1]: text\nSee https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "reject": "footnote continuation"
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ]
+    },
+    {
+      "name": "footnote-indented",
+      "construct": "footnote",
+      "markdown": "Note[^1].\n\n[^1]: text\n\n    See https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "reject": "footnote continuation"
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ]
+    },
+    {
+      "name": "footnote-table",
+      "construct": "footnote",
+      "markdown": "Note[^1].\n\n[^1]: a | b\n    |---|---|",
+      "expected": {
+        "reject": "table in a container"
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "h2",
+        "li",
+        "table"
+      ]
+    },
+    {
+      "name": "table-then-footnote",
+      "construct": "footnote",
+      "markdown": "| a | b |\n|---|---|\n[^1]: See https://request-seal.hexdocs.pm/2.3.4/readme.html\n\nUse [^1].",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "h2",
+        "li",
+        "table"
+      ]
+    },
+    {
+      "name": "footnote-duplicate",
+      "construct": "footnote",
+      "markdown": "Note[^1].\n\n[^1]: a\n[^1]: b",
+      "expected": {
+        "reject": "duplicate footnote"
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "h2",
+        "li"
+      ]
+    },
+    {
+      "name": "footnote-unresolved",
+      "construct": "footnote",
+      "markdown": "Note[^1].",
+      "expected": {
+        "reject": "requires a definition"
+      },
+      "github_hrefs": [],
+      "github_blocks": []
+    },
+    {
+      "name": "reference",
+      "construct": "reference",
+      "markdown": "[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "destinations": [
+          "https://example.com/g"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "reference-following-paragraph",
+      "construct": "reference",
+      "markdown": "Paragraph\n[g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "ambiguous reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "reference-indented-continuation",
+      "construct": "reference",
+      "markdown": "Paragraph\n    [g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "ambiguous reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "reference-fenced",
+      "construct": "reference",
+      "markdown": "[g]\n\n```text\n[g]: https://example.com/g\n```",
+      "expected": {
+        "reject": "requires a definition"
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code",
+        "pre"
+      ]
+    },
+    {
+      "name": "reference-indented-code",
+      "construct": "reference",
+      "markdown": "[g]\n\n    [g]: https://example.com/g",
+      "expected": {
+        "reject": "requires a definition"
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code",
+        "pre"
+      ]
+    },
+    {
+      "name": "reference-in-quote",
+      "construct": "reference",
+      "markdown": "> [g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "reference definition in a container"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "blockquote"
+      ]
+    },
+    {
+      "name": "reference-in-list",
+      "construct": "reference",
+      "markdown": "- [g]: https://example.com/g\n\nUse [g].",
+      "expected": {
+        "reject": "reference definition in a container"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "li"
+      ]
+    },
+    {
+      "name": "reference-full-missing",
+      "construct": "reference",
+      "markdown": "[a][b]",
+      "expected": {
+        "reject": "requires a definition"
+      },
+      "github_hrefs": [],
+      "github_blocks": []
+    },
+    {
+      "name": "shortcut-undefined-0",
+      "construct": "reference",
+      "markdown": "[RFC 9421] [section 2]",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": []
+    },
+    {
+      "name": "shortcut-defined-0",
+      "construct": "reference",
+      "markdown": "[a] [b]\n\n[a]: https://example.com/a\n[b]: https://example.com/b",
+      "expected": {
+        "destinations": [
+          "https://example.com/a",
+          "https://example.com/b"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/a",
+        "https://example.com/b"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "shortcut-undefined-1",
+      "construct": "reference",
+      "markdown": "[RFC 9421]\n[section 2]",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": []
+    },
+    {
+      "name": "shortcut-defined-1",
+      "construct": "reference",
+      "markdown": "[a]\n[b]\n\n[a]: https://example.com/a\n[b]: https://example.com/b",
+      "expected": {
+        "destinations": [
+          "https://example.com/a",
+          "https://example.com/b"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/a",
+        "https://example.com/b"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "label-inline",
+      "construct": "reference",
+      "markdown": "[a][b](https://example.com/missing)",
+      "expected": {
+        "destinations": [
+          "https://example.com/missing"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "label-inline-outside",
+      "construct": "reference",
+      "markdown": "[a][b](https://example.com/missing)",
+      "expected": {
+        "reject": "reference 'b'"
+      },
+      "outside_definitions": "[b]: https://example.com/g",
+      "github_hrefs": [
+        "https://example.com/missing"
+      ],
+      "github_blocks": [],
+      "github_document_hrefs": [
+        "https://example.com/g",
+        "https://example.com/missing"
+      ]
+    },
+    {
+      "name": "label-inline-local",
+      "construct": "reference",
+      "markdown": "[a][b](https://example.com/missing)\n\n[b]: https://example.com/g",
+      "expected": {
+        "reject": "reference/inline link precedence"
+      },
+      "github_hrefs": [
+        "https://example.com/g",
+        "https://example.com/missing"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "escaped-run",
+      "construct": "code span",
+      "markdown": "- \\``a` https://request-seal.hexdocs.pm/2.3.4/readme.html `b`",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "code",
+        "li"
+      ]
+    },
+    {
+      "name": "escaped-run-remaining",
+      "construct": "code span",
+      "markdown": "\\```https://request-seal.hexdocs.pm/2.3.4/readme.html``",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code"
+      ]
+    },
+    {
+      "name": "escaped-backtick",
+      "construct": "code span",
+      "markdown": "- Escaped \\` then https://request-seal.hexdocs.pm/2.3.4/readme.html and `code`.",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "code",
+        "li"
+      ]
+    },
+    {
+      "name": "code-multiline",
+      "construct": "code span",
+      "markdown": "`text\nhttps://request-seal.hexdocs.pm/2.3.4/readme.html`",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code"
+      ]
+    },
+    {
+      "name": "code-pipe-prose",
+      "construct": "code span",
+      "markdown": "`a |\nhttps://request-seal.hexdocs.pm/2.3.4/readme.html\n| b`",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code"
+      ]
+    },
+    {
+      "name": "code-unmatched",
+      "construct": "code span",
+      "markdown": "Unclosed `` text https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-then-code",
+      "construct": "autolink ordering",
+      "markdown": "See https://request-seal.hexdocs.pm/2.3.4/readme.html`x` y",
+      "expected": {
+        "reject": "canonical"
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html%60x%60"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-then-code-external",
+      "construct": "autolink ordering",
+      "markdown": "See https://example.com/missing`x` y",
+      "expected": {
+        "reject": "ambiguous destination"
+      },
+      "github_hrefs": [
+        "https://example.com/missing%60x%60"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "code-then-url",
+      "construct": "autolink ordering",
+      "markdown": "`x`https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "code"
+      ]
+    },
+    {
+      "name": "code-around-url",
+      "construct": "autolink ordering",
+      "markdown": "`https://request-seal.hexdocs.pm/2.3.4/readme.html`",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code"
+      ]
+    },
+    {
+      "name": "angle-autolink",
+      "construct": "autolink",
+      "markdown": "<https://request-seal.hexdocs.pm/2.3.4/readme.html>",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "www-autolink",
+      "construct": "autolink",
+      "markdown": "www.example.com",
+      "expected": {
+        "destinations": [
+          "www.example.com"
+        ]
+      },
+      "github_hrefs": [
+        "http://www.example.com"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-own-text",
+      "construct": "inline link",
+      "markdown": "[https://request-seal.hexdocs.pm/2.3.4/readme.html](https://request-seal.hexdocs.pm/2.3.4/readme.html)",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "inline-emphasis",
+      "construct": "inline link",
+      "markdown": "**[Guide](https://request-seal.hexdocs.pm/2.3.4/readme.html)**",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "inline-em-dash",
+      "construct": "inline link",
+      "markdown": "[Guide](https://request-seal.hexdocs.pm/2.3.4/readme.html)—details",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "occupied-range",
+      "construct": "inline link",
+      "markdown": "- [x] see https://request-seal.hexdocs.pm/2.3.4/readme.html foo](https://example.com)",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html",
+          "https://example.com"
+        ]
+      },
+      "github_hrefs": [
+        "https://example.com",
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": [
+        "li"
+      ]
+    },
+    {
+      "name": "fenced-code",
+      "construct": "code block",
+      "markdown": "```text\nhttps://request-seal.hexdocs.pm/2.3.4/readme.html\n```",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code",
+        "pre"
+      ]
+    },
+    {
+      "name": "indented-code",
+      "construct": "code block",
+      "markdown": "    https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code",
+        "pre"
+      ]
+    },
+    {
+      "name": "list-indented-code",
+      "construct": "code block",
+      "markdown": "- Item\n\n      https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "destinations": []
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code",
+        "li",
+        "pre"
+      ]
+    },
+    {
+      "name": "quote-indented-code",
+      "construct": "code block",
+      "markdown": ">     https://request-seal.hexdocs.pm/2.3.4/readme.html",
+      "expected": {
+        "reject": "indented code in a block quote"
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote",
+        "code",
+        "pre"
+      ]
+    },
+    {
+      "name": "container-fence",
+      "construct": "code block",
+      "markdown": "> ```\n> https://request-seal.hexdocs.pm/2.3.4/readme.html\n> ```",
+      "expected": {
+        "reject": "code fence in a container"
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "blockquote",
+        "code",
+        "pre"
+      ]
+    },
+    {
+      "name": "raw-html",
+      "construct": "HTML block",
+      "markdown": "<div>\nhttps://request-seal.hexdocs.pm/2.3.4/readme.html\n</div>",
+      "expected": {
+        "reject": "raw HTML"
+      },
+      "github_hrefs": [],
+      "github_blocks": []
+    },
+    {
+      "name": "html-comment",
+      "construct": "HTML block",
+      "markdown": "<!-- https://request-seal.hexdocs.pm/2.3.4/readme.html -->",
+      "expected": {
+        "reject": "HTML comment"
+      },
+      "github_hrefs": [],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-0",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html?",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-1",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html!",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-2",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html.",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-3",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html,",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-4",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html:",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-5",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html*",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-6",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html_",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-7",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html~",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-8",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html'",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-9",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html\"",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-10",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-11",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html)",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-12",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html&copy;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-13",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html&ABC;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-trailing-14",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html**).",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-entity-0",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html&123;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html&123"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html&123"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-entity-1",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html&abc123;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html&abc123"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html&abc123"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-entity-2",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html&abc_foo;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html&abc_foo"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html&abc_foo"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-entity-3",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html&#123;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html&#123"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html&#123"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-entity-4",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html&#39;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html&#39"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html&#39"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-entity-5",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html&#x27;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html&#x27"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html&#x27"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-entity-6",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html&#xAB;",
+      "expected": {
+        "destinations": [
+          "https://request-seal.hexdocs.pm/2.3.4/readme.html&#xAB"
+        ]
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html&#xAB"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-embedded-apostrophe",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html's",
+      "expected": {
+        "reject": "canonical"
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html's"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-embedded-quote",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html\"s",
+      "expected": {
+        "reject": "canonical"
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html%22s"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-embedded-backtick",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html`",
+      "expected": {
+        "reject": "canonical"
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html%60"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "url-embedded-nbsp",
+      "construct": "autolink",
+      "markdown": "https://request-seal.hexdocs.pm/2.3.4/readme.html next",
+      "expected": {
+        "reject": "canonical"
+      },
+      "github_hrefs": [
+        "https://request-seal.hexdocs.pm/2.3.4/readme.html%C2%A0next"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "table-indented-body",
+      "construct": "table",
+      "markdown": "| a | b |\n|---|---|\n    | https://example.com/hidden | x |",
+      "expected": {
+        "reject": "indented code after a table"
+      },
+      "github_hrefs": [],
+      "github_blocks": [
+        "code",
+        "pre",
+        "table"
+      ]
+    },
+    {
+      "name": "reference-backtick-title",
+      "construct": "reference",
+      "markdown": "[g]: https://example.com/g \"`title\"\n\nUse [g]. See https://example.com/visible `end",
+      "expected": {
+        "reject": "backticks in a link reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g",
+        "https://example.com/visible"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "reference-multiline-title",
+      "construct": "reference",
+      "markdown": "[g]: https://example.com/g\n  \"https://example.com/title\"\n\nUse [g].",
+      "expected": {
+        "reject": "multiline link reference definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": []
+    },
+    {
+      "name": "footnote-nested-definition",
+      "construct": "footnote",
+      "markdown": "Note[^1]. Use [g].\n\n[^1]: [g]: https://example.com/g",
+      "expected": {
+        "reject": "nested block in a footnote definition"
+      },
+      "github_hrefs": [
+        "https://example.com/g"
+      ],
+      "github_blocks": [
+        "h2",
+        "li"
+      ]
+    }
+  ],
+  "recorded_on": "2026-11-17"
+}

@@ -145,13 +145,22 @@ end
             output = Path(directory) / "docs"
             run(["mix", "docs", "--warnings-as-errors", "--output", output], cwd=ROOT,
                 extra_env={"MIX_ENV": "dev"}, timeout=900)
-            try:
-                path.write_bytes(original + (
-                    "\nfile:///home/person/key\ninternal planning records\n"
-                    "```elixir\n:ok\n```\n" + target + "\n").encode())
-                checked, errors = docs.check(ROOT, docs_output=output)
-            finally:
-                path.write_bytes(original)
+            # Use check's real root parameter. No tracked source is ever edited,
+            # including while a failing or interrupted checker owns the copy.
+            root = Path(directory) / "source"
+            root.mkdir()
+            for name in docs.public_paths(ROOT):
+                source = ROOT / name
+                if source.is_file() and not source.is_symlink():
+                    destination = root / name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(source.read_bytes())
+            run(["git", "init", "--quiet"], cwd=root)
+            (root / relative).write_bytes(original + (
+                "\nfile:///home/person/key\ninternal planning records\n"
+                "```elixir\n:ok\n```\n" + target + "\n").encode())
+            checked, errors = docs.check(root, docs_output=output)
+        self.assertEqual(original, path.read_bytes())
         self.assertEqual(approved, checked)
         for reason in ("machine or private file URL", "internal process material", "Elixir fences require"):
             with self.subTest(reason=reason):

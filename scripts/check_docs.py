@@ -569,6 +569,10 @@ def tracked_link_errors(root, paths, version, published, references, checked=(),
         except UnicodeDecodeError:
             continue
         for offset, target, ambiguous in extract_destinations(source, markdown=path.suffix.lower() in MARKDOWN_SUFFIXES):
+            if ambiguous:
+                line = 1 + source.count("\n", 0, offset)
+                errors.append(f"{relative}:{line}: {target}: ambiguous destination syntax")
+                continue
             is_first_party = False
             try:
                 url = urlsplit("https://" + target if target.lower().startswith("www.") else target)
@@ -577,8 +581,6 @@ def tracked_link_errors(root, paths, version, published, references, checked=(),
                     continue
                 classify_destination(target)
                 reasons = first_party_link_errors(root, relative, target, version, published, references)
-                if ambiguous:
-                    reasons.append("ambiguous destination syntax")
                 line = 1 + source.count("\n", 0, offset)
                 errors.extend(f"{relative}:{line}: {target}: {reason}" for reason in reasons)
             except ValueError as error:

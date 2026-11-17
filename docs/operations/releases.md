@@ -115,7 +115,12 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    for the check. Response bodies are read in chunks with a deadline check and
    a refreshed socket timeout before each read, including slow-drip responses.
    HTTP 429 also retries, honoring `Retry-After` (seconds or HTTP date) within
-   that deadline. Other 4xx statuses are final. A permanent failure stops retries
+   that deadline. The requests honor `http_proxy`, `https_proxy`, and `no_proxy`
+   through the standard library's proxy discovery and bypass rules. An HTTP
+   proxy forwards HTTP requests and uses CONNECT tunnels for HTTPS destinations;
+   proxy credentials stay in request headers. TLS connections to a proxy followed
+   by another TLS tunnel are unsupported and fail explicitly.
+   Other 4xx statuses are final. A permanent failure stops retries
    after collecting that round's results, even if another URL still returns 404.
    The socket timeout is set to `min(15, remaining_seconds)` before each request
    and body chunk. That timeout applies per socket operation.
@@ -211,7 +216,7 @@ fences fail even inside an open fence, naming the line. Heading-like
 lines inside fences do not create sections. Unclosed fences, backticks in fence
 info, indented or container-prefixed fences/release headings, missing blank lines
 before release headings, and malformed release headings are errors. HTML comments
-outside fences must fit on one line. This is a CHANGELOG format, not a general
+in released sections are unsupported. This is a CHANGELOG format, not a general
 Markdown parser. Raw HTML tags outside code spans and code blocks in the CHANGELOG
 are rejected because they can make release boundaries ambiguous.
 
@@ -229,14 +234,16 @@ The conservative lexical gate and documentation checker share one destination
 extractor and one first-party classifier. The extractor covers inline/image
 links, reference definitions, autolinks `<scheme:…>`, bare `http://`, `https://`
 and `www.` occurrences, and HTML `href`/`src` attributes. Code spans and code blocks
-are ignored: GitHub does not link their contents. Visible comments and container
-prose still receive checks. Relative, empty, fragment-only, query-only,
+are ignored: GitHub does not link their contents. Container prose still receives
+checks. Relative, empty, fragment-only, query-only,
 protocol-relative, unclassifiable, and ambiguous release destinations fail.
 Emphasis around links, a following em dash, and link text equal to its own URL
 are accepted without changing the authored bytes. Bare destinations end according
 to [GFM extended autolinks](https://github.github.com/gfm/#autolinks-extension-):
 trailing `? ! . , : * _ ~`, excess closing parentheses and a trailing entity
 reference are excluded, and `<` ends the URL. Third-party `www.` prose is accepted.
+A bare URL consumes adjacent backticks before they can open a code span. Separate
+the URL from code with whitespace, or use an angle-enclosed autolink.
 
 First-party documentation and repository-file URLs in a dated section must use
 that section's own version. Unversioned URLs, `main`, stale versions, dot segments,
@@ -306,9 +313,10 @@ become an allowed release form.
 Full and collapsed references must have a definition inside the released section.
 A definition counts only outside code, at the start of a block: after a blank
 line, at the start of the section, immediately after an ATX or setext heading,
-or immediately after another definition.
+or immediately after another link reference definition.
 A definition-shaped line in paragraph continuation is rejected with its line.
 Definitions inside fences or indented code cannot resolve visible uses.
+Multiline titles and backticks in link reference definitions are rejected.
 A shortcut reference counts when its label has a definition anywhere in the
 CHANGELOG, and also requires that definition inside this section. Full references
 have no whitespace between text and label: `[a][b]` needs a definition for `b`.
@@ -316,16 +324,35 @@ Whitespace, including a newline, makes `[a] [b]` two shortcut references. Each
 resolves independently when defined and otherwise remains literal text, so
 undefined `[RFC 9421] [section 2]` is accepted. Labels compare
 case-insensitively with whitespace collapsed. Unresolved references name their line.
+`[a][b](url)` is accepted only when `b` has no definition anywhere in the
+CHANGELOG; otherwise its reference/inline-link precedence is rejected. This
+prevents a definition outside the released section from changing its rendering.
 GitHub footnotes use `[^label]` and need a unique `[^label]: …` definition in the
-same released section; unresolved uses and duplicate definitions fail. Code spans
-pair equal-length backtick runs within a paragraph, list-item paragraph, or
-heading. Escaped backticks cannot open spans; unmatched runs remain literal text.
+same released section; unresolved uses and duplicate definitions fail. A one-line
+footnote definition may interrupt a paragraph or follow a table directly. Its
+body opens a paragraph: a following reference-shaped line is continuation text,
+not a link definition. Multiline footnote bodies, continuations, and nested
+blocks in footnote definitions are rejected. Code spans pair equal-length
+backtick runs within a paragraph, list-item paragraph, or
+heading. A backslash escapes only the first backtick in a run; remaining backticks
+can open a span. Unmatched runs remain literal text.
+Top-level tables parse each cell and row separately, with equally many header
+and delimiter cells and at most three spaces before the delimiter. Four spaces
+or a tab do not form a table delimiter. Excess body cells, indented code directly
+after a table, tables or setext headings in containers, lazy block-quote
+continuations, container reference definitions or fences, and indented block-quote
+code are rejected with the construct's name. Ordinary list paragraphs, block quotes, top-level
+headings, thematic breaks, and top-level fenced and indented code are supported.
 Errors name the source line and destination, for example
 `CHANGELOG.md:7: destination 'docs/guide.md': requires an absolute HTTP(S) or mailto URL`
 or `first-party destination must use version 2.0.0`. Raw HTML and section-format
 errors also name the line where available. These are authoring rules, with
 intentional over-rejection and no CommonMark conformance claim. Release tooling
 never selects destinations or changes Markdown syntax.
+
+The synthetic Markdown reference cases record GitHub's rendered destinations.
+To refresh those public reference results, run `python3 -B scripts/record_markdown.py`
+with an authenticated GitHub CLI. Only synthetic samples are submitted.
 
 The documentation gate builds current-version docs once per check with the
 project's actual ExDoc into scratch output. `scripts/check.py` owns that build
