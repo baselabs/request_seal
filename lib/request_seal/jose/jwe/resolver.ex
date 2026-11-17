@@ -55,9 +55,6 @@ defmodule RequestSeal.JOSE.JWE.Resolver do
        )
        when map_size(entry) == 2 do
     cond do
-      algorithm != expected ->
-        :algorithm_mismatch
-
       not Bounds.within?(handle, Bounds.handle_words(), Bounds.binary_bytes()) ->
         :key_resolver_failed
 

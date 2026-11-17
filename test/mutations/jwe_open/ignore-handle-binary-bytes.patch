@@ -1,11 +1,11 @@
 --- a/lib/request_seal/jose/jwe/resolver.ex
 +++ b/lib/request_seal/jose/jwe/resolver.ex
-@@ -58,7 +58,7 @@
-       algorithm != expected ->
-         :algorithm_mismatch
-
+@@ -55,7 +55,7 @@
+        )
+        when map_size(entry) == 2 do
+     cond do
 -      not Bounds.within?(handle, Bounds.handle_words(), Bounds.binary_bytes()) ->
 +      not Bounds.within?(handle, Bounds.handle_words()) ->
          :key_resolver_failed
-
+ 
        a != {:jwe, expected} ->
