@@ -488,7 +488,8 @@ def removal(event, args):
 sys.addaudithook(removal)
 try:
     with temporary_directory(prefix="burst-", dir=sys.argv[1]) as scratch:
-        with command(["sleep", "60"]) as child:
+        with command(["sleep", "60"], stdout=__import__("subprocess").DEVNULL,
+                     stderr=__import__("subprocess").DEVNULL) as child:
             Path(sys.argv[2]).write_text(json.dumps([child.pid, scratch]))
             os.read(int(sys.argv[5]), 1)
             sys.settrace(interrupt)
