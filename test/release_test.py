@@ -115,7 +115,7 @@ class ReleaseIdentityTest(unittest.TestCase):
             with self.subTest(source=changed), self.assertRaises(ValueError):
                 release.release_notes(changed, "2.3.4")
         (self.root / "CHANGELOG.md").write_text(source.replace("## 2.3.4 -", "## Unreleased 2.3.4 -"))
-        with self.assertRaisesRegex(ValueError, "dated section"):
+        with self.assertRaisesRegex(ValueError, "dated section|ambiguous release heading"):
             self.verify()  # Dry run must reject before any tag exists.
 
     def test_bumped_version_rejects_stale_documented_installs(self):
@@ -151,7 +151,7 @@ class ReleaseIdentityTest(unittest.TestCase):
     def test_release_notes_are_verbatim_with_literal_absolute_destinations(self):
         body = ('### Changed\n\n'
                 '-  Keep **wording**, `code`, &copy; and trailing spaces.  \n'
-                '[Guide](https://hexdocs.pm/request_seal/2.3.4/web-bot-auth.html#replay)\n'
+                '[Guide](https://request-seal.hexdocs.pm/2.3.4/web-bot-auth.html#replay)\n'
                 '[Source](<https://github.com/baselabs/request_seal/blob/v2.3.4/README.md> "Read me")\n'
                 '![Asset](https://github.com/baselabs/request_seal/raw/v2.3.4/image.png)\n'
                 '[External](https://www.rfc-editor.org/rfc/rfc9421.html#section-2)\n'
@@ -168,7 +168,12 @@ class ReleaseIdentityTest(unittest.TestCase):
     def test_every_destination_is_checked_in_containers_code_and_comments(self):
         targets = ("docs/x.md", "", "#fragment", "?q=1", "//example.com/x", "custom:opaque",
                    "https://", "https://example.com:bad/x", "https://user@example.com/x",
+                   "https://%68exdocs.pm/request_seal/1.0.0/web-bot-auth.html",
+                   "https://hexdocs.pm./request_seal/1.0.0/web-bot-auth.html",
                    "https://hexdocs.pm/request_seal/1.0.0/web-bot-auth.html",
+                   "https://request-seal.hexdocs.pm/1.0.0/web-bot-auth.html",
+                   "https://request-seal.hexdocs.pm/web-bot-auth.html",
+                   "https://raw.githubusercontent.com/baselabs/request_seal/main/README.md",
                    "https://github.com/baselabs/request_seal/blob/main/README.md",
                    "https://github.com/baselabs/request_seal/raw/v2.3.3/image.png",
                    "https://github.com/baselabs/request_seal/tree/v2.3.4/docs",
@@ -187,7 +192,8 @@ class ReleaseIdentityTest(unittest.TestCase):
                         self.assertRegex(message, r"CHANGELOG.md:\d+:")
                         # Short malformed comments can fail the explicit section format first.
                         if not body.startswith(("<!-->", "<!--->")):
-                            self.assertIn(repr(target), message)
+                            self.assertIn("destination", message)
+                            self.assertIn(target, message)
 
     def test_literal_examples_do_not_have_a_code_or_comment_exemption(self):
         for body, number in (("- Intro.\n\n```markdown\n[bad](relative.md)\n```", 6),
@@ -212,7 +218,7 @@ class ReleaseIdentityTest(unittest.TestCase):
         for suffix in ('\n\n## 2.3.4 - 2026-11-17\n\n- Duplicate.',
                        '\n\n```markdown\n## 2.3.3 - 2026-11-16',
                        '\n\n  ## 2.3.3 - 2026-11-16', '\n\n> ## 2.3.3 - 2026-11-16',
-                       '\n\n- ```markdown', '\n\n    ~~~', '\n\n```a`b',
+                       '\n\n- ```markdown', '\n\n    ~~~', '\n\n```a`b', '\n\n- > ```markdown',
                        '\n\n<!--\n## 2.3.3 - 2026-11-16\n-->',
                        '\n## 2.3.3 - 2026-11-16\n\n- Missing blank.',
                        '\n\n## An ambiguous heading'):
@@ -221,6 +227,8 @@ class ReleaseIdentityTest(unittest.TestCase):
         for fence in ("```", "~~~~"):
             body = f"- Released.\n\n{fence}markdown\n## Unreleased 2.4.0\n## 2.3.3 - 2026-11-16\n{fence + fence[0]}\n"
             self.assertEqual(body, release.release_notes("## 2.3.4 - 2026-11-17\n\n" + body, "2.3.4"))
+        with self.assertRaisesRegex(ValueError, "unsupported raw HTML"):
+            release.release_notes("<div>\n\n## 2.3.4 - 2026-11-17\n\n- Ambiguous HTML section.\n", "2.3.4")
 
     def test_all_release_entry_points_share_the_same_gate(self):
         (self.root / "scripts").mkdir()
@@ -258,7 +266,7 @@ class ReleaseIdentityTest(unittest.TestCase):
         source = (ROOT / "CHANGELOG.md").read_text()
         body = source.split("## 1.0.0 - 2026-11-11\n", 1)[1].split("\n## ", 1)[0].strip("\n") + "\n"
         self.assertEqual(body, release.release_notes(source, "1.0.0"))
-        self.assertEqual(4, body.count("https://hexdocs.pm/request_seal/1.0.0/"))
+        self.assertEqual(4, body.count("https://request-seal.hexdocs.pm/1.0.0/"))
         finalized = source.replace("## Unreleased 2.0.0", "## 2.0.0 - 2026-11-17").replace(
             "https://github.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md",
             "https://hexdocs.pm/request_seal/2.0.0/verifying-releases.html")
@@ -329,9 +337,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
             self.assertIn(contract, runbook)
 
     def test_postpublication_check_uses_real_http_and_rejects_a_missing_page(self):
-        release.verify_published_destinations("[Policy](https://hexdocs.pm/request_seal/1.0.0/compatibility.html)", "1.0.0")
+        release.verify_published_destinations("[Policy](https://request-seal.hexdocs.pm/1.0.0/compatibility.html) [Source](https://raw.githubusercontent.com/baselabs/request_seal/v1.0.0/README.md)", "1.0.0")
         with self.assertRaisesRegex(ValueError, "expected HTTP 200, got 404"):
-            release.verify_published_destinations("[Missing](https://hexdocs.pm/request_seal/1.0.0/no-such-release-page.html)", "1.0.0")
+            release.verify_published_destinations("[Missing](https://request-seal.hexdocs.pm/1.0.0/no-such-release-page.html)", "1.0.0")
+        with self.assertRaisesRegex(ValueError, "expected HTTP 200, got 301"):
+            release.verify_published_destinations("[Policy](https://hexdocs.pm/request_seal/1.0.0/compatibility.html)", "1.0.0")
 
     def test_prerelease_flag_uses_the_verified_job_output(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()

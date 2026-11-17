@@ -105,8 +105,15 @@ class PublicDocsTest(unittest.TestCase):
                                        version, configuration["documents"], references)
 
         for target in (f"https://hexdocs.pm/request_seal/{version}/web-bot-auth.html",
+                       f"https://request-seal.hexdocs.pm/{version}/web-bot-auth.html",
+                       "https://request-seal.hexdocs.pm",
+                       "https://request-seal.hexdocs.pm/",
+                       "https://hexdocs.pm/request_seal/web-bot-auth.html",
                        f"https://hexdocs.pm/request_seal/{version}/livebook-web-bot-auth.html",
+                       f"https://github.com/baselabs/request_seal/blob/v{version}/README.md",
                        "https://hexdocs.pm/request_seal/1.0.0/compatibility.html",
+                       "https://request-seal.hexdocs.pm/1.0.0/compatibility.html",
+                       "https://raw.githubusercontent.com/baselabs/request_seal/v1.0.0/README.md",
                        "https://hexdocs.pm/request_seal/1.0.0/web-bot-auth.html",
                        "https://hexdocs.pm/request_seal/1.0.0/phoenix-and-plug.html",
                        "https://github.com/baselabs/request_seal/blob/v1.0.0/docs/guides/web-bot-auth.md",
@@ -115,9 +122,15 @@ class PublicDocsTest(unittest.TestCase):
             with self.subTest(target=target):
                 self.assertEqual([], errors(target))
         for target in (f"https://hexdocs.pm/request_seal/{version}/releases.html",
+                       f"https://request-seal.hexdocs.pm/{version}/nonexistent.html",
+                       "https://request-seal.hexdocs.pm/nonexistent.html",
+                       "https://hexdocs.pm/request_seal/nonexistent.html",
+                       f"https://github.com/baselabs/request_seal/raw/v{version}/missing.png",
                        f"https://hexdocs.pm/request_seal/{version}/nonexistent.html",
                        f"https://hexdocs.pm/request_seal/{version}/.private.html",
                        "https://hexdocs.pm/request_seal/1.0.0/verifying-releases.html",
+                       "https://request-seal.hexdocs.pm/1.0.0/verifying-releases.html",
+                       "https://raw.githubusercontent.com/baselabs/request_seal/v1.0.0/missing.png",
                        "https://hexdocs.pm/request_seal/99.0.0/web-bot-auth.html",
                        "https://github.com/baselabs/request_seal/blob/v1.0.0/docs/guides/verifying-releases.md",
                        "https://github.com/baselabs/request_seal/raw/v1.0.0/missing.png",
@@ -148,7 +161,7 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
             root = Path(directory)
             (root / "scripts").mkdir()
             (root / "scripts/release.py").write_bytes((ROOT / "scripts/release.py").read_bytes())
-            for target, accepted in (("https://hexdocs.pm/request_seal/1.0.0/compatibility.html", True),
+            for target, accepted in (("https://request-seal.hexdocs.pm/1.0.0/compatibility.html", True),
                                      ("docs/reference/compatibility.md", False)):
                 (root / "CHANGELOG.md").write_text(f"## 1.0.0 - 2026-11-11\n\n- [Policy]({target})\n")
                 result = subprocess.run(["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression, "--", directory],
@@ -164,13 +177,16 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
         version = docs.public_configuration(ROOT)["version"]
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
-            target = f"https://hexdocs.pm/request_seal/{version}/guide.html#section"
-            (output / "readme.html").write_text(f'<a href="{target}">Guide</a>')
-            self.assertTrue(gate.doc_link_errors(output))
-            (output / "guide.html").write_text('<h1 id="section">Guide</h1>')
-            self.assertEqual([], gate.doc_link_errors(output))
-            (output / "guide.html").write_text('<h1 id="renamed">Guide</h1>')
-            self.assertTrue(gate.doc_link_errors(output))
+            for base in (f"https://request-seal.hexdocs.pm/{version}/",
+                         f"https://hexdocs.pm/request_seal/{version}/"):
+                with self.subTest(base=base):
+                    (output / "guide.html").unlink(missing_ok=True)
+                    (output / "readme.html").write_text(f'<a href="{base}guide.html#section">Guide</a>')
+                    self.assertTrue(gate.doc_link_errors(output))
+                    (output / "guide.html").write_text('<h1 id="section">Guide</h1>')
+                    self.assertEqual([], gate.doc_link_errors(output))
+                    (output / "guide.html").write_text('<h1 id="renamed">Guide</h1>')
+                    self.assertTrue(gate.doc_link_errors(output))
 
     def test_git_installs_are_rejected_in_public_text(self):
         for install in (

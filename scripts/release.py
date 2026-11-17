@@ -68,8 +68,11 @@ RAW_HTML = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)|<![A-Za-z\[]|<\?")
 
 def first_party(url):
     path = unquote(url.path)
-    if url.hostname == "hexdocs.pm" and (path == "/request_seal" or path.startswith("/request_seal/")):
+    if (url.hostname == "request-seal.hexdocs.pm"
+            or url.hostname == "hexdocs.pm" and (path == "/request_seal" or path.startswith("/request_seal/"))):
         return "hexdocs"
+    if url.hostname == "raw.githubusercontent.com" and path.lower().startswith("/baselabs/request_seal/"):
+        return "github_raw"
     if url.hostname == "github.com" and (path.lower() == "/baselabs/request_seal" or path.lower().startswith("/baselabs/request_seal/")):
         # Public advisory permalinks describe security history, not tagged files.
         if re.fullmatch(r"/baselabs/request_seal/security/advisories/GHSA-[a-z0-9-]+", path):
@@ -87,6 +90,8 @@ def validate_destination(target, version):
     if url.scheme in ("http", "https"):
         if not url.hostname or url.username is not None or url.password is not None:
             raise ValueError("requires an absolute HTTP(S) URL without credentials")
+        if "%" in url.hostname or url.hostname.endswith(".") or ".." in url.hostname:
+            raise ValueError("requires an unambiguous literal hostname")
         if url.port is not None and not 0 < url.port < 65536:
             raise ValueError("invalid URL port")
     elif url.scheme == "mailto":
@@ -96,8 +101,12 @@ def validate_destination(target, version):
         raise ValueError("requires an absolute HTTP(S) or mailto URL")
     kind = first_party(url)
     if kind:
-        prefix = (f"/request_seal/{version}/",) if kind == "hexdocs" else (
-            f"/baselabs/request_seal/blob/v{version}/", f"/baselabs/request_seal/raw/v{version}/")
+        if kind == "hexdocs":
+            prefix = (f"/{version}/",) if url.hostname == "request-seal.hexdocs.pm" else (f"/request_seal/{version}/",)
+        elif kind == "github_raw":
+            prefix = (f"/baselabs/request_seal/v{version}/",)
+        else:
+            prefix = (f"/baselabs/request_seal/blob/v{version}/", f"/baselabs/request_seal/raw/v{version}/")
         if (url.scheme != "https" or url.netloc != url.hostname
                 or not url.path.startswith(prefix) or url.path.endswith("/")
                 or any(part in (".", "..") for part in unquote(url.path).split("/"))):
@@ -158,7 +167,7 @@ def release_notes(source, version):
                 if "`" in marker[2]:
                     raise ValueError(f"CHANGELOG.md:{number}: ambiguous fence info")
                 fence = marker[1]
-            elif re.match(r"[ \t>]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(?:`{3,}|~{3,}|##(?:[ \t]|$))", text):
+            elif re.match(r"[ \t>+*.0-9()-]*(?:`{3,}|~{3,}|##(?:[ \t]|$))", text):
                 if not text.startswith("## "):
                     raise ValueError(f"CHANGELOG.md:{number}: release headings and fences must start in column one")
             if "<!--" in text and not re.fullmatch(r"[^\n]*<!--(?:(?!-->).)*-->[^\n]*", text):
@@ -189,6 +198,10 @@ def release_notes(source, version):
         raise ValueError("CHANGELOG.md release section is empty for " + version)
     first_line = sections[index][3] + len(original) - len(original.lstrip("\n"))
     release_destinations(body, version, first_line)
+    raw = RAW_HTML.search(source)
+    if raw:
+        line = 1 + source.count("\n", 0, raw.start())
+        raise ValueError(f"CHANGELOG.md:{line}: unsupported raw HTML {raw[0]!r}; release boundaries would be ambiguous")
     return body + "\n"
 
 

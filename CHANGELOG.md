@@ -63,7 +63,7 @@
 
 ## 1.0.0 - 2026-11-11
 
-The first stable release. From 1.0.0 the public API follows the [compatibility and deprecation policy](https://hexdocs.pm/request_seal/1.0.0/compatibility.html). It fixes a Web Bot Auth replay weakness present in every earlier release, removes quorum verification, and tightens several parsers and resource bounds. Every application upgrading from 0.5 changes its requirement; the notes under "Upgrading from 0.5" say who must change more.
+The first stable release. From 1.0.0 the public API follows the [compatibility and deprecation policy](https://request-seal.hexdocs.pm/1.0.0/compatibility.html). It fixes a Web Bot Auth replay weakness present in every earlier release, removes quorum verification, and tightens several parsers and resource bounds. Every application upgrading from 0.5 changes its requirement; the notes under "Upgrading from 0.5" say who must change more.
 
 ### Security: Web Bot Auth replay (every release before 1.0.0)
 
@@ -78,14 +78,14 @@ Advisory: [GHSA-vj55-78vg-59wf](https://github.com/baselabs/request_seal/securit
 
 - Change your requirement to `{:request_seal, "~> 1.0"}`; `~> 0.5` never matches 1.0.0. With the optional integrations, allow `{:ash_onetime, "~> 1.9 and >= 1.9.2"}` and `{:ash, "~> 3.37 and >= 3.37.2"}`; ash_hooks 2.x and 3.x are both accepted.
 - `RequestSeal.verify_quorum/3` and `RequestSeal.Quorum` are removed. Verify each signature label with `RequestSeal.verify/3`, and decide in your application which verified signers you accept. Remove handlers for the `[:request_seal, :verify_quorum, :stop]` telemetry event and matches on the `:quorum` error layer.
-- Web Bot Auth replay commitments: before, the commitment received `%{profile: profile, signatures: [fact, ...]}`, each fact with a `label`; now it receives one facts map, `identifier` (the nonce), `algorithm`, `keyid`, `agent`, `created`, `expires` and `profile`, the same shape generic verification passes with `agent` in place of `tag`. Commit to `identifier`, `keyid` and `agent[:identifier]`, as the [Web Bot Auth guide](https://hexdocs.pm/request_seal/1.0.0/web-bot-auth.html) shows.
+- Web Bot Auth replay commitments: before, the commitment received `%{profile: profile, signatures: [fact, ...]}`, each fact with a `label`; now it receives one facts map, `identifier` (the nonce), `algorithm`, `keyid`, `agent`, `created`, `expires` and `profile`, the same shape generic verification passes with `agent` in place of `tag`. Commit to `identifier`, `keyid` and `agent[:identifier]`, as the [Web Bot Auth guide](https://request-seal.hexdocs.pm/1.0.0/web-bot-auth.html) shows.
 - Key resolvers: before, a result could carry an optional `:identity`; now it is exactly `%{algorithm: algorithm, key: key}`, and any other key rejects with `:key_resolver_failed` at `:key`.
 - `RequestSeal.Message.request/5`: before, `message.scheme` and `message.authority` were lowercased with default ports removed; now they keep the URL's spelling (`"HTTPS"`, `"Telemetry.Example:443"`). Code that reads or compares those fields changes, and signatures covering `@target-uri` for such URLs sign the URL as written. `RequestSeal.Req` and `RequestSeal.Finch` keep the host's case and omit only the scheme's default port, matching the Host Mint sends.
 - `RequestSeal.Finch`: before, a caller-supplied `Host` header was sent; now it rejects with `:invalid_options`. Remove it and let Mint derive Host from the URL.
 - Retained request bodies and Req response collection: before, only bytes were bounded. Now retaining a request body (`{:retain, max}`) also stops with `:limit` at 16,384 chunks (empty chunks count) or after a fixed 5,000 ms, and Req's response collection also stops with `:limit` at 16,384 chunks.
 - Ed25519 public keys: before, a 32-byte value that is not a curve point imported; now it rejects with `:invalid_key` at import and when a supplied struct is validated. A stored `RequestSeal.PublicKey` or JWKS entry holding such a value fails; it could never verify a signature.
 - Discovery: field values are trimmed of space and horizontal tab only, so a response that relied on other whitespace around `Content-Length`, `Transfer-Encoding`, `Content-Encoding` or a media type now rejects as `:invalid_response`. A CIMD source whose client identifier path is only `/` now rejects at `RequestSeal.Discovery.Source.new/1`. Key-set freshness now corrects `Age` by the response delay, so a slow fetch goes stale sooner and refetches.
-- With `RequestSeal.Plug.Capture`, `origin: :connection` takes the authority from the request's Host line, which the sender chooses; declare your origin in production, as the [Phoenix and Plug guide](https://hexdocs.pm/request_seal/1.0.0/phoenix-and-plug.html) explains.
+- With `RequestSeal.Plug.Capture`, `origin: :connection` takes the authority from the request's Host line, which the sender chooses; declare your origin in production, as the [Phoenix and Plug guide](https://request-seal.hexdocs.pm/1.0.0/phoenix-and-plug.html) explains.
 
 ### Removed
 
@@ -96,7 +96,7 @@ Advisory: [GHSA-vj55-78vg-59wf](https://github.com/baselabs/request_seal/securit
 
 - The optional ash_hooks integration accepts ash_hooks 3.0 (`~> 2.0 or ~> 3.0`).
 - The optional ash_onetime requirement rises from `~> 1.5` to `~> 1.9 and >= 1.9.2`, the oldest release with everything `RequestSeal.Replay.AshOnetime` relies on: AshSql 0.8.6 or later (0.8.4 and 0.8.5 were retired for a security issue), AshPostgres 2.15.2 or later, and the cleanup fixes that keep nonce retention running.
-- A [compatibility and deprecation policy](https://hexdocs.pm/request_seal/1.0.0/compatibility.html) states what 1.x keeps stable, what a minor release may add, how security fixes may tighten acceptance, and how APIs are deprecated. `RequestSeal.Profile` is covered by it. `RequestSeal.KeyHandle`'s `ref`, `RequestSeal.Digest`'s hash contexts and `RequestSeal.KeyIdentity`'s fields are implementation state outside it. The telemetry contract covers measurement units and the meaning of each value.
+- A [compatibility and deprecation policy](https://request-seal.hexdocs.pm/1.0.0/compatibility.html) states what 1.x keeps stable, what a minor release may add, how security fixes may tighten acceptance, and how APIs are deprecated. `RequestSeal.Profile` is covered by it. `RequestSeal.KeyHandle`'s `ref`, `RequestSeal.Digest`'s hash contexts and `RequestSeal.KeyIdentity`'s fields are implementation state outside it. The telemetry contract covers measurement units and the meaning of each value.
 - `SECURITY.md` declares supported versions: the latest 1.x minor receives security fixes; 0.x receives none, and 0.x releases affected by a published advisory are retired on Hex.
 - Documentation describes current behavior only, with complete public specs, and the guides and Livebooks were brought up to date with this release.
 

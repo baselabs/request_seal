@@ -22,7 +22,7 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    `## <version> - YYYY-MM-DD` (substitute the version and actual release date), and
    finish the release and migration guidance beneath it. This dated, nonempty
    section becomes the GitHub release notes verbatim. Finalize every documentation
-   link to `https://hexdocs.pm/request_seal/<version>/<page>.html` and source or
+   link to `https://request-seal.hexdocs.pm/<version>/<page>.html` and source or
    asset links to `https://github.com/baselabs/request_seal/blob/v<version>/<path>`
    or `/raw/v<version>/<path>`. Unreleased entries may use absolute GitHub `main`
    URLs; replace them when cutting the release. Both `mix hex.publish` and the release gate reject a missing,
@@ -91,7 +91,7 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    export VERSION=$(python3 scripts/release.py --version)
    mix hex.publish --yes
    mix hex.info request_seal "$VERSION"
-   curl --fail --location --silent --show-error --output /dev/null "https://hexdocs.pm/request_seal/$VERSION/index.html"
+   curl --fail --location --silent --show-error --output /dev/null "https://request-seal.hexdocs.pm/$VERSION/index.html"
    ```
 
    Confirm Hex reports that version and check each versioned page linked by its
@@ -187,10 +187,11 @@ lines inside fences do not create sections. Unclosed fences, backticks in fence
 info, indented or container-prefixed fences/release headings, missing blank lines
 before release headings, and malformed release headings are errors. HTML comments
 outside fences must fit on one line. This is a CHANGELOG format, not a general
-Markdown parser.
+Markdown parser. Raw HTML tags anywhere in the CHANGELOG are rejected because
+they can make release boundaries ambiguous.
 
 Use canonical single-line inline links and images, such as
-`[guide](https://hexdocs.pm/request_seal/1.0.0/web-bot-auth.html)` or
+`[guide](https://request-seal.hexdocs.pm/1.0.0/web-bot-auth.html)` or
 `![asset](https://example.com/asset.png)`.
 Self-contained reference definitions put the label and literal absolute URL on
 the same line. Destinations may be angle-enclosed; optional quoted titles remain
@@ -207,6 +208,12 @@ There are no code-block exemptions: rewrite an example to satisfy this contract.
 First-party documentation and repository-file URLs must use the section's own
 version; unversioned URLs, `main`, stale versions, and dot segments fail. Explicit
 public advisory permalinks and external standards retain their authored URLs.
+Both `request-seal.hexdocs.pm/<version>/` and
+`hexdocs.pm/request_seal/<version>/` identify this package's documentation. Use
+the directly served canonical host for publication: a redirect from the older
+host fails the HTTP-200 gate. Tagged raw GitHub content may use
+`https://raw.githubusercontent.com/baselabs/request_seal/v<version>/<path>`;
+it has the same version and offline tree checks as GitHub `blob`/`raw` URLs.
 Errors name the source line and destination, for example
 `CHANGELOG.md:7: destination 'docs/guide.md': requires an absolute HTTP(S) or mailto URL`
 or `first-party destination must use version 2.0.0`. Raw HTML and section-format
@@ -218,7 +225,8 @@ The offline documentation gate checks first-party absolute guide URLs against
 the explicit ExDoc inventory and its page names. Historical guides and GitHub
 `blob`/`raw` targets use the referenced local tag/branch tree, without network
 requests; fetch the repository's tags before running the gate. Current-version
-links also retain generated-page and fragment checks during documentation builds.
+source links use the release working tree until its tag exists. Current-version
+documentation links also retain generated-page and fragment checks during builds.
 
 ## Dependency updates
 

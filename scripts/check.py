@@ -254,15 +254,16 @@ def doc_link_errors(output):
         collector.feed(page.read_text())
         pages[page.resolve()] = collector
     errors = []
-    current_hexdocs = "/request_seal/" + package_version((ROOT / "mix.exs").read_text()) + "/"
+    version = package_version((ROOT / "mix.exs").read_text())
+    current_hexdocs = {"hexdocs.pm": "/request_seal/" + version + "/", "request-seal.hexdocs.pm": "/" + version + "/"}
     for page, collector in pages.items():
         for href in collector.hrefs:
             parts = urlsplit(href)
-            if (parts.scheme == "https" and parts.netloc == "hexdocs.pm"
-                    and parts.path.startswith(current_hexdocs)):
+            prefix = current_hexdocs.get(parts.netloc)
+            if parts.scheme == "https" and prefix and parts.path.startswith(prefix):
                 # Absolute authored links to this version must retain the same
                 # generated-page and fragment checks as local ExDoc links.
-                parts = parts._replace(scheme="", netloc="", path=parts.path.split("/", 3)[3])
+                parts = parts._replace(scheme="", netloc="", path=parts.path[len(prefix):])
             if parts.scheme or parts.netloc or href.startswith("//"):
                 continue
             target = (page.parent / unquote(parts.path)).resolve() if parts.path else page

@@ -240,23 +240,35 @@ def inventory_errors(root, approved, paths):
 def first_party_link_errors(root, relative, url, version, published, references):
     """Resolve authored first-party destinations against their real Git tree."""
     path = unquote(url.path)
-    if url.hostname == "hexdocs.pm" and path.startswith("/request_seal/"):
-        parts = path.split("/", 3)
-        if len(parts) != 4 or not SEMVER.fullmatch(parts[2]):
-            # Unversioned package landing pages remain valid outside release notes.
-            return [] if len(parts) == 3 else ["HexDocs destination requires an explicit version"]
-        release_version, target = parts[2:]
-        ref = None if release_version == version else "refs/tags/v" + release_version
+    if (url.hostname == "request-seal.hexdocs.pm"
+            or url.hostname == "hexdocs.pm" and path.startswith("/request_seal/")):
+        if url.hostname == "request-seal.hexdocs.pm" and path in ("", "/"):
+            return []  # Package landing page outside dated release notes.
+        docs_path = "/request_seal" + path if url.hostname == "request-seal.hexdocs.pm" else path
+        parts = docs_path.split("/", 3)
+        if len(parts) == 3:
+            if not parts[2]:
+                return []  # Package landing page outside dated release notes.
+            target, ref = parts[2], None
+        elif SEMVER.fullmatch(parts[2]):
+            release_version, target = parts[2:]
+            ref = None if release_version == version else "refs/tags/v" + release_version
+        else:
+            return ["HexDocs destination requires an explicit version"]
         kind = "hexdocs"
-    elif url.hostname == "github.com" and path.startswith("/baselabs/request_seal/"):
-        parts = path.split("/", 5)
+    elif url.hostname in ("github.com", "raw.githubusercontent.com") and path.startswith("/baselabs/request_seal/"):
+        source_path = path.replace("/baselabs/request_seal/", "/baselabs/request_seal/raw/", 1) if url.hostname == "raw.githubusercontent.com" else path
+        parts = source_path.split("/", 5)
         if len(parts) < 5 or parts[3] not in ("blob", "raw"):
             return []  # Repository landing pages, issues and advisory permalinks.
         if len(parts) != 6 or not parts[4] or not parts[5]:
             return ["GitHub destination requires a ref and file path"]
         name, target = parts[4:]
         ref = "refs/tags/" + name
-        if not name.startswith("v"):
+        if name == "v" + str(version) and subprocess.run(
+                ["git", "show-ref", "--verify", "--quiet", ref], cwd=root).returncode == 1:
+            ref = None  # The release commit is checked before its tag exists.
+        elif not name.startswith("v"):
             ref = "refs/heads/" + name
             if run(["git", "show-ref", "--verify", "--quiet", ref], cwd=root, capture_output=True,
                    check=False, timeout=30).returncode:
@@ -269,6 +281,9 @@ def first_party_link_errors(root, relative, url, version, published, references)
     key = ref or "WORKTREE"
     try:
         if key not in references:
+            if ref is not None and subprocess.run(
+                    ["git", "show-ref", "--verify", "--quiet", ref], cwd=root).returncode:
+                return ["first-party destination ref is missing: " + ref]
             configuration = public_configuration(root, ref)
             if ref is None:
                 tree = {p: "100644" for p in public_paths(root)}
@@ -290,6 +305,8 @@ def first_party_link_errors(root, relative, url, version, published, references)
             return ["HexDocs page targets missing or symlinked published content"]
     elif target not in tree or tree[target] not in ("100644", "100755"):
         return ["GitHub link targets missing or nonregular content at " + key]
+    elif ref is None and (has_symlink(root, target) or not (root / target).is_file()):
+        return ["GitHub link targets missing or symlinked content"]
     elif (published is not None and relative in published and Path(target).suffix in (".md", ".livemd")
           and target not in configuration["documents"]):
         return ["published document links a repository-only document at " + key]
