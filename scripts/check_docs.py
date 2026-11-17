@@ -314,7 +314,7 @@ def first_party_link_errors(root, relative, url, version, published, references)
                 return ["HexDocs fragment is missing from real documentation output for " + release_version]
             return []
         if kind in ("github_live", "hex_package"):
-            if (kind == "hex_package" and link["version"] == version
+            if (kind == "hex_package" and version is not None and link.get("version") == version
                     and not ref_exists(root, "refs/tags/v" + version)):
                 # The current release's package page does not exist until Hex
                 # publication. Historical/tagged releases still require HTTP.
