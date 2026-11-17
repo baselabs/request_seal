@@ -655,6 +655,10 @@ class BuildContractsTest(unittest.TestCase):
                         original.replace("- uses: " + checkout, "# - uses: " + checkout),
                         original.replace("      - uses: actions/setup-node@", "      # - uses: actions/setup-node@"),
                         original.replace("- uses: " + checkout, "- {uses: actions/checkout@v4}"),
+                        original.replace("- uses: " + checkout, "- 'uses': other/action@v1"),
+                        original.replace("- uses: " + checkout, "- &checkout\n        uses: " + checkout, 1),
+                        original.replace("- uses: " + checkout, "- *checkout", 1),
+                        original.replace("- uses: " + checkout, "- <<: *checkout", 1),
                         original.replace("- uses: " + checkout, "- uses: " + checkout
                                          + "\n      - {uses: other/action@v1, with: {a: b}}", 1)):
             with self.subTest(changed=changed):

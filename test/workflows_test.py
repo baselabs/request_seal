@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import qualify  # noqa: E402
+from workflow_yaml import load as load_workflow  # noqa: E402
 
 WORKFLOWS = ROOT / ".github/workflows"
 PROOFS = {"process-ownership-macos", "toolchain", "verify", "mutations", "teardown"}
@@ -27,22 +28,54 @@ def workflows():
     return sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
 
 
-def uncommented(source):
-    return "\n".join(re.sub(r"(^|\s)#.*$", "", line) for line in source.splitlines()) + "\n"
-
-
 def triggers(source):
-    """The `on:` block, up to the next top-level key."""
-    return re.search(r"(?ms)^on:\n(.*?)^\S", uncommented(source))[1]
+    return load_workflow(source)["on"]
 
 
 def jobs(source):
-    body = uncommented(source).partition("\njobs:\n")[2]
-    headers = list(re.finditer(r"(?m)^  ([A-Za-z0-9_-]+):\n", body))
-    return {
-        header[1]: body[header.end():following.start() if following else len(body)]
-        for header, following in zip(headers, headers[1:] + [None])
+    return load_workflow(source)["jobs"]
+
+
+def fields(value):
+    """Walk structural fields without interpreting block scalar contents as YAML."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield key, child
+            yield from fields(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from fields(child)
+
+
+def step_identity(step):
+    return step["uses"].split("@", 1)[0] if "uses" in step else step["run"]
+
+
+def proof_condition_errors(source, ci_source):
+    proofs = jobs(source)
+    conditions = {}
+    errors = []
+    for job, body in proofs.items():
+        if "if" in body:
+            errors.append(f"{job}: job condition is forbidden")
+        for step in body["steps"]:
+            if "if" in step:
+                identity = (job, step_identity(step))
+                conditions.setdefault(identity, []).append(step["if"])
+    conditions = {identity: sorted(bound) for identity, bound in conditions.items()}
+    expected = {
+        ("verify", "actions/cache"): ["matrix.lane == 'latest'"],
+        ("verify", "mix test --warnings-as-errors"): ["matrix.lane == 'floor'", "matrix.lane == 'mid'"],
+        ("verify", "python3 scripts/check_optional_clients.py"): ["matrix.lane == 'floor'"],
+        ("verify", "python3 scripts/check.py"): ["matrix.lane == 'latest'"],
+        ("teardown", "actions/upload-artifact"): ["always()"],
     }
+    if conditions != expected:
+        errors.append("proof conditions must bind exactly to the declared job and step")
+    for workflow in (load_workflow(source), load_workflow(ci_source)):
+        if any(key == "continue-on-error" for key, _ in fields(workflow)):
+            errors.append("continue-on-error is forbidden")
+    return errors
 
 
 def proof_jobs(conclusion="success", **changes):
@@ -105,59 +138,59 @@ class QualificationTest(unittest.TestCase):
         self.assertIn('workflows.glob("*.yml"), *workflows.glob("*.yaml")', check)
 
     def test_only_candidate_pushes_start_the_qualification_run(self):
-        self.assertEqual("  push:\n    branches: ['kci/**']\n", triggers(text("ci.yml")))
+        self.assertEqual({"push": {"branches": ["kci/**"]}}, triggers(text("ci.yml")))
 
     def test_proofs_are_defined_once_and_called_by_the_candidate_and_contribution_runs(self):
-        self.assertEqual("  workflow_call:\n", triggers(text("proofs.yml")))
+        self.assertEqual({"workflow_call": ""}, triggers(text("proofs.yml")))
         self.assertEqual(PROOFS, set(jobs(text("proofs.yml"))))
         self.assertEqual(PROOFS, {*qualify.JOBS, qualify.LANE_JOB})
-        self.assertIn("    name: verify (${{ matrix.lane }})\n", jobs(text("proofs.yml"))["verify"])
+        self.assertEqual("verify (${{ matrix.lane }})", jobs(text("proofs.yml"))["verify"]["name"])
         for name, caller in (("ci.yml", "proofs"), ("contributions.yml", "contribution")):
-            callers = {job: body for job, body in jobs(text(name)).items() if "\n    uses: " in "\n" + body}
-            self.assertEqual({caller: "    uses: ./.github/workflows/proofs.yml\n"}, callers, name)
+            callers = {job: body for job, body in jobs(text(name)).items() if "uses" in body}
+            self.assertEqual({caller: {"uses": "./.github/workflows/proofs.yml"}}, callers, name)
         self.assertEqual(qualify.CALLER, "proofs")
         for workflow in workflows():
             if workflow.name not in {"ci.yml", "contributions.yml"}:
-                self.assertNotIn("proofs.yml", workflow.read_text(), workflow.name)
+                self.assertFalse(any("proofs.yml" in str(value) for key, value in fields(load_workflow(workflow.read_text()))
+                                     if key == "uses"), workflow.name)
 
     def test_outside_pull_requests_run_separately_without_secrets(self):
-        self.assertEqual("  pull_request:\n", triggers(text("contributions.yml")))
+        self.assertEqual({"pull_request": ""}, triggers(text("contributions.yml")))
         for workflow in workflows():
             if workflow.name != "contributions.yml":
                 self.assertNotIn("pull_request", triggers(workflow.read_text()), workflow.name)
         for name in ("proofs.yml", "ci.yml", "contributions.yml"):
-            source = text(name)
-            self.assertNotRegex(source, r"(?m)\$\{\{[^}]*\bsecrets\.|^\s+secrets:", name)
-            self.assertRegex(source, r"(?m)^permissions:\n  contents: read\n(?!  )", name)
-            self.assertNotRegex(source, r"(?m)^\s+\w[\w-]*: write$", name)
-        self.assertNotIn("qualified", text("contributions.yml"))
+            workflow = load_workflow(text(name))
+            self.assertEqual({"contents": "read"}, workflow["permissions"], name)
+            for key, value in fields(workflow):
+                self.assertNotEqual("secrets", key, name)
+                if isinstance(value, str):
+                    self.assertNotRegex(value, r"\$\{\{[^}]*\bsecrets\.", name)
+                if key == "permissions":
+                    self.assertNotIn("write", value.values(), name)
+        self.assertNotIn("qualified", jobs(text("contributions.yml")))
 
     def test_qualified_reads_every_job_conclusion_of_its_own_run(self):
         ci = jobs(text("ci.yml"))
         self.assertEqual(["proofs", "qualified"], list(ci))
         self.assertEqual(
-            "    name: qualified\n"
-            "    if: always()\n"
-            "    needs: [proofs]\n"
-            "    runs-on: ubuntu-24.04\n"
-            "    timeout-minutes: 5\n"
-            "    permissions:\n"
-            "      actions: read\n"
-            "      contents: read\n"
-            "    steps:\n"
-            "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
-            "        with:\n"
-            "          persist-credentials: false\n"
-            "      - name: Require every proof job in this run to have succeeded\n"
-            "        env:\n"
-            "          GH_TOKEN: ${{ github.token }}\n"
-            "          PROOFS_RESULT: ${{ needs.proofs.result }}\n"
-            "        run: python3 scripts/qualify.py\n",
+            {"name": "qualified", "if": "always()", "needs": ["proofs"],
+             "runs-on": "ubuntu-24.04", "timeout-minutes": "5",
+             "permissions": {"actions": "read", "contents": "read"},
+             "steps": [
+                 {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                  "with": {"persist-credentials": "false"}},
+                 {"name": "Require every proof job in this run to have succeeded",
+                  "env": {"GH_TOKEN": "${{ github.token }}", "PROOFS_RESULT": "${{ needs.proofs.result }}"},
+                  "run": "python3 scripts/qualify.py"},
+             ]},
             ci["qualified"],
         )
         for workflow in workflows():
             if workflow.name != "ci.yml":
-                self.assertNotRegex(workflow.read_text(), r"(?m)^\s+(name: )?qualified:?\s*$", workflow.name)
+                defined = jobs(workflow.read_text())
+                self.assertNotIn("qualified", defined, workflow.name)
+                self.assertNotIn("qualified", [job.get("name") for job in defined.values()], workflow.name)
 
     def test_inventory_is_every_proof_and_one_verify_leg_per_lane(self):
         self.assertEqual(
@@ -221,39 +254,68 @@ class QualificationTest(unittest.TestCase):
             for job, body in jobs(workflow.read_text()).items():
                 with self.subTest(workflow=workflow.name, job=job):
                     # A job that calls a reusable workflow takes no timeout; its jobs carry their own.
-                    if not body.startswith("    uses: ./"):
-                        self.assertRegex(body, r"(?m)^    timeout-minutes: \d+$")
+                    if "uses" not in body:
+                        self.assertTrue(body["timeout-minutes"].isdigit())
+                        self.assertGreater(int(body["timeout-minutes"]), 0)
 
     def test_proof_steps_run_unconditionally_except_the_declared_lane_and_evidence_steps(self):
-        conditions = re.findall(r"(?m)^\s+(?:- )?if:\s*(.+?)\s*$", uncommented(text("proofs.yml")))
-        self.assertEqual(sorted([
-            "matrix.lane == 'latest'", "matrix.lane == 'floor'", "matrix.lane == 'mid'",
-            "matrix.lane == 'floor'", "matrix.lane == 'latest'", "always()",
-        ]), sorted(conditions))
-        self.assertNotRegex(uncommented(text("proofs.yml")), r"continue-on-error")
+        self.assertEqual([], proof_condition_errors(text("proofs.yml"), text("ci.yml")))
+        process = jobs(text("proofs.yml"))["process-ownership-macos"]
+        tests = [step for step in process["steps"] if "run" in step]
+        self.assertEqual([{"run": "python3 -B -m unittest discover -s test -p processes_test.py"}], tests)
+
+    def test_condition_bindings_reject_relocation_and_extra_conditions(self):
+        original, ci = text("proofs.yml"), text("ci.yml")
+        relocated = original.replace("      - if: matrix.lane == 'latest'\n        uses: actions/cache@",
+                                     "      - uses: actions/cache@", 1).replace(
+            "        run: python3 scripts/mutations.py",
+            "        if: matrix.lane == 'latest'\n        run: python3 scripts/mutations.py", 1)
+        for changed in (
+            relocated,
+            original.replace("  mutations:\n", "  mutations:\n    if: false\n"),
+            original.replace("  verify:\n", "  verify:\n    continue-on-error: true\n"),
+            original.replace("        run: python3 scripts/mutations.py",
+                             "        continue-on-error: true\n        run: python3 scripts/mutations.py"),
+            original.replace("      - run: python3 -B -m unittest discover -s test -p processes_test.py",
+                             "      - if: false\n        run: python3 -B -m unittest discover -s test -p processes_test.py"),
+            original.replace("        run: python3 scripts/mutations.py",
+                             "        if: false\n        run: python3 scripts/mutations.py"),
+            original.replace('        run: python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"',
+                             '        if: false\n        run: python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"'),
+        ):
+            with self.subTest(changed=changed):
+                self.assertNotEqual(original, changed)
+                self.assertTrue(proof_condition_errors(changed, ci))
+        self.assertTrue(proof_condition_errors(original, ci.replace(
+            "  qualified:\n", "  qualified:\n    continue-on-error: true\n")))
 
     def test_mutations_and_teardown_are_candidate_jobs_with_kept_evidence(self):
         proofs = jobs(text("proofs.yml"))
         for job, command in (("mutations", "python3 scripts/mutations.py"),
                              ("teardown", 'python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"')):
             with self.subTest(job=job):
-                self.assertIn("    needs: toolchain\n", proofs[job])
-                self.assertIn(f"        run: {command}\n", proofs[job])
-                self.assertIn("      MIX_ENV: test\n", proofs[job])
-                self.assertIn("mix deps.get --check-locked", proofs[job])
-                # Neither job caches dependencies (verify caches none), and mutations proves it
-                # needs no database by running without one.
-                self.assertNotRegex(proofs[job], r"actions/cache@|\bservices\b|\bimage\s*:")
-        upload = proofs["teardown"].partition("actions/upload-artifact@")[2]
-        self.assertIn("        if: always()\n", upload)
-        self.assertIn("          name: jwe-teardown\n", upload)
-        self.assertIn("          if-no-files-found: error\n", upload)
-        self.assertIn("          path: ${{ runner.temp }}/jwe-teardown.json\n", upload)
+                self.assertEqual("toolchain", proofs[job]["needs"])
+                steps = proofs[job]["steps"]
+                commands = [step["run"] for step in steps if "run" in step]
+                self.assertEqual(1, commands.count(command))
+                self.assertNotIn("if", next(step for step in steps if step.get("run") == command))
+                self.assertEqual("test", proofs[job]["env"]["MIX_ENV"])
+                self.assertIn("mix deps.get --check-locked", commands)
+                # These proofs run without services or caches.
+                self.assertNotIn("services", proofs[job])
+                self.assertFalse(any(step_identity(step).split("/")[:2] == ["actions", "cache"] for step in steps))
+        uploads = [step for step in proofs["teardown"]["steps"] if step_identity(step) == "actions/upload-artifact"]
+        self.assertEqual(1, len(uploads))
+        self.assertEqual({"uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                          "if": "always()", "with": {"name": "jwe-teardown", "if-no-files-found": "error",
+                                                       "path": "${{ runner.temp }}/jwe-teardown.json"}}, uploads[0])
         for workflow in workflows():
             if workflow.name != "proofs.yml":
-                source = workflow.read_text()
-                self.assertNotIn("scripts/mutations.py", source, workflow.name)
-                self.assertNotIn("jwe_teardown_gate", source, workflow.name)
+                commands = [step.get("run", "") for body in jobs(workflow.read_text()).values()
+                            for step in body.get("steps", [])]
+                for command in commands:
+                    self.assertNotIn("scripts/mutations.py", command, workflow.name)
+                    self.assertNotIn("jwe_teardown_gate", command, workflow.name)
 
 
 if __name__ == "__main__":

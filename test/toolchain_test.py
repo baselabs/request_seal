@@ -9,6 +9,9 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from workflow_yaml import load as load_workflow
+
 spec = importlib.util.spec_from_file_location("toolchain", ROOT / "scripts/toolchain.py")
 pins = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pins)
@@ -23,22 +26,34 @@ def workflow_sources():
 
 
 def container_errors(name, source):
-    """Every image a workflow starts must be the reader's output, and only proofs/verify starts one.
-
-    Comments are removed first; block (`image: x`) and flow (`{image: x}`) mappings both count,
-    and a job container in either form is refused outright."""
-    source = "\n".join(re.sub(r"(^|\s)#.*$", "", line) for line in source.splitlines())
-    errors = [f"{name}: image {image}" for image in
-              re.findall(r"\bimage\s*:\s*(\$\{\{[^}]*\}\}|[^\s,}]+)", source) if image != SERVICE_IMAGE]
-    errors += [f"{name}: job container" for _ in re.findall(r"\bcontainer\s*:", source)]
-    jobs = source.partition("\njobs:\n")[2]
-    headers = list(re.finditer(r"(?m)^  ([A-Za-z0-9_-]+):", jobs))
-    for header, following in zip(headers, headers[1:] + [None]):
-        body = jobs[header.end():following.start() if following else len(jobs)]
-        if re.search(r"\bservices\s*:", body) and (name, header[1]) != ("proofs.yml", "verify"):
-            errors.append(f"{name}: services in {header[1]}")
-    if re.search(r"\bservices\s*:", source.partition("\njobs:\n")[0]):
+    """Only proofs/verify starts services, all from the toolchain's exact output."""
+    try:
+        workflow = load_workflow(source)
+    except ValueError as error:
+        return [f"{name}: workflow YAML: {error}"]
+    errors = []
+    if "services" in workflow:
         errors.append(f"{name}: services outside a job")
+    jobs = workflow.get("jobs", {})
+    if not isinstance(jobs, dict):
+        return errors + [f"{name}: jobs must be mappings"]
+    for job, body in jobs.items():
+        if not isinstance(body, dict):
+            errors.append(f"{name}: invalid job {job}")
+            continue
+        if "container" in body:
+            errors.append(f"{name}: job container")
+        if "services" not in body:
+            continue
+        if (name, job) != ("proofs.yml", "verify"):
+            errors.append(f"{name}: services in {job}")
+        services = body["services"]
+        if not isinstance(services, dict):
+            errors.append(f"{name}: services must be mappings")
+            continue
+        for service in services.values():
+            if not isinstance(service, dict) or service.get("image") != SERVICE_IMAGE:
+                errors.append(f"{name}: image must be {SERVICE_IMAGE}")
     return errors
 
 
@@ -136,17 +151,32 @@ class ToolchainTest(unittest.TestCase):
             (proofs.replace(verify, "    services: {postgres: {image: postgres:18}}"), "proofs.yml"),
             (proofs.replace(verify, '    services: {postgres: {image: "' + image + '"}}'), "proofs.yml"),
             (proofs.replace("  mutations:\n", "  mutations:\n    container: postgres:18\n"), "proofs.yml"),
+            (proofs.replace("  mutations:\n", "  mutations:\n    'container': postgres:18\n"), "proofs.yml"),
+            (proofs.replace("        image: " + SERVICE_IMAGE, "        'image': postgres:18"), "proofs.yml"),
+            (proofs.replace("  mutations:\n", "  mutations: {container: postgres:18}\n"), "proofs.yml"),
+            (proofs.replace("      postgres:\n        image: " + SERVICE_IMAGE,
+                            "      postgres: {image: postgres:18}"), "proofs.yml"),
+            ("jobs:\n  mutations: {container: postgres:18}\n", "proofs.yml"),
+            ("jobs:\n  verify:\n    services:\n      postgres: {image: postgres:18}\n", "proofs.yml"),
             (proofs.replace("  mutations:\n", "  mutations:\n    container: {image: " + SERVICE_IMAGE + "}\n"),
              "proofs.yml"),
             (proofs.replace("  teardown:\n", "  teardown:\n    services:\n      postgres:\n        image: "
                             + SERVICE_IMAGE + "\n"), "proofs.yml"),
             (sources["ci.yml"].replace("  qualified:\n", "  qualified:\n    services: {}\n"), "ci.yml"),
+            (proofs.replace("jobs:\n", "services:\n  postgres:\n    image: " + SERVICE_IMAGE + "\njobs:\n"),
+             "proofs.yml"),
             (proofs.replace(verify, verify), "contributions.yml"),
         ):
             with self.subTest(name=name, changed=changed):
                 self.assertTrue(container_errors(name, changed))
         commented = proofs.replace("  mutations:\n", "  mutations:\n    # container: postgres:18\n")
         self.assertEqual([], container_errors("proofs.yml", commented))
+        for field, source, line in (
+            ("container", "jobs:\n  mutations:\n    'container': postgres:18\n", 3),
+            ("image", "jobs:\n  verify:\n    services:\n      sidecar:\n        'image': postgres:18\n", 5),
+        ):
+            with self.subTest(quoted=field):
+                self.assertIn(f"workflow YAML: <line {line}>:", container_errors("proofs.yml", source)[0])
         self.assertIn("postgres_image: ${{ steps.pins.outputs.postgres_image }}",
                       (ROOT / ".github/workflows/proofs.yml").read_text())
 

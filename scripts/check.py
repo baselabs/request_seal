@@ -11,6 +11,7 @@ import subprocess
 import sys
 from release import development_snapshot, package_version, release_notes
 from processes import cleanup_on_exit, command, install_signal_handlers, run, temporary_directory
+from workflow_yaml import load as load_workflow
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -103,17 +104,30 @@ def ci_action_errors(workflow, required_actions=None):
     """Require the build's essential actions and immutable commit identities.
 
     A reference to a workflow in this repository (./.github/workflows/...) is fixed by the
-    commit being run, so it is the one reference that carries no commit identity. Comments
-    are removed first: a commented-out step is not a step."""
+    commit being run, so it is the one reference that carries no commit identity."""
     errors = []
-    workflow = "\n".join(re.sub(r"(^|\s)#.*$", "", line) for line in workflow.splitlines())
-    actions = re.findall(r"\buses:\s*([^\s,}]+)", workflow)
+    try:
+        workflow = load_workflow(workflow)
+    except ValueError as error:
+        return [f"CI workflow YAML: {error}"]
+    jobs = workflow.get("jobs", {})
+    if not isinstance(jobs, dict) or any(not isinstance(job, dict) for job in jobs.values()):
+        return ["CI workflow jobs must be mappings"]
+    calls, actions = [], []
+    for job in jobs.values():
+        if "uses" in job:
+            calls.append(job["uses"])
+        steps = job.get("steps", [])
+        if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+            return ["CI workflow steps must be mappings"]
+        actions.extend(step["uses"] for step in steps if "uses" in step)
     if required_actions is None:
         required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
     local = re.compile(r"\./\.github/workflows/[A-Za-z0-9_.-]+\.yml")
-    if not required_actions.issubset({action.split("@", 1)[0] for action in actions}) or any(
-        not (re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) or local.fullmatch(action)) for action in actions
-    ):
+    pinned = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[0-9a-fA-F]{40}")
+    if (not required_actions.issubset({ref.split("@", 1)[0] for ref in [*calls, *actions] if isinstance(ref, str)})
+            or any(not isinstance(call, str) or not local.fullmatch(call) or ".." in call for call in calls)
+            or any(not isinstance(action, str) or not pinned.fullmatch(action) for action in actions)):
         errors.append("CI actions must use immutable commit identities")
     return errors
 
