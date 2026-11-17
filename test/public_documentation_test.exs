@@ -69,7 +69,7 @@ defmodule RequestSeal.PublicDocumentationTest do
       )
 
       notes =
-        "- Released behavior. [Guide](https://request-seal.hexdocs.pm/#{version}/web-bot-auth.html)\n"
+        "- Released behavior. [Guide](https:\x2f\x2frequest-seal.hexdocs.pm/#{version}/web-bot-auth.html)\n"
 
       File.write!(
         Path.join(directory, "CHANGELOG.md"),

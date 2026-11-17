@@ -279,6 +279,16 @@ def check_doc_links(output):
     if errors:
         raise ValueError("Generated documentation has broken links:\n" + "\n".join(errors))
 
+
+def check_documentation():
+    with temporary_directory(prefix="requestseal-docs-") as scratch:
+        output = Path(scratch) / "current"
+        run(["mix", "docs", "--warnings-as-errors", "--output", output], extra_env={"MIX_ENV": "dev"})
+        run([sys.executable, "scripts/check_docs.py", "--docs-output", output])
+        normalize_exdoc_inventory(output)
+        check_doc_links(output)
+
+
 def notebooks():
     tooling = ROOT / "tools/notebooks"
     run(["mix", "deps.get", "--check-locked"], tooling)
@@ -339,10 +349,7 @@ if __name__ == "__main__":
             run(["mix", "run", "scripts/check_corpus_mutations.exs"], extra_env={"MIX_ENV": "test"})
             run([sys.executable, "scripts/check_optional_clients.py"])
             run([sys.executable, "-m", "unittest", "discover", "-s", "test", "-p", "*_test.py"])
-            run([sys.executable, "scripts/check_docs.py"])
-            run(["mix", "docs", "--warnings-as-errors"])
-            normalize_exdoc_inventory(ROOT / "doc")
-            check_doc_links(ROOT / "doc")
+            check_documentation()
             run(["mix", "hex.audit"])
             check_package()
             check_sbom()

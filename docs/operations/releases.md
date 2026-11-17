@@ -22,7 +22,7 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    `## <version> - YYYY-MM-DD` (substitute the version and actual release date), and
    finish the release and migration guidance beneath it. This dated, nonempty
    section becomes the GitHub release notes verbatim. Finalize every documentation
-   link to `https://request-seal.hexdocs.pm/<version>/<page>.html` and source or
+   link to `https://request-seal.hexdocs.pm/<version>/<page>` and source or
    asset links to `https://github.com/baselabs/request_seal/blob/v<version>/<path>`
    or `https://raw.githubusercontent.com/baselabs/request_seal/v<version>/<path>`. Unreleased entries may use absolute GitHub `main`
    URLs; replace them when cutting the release. Both `mix hex.publish` and the release gate reject a missing,
@@ -110,8 +110,14 @@ both repositories use the [conformance corpus](../reference/corpus-format.md).
    without following them. HTTP 404, 5xx and transport errors retry with 1, 2, 4,
    8, then at most 10 seconds of backoff, within one 180-second total deadline
    for the check, including request time (at most 15 seconds per request).
-   Other statuses do not retry. Failure lists every failing destination and its
-   last status or transport error. The workflow selects its mode explicitly by event.
+   HTTP 429 also retries, honoring `Retry-After` (seconds or HTTP date) within
+   that deadline. Other 4xx statuses are final. A permanent failure stops retries
+   after collecting that round's results, even if another URL still returns 404.
+   The socket timeout for each request is `min(15, remaining_seconds)`; the
+   worst-case bound is the 180-second deadline plus one socket timeout (at most
+   15 seconds), or 195 seconds. Transport errors include TLS errors and malformed
+   or prematurely closed HTTP responses. Failure lists every failing destination
+   and its last status or transport error. The workflow selects its mode explicitly by event.
 6. Install from Hex in a clean consumer, without a path or Git override. Use an
    empty Mix install directory and verify the installed application version and
    an actual public entry point:
@@ -196,8 +202,8 @@ lines inside fences do not create sections. Unclosed fences, backticks in fence
 info, indented or container-prefixed fences/release headings, missing blank lines
 before release headings, and malformed release headings are errors. HTML comments
 outside fences must fit on one line. This is a CHANGELOG format, not a general
-Markdown parser. Raw HTML tags anywhere in the CHANGELOG are rejected because
-they can make release boundaries ambiguous.
+Markdown parser. Raw HTML tags outside code spans and code blocks in the CHANGELOG
+are rejected because they can make release boundaries ambiguous.
 
 Use canonical single-line inline links and images, such as
 `[guide](https://request-seal.hexdocs.pm/1.0.0/web-bot-auth.html)` or
@@ -209,26 +215,83 @@ spaces and parentheses; Markdown escapes and HTML entities in destinations are
 unsupported. Raw HTML tags, declarations, and processing instructions are
 unsupported, even when their attributes contain absolute URLs.
 
-The conservative lexical gate examines potential inline/image destinations,
-reference definitions, autolinks `<scheme:…>`, bare `http://`, `https://` and
-`www.` occurrences, and every `href`/`src` attribute everywhere, including
-containers, code examples, and comments. Relative, empty, fragment-only,
-query-only, protocol-relative, unclassifiable, and ambiguous destinations fail.
-There are no code-block exemptions: rewrite an example to satisfy this contract.
-First-party documentation and repository-file URLs must use the section's own
-version; unversioned URLs, `main`, stale versions, and dot segments fail. Explicit
-public advisory permalinks and external standards retain their authored URLs.
-The only canonical forms are
-`https://request-seal.hexdocs.pm/<version>/<page>`,
-`https://github.com/baselabs/request_seal/blob/v<version>/<path>`, and
-`https://raw.githubusercontent.com/baselabs/request_seal/v<version>/<path>`.
-Redirecting HexDocs hosts and GitHub raw routes fail the offline gate before Hex
-publication. Host, owner and repository classification is case-insensitive and
-includes `www.` hosts and normalized paths; first-party links then reject
-noncanonical hosts/casing, percent-encoded paths, dot segments, userinfo and ports.
+The conservative lexical gate and documentation checker share one destination
+extractor and one first-party classifier. The extractor covers inline/image
+links, reference definitions, autolinks `<scheme:…>`, bare `http://`, `https://`
+and `www.` occurrences, and HTML `href`/`src` attributes. Code spans and code blocks
+are ignored: GitHub does not link their contents. Visible comments and container
+prose still receive checks. Relative, empty, fragment-only, query-only,
+protocol-relative, unclassifiable, and ambiguous release destinations fail.
+Emphasis around links, a following em dash, and link text equal to its own URL
+are accepted without changing the authored bytes. Bare destinations end according
+to [GFM extended autolinks](https://github.github.com/gfm/#autolinks-extension-):
+trailing `? ! . , : * _ ~`, excess closing parentheses and a trailing entity
+reference are excluded, and `<` ends the URL. Third-party `www.` prose is accepted.
+
+First-party documentation and repository-file URLs in a dated section must use
+that section's own version. Unversioned URLs, `main`, stale versions, dot segments,
+and every query string fail there. Canonical forms are:
+
+- `https://request-seal.hexdocs.pm/<version>/<page>` (including the index
+  `https://request-seal.hexdocs.pm/<version>/`; omitting its final slash redirects
+  and is rejected);
+- `https://github.com/baselabs/request_seal/blob/v<version>/<path>`;
+- `https://raw.githubusercontent.com/baselabs/request_seal/v<version>/<path>`;
+- `https://github.com/baselabs/request_seal/issues/<number>` and
+  `https://github.com/baselabs/request_seal/pull/<number>`, checked live in both modes;
+- `https://github.com/baselabs/request_seal/compare/v<base>...v<version>`:
+  dispatch verifies that the base tag exists and is an ancestor of HEAD, and
+  push checks the URL live;
+- `https://hex.pm/packages/request_seal/<version>`, checked live in both modes
+  after Hex publication.
+
+Public advisory permalinks are also checked live. External standards retain their
+authored URLs. A HexDocs fragment must name an actual HTML `id` in real ExDoc output
+or the published documentation tarball (the destination check reads the real HTTP
+page). GitHub source fragments allow only `#L<n>` and `#L<n>-L<m>`, within the checked
+file's line count and with a forward range. Raw assets and other first-party forms
+allow no fragment. The same canonical classifier serves the documentation check;
+outside dated release notes it also allows current `main` source links, package
+and repository landing pages, the Security tab, and canonical unversioned HexDocs
+pages, checked against the latest published documentation.
+
+### First-party host class
+
+The class is this repository's or package's content on GitHub and Hex, including
+alternate delivery routes. Classification ignores case and recognizes `www.`,
+percent-decoded and normalized paths; validation rejects noncanonical host/path
+casing, encoding, dot segments, credentials, ports and queries.
+
+| Hosts and identifying routes | Outcome |
+| --- | --- |
+| `request-seal.hexdocs.pm`; legacy `hexdocs.pm/request_seal`; underscore alias `request_seal.hexdocs.pm` | Only the canonical package subdomain and forms above are accepted. |
+| `github.com/baselabs/request_seal`; `raw.githubusercontent.com/baselabs/request_seal` | Only the canonical source, raw, issue, pull, compare, advisory and navigation forms above are accepted. |
+| `raw.github.com`, `codeload.github.com`, `media.githubusercontent.com`, `api.github.com`, `uploads.github.com`, and other `*.github.com` / `*.githubusercontent.com` paths identifying `baselabs/request_seal` | Rejected with a canonical source or raw alternative; this includes API `/repos/baselabs/request_seal` and archive/LFS routes. |
+| `baselabs.github.io/request_seal` | Rejected with the canonical documentation/source alternative. |
+| `objects.githubusercontent.com`, `objects-origin.githubusercontent.com`, `github-releases.githubusercontent.com`, `release-assets.githubusercontent.com`, `github-cloud.githubusercontent.com`, `github-cloud.s3.amazonaws.com` | Opaque or temporary asset URLs are rejected conservatively because they cannot establish a stable repository ref. Use the canonical versioned source/raw form. |
+| `hex.pm` package and API routes; `diff.hex.pm`; `preview.hex.pm`; `repo.hex.pm` package registry, tarball and docs routes for `request_seal` (including query identifiers) | Only `hex.pm/packages/request_seal/<version>` is accepted in dated notes. Other routes name that canonical alternative. |
+
+This inventory follows GitHub's [repository content API](https://docs.github.com/en/rest/repos/contents),
+[runner endpoint inventory](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
+[legacy raw hostname notice](https://github.blog/news-insights/disabling-old-ip-addresses/),
+and [project Pages URL rules](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages),
+and Hex's [API and repository endpoints](https://github.com/hexpm/specifications/blob/main/endpoints.md),
+[package subdomain migration](https://hex.pm/blog/hexdocs-per-package-subdomains),
+and [Hex 2.6 file browser and diff migration](https://hex.pm/blog/hex-v26-released).
+The host inventory is an authoring policy; a new delivery host does not silently
+become an allowed release form.
+
+### References and diagnostics
+
 Full and collapsed references must have a definition inside the released section.
+A definition counts only outside code, at the start of a block: after a blank
+line, at the start of the section, or immediately after another definition.
+A definition-shaped line in paragraph continuation is rejected with its line.
+Definitions inside fences or indented code cannot resolve visible uses.
 A shortcut reference counts when its label has a definition anywhere in the
-CHANGELOG, and also requires that definition inside this section. Labels compare
+CHANGELOG, and also requires that definition inside this section. Adjacent shortcut
+references separated by whitespace, such as `[RFC 9421] [section 2]`, remain two
+references when both labels are defined. Labels compare
 case-insensitively with whitespace collapsed. Unresolved references name their line.
 Errors name the source line and destination, for example
 `CHANGELOG.md:7: destination 'docs/guide.md': requires an absolute HTTP(S) or mailto URL`
@@ -238,17 +301,25 @@ intentional over-rejection and no CommonMark conformance claim. Release tooling
 never selects destinations or changes Markdown syntax.
 
 The documentation gate builds current-version docs once per check with the
-project's actual ExDoc into scratch output. A page exists exactly when it is a
+project's actual ExDoc into scratch output. `scripts/check.py` owns that build
+and passes `--docs-output DIR` to `scripts/check_docs.py`; standalone use builds
+its own output. A page exists exactly when it is a
 file there, including module pages, `api-reference.html` and extras. Published
 versions use the version's documentation tarball fetched and unpacked by the
-real Hex client into scratch. Historical source document inventory comes from
+real Hex client into scratch. A failed fetch is cached per version for the run;
+the real Hex API distinguishes "version not published on Hex" from "Hex unreachable."
+Historical source document inventory comes from
 the shipped Hex package, without evaluating historical project code. Scratch is
 removed on success, failure and handled termination. GitHub tagged source paths
 use the referenced local tag tree; fetch tags before running the gate. A `main`
 URL uses the working tree being checked and current `mix.exs` inventory, even
 without a local or remote `main` ref. A current-version source URL uses the
 working tree until its tag exists. Current-version documentation links also
-retain generated-page and fragment checks during builds.
+retain generated-page and fragment checks during builds. Every tracked UTF-8 text
+file is scanned for first-party destinations, including package source and metadata,
+`corpus/`, `docs/`, `livebooks/`, README and CHANGELOG; new unignored text is checked
+before staging too. Binary files are excluded. This uses the same extractor and
+classifier as release notes.
 
 ## Dependency updates
 

@@ -10,8 +10,7 @@ details into public issues, logs, notebooks, or chat transcripts.
 
 Report vulnerabilities privately through GitHub: open the repository's
 [Security tab](https://github.com/baselabs/request_seal/security) and choose
-"Report a vulnerability," or go directly to
-[the private report form](https://github.com/baselabs/request_seal/security/advisories/new).
+"Report a vulnerability."
 Only the reporter and the maintainers can see the report. Do not open a public issue
 for a vulnerability.
 

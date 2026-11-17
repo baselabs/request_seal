@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """Check the explicit public-document inventory, content tripwires, and local links."""
 from pathlib import Path
-from html import unescape
+import argparse
+from contextlib import nullcontext
 import os
 import re
 import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
-from release import SEMVER, first_party, first_party_syntax, install_requirement, parse_version
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from http.client import HTTPException
+import json
+from release import (classify_destination, compare_errors, extract_destinations, first_party,
+                     git_source_errors, install_requirement, page_ids,
+                     parse_version, source_fragment_errors, verify_http_destinations)
 from processes import install_signal_handlers, run, temporary_directory
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,18 +62,6 @@ UNPUBLISHED = re.compile(
     re.IGNORECASE,
 )
 INSTALL = re.compile(r"\{\s*:request_seal\s*,\s*([^}]*)\}", re.DOTALL)
-LINKS = (
-    re.compile(r"\[[^\]]*\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+['\"][^)]*['\"])?\s*\)"),
-    re.compile(r"^\s*\[[^\]]+\]:\s*(<[^>]+>|\S+)", re.MULTILINE),
-)
-
-# Extract attributes independently of HTML parser state. An unfinished script or
-# comment in a Markdown example must not hide later public targets. Inspect code
-# examples too; this is a disclosure tripwire, not an HTML rendering validator.
-HTML_ATTRIBUTES = re.compile(
-    r"""\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))""",
-    re.IGNORECASE,
-)
 
 
 def public_paths(root):
@@ -224,9 +219,33 @@ def inventory_errors(root, approved, paths):
     return errors
 
 
-def documentation_pages(root, requested_version, current_version):
+def documentation_inventory(output, version):
+    if not (output / "api-reference.html").is_file():
+        raise ValueError("documentation output is missing api-reference.html for " + version)
+    return {path.relative_to(output).as_posix(): page_ids(path.read_text()) if path.suffix == ".html" else set()
+            for path in output.rglob("*") if path.is_file() and not has_symlink(output, path.relative_to(output))}
+
+
+def hex_metadata(version=None):
+    endpoint = "https://hex.pm" + "/api/packages/request_seal" + ("/releases/" + version if version else "")
+    try:
+        with urlopen(Request(endpoint, headers={"User-Agent": "RequestSeal-docs"}), timeout=15) as response:
+            return json.load(response)
+    except HTTPError as error:
+        status = error.code
+        error.close()
+        if status == 404:
+            raise ValueError("version not published on Hex: " + str(version)) from error
+        raise ValueError(f"Hex unreachable: HTTP {status}") from error
+    except (OSError, URLError, HTTPException) as error:
+        raise ValueError(f"Hex unreachable: {error}") from error
+
+
+def documentation_pages(root, requested_version, current_version, docs_output=None):
     """Read real ExDoc output or Hex's published documentation, never derive names."""
     parse_version(requested_version)
+    if requested_version == current_version and docs_output is not None:
+        return documentation_inventory(Path(docs_output), requested_version)
     with temporary_directory(prefix="requestseal-docs-") as directory:
         scratch = Path(directory)
         if requested_version == current_version:
@@ -235,13 +254,17 @@ def documentation_pages(root, requested_version, current_version):
                 cwd=root, extra_env={"MIX_ENV": "dev"}, timeout=900)
         else:
             hex_home = scratch / "hex"
-            run(["mix", "hex.docs", "fetch", "request_seal", requested_version],
-                cwd=root, extra_env={"HEX_HOME": str(hex_home)}, timeout=180)
+            try:
+                result = run(["mix", "hex.docs", "fetch", "request_seal", requested_version],
+                             cwd=root, extra_env={"HEX_HOME": str(hex_home)}, check=False, timeout=180)
+            except (OSError, subprocess.SubprocessError) as error:
+                hex_metadata(requested_version)
+                raise ValueError("Hex unreachable: documentation fetch failed for published version " + requested_version) from error
             output = hex_home / "docs/hexpm/request_seal" / requested_version
-        if not (output / "api-reference.html").is_file():
-            raise ValueError("documentation output is missing api-reference.html for " + requested_version)
-        return {path.relative_to(output).as_posix() for path in output.rglob("*")
-                if path.is_file() and not has_symlink(output, path.relative_to(output))}
+            if result.returncode or not (output / "api-reference.html").is_file():
+                hex_metadata(requested_version)  # Distinguish absence from a failed transport.
+                raise ValueError("Hex unreachable: documentation fetch failed for published version " + requested_version)
+        return documentation_inventory(output, requested_version)
 
 
 def published_documents(root, version):
@@ -258,58 +281,60 @@ def published_documents(root, version):
 
 
 def first_party_link_errors(root, relative, url, version, published, references):
-    """Use the checked working tree for main, tags for source, and real docs output."""
-    kind = first_party(url)
-    if kind is None:
-        return []
+    """Use the shared classifier, working tree/tags, real ExDoc, and Hex artifacts."""
     try:
-        first_party_syntax(url, kind)
-    except ValueError as error:
-        return [str(error)]
-    path = url.path
-    if kind == "hexdocs":
-        if path in ("", "/"):
-            return []  # Package landing page outside dated release notes.
-        parts = path.lstrip("/").split("/", 1)
-        if len(parts) != 2 or not SEMVER.fullmatch(parts[0]):
-            return ["HexDocs destination requires an explicit version"]
-        release_version, target = parts
-        if not safe_document_path(target):
-            return ["first-party link targets a private or unsafe path"]
-        key = ("hexdocs", release_version)
-        try:
+        authored = url if isinstance(url, str) else url.geturl()
+        url = urlsplit("https://" + authored if authored.lower().startswith("www.") else authored)
+        link = classify_destination(authored)
+        if link is None:
+            return []
+        kind, target, fragment = link["kind"], link["path"], link["fragment"]
+        if kind == "hexdocs":
+            release_version = link["version"]
+            if release_version is None:
+                if "HEX_LATEST" not in references:
+                    try:
+                        references["HEX_LATEST"] = hex_metadata()["latest_stable_version"]
+                    except ValueError as error:
+                        references["HEX_LATEST"] = error
+                if isinstance(references["HEX_LATEST"], ValueError):
+                    return [str(references["HEX_LATEST"])]
+                release_version = references["HEX_LATEST"]
+            key = ("hexdocs", release_version)
             if key not in references:
-                references[key] = documentation_pages(root, release_version, version)
-            if isinstance(references[key], str):
-                return [references[key]]
-            if target not in references[key]:
+                try:
+                    references[key] = documentation_pages(root, release_version, version, references.get("DOCS_OUTPUT"))
+                except (OSError, ValueError, subprocess.SubprocessError) as error:
+                    references[key] = f"cannot inspect HexDocs {release_version}: {error}"
+            pages = references[key]
+            if isinstance(pages, str):
+                return [pages]
+            if target not in pages:
                 return ["HexDocs page is missing from real documentation output for " + release_version]
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            references[key] = f"cannot inspect HexDocs {release_version}: {error}"
-            return [references[key]]
-        return []
-    source_path = path.removeprefix("/baselabs/request_seal/")
-    if kind == "github":
-        parts = source_path.split("/", 2)
-        if parts[0] not in ("blob", "raw"):
-            return []  # Repository landing pages, issues and advisory permalinks.
-        if parts[0] != "blob":
-            return ["canonical source form: https://github.com/baselabs/request_seal/blob/<ref>/<path>; "
-                    "raw assets use https://raw.githubusercontent.com/baselabs/request_seal/<ref>/<path>"]
-        parts = parts[1:]
-    else:
-        parts = source_path.split("/", 1)
-    if len(parts) != 2 or not all(parts):
-        return ["GitHub destination requires a ref and file path"]
-    name, target = parts
-    if not safe_document_path(target):
-        return ["first-party link targets a private or unsafe path"]
-    # A main URL names what this change makes main, even without any main ref.
-    ref = None if name == "main" else "refs/tags/" + name
-    if name == "v" + str(version) and not ref_exists(root, ref):
-        ref = None  # Release working tree before its tag exists.
-    key = ref or "WORKTREE"
-    try:
+            if fragment and unquote(fragment) not in pages[target]:
+                return ["HexDocs fragment is missing from real documentation output for " + release_version]
+            return []
+        if kind in ("github_live", "hex_package"):
+            key = ("HTTP", url.geturl())
+            if key not in references:
+                try:
+                    verify_http_destinations([url.geturl()])
+                    references[key] = []
+                except ValueError as error:
+                    references[key] = [str(error)]
+            return references[key]
+        if kind == "github_compare":
+            errors = compare_errors(root, link["ref"])
+            if errors:
+                return errors
+            if link["version"] != version and not ref_exists(root, "refs/tags/v" + link["version"]):
+                return ["compare destination tag is missing: v" + link["version"]]
+            return []
+        name = link["ref"]
+        ref = None if name == "main" else "refs/tags/" + name
+        if name == "v" + str(version) and not ref_exists(root, ref):
+            ref = None
+        key = ref or "WORKTREE"
         if key not in references:
             if ref is None:
                 references[key] = public_configuration(root), {p: "100644" for p in public_paths(root)}
@@ -325,6 +350,10 @@ def first_party_link_errors(root, relative, url, version, published, references)
             return ["GitHub link targets missing or nonregular content at " + key]
         if ref is None and (has_symlink(root, target) or not (root / target).is_file()):
             return ["GitHub link targets missing or symlinked content"]
+        if fragment:
+            errors = source_fragment_errors(fragment, (root / target).read_bytes()) if ref is None else git_source_errors(root, ref, target, fragment)
+            if errors:
+                return errors
         if published is not None and relative in published and Path(target).suffix in (".md", ".livemd"):
             if ref is None:
                 documents = configuration["documents"]
@@ -336,7 +365,7 @@ def first_party_link_errors(root, relative, url, version, published, references)
             if target not in documents:
                 return ["published document links a repository-only document at " + key]
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        return [f"cannot inspect first-party destination ref {key}: {error}"]
+        return [str(error)]
     return []
 
 
@@ -350,20 +379,16 @@ def content_errors(root, relative, source, paths, version=None, published=None, 
     if INTERNAL_PROCESS.search(source):
         errors.append(f"{relative}: internal process material is not public documentation")
     errors.extend(release_errors(relative, source, version))
-    targets = [match.group(1).strip("<>") for pattern in LINKS for match in pattern.finditer(source)]
-    targets.extend(
-        unescape(next(value for value in match.groups() if value is not None))
-        for match in HTML_ATTRIBUTES.finditer(source)
-    )
+    targets = [target for _, target, _ in extract_destinations(source)]
     for target in targets:
         try:
-            url = urlsplit(target)
+            url = urlsplit("https://" + target if target.lower().startswith("www.") else target)
         except ValueError:
             errors.append(f"{relative}: malformed link")
             continue
         if url.scheme in ("https", "http", "mailto"):
             errors.extend(f"{relative}: {target}: {error}" for error in
-                          first_party_link_errors(root, relative, url, version, published, references))
+                          first_party_link_errors(root, relative, target, version, published, references))
             continue
         if url.scheme or url.netloc:
             errors.append(f"{relative}: unsupported or private link scheme")
@@ -504,30 +529,70 @@ def fence_errors(root, relative, source):
     return errors
 
 
-def check(root=ROOT):
+def tracked_link_errors(root, paths, version, published, references, checked=()):
+    """Every tracked UTF-8 text file is a link source, including corpus metadata."""
+    errors = []
+    for relative in sorted(set(paths) - set(checked)):
+        path = root / relative
+        if not path.is_file() or path.is_symlink():
+            continue
+        data = path.read_bytes()
+        if b"\0" in data:
+            continue
+        try:
+            source = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        for offset, target, ambiguous in extract_destinations(source, markdown=path.suffix in (".md", ".livemd")):
+            try:
+                url = urlsplit("https://" + target if target.lower().startswith("www.") else target)
+                if not first_party(url):
+                    continue
+                reasons = first_party_link_errors(root, relative, target, version, published, references)
+                if ambiguous:
+                    reasons.append("ambiguous destination syntax")
+                line = 1 + source.count("\n", 0, offset)
+                errors.extend(f"{relative}:{line}: {target}: {reason}" for reason in reasons)
+            except ValueError as error:
+                if re.search(r"request[_-]seal", unquote(target), re.I):
+                    errors.append(f"{relative}: {target}: {error}")
+    return errors
+
+
+def check(root=ROOT, docs_output=None):
     configuration = public_configuration(root)
     approved = configuration["documents"] | SOURCE_DOCUMENTS
     paths = public_paths(root)
     errors = inventory_errors(root, approved, paths)
     errors.extend(package_errors(root, configuration))
-    references = {"WORKTREE": (configuration, {p: "100644" for p in paths})}
-    for relative in sorted(approved):
-        path = root / relative
-        if path.is_file() and not path.is_symlink():
-            source = path.read_bytes().decode("utf-8")
-            errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"], references))
-            errors.extend(fence_errors(root, relative, source))
-    for relative in sorted(configuration["files"] - approved):
-        path = root / relative
-        if path.is_file() and not path.is_symlink():
-            errors.extend(release_errors(relative, path.read_text(), configuration["version"]))
+    with temporary_directory(prefix="requestseal-docs-") if docs_output is None else nullcontext() as scratch:
+        if docs_output is None:
+            docs_output = Path(scratch) / "current"
+            run(["mix", "docs", "--warnings-as-errors", "--output", docs_output],
+                cwd=root, extra_env={"MIX_ENV": "dev"}, timeout=900)
+        references = {"WORKTREE": (configuration, {p: "100644" for p in paths}), "DOCS_OUTPUT": docs_output}
+        references[("hexdocs", configuration["version"])] = documentation_inventory(Path(docs_output), configuration["version"])
+        for relative in sorted(approved):
+            path = root / relative
+            if path.is_file() and not path.is_symlink():
+                source = path.read_bytes().decode("utf-8")
+                errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"], references))
+                errors.extend(fence_errors(root, relative, source))
+        errors.extend(tracked_link_errors(root, paths, configuration["version"], configuration["documents"], references, approved))
+        for relative in sorted(configuration["files"] - approved):
+            path = root / relative
+            if path.is_file() and not path.is_symlink():
+                errors.extend(release_errors(relative, path.read_text(), configuration["version"]))
     return approved, errors
 
 
 if __name__ == "__main__":
     install_signal_handlers()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--docs-output", type=Path, help="Reuse real ExDoc output built by the caller")
+    args = parser.parse_args()
     try:
-        approved, errors = check()
+        approved, errors = check(docs_output=args.docs_output)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Public-document check failed: {error}")
         sys.exit(1)
