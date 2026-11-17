@@ -82,6 +82,42 @@ class ProcessGroupTest(unittest.TestCase):
     def runtime_identity(self, pid, owner):
         return runtime_identity(pid, owner)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor exhaustion probe")
+    def test_event_registration_failure_still_kills_and_reaps_the_child(self):
+        source = '''import errno, os, resource, signal, sys
+sys.path.insert(0, "scripts")
+from processes import ProcessEvents, command
+limits = resource.getrlimit(resource.RLIMIT_NOFILE)
+pid = None
+def exhaust(frame, event, arg):
+    global pid
+    if event == "call" and frame.f_code is ProcessEvents.__init__.__code__:
+        sys.settrace(None)
+        pid = frame.f_locals["process"].pid
+        resource.setrlimit(resource.RLIMIT_NOFILE, (0, limits[1]))
+    return exhaust
+sys.settrace(exhaust)
+try:
+    try:
+        with command(["sleep", "60"]):
+            raise AssertionError("event registration ignored descriptor exhaustion")
+    except OSError as error:
+        assert error.errno == errno.EMFILE, error
+finally:
+    sys.settrace(None)
+    resource.setrlimit(resource.RLIMIT_NOFILE, limits)
+try:
+    child, _ = os.waitpid(pid, os.WNOHANG)
+except ChildProcessError:
+    pass
+else:
+    if child == 0:
+        os.killpg(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+    raise AssertionError("event registration failure retained its child")
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=15)
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "pidfds bind Linux process identity")
     def test_pidfd_binds_identity_before_ancestry_reads(self):
         with processes.command(["sleep", "60"]) as child:

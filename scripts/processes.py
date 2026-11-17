@@ -202,7 +202,13 @@ def command(argv, **options):
         with blocked_signals():
             try:
                 if process is not None:
-                    stop_group(process)
+                    if hasattr(process, "events"):
+                        stop_group(process)
+                    else:
+                        # Event registration can fail after spawn (for example,
+                        # at the descriptor limit). Still discharge ownership.
+                        signal_group(process, signal.SIGKILL)
+                        process.wait()
             finally:
                 if process is not None and hasattr(process, "events"):
                     process.events.close()
