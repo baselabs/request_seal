@@ -376,8 +376,8 @@ def stop_group(process):
             events = ProcessEvents(process)
         try:
             # Caller output and EOF descriptors must never wake cleanup waits.
-            for fd, data in list(events.files.items()):
-                if data != "cleanup":
+            for fd in list(events.files):
+                if fd != getattr(process, "cleanup_reader", None):
                     events.unregister(fd)
             signal_group(process, signal.SIGTERM)
             # Each nesting level gets half its parent's five-second budget,

@@ -639,7 +639,9 @@ assert list(path.parent.iterdir()) == [path], list(path.parent.iterdir())
                 wall, cpu = time.monotonic(), time.process_time()
                 processes.stop_group(child)
                 elapsed = time.monotonic() - wall
-                self.assertLess(time.process_time() - cpu, elapsed * 0.1)
+                used = time.process_time() - cpu
+                print(f"caller-descriptor cleanup: wall={elapsed:.3f}s cpu={used:.4f}s", flush=True)
+                self.assertLess(used, elapsed * 0.1)
                 self.assertTrue(all(reader not in child.events.files for reader, _ in pipes))
             finally:
                 for reader, _ in pipes:
@@ -669,7 +671,9 @@ assert list(path.parent.iterdir()) == [path], list(path.parent.iterdir())
                 _, status, usage = os.wait4(parent.pid, 0)
                 parent.returncode = os.waitstatus_to_exitcode(status)
                 elapsed = time.monotonic() - started
-                self.assertLess(usage.ru_utime + usage.ru_stime, elapsed * 0.1)
+                used = usage.ru_utime + usage.ru_stime
+                print(f"owner EOF cleanup: wall={elapsed:.3f}s cpu={used:.4f}s", flush=True)
+                self.assertLess(used, elapsed * 0.1)
                 self.assertEqual(125, parent.returncode)
                 if pidfd is not None:
                     self.assertTrue(select.select([pidfd], [], [], 2)[0])

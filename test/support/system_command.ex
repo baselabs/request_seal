@@ -139,14 +139,21 @@ defmodule RequestSeal.SystemCommand do
     end
   end
 
-  defp await_agent(port, socket, pid_file, deadline) do
+  def agent_ready(socket, pid_file) do
     with {:ok, contents} <- File.read(pid_file),
          {pid, ""} when pid > 0 <- Integer.parse(String.trim(contents)),
          {:ok, connection} <- :gen_tcp.connect({:local, socket}, 0, [:binary, active: false], 50) do
       :ok = :gen_tcp.close(connection)
-      Integer.to_string(pid)
+      {:ok, Integer.to_string(pid)}
     else
-      _ ->
+      _ -> :retry
+    end
+  end
+
+  defp await_agent(port, socket, pid_file, deadline) do
+    case agent_ready(socket, pid_file) do
+      {:ok, pid} -> pid
+      :retry ->
         receive do
           {^port, {:exit_status, status}} -> raise "ssh-agent exited before readiness: #{status}"
         after

@@ -18,6 +18,23 @@ defmodule RequestSeal.SystemCommandTest do
     assert diagnostic == "requestseal-owner: command deadline exceeded after 0.1s\n"
   end
 
+  test "a bound Unix socket without a listener is not ready" do
+    dir = Path.join(System.tmp_dir!(), "agent-bound-" <> Integer.to_string(System.unique_integer([:positive])))
+    File.mkdir!(dir)
+    path = Path.join(dir, "socket")
+    {:ok, socket} = :socket.open(:local, :stream)
+
+    try do
+      # Exercise the kernel's bind-before-listen state without inventing a peer reply.
+      :ok = :socket.bind(socket, %{family: :local, path: path})
+      File.write!(path <> ".pid", System.pid())
+      assert :retry = SystemCommand.agent_ready(path, path <> ".pid")
+    after
+      :socket.close(socket)
+      File.rm_rf!(dir)
+    end
+  end
+
   test "real agent is listening with a numeric identity and teardown reaps both owners" do
     dir = Path.join(System.tmp_dir!(), "agent-owner-" <> Integer.to_string(System.unique_integer([:positive])))
     File.mkdir!(dir)
@@ -30,6 +47,12 @@ defmodule RequestSeal.SystemCommandTest do
     try do
       assert {number, ""} = Integer.parse(pid)
       assert number > 0
+      assert {:ok, ^pid} = SystemCommand.agent_ready(socket, socket <> ".pid")
+      for contents <- ["", "invalid", "0", "-1", pid <> "extra"] do
+        File.write!(socket <> ".pid", contents)
+        assert :retry = SystemCommand.agent_ready(socket, socket <> ".pid")
+      end
+      File.write!(socket <> ".pid", pid)
       assert {:ok, connection} = :gen_tcp.connect({:local, socket}, 0, [:binary, active: false], 100)
       assert :ok = :gen_tcp.close(connection)
       assert :ok = SystemCommand.signal_agent(owner, :stop)
