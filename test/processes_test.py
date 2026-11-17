@@ -45,6 +45,33 @@ class ProcessGroupTest(unittest.TestCase):
             processes.run([sys.executable, "-B", "-c", "raise SystemExit(7)"], timeout=10)
         self.assertEqual(7, error.exception.returncode)
 
+    def runtime_identity(self, pid, owner):
+        # Confirm ancestry before binding a PID from a file. The test's
+        # unreaped parent anchors the tree even if the runtime setsid().
+        listing = subprocess.run(["ps", "-axo", "pid=,ppid="],
+                                 capture_output=True, text=True, check=True).stdout
+        parents = dict(map(int, row.split()) for row in listing.splitlines())
+        ancestor = pid
+        while ancestor in parents and ancestor != owner:
+            ancestor = parents[ancestor]
+        self.assertEqual(owner, ancestor, "ready-file PID does not belong to the test's process tree")
+        group, session = os.getpgid(pid), os.getsid(pid)
+        pidfd = os.pidfd_open(pid) if hasattr(os, "pidfd_open") else None
+        return group, session, pidfd
+
+    def test_ready_file_pid_cannot_authorize_signaling_an_unrelated_process(self):
+        children = [subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(60)"],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    for _ in range(2)]
+        try:
+            with self.assertRaisesRegex(AssertionError, "does not belong"):
+                self.runtime_identity(children[1].pid, children[0].pid)
+            self.assertIsNone(children[1].poll(), "ownership rejection signaled an unrelated process")
+        finally:
+            for child in children:
+                child.terminate()
+                child.wait(timeout=10)
+
     def assert_tree_stopped(self, signum=None, startup_delay=0, repeated=False, nested=False, fast=False):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "runtime.lock"
@@ -84,19 +111,7 @@ class ProcessGroupTest(unittest.TestCase):
                         self.fail("real descendant did not create its ready file within 30 seconds")
                     time.sleep(0.01)
                 runtime_pid = int(ready.read_text())
-                # Confirm ancestry before binding a PID from a file. The test's
-                # unreaped parent anchors the tree even if the runtime setsid().
-                listing = subprocess.run(["ps", "-axo", "pid=,ppid="],
-                                         capture_output=True, text=True, check=True).stdout
-                parents = dict(map(int, row.split()) for row in listing.splitlines())
-                ancestor = runtime_pid
-                while ancestor in parents and ancestor != parent.pid:
-                    ancestor = parents[ancestor]
-                self.assertEqual(parent.pid, ancestor, "ready-file PID does not belong to the test's process tree")
-                runtime_group = os.getpgid(runtime_pid)
-                runtime_session = os.getsid(runtime_pid)
-                if hasattr(os, "pidfd_open"):
-                    pidfd = os.pidfd_open(runtime_pid)
+                runtime_group, runtime_session, pidfd = self.runtime_identity(runtime_pid, parent.pid)
                 started = time.monotonic()
                 if signum is not None:
                     os.kill(parent.pid, signum)
