@@ -59,6 +59,8 @@ class ToolchainTest(unittest.TestCase):
             )
             values = dict(line.split("=", 1) for line in output.read_text().splitlines())
             expected = pins.toolchain((ROOT / ".tool-versions").read_text())
+            expected |= pins.service_images((ROOT / ".github/service-images").read_text())
+            self.assertRegex(values["postgres_image"], r"^postgres@sha256:[0-9a-f]{64}$")
             self.assertEqual(expected["matrix"], json.loads(values.pop("matrix")))
             self.assertEqual({key: value for key, value in expected.items() if key != "matrix"}, values)
 
@@ -73,9 +75,36 @@ class ToolchainTest(unittest.TestCase):
                 self.assertIn('scripts/toolchain.py --github-output "$GITHUB_OUTPUT"', source)
             for version in versions:
                 self.assertNotIn(version, source, str(path))
-        ci = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.assertIn("fromJSON(needs.toolchain.outputs.matrix)", ci)
-        self.assertIn("node-version: ${{ needs.toolchain.outputs.node }}", ci)
+        proofs = (ROOT / ".github/workflows/proofs.yml").read_text()
+        self.assertIn("fromJSON(needs.toolchain.outputs.matrix)", proofs)
+        self.assertIn("node-version: ${{ needs.toolchain.outputs.node }}", proofs)
+
+    def test_service_images_are_digest_pinned_with_one_home(self):
+        source = (ROOT / ".github/service-images").read_text()
+        image = pins.service_images(source)["postgres_image"]
+        digest = image.split("@sha256:", 1)[1]
+        for changed in (
+            source.replace(image, "postgres:18"),
+            source.replace(image, image[:-1]),
+            source.replace(image, "postgres@sha256:" + digest.upper()),
+            source.replace(image, "other@sha256:" + digest),
+            source + image.join(("postgres=", "\n")),
+            source + "redis=redis@sha256:" + digest + "\n",
+            source.replace("postgres=", "postgres "),
+            "# no services\n",
+        ):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                pins.service_images(changed)
+        # Every workflow takes a service image from the reader's output, never a literal.
+        for path in (ROOT / ".github/workflows").glob("*.yml"):
+            text = path.read_text()
+            self.assertNotIn(digest, text, path.name)
+            for literal in re.findall(r"(?m)^\s+image:\s*(.+)$", text):
+                self.assertEqual("${{ needs.toolchain.outputs.postgres_image }}", literal, path.name)
+        self.assertIn("image: ${{ needs.toolchain.outputs.postgres_image }}",
+                      (ROOT / ".github/workflows/proofs.yml").read_text())
+        self.assertIn("postgres_image: ${{ steps.pins.outputs.postgres_image }}",
+                      (ROOT / ".github/workflows/proofs.yml").read_text())
 
     def test_notebook_tooling_requires_the_latest_lane_minor_without_reading_outside_files(self):
         configuration = pins.toolchain((ROOT / ".tool-versions").read_text())

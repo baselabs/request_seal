@@ -1,97 +1,33 @@
 name: CI
+# One qualification run per kci/<sha> candidate; `qualified` is its verdict, and only a
+# candidate with a successful verdict moves main.
 on:
   push:
-  pull_request:
+    branches: ['kci/**']
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  process-ownership-macos:
-    runs-on: macos-15
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.12'
-      - run: python3 -B -m unittest discover -s test -p processes_test.py
-  toolchain:
+  proofs:
+    uses: ./.github/workflows/proofs.yml
+  qualified:
+    name: qualified
+    if: always()
+    needs: [proofs]
     runs-on: ubuntu-24.04
-    outputs:
-      matrix: ${{ steps.pins.outputs.matrix }}
-      node: ${{ steps.pins.outputs.node }}
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - id: pins
-        run: python3 scripts/toolchain.py --github-output "$GITHUB_OUTPUT"
-  verify:
-    needs: toolchain
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.toolchain.outputs.matrix) }}
-    services:
-      postgres:
-        image: postgres:18
+      - name: Require every qualification job to succeed
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432/tcp
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
-        with:
-          elixir-version: ${{ matrix.elixir }}
-          otp-version: ${{ matrix.otp }}
-          version-type: strict
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.12'
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: ${{ needs.toolchain.outputs.node }}
-      - run: mix local.hex --force
-      - run: mix local.rebar --force
-      - run: mix deps.get --check-locked
-      # The declared gate runs dialyzer; its PLT is worth caching on the lane
-      # that runs the gate (floor/mid lanes do not analyze).
-      - if: matrix.lane == 'latest'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            _build/dev/dialyxir_*.plt
-            _build/dev/dialyxir_*.plt.hash
-          key: dialyzer-plt-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
-          restore-keys: dialyzer-plt-${{ matrix.elixir }}-${{ matrix.otp }}-
-      - if: matrix.lane == 'floor'
-        run: mix test --warnings-as-errors
-        env:
-          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-      - if: matrix.lane == 'mid'
-        run: mix test --warnings-as-errors
-        env:
-          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-      - if: matrix.lane == 'floor'
-        run: python3 scripts/check_optional_clients.py
-        env:
-          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-      # The latest gate also invokes check_optional_clients.py, including the
-      # ash_onetime and ash_hooks floors available on that toolchain.
-      - if: matrix.lane == 'latest'
-        run: python3 scripts/check.py
-        env:
-          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 -I - <<'PY'
+          import json, os, sys
+          results = json.loads(os.environ["NEEDS"])
+          failed = [name for name, job in results.items() if job["result"] != "success"]
+          if not results or failed:
+              print("Qualification refused: " + (", ".join(failed) or "no jobs"))
+              sys.exit(1)
+          PY

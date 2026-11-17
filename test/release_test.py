@@ -690,7 +690,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("python3 scripts/release.py --verify --notes-file release-notes.md", workflow)
         self.assertIn("--notes-file release-notes.md", workflow)
         self.assertIn("            release-notes.md", workflow)
-        ci = (ROOT / ".github/workflows/ci.yml").read_text().split("\n  verify:\n", 1)[1]
+        ci = (ROOT / ".github/workflows/proofs.yml").read_text().split("\n  verify:\n", 1)[1]
         self.assertIn("fetch-depth: 0", ci, "offline historical destination checks require local tags and branch refs")
         runbook = (ROOT / "docs/operations/releases.md").read_text()
         for contract in ("verbatim", "same line", "inside fences", "no CommonMark conformance claim",

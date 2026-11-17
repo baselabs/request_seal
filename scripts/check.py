@@ -100,22 +100,31 @@ def read_notebook(process, timeout, maximum_output):
 
 
 def ci_action_errors(workflow, required_actions=None):
-    """Require the build's essential actions and immutable commit identities."""
+    """Require the build's essential actions and immutable commit identities.
+
+    A reference to a workflow in this repository (./.github/workflows/...) is fixed by the
+    commit being run, so it is the one reference that carries no commit identity."""
     errors = []
     actions = re.findall(r"uses:\s*(\S+)", workflow)
     if required_actions is None:
         required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
-    if not required_actions.issubset({action.split("@", 1)[0] for action in actions}) or any(not re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) for action in actions):
+    local = re.compile(r"\./\.github/workflows/[A-Za-z0-9_.-]+\.yml")
+    if not required_actions.issubset({action.split("@", 1)[0] for action in actions}) or any(
+        not (re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) or local.fullmatch(action)) for action in actions
+    ):
         errors.append("CI actions must use immutable commit identities")
     return errors
 
 
 def check_ci_actions():
-    errors = ci_action_errors((ROOT / ".github/workflows/ci.yml").read_text())
-    errors += ci_action_errors((ROOT / ".github/workflows/release.yml").read_text(), {
+    workflows = ROOT / ".github/workflows"
+    errors = ci_action_errors((workflows / "proofs.yml").read_text())
+    errors += ci_action_errors((workflows / "release.yml").read_text(), {
         "actions/checkout", "erlef/setup-beam", "actions/setup-python",
         "actions/upload-artifact", "actions/download-artifact", "actions/attest",
     })
+    for workflow in sorted(workflows.glob("*.yml")):
+        errors += [f"{workflow.name}: {error}" for error in ci_action_errors(workflow.read_text(), set())]
     if errors:
         raise ValueError("\n".join(errors))
     print("PASS: CI actions use immutable commits")

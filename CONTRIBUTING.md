@@ -1,6 +1,8 @@
 # Contributing
 
 Open issues and pull requests at [baselabs/request_seal](https://github.com/baselabs/request_seal).
+Each pull request runs the repository's proofs as a contribution check. A change reaches
+`main` only when a maintainer lands it as a candidate commit whose qualification run passes.
 Contributions are licensed under Apache-2.0, as section 5 of the [license](LICENSE) describes.
 Report vulnerabilities as [SECURITY.md](SECURITY.md) describes, never in a public issue.
 

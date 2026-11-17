@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Read CI runtime lanes and the Node pin from .tool-versions."""
+"""Read CI runtime lanes and the Node pin from .tool-versions, and service images from
+.github/service-images: the one home of every pin a workflow uses."""
 import argparse
 import json
 from pathlib import Path
@@ -42,11 +43,35 @@ def toolchain(source):
     return {"matrix": {"include": lanes}, "node": node[0], **pairs[-1]}
 
 
+SERVICES = {"postgres": re.compile(r"postgres@sha256:[0-9a-f]{64}")}
+
+
+def service_images(source):
+    """Each CI service image, pinned by digest so a moving tag cannot change what runs."""
+    images = {}
+    for line in source.splitlines():
+        entry = line.split("#", 1)[0].strip()
+        if not entry:
+            continue
+        name, separator, image = (part.strip() for part in entry.partition("="))
+        if not separator or name not in SERVICES:
+            raise ValueError(f"Unknown service image entry: {entry}")
+        if name in images:
+            raise ValueError(f"Duplicate service image: {name}")
+        if not SERVICES[name].fullmatch(image):
+            raise ValueError(f"Service image {name} must be pinned by sha256 digest")
+        images[name] = image
+    if images.keys() != SERVICES.keys():
+        raise ValueError("Expected exactly one image for each service: " + ", ".join(SERVICES))
+    return {f"{name}_image": image for name, image in images.items()}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     configuration = toolchain((ROOT / ".tool-versions").read_text())
+    configuration |= service_images((ROOT / ".github/service-images").read_text())
     if args.github_output:
         with args.github_output.open("a") as output:
             for key, value in configuration.items():
