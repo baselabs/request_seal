@@ -145,6 +145,7 @@ def install_signal_handlers():
     for signum in (signal.SIGHUP, signal.SIGTERM):
         if signal.getsignal(signum) != signal.SIG_IGN:
             signal.signal(signum, terminate)
+    _install_cleanup_handlers()
 
 
 class ProcessEvents:
@@ -505,10 +506,14 @@ def main():
     except subprocess.TimeoutExpired as error:
         print(f"requestseal-owner: command deadline exceeded after {error.timeout}s", file=sys.stderr)
         return 124
-    except (OSError, RuntimeError, EOFError, ValueError) as error:
+    except Exception as error:
         print("requestseal-owner: " + " ".join(str(error).splitlines()), file=sys.stderr)
         return 125
 
+
+# Standalone cleanup (for example stop_group on a caller's Popen) needs the
+# dispatcher before its first bytecode too, not only after entering a context.
+_install_cleanup_handlers()
 
 if __name__ == "__main__":
     raise SystemExit(main())

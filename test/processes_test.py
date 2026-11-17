@@ -461,7 +461,7 @@ except KeyboardInterrupt:
                 child.wait(timeout=10)
 
     def test_signals_before_cleanup_entry_preserve_ownership_mask_and_original_error(self):
-        source = r'''import json, os, signal, sys
+        source = r'''import json, os, signal, subprocess, sys
 from pathlib import Path
 sys.path.insert(0, "scripts")
 from processes import command, install_signal_handlers, temporary_directory
@@ -488,8 +488,8 @@ def removal(event, args):
 sys.addaudithook(removal)
 try:
     with temporary_directory(prefix="burst-", dir=sys.argv[1]) as scratch:
-        with command(["sleep", "60"], stdout=__import__("subprocess").DEVNULL,
-                     stderr=__import__("subprocess").DEVNULL) as child:
+        with command(["sleep", "60"], stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL) as child:
             Path(sys.argv[2]).write_text(json.dumps([child.pid, scratch]))
             os.read(int(sys.argv[5]), 1)
             sys.settrace(interrupt)
@@ -562,6 +562,36 @@ print("cleanup complete; original exception and mask preserved")
                         os.close(reader)
                         os.close(release_writer)
 
+    def test_standalone_stop_group_defers_signals_before_its_mask_entry(self):
+        source = r'''import os, signal, subprocess, sys
+sys.path.insert(0, "scripts")
+from processes import stop_group
+child = subprocess.Popen(["sleep", "60"], start_new_session=True)
+code = getattr(stop_group, "__wrapped__", stop_group).__code__
+def interrupt(frame, event, arg):
+    if event == "call" and frame.f_code is code:
+        sys.settrace(None)
+        for _ in range(64):
+            os.kill(os.getpid(), signal.SIGINT)
+    return interrupt
+try:
+    sys.settrace(interrupt)
+    try:
+        stop_group(child)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("standalone cleanup discarded its interrupt")
+    assert child.returncode is not None, "standalone cleanup retained its child"
+    assert not ({signal.SIGINT, signal.SIGTERM, signal.SIGHUP} & signal.pthread_sigmask(signal.SIG_BLOCK, set()))
+finally:
+    sys.settrace(None)
+    if child.returncode is None:
+        os.killpg(child.pid, signal.SIGKILL)
+        child.wait()
+'''
+        processes.run([sys.executable, "-B", "-c", source], timeout=10)
+
     def test_owner_pid_file_is_atomically_published(self):
         source = r'''import os, runpy, sys
 from pathlib import Path
@@ -606,7 +636,8 @@ assert list(path.parent.iterdir()) == [path], list(path.parent.iterdir())
         for source, timeout, status, diagnostic in (
                 ("import os,signal; os.kill(os.getpid(),signal.SIGTERM)", "10", 143, b""),
                 ("import time; time.sleep(60)", "0.1", 124, b"requestseal-owner: command deadline"),
-                ("raise SystemExit(7)", "10", 7, b"")):
+                ("raise SystemExit(7)", "10", 7, b""),
+                ("import time; time.sleep(60)", "inf", 125, b"requestseal-owner:")):
             with self.subTest(status=status):
                 child = subprocess.Popen([sys.executable, "-B", "scripts/processes.py", "--timeout", timeout,
                                           "--", sys.executable, "-B", "-c", source], cwd=ROOT,
