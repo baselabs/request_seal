@@ -166,15 +166,16 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
   end
 
   defp sweep(s) do
+    guard = s.guard
+
+    # Select the first new sweep event before processing unrelated trace
+    # traffic. The guard is resumed only after the pre-resume trace barrier.
     s =
-      Runtime.receive_event(
-        s,
-        fn
-          {:trace_ts, pid, :call, {Guard, :sweep, _}, _} -> pid == s.guard
-          _ -> false
-        end,
-        Bounds.now() + 60_000_000
-      )
+      receive do
+        {:trace_ts, ^guard, :call, {Guard, :sweep, _}, _} = event -> Runtime.observe(s, event)
+      after
+        60_000 -> flunk("production sweep event missing")
+      end
 
     if pause(s.guard) do
       # A queued call trace alone does not prove the guard is still sweeping.
@@ -188,10 +189,10 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
         {:ok, Runtime.delivered(s)}
       else
         :erlang.resume_process(s.guard)
-        :retry
+        {:retry, {:outside_sweep, stack}}
       end
     else
-      :retry
+      {:retry, :guard_ended_before_suspension}
     end
   end
 
@@ -236,6 +237,7 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
                     s
                   end
 
+                s = Runtime.delivered(s)
                 :erlang.resume_process(s.guard)
 
                 case sweep(s) do
@@ -272,8 +274,8 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
 
                     all_ended(result)
 
-                  :retry ->
-                    :retry
+                  {:retry, _} = retry ->
+                    retry
                 end
               after
                 Runtime.cleanup(s)
@@ -318,6 +320,7 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
                 registry = Runtime.registry(s)
                 assert :ets.info(registry, :owner) == s.guard
                 assert :ets.lookup(registry, :outcome) == [{:outcome, :replied}]
+                s = Runtime.delivered(s)
                 :erlang.resume_process(s.guard)
 
                 case sweep(s) do
@@ -349,8 +352,8 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
 
                     all_ended(result)
 
-                  :retry ->
-                    :retry
+                  {:retry, _} = retry ->
+                    retry
                 end
               after
                 Runtime.cleanup(s)
@@ -608,22 +611,24 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
   end
 
   defp pause_codec(targets, functions, until) do
-    candidate = Enum.find(targets, &Runtime.in_codec_unit?(&1, functions))
+    if Bounds.now() >= until do
+      false
+    else
+      placed =
+        Enum.any?(targets, fn pid ->
+          if pause(pid) do
+            if Runtime.in_codec_unit?(pid, functions) do
+              true
+            else
+              :erlang.resume_process(pid)
+              false
+            end
+          else
+            false
+          end
+        end)
 
-    cond do
-      candidate != nil and pause(candidate) ->
-        if Runtime.in_codec_unit?(candidate, functions) do
-          true
-        else
-          :erlang.resume_process(candidate)
-          pause_codec(targets, functions, until)
-        end
-
-      Bounds.now() >= until ->
-        false
-
-      true ->
-        pause_codec(targets, functions, until)
+      placed or pause_codec(targets, functions, until)
     end
   end
 end

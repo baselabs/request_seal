@@ -1,11 +1,10 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -269,7 +269,7 @@
+@@ -269,7 +269,6 @@
 
      cond do
        current != at -> wait(s)
 -      Bounds.now() >= at -> {Codec.error(:deadline_exceeded, :crypto), s}
-+      false -> {Codec.error(:deadline_exceeded, :crypto), s}
        s.down != nil and s.reply != nil -> finish_reply(s, at)
        s.down == :deadline -> {Codec.error(:deadline_exceeded, :crypto), s}
        s.down != nil and s.down != :replied -> {Codec.error(:internal_failure, :internal), s}

@@ -59,10 +59,12 @@ violations are `:invalid_policy`. Resolvers validate and digest their answer
 before forwarding it, with the same word and binary-byte bounds for handles;
 oversized answers are `:key_resolver_failed`. Sink delivery normalizes in its
 sender. RequestSeal owns UTF-8 traversal on every library path.
-Serialization detection compiles its non-whitespace pattern once and searches
-at most 256 bytes per recursive codec step, including mixed whitespace at the
-token byte cap. The whole byte unit remains observable by production-sensitive
-suspension placement; it cannot be fused into a whole-token native call.
+Serialization detection uses one native scan of the capped token, including
+mixed whitespace. The Codec function consumes the native result, retaining its
+continuation while OTP yields in `erlang:binary_find_trap/3`. Placement suspends
+first, then checks that stack for the actual Codec unit; it never depends on
+the native continuation's current function name. The checkpoint unit remains
+one whole token, including its separator scan and accounting.
 
 Validation catches only explicit input failures. Unexpected library exceptions
 and exits become `:internal_failure`, including a preflight exit without a final
@@ -93,9 +95,10 @@ resuming it; the receive entry after the kill ends the measured interval before
 another dequeue or the registry sweep. Topology samples install only the kill
 and finish reduction dumps after placement, so setup does not trace every queued
 end notice.
-Placement collectors match each new event once; sweep placement starts with new
-events after resume rather than scanning retained history. The return collector
-checks its absolute deadline before each dequeue, including under continuous
+Placement collectors match each new event once. Sweep placement drains earlier
+traces while the guard is suspended, then selects its first new sweep event
+before processing unrelated traffic. The return collector checks its absolute
+deadline before each dequeue, including under continuous
 receive-timeout traces from a caller-bound mutation. It checks the caller result
 before a trace barrier, then stops the producer before cleanup drains the queue.
 A second trigger during a sweep requires both a verified registry owner flip

@@ -309,7 +309,7 @@ defmodule RequestSeal.JWEOpenOraclesTest do
       try do
         s = Runtime.collect_return(s, Bounds.now() + 1_000_000)
 
-        assert {:error, %{reason: :deadline_exceeded}} = s.return,
+        assert match?({:error, %{reason: :deadline_exceeded}}, s.return),
                "caller wait must be bounded with guard suspended"
 
         # Fail before a trace barrier when a mutant is still producing traces.
@@ -327,8 +327,10 @@ defmodule RequestSeal.JWEOpenOraclesTest do
               pid == s.caller and function in [:wait_end, :cleanup],
               do: {function, args}
 
-        assert [{:wait_end, [at]}, {:cleanup, _} | _] = boundaries,
+        assert match?([{:wait_end, [_]}, {:cleanup, _} | _], boundaries),
                "wait end must be stamped before cleanup"
+
+        [{:wait_end, [at]} | _] = boundaries
 
         assert at <= f + Bounds.teardown(1),
                "wait end must fit F plus B: #{inspect({at, f + Bounds.teardown(1)})}"

@@ -535,22 +535,14 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     end
   end
 
-  # A native scan may yield in the BIF. Its suspended stack must still name
-  # the production codec unit; a call event alone cannot prove placement.
+  # OTP may run a native scan as erlang:binary_find_trap/3. Match the retained
+  # Codec continuation regardless of the current MFA, on the suspended stack.
+  # A queued call trace or an OTP frame alone never proves placement.
   def in_codec_unit?(pid, functions) do
-    case info(pid, :current_function) do
-      {Codec, function, _} ->
-        function in functions
-
-      {:binary, :match, _} ->
-        Enum.any?(info(pid, :current_stacktrace) || [], fn
-          {Codec, function, _, _} -> function in functions
-          _ -> false
-        end)
-
-      _ ->
-        false
-    end
+    Enum.any?(info(pid, :current_stacktrace) || [], fn
+      {Codec, function, _, _} -> function in functions
+      _ -> false
+    end)
   end
 
   def info(pid, key) do

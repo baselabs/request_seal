@@ -6,7 +6,6 @@ defmodule RequestSeal.JOSE.JWE.Codec do
   @algorithms ~w(RSA-OAEP RSA-OAEP-256 A128KW A256KW A128GCMKW A256GCMKW dir ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW)
   @reserved ~w(alg enc iv tag epk apu apv)
   @non_whitespace for byte <- 0..255, byte not in [32, 9, 10, 13], do: <<byte>>
-  @scan_bytes 256
 
   @spec fail(atom()) :: no_return()
   @spec fail(atom(), atom()) :: no_return()
@@ -271,13 +270,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
   defp tree_list(_, _), do: fail(:invalid_header)
 
   defp whitespace?(<<>>), do: true
-  defp whitespace?(bytes), do: whitespace?(bytes, :binary.compile_pattern(@non_whitespace))
-
-  defp whitespace?(<<unit::binary-size(@scan_bytes), rest::binary>>, pattern) do
-    :binary.match(unit, pattern) == :nomatch and whitespace?(rest, pattern)
-  end
-
-  defp whitespace?(bytes, pattern), do: :binary.match(bytes, pattern) == :nomatch
+  defp whitespace?(bytes), do: :binary.match(bytes, @non_whitespace) == :nomatch
 
   defp depth(<<>>, d, string, _), do: ensure(d == 0 and not string, :invalid_header)
   defp depth(<<_, r::binary>>, d, true, true), do: depth(r, d, true, false)
@@ -307,28 +300,18 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     end
   end
 
-  # Search at most 256 bytes per native call, then recur in a Codec frame.
-  # Compile once per scan, including arbitrary mixtures of JSON whitespace.
-  # A whole-token BIF hides this frame from production-sensitive placement.
-  defp json_serialization?(<<b, _::binary>> = bytes) when b in [32, 9, 10, 13],
-    do: json_serialization?(bytes, :binary.compile_pattern(@non_whitespace))
+  # The checkpoint unit is the whole capped token, not a native scan's chunk.
+  # Consume the BIF result here so this Codec continuation stays on the stack
+  # even when OTP yields in erlang:binary_find_trap/3 instead of binary:match/2.
+  defp json_serialization?(<<b, _::binary>> = bytes) when b in [32, 9, 10, 13] do
+    case :binary.match(bytes, @non_whitespace) do
+      {at, 1} -> :binary.part(bytes, at, 1) in ["{", "["]
+      :nomatch -> false
+    end
+  end
 
   defp json_serialization?(<<b, _::binary>>), do: b in [123, 91]
   defp json_serialization?(_), do: false
-
-  defp json_serialization?(<<unit::binary-size(@scan_bytes), rest::binary>>, pattern) do
-    case :binary.match(unit, pattern) do
-      :nomatch -> json_serialization?(rest, pattern)
-      {at, 1} -> :binary.part(unit, at, 1) in ["{", "["]
-    end
-  end
-
-  defp json_serialization?(bytes, pattern) do
-    case :binary.match(bytes, pattern) do
-      :nomatch -> false
-      {at, 1} -> :binary.part(bytes, at, 1) in ["{", "["]
-    end
-  end
 
   defp separators(token, offset, n, acc) do
     case :binary.match(token, ".", [{:scope, {offset, byte_size(token) - offset}}]) do

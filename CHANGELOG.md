@@ -2,9 +2,11 @@
 
 ## Unreleased 2.0.0
 
+- Verify JWE byte placements on suspended Codec stacks and drain earlier traces
+  before sweep placement. Preserve the caller-bound mutation's claimed assertion.
 - Arm absolute JWE phase, guard and caller wakeups across descheduling. Reduce
-  per-notice guard work with empty ordered-set notices and retain recursive
-  token-scan frames, including mixed JSON whitespace. Keep routed
+  per-notice guard work with empty ordered-set notices and retain Codec
+  continuations across native token scans, including mixed JSON whitespace. Keep routed
   custody sinks opaque through their typed constructor.
 - Keep the JWE library process tree on native map operations and preserve
   algorithm-mismatch and malformed-capability refusals at resolver ingress.
@@ -16,7 +18,7 @@
 - Recheck JWE completion after deadline transitions, preserve an early unwrap
   deadline when resolver notices arrive late, and keep worker group intake and
   route revocation linear. Reserve receive-timeout rounding within the existing
-  caller wait bound and scan leading serialization whitespace in bounded chunks.
+  caller wait bound and scan leading serialization whitespace within the token byte cap.
 - Report broken JWE library lifecycles as `:internal_failure`, retain caller
   notices through exception cleanup, and join registered children before return.
   Preflight cannot send a validation verdict after successful admission; final

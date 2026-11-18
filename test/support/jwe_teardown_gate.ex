@@ -520,7 +520,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
       if catch_suspend(s.preflight) do
         # The worker may already have consumed its policy. Resume into the
-        # actual unit and verify current_function after suspending it there.
+        # actual unit and verify its retained frame after suspending it there.
         d =
           Enum.find_value(s.events, fn
             {:spawn, _, _, Guard, :run, [_, _, _, _, _, _, d, _, _], _} -> d
@@ -583,10 +583,10 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
   defp suspend_in_unit(pid, functions, d) do
     cond do
-      Bounds.now() >= d or Runtime.info(pid, :current_function) == nil ->
+      Bounds.now() >= d ->
         false
 
-      Runtime.in_codec_unit?(pid, functions) and catch_suspend(pid) ->
+      catch_suspend(pid) ->
         if Runtime.in_codec_unit?(pid, functions) do
           true
         else
@@ -595,7 +595,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         end
 
       true ->
-        suspend_in_unit(pid, functions, d)
+        false
     end
   end
 
