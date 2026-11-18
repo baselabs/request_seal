@@ -123,6 +123,7 @@ defmodule RequestSeal.HTTPSignaturePeer do
       receive do: ({:DOWN, ^monitor, :process, _, _} -> :ok)
       :gen_tcp.close(socket)
     end)
+
     {origin, task}
   end
 

@@ -2,6 +2,11 @@
 
 ## Unreleased 2.0.0
 
+- Classify JWE whitespace eight bytes per step without compiling a large binary
+  pattern set. Preserve compact token slices and JSON refusal precedence.
+  Register sensitive signing runners through their live custody handshake in
+  socket teardown tests. At U, notify each range once and settle terminal results
+  without rebuilding unchanged admission and resolution counters.
 - Reserve 10 ms inside the unchanged JWE caller wait bound for upward timer
   rounding and scheduling in every wait phase. Report incomplete guard and
   coordinator work at collection caps as linear-teardown failures. Isolate
@@ -33,8 +38,8 @@
   before sweep placement. Preserve the caller-bound mutation's claimed assertion.
 - Arm absolute JWE phase, guard and caller wakeups across descheduling. Reduce
   per-notice guard work with empty ordered-set notices and retain Codec
-  continuations across native token scans, including mixed JSON whitespace. Keep routed
-  custody sinks opaque through their typed constructor.
+  continuations across token scans, including mixed JSON whitespace. Keep
+  routed custody sinks opaque through their typed constructor.
 - Keep the JWE library process tree on native map operations and preserve
   algorithm-mismatch and malformed-capability refusals at resolver ingress.
   Count every shared-list occurrence against the traversal budget and build
@@ -55,7 +60,7 @@
   Join a guard before draining a caller-notice handoff that raced its timeout.
   Prepare all JWE telemetry measurements before publishing outcome events;
   raising handlers retain telemetry's normal isolation and the caller's result.
-- Verify 69 distinct JWE reversing mutations with a passing clean baseline per
+- Verify 71 distinct JWE reversing mutations with a passing clean baseline per
   selected test and commit, then the named rejection and a clean reversal.
   The teardown gate measures absolute Bounds limits with load and CPU steal
   admission based on host logical CPUs, host identity, retry evidence, and an

@@ -631,6 +631,24 @@
       "covers": [
         "all telemetry measurements are prepared before publishing any outcome"
       ]
+    },
+    {
+      "patch": "whitespace-word-accepts-vertical-tab.patch",
+      "file": "test/property/jose_test.exs",
+      "test": "JWE whitespace classification covers every byte and word boundary",
+      "failure": "whitespace classification must match the bytewise reference",
+      "covers": [
+        "exact four-byte whitespace alphabet in every word lane; JSON refusal precedence"
+      ]
+    },
+    {
+      "patch": "U-duplicates-range-expiry.patch",
+      "file": "test/jwe_open_lifecycle_test.exs",
+      "test": "U notifies each range once while retaining every group outcome",
+      "failure": "U must notify each live range exactly once",
+      "covers": [
+        "U expiry notification is once per live range, independently of custody-group count"
+      ]
     }
   ],
   "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."

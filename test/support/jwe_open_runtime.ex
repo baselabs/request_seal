@@ -555,6 +555,10 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   end
 
   def observe(s, {:trace_ts, parent, :spawn, pid, {module, function, args}, stamp} = event) do
+    # All six JWE roles are born from the ordinary caller, guard or coordinator.
+    # Their parents emit these events even when the child immediately becomes
+    # sensitive. Resolver/unwrap callbacks spawn no additional library workers;
+    # the analyzer pins those entries and Custody.unwrap/4's direct dispatch.
     ref = Process.monitor(pid)
 
     role =
@@ -696,8 +700,8 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     end
   end
 
-  # OTP may yield inside a native byte scan. Match the retained
-  # Codec continuation regardless of the current MFA, on the suspended stack.
+  # Byte loops and native searches both yield. Match the retained Codec
+  # continuation regardless of the current MFA, on the suspended stack.
   # A queued call trace or an OTP frame alone never proves placement.
   def in_codec_unit?(pid, functions) do
     Enum.any?(info(pid, :current_stacktrace) || [], fn

@@ -530,6 +530,57 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
     end)
   end
 
+  test "U notifies each range once while retaining every group outcome" do
+    Runtime.with_peer(fn ->
+      n = 32
+
+      s =
+        Runtime.start(n, :custody,
+          policy: %{timeout: 5_000, resolve_timeout: 3_000, unwrap_timeout: 1_000}
+        )
+
+      try do
+        workers = for {pid, :worker} <- s.pids, do: pid
+        result = Runtime.collect_return(s) |> Runtime.delivered()
+
+        notifications =
+          for {:trace_ts, pid, :send, {_, :unwrap_expired, _}, worker, _} <- result.messages,
+              pid == s.coordinator,
+              do: worker
+
+        assert Enum.frequencies(notifications) == Map.new(workers, &{&1, 1}),
+               "U must notify each live range exactly once"
+
+        refute Enum.any?(result.messages, fn
+                 {:trace_ts, _, :send, {_, :group_summary, _, _}, _, _} -> true
+                 _ -> false
+               end),
+               "U must not send a timeout message per group"
+
+        assert {:ok, results} = result.return
+        assert length(results) == n
+
+        assert Enum.all?(
+                 results,
+                 &match?({:error, %{reason: :decryption_failed, layer: :crypto}}, &1)
+               )
+
+        groups =
+          for {:trace_ts, pid, :send, {_, :group, _, items}, _, _} <- result.messages,
+              pid == s.coordinator,
+              do: items
+
+        assert length(groups) == n
+        assert Enum.sum(groups) == n
+        result = Runtime.collect_ends(result)
+        assert result.remaining == 0
+        assert map_size(result.ends) == map_size(result.pids)
+      after
+        Runtime.cleanup(s)
+      end
+    end)
+  end
+
   test "shared U preserves authenticated deliveries and expires every remaining group once" do
     Runtime.with_peer(fn ->
       n = 32

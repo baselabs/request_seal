@@ -1,0 +1,8 @@
+--- a/lib/request_seal/jose/jwe/coordinator.ex
++++ b/lib/request_seal/jose/jwe/coordinator.ex
+@@ -624,4 +624,5 @@
+   defp expire_workers([{_, {pid, _, _, alive}} | rest], tag, u) do
+     if alive, do: send(pid, {tag, :unwrap_expired, u})
++    if alive, do: send(pid, {tag, :unwrap_expired, u})
+     expire_workers(rest, tag, u)
+   end

@@ -4,6 +4,35 @@ defmodule RequestSeal.JWEOpenRuntimeTest do
   alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
   @after_compile Runtime
 
+  test "sensitive callback handshakes belong to the coordinator birth inventory" do
+    Runtime.with_peer(fn ->
+      s = Runtime.start(8, :custody, trace_input: false, trace_messages: false)
+
+      try do
+        s = Runtime.delivered(s)
+
+        for {pids, role} <- [{s.resolvers, :resolver}, {s.custody, :custody}] do
+          assert length(pids) == 8
+
+          for pid <- pids do
+            assert s.pids[pid] == role
+
+            assert Enum.any?(s.events, fn
+                     {:spawn, parent, ^pid, _, _, _, _} -> parent == s.coordinator
+                     _ -> false
+                   end)
+          end
+        end
+
+        result = Runtime.trigger(s, :caller)
+        assert result.remaining == 0
+        assert map_size(result.ends) == map_size(result.pids)
+      after
+        Runtime.cleanup(s)
+      end
+    end)
+  end
+
   test "end timestamps precede delayed observation for ordinary and sensitive children" do
     Runtime.with_peer(fn ->
       s = Runtime.start(1, :resolvers, trace_input: false, trace_messages: false)
@@ -90,6 +119,7 @@ defmodule RequestSeal.JWEOpenRuntimeTest do
 
       try do
         send(self(), :queued_event)
+
         assert_raise RuntimeError, ~r/placement\/end markers missing/, fn ->
           Runtime.collect_until(s, fn _ -> false end, 0)
         end

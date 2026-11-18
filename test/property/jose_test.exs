@@ -2,6 +2,7 @@ defmodule RequestSeal.JOSEPropertyTest do
   use ExUnit.Case, async: false
   use ExUnitProperties
   alias RequestSeal.JOSE.{Error, Header, JWE, JWS, Nested, Support}
+  alias RequestSeal.JOSE.JWE.Codec
   alias RequestSeal.PropertySupport, as: P
   @seed 7516
   @runs 300
@@ -10,6 +11,67 @@ defmodule RequestSeal.JOSEPropertyTest do
     ctx = P.jose(@seed)
     on_exit(fn -> if Process.alive?(ctx.owner), do: Agent.stop(ctx.owner) end)
     ctx
+  end
+
+  property "JWE whitespace classification agrees with a bytewise reference" do
+    check all(
+            bytes <- binary(max_length: 2048),
+            spaces <- list_of(member_of([32, 9, 10, 13]), max_length: 128),
+            max_runs: @runs,
+            max_run_time: :infinity,
+            initial_seed: @seed
+          ) do
+      prefix = :erlang.list_to_binary(spaces)
+
+      for token <- [bytes, prefix <> bytes, prefix <> "{" <> bytes, prefix <> "a.b.c.d.e"] do
+        assert Codec.split(token) == reference_split(token),
+               "whitespace classification must match the bytewise reference"
+      end
+
+      assert {:ok, %{}} = Codec.object("{}" <> prefix, 16_384)
+    end
+  end
+
+  test "JWE whitespace classification covers every byte and word boundary" do
+    for size <- [0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33] do
+      prefix = binary_part(:binary.copy(" \t\r\n", 9), 0, size)
+
+      for suffix <- ["", "{}", "[....]", ".b.c.d.e", "a.b.c.d.e"] do
+        token = prefix <> suffix
+
+        assert Codec.split(token) == reference_split(token),
+               "whitespace classification must match the bytewise reference"
+      end
+
+      for byte <- 0..255 do
+        token = prefix <> <<byte>> <> "{a.b.c.d.e}"
+
+        assert Codec.split(token) == reference_split(token),
+               "whitespace classification must match the bytewise reference"
+
+        result = Codec.object("{}" <> prefix <> <<byte>>, 16_384)
+
+        if byte in [32, 9, 10, 13],
+          do: assert(result == {:ok, %{}}),
+          else: assert(match?({:error, %Error{}}, result))
+      end
+    end
+  end
+
+  defp reference_split(token) do
+    first =
+      token
+      |> :binary.bin_to_list()
+      |> Enum.drop_while(&(&1 in [32, 9, 10, 13]))
+
+    case first do
+      [byte | _] when byte in [123, 91] ->
+        Codec.error(:unsupported_serialization)
+
+      _ ->
+        parts = :binary.split(token, ".", [:global])
+        if length(parts) == 5, do: {:ok, parts}, else: Codec.error(:invalid_serialization)
+    end
   end
 
   property "random and mutated compact strings return only typed results", ctx do
@@ -192,6 +254,7 @@ defmodule RequestSeal.JOSEPropertyTest do
         Process.exit(pid, :kill)
         receive do: ({:DOWN, ^monitor, :process, ^pid, _} -> :ok)
       end)
+
       :erlang.trace(pid, true, [:call, {:tracer, self()}])
       send(pid, :go)
       assert_receive {:result, ^pid, ^expected}, 1_000

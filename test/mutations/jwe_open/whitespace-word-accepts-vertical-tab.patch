@@ -1,0 +1,9 @@
+--- a/lib/request_seal/jose/jwe/codec.ex
++++ b/lib/request_seal/jose/jwe/codec.ex
+@@ -276,5 +276,5 @@
+   defp first_non_whitespace(<<a, b, c, d, e, f, g, h, rest::binary>>, at)
+        when a in [32, 9, 10, 13] and b in [32, 9, 10, 13] and c in [32, 9, 10, 13] and
+               d in [32, 9, 10, 13] and e in [32, 9, 10, 13] and f in [32, 9, 10, 13] and
+-              g in [32, 9, 10, 13] and h in [32, 9, 10, 13],
++              g in [32, 9, 10, 13] and h in [32, 9, 10, 13, 11],
+        do: first_non_whitespace(rest, at + 8)

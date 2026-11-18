@@ -115,6 +115,9 @@ defmodule RequestSeal.JOSE.JWE.Worker do
         {^tag, :member, i, g, pid, u, count} ->
           loop(member(s, i, g, pid, u, count))
 
+        {^tag, :unwrap_expired, u} ->
+          loop(%{s | u: u})
+
         {^tag, :group_summary, g, kind} ->
           loop(close(s, g, kind))
 

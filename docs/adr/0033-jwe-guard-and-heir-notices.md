@@ -38,6 +38,10 @@ notices arrive after R. R expiry is independent of an existing barrier and
 preserves its original U. Every range shares that U; group intake counts members
 directly. R and D rebuild positional state once per expiry; U likewise rebuilds
 group state once, issuing all unfinished-group kills before summary traffic.
+U notifies each live range once with the shared deadline, instead of sending a
+timeout summary for every group. Per-group durations and item counts remain
+intact. A terminal result updates only its position and settled count; admission
+and resolution counters do not change when content work finishes.
 At U, each worker revokes all remaining routes, authenticates each undelivered
 prepared position once under its fallback, and rebuilds positional state once.
 This includes positions whose member message is still queued, so late members
@@ -75,16 +79,21 @@ violations are `:invalid_policy`. Resolvers validate and digest their answer
 before forwarding it, with the same word and binary-byte bounds for handles;
 oversized answers are `:key_resolver_failed`. Sink delivery normalizes in its
 sender. RequestSeal owns UTF-8 traversal on every library path.
-Serialization detection finds the first non-whitespace byte with native binary
-search and refuses a JSON opening before attempting compact form. At most five
-scoped dot searches then establish exactly four separators; the first search
-starts after the already-classified whitespace. There is no per-token regular
-expression compilation or backtracking. Allocation is bounded independently of
-the number of dots. Leading whitespace remains part of the original protected
-bytes, and parts reference the original token. The Codec function consumes each
-native result, retaining its continuation while OTP yields. Placement suspends
-first, then checks that stack for the actual Codec unit; it never depends on the
-native continuation's current function name. The checkpoint unit remains one
+Serialization detection skips eight whitespace bytes per recursive step, then
+uses byte steps for a partial word, and refuses a JSON opening before attempting
+compact form. Each byte lane accepts only space, tab, LF and CR. This avoids
+compiling a 252-pattern automaton and traversing it for every byte, without
+allocating wide integers or copying a prefix. JSON trailing whitespace uses the
+same classifier. At most five scoped dot searches then establish exactly four
+separators; the first search starts after the already-classified whitespace.
+There is no per-token regular expression compilation or backtracking. Allocation
+is bounded independently of the number of dots. Leading whitespace remains part
+of the original protected bytes, and parts reference the original token. Byte
+classification yields through ordinary reductions; the Codec function consumes
+each native dot-search result,
+retaining its continuation while OTP yields. Placement suspends first, then
+checks that stack for the actual Codec unit; it never depends on the native
+continuation's current function name. The checkpoint unit remains one
 whole token, including its separator scan and accounting.
 
 Validation catches only explicit input failures. Unexpected library exceptions
@@ -109,7 +118,7 @@ ETS and an off-heap guard mailbox keep reaction state independent of n. End
 notices avoid copying caller-sized exit reasons. The inherited registry remains
 complete even when the coordinator stops between process creation and handoff.
 
-The committed reduction oracles and 69 distinct reversing mutations check constant reaction,
+The committed reduction oracles and 71 distinct reversing mutations check constant reaction,
 linear complete teardown, queue bounds, guard heap and caller wait-end. A
 mutation selects its test by the manifest's exact test name, with an independent
 check that the name exists exactly once in its file. Moving test lines cannot
@@ -130,7 +139,7 @@ before a trace barrier, then stops the producer before cleanup drains the queue.
 A second trigger during a sweep requires both a verified registry owner flip
 and a guard still paused in the sweep.
 OTP fold helpers may have different arities; a helper frame must retain the
-enclosing guard check. Native byte-scan placements likewise require the codec
+enclosing guard check. Byte-scan placements likewise require the codec
 unit on the suspended process's stack.
 A release gate measures the absolute bound and derives K_pf from byte units,
 report send and preflight exit. Constants come from Bounds; no baseline ratio replaces them.

@@ -163,8 +163,10 @@ defmodule RequestSeal.JWEOpenStructureTest do
            "bootstrap must copy one item"
 
     assert text =~ ":atomics.get(s.flag, 1) == 0", "caller must read the input stop flag"
+
     assert text =~ "Bounds.caller_wait(s.f, :atomics.get(s.flag, 2))",
            "caller wait must be bounded"
+
     assert text =~ ":maps.remove(:expected, protected)", "single policy must not carry expected"
     assert Bounds.teardown(10_000) == 170_000
     assert Open.wait_end(123) == 123

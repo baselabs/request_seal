@@ -1574,7 +1574,10 @@ defmodule RequestSeal.ClientAdaptersTest do
       | ref: fn ->
           {:links, links} = Process.info(self(), :links)
           send(owner, {:signing_workers, self(), links})
-          original.()
+
+          receive do
+            :sign -> original.()
+          end
         end
     }
 
@@ -1591,21 +1594,31 @@ defmodule RequestSeal.ClientAdaptersTest do
 
     try do
       send(caller, :go)
-      assert_receive {:wire_request, _, {:ok, _}}, 5_000
-      assert_receive {:holding, _}, 5_000
       assert_receive {:signing_workers, runner, [middle]}, 5_000
-      assert client_socket_count(port) == 1
-      assert Process.alive?(caller)
-      Process.exit(caller, :kill)
-      assert_receive {:DOWN, ^ref, :process, ^caller, :killed}, 5_000
-      assert_receive {:peer_closed, {:error, :closed}}, 1_000
-      assert_receive :no_connection, 1_500
-      refute_receive {:wire_request, _, _}
-      assert client_socket_count(port) == 0
+      assert Process.info(runner, :links) == {:links, [middle]}
+      assert {:monitors, monitors} = Process.info(middle, :monitors)
+      assert {:process, caller} in monitors
+      assert {:monitored_by, observers} = Process.info(caller, :monitored_by)
+      assert middle in observers
+      registered = MapSet.new([caller, runner, middle])
       delivered = :erlang.trace_delivered(:all)
-      workers = call_workers(delivered, MapSet.new([caller]))
+      workers = call_workers(delivered, registered)
 
       try do
+        send(runner, :sign)
+        assert_receive {:wire_request, _, {:ok, _}}, 5_000
+        assert_receive {:holding, _}, 5_000
+        assert client_socket_count(port) == 1
+        assert Process.alive?(caller)
+        Process.exit(caller, :kill)
+        assert_receive {:DOWN, ^ref, :process, ^caller, :killed}, 5_000
+        assert_receive {:peer_closed, {:error, :closed}}, 1_000
+        assert_receive :no_connection, 1_500
+        refute_receive {:wire_request, _, _}
+        assert client_socket_count(port) == 0
+        delivered = :erlang.trace_delivered(:all)
+        workers = call_workers(delivered, workers)
+
         assert MapSet.member?(workers, runner), "inventory must include sensitive runners"
         assert MapSet.member?(workers, middle), "inventory must include custody guardians"
 
@@ -1782,10 +1795,10 @@ defmodule RequestSeal.ClientAdaptersTest do
     Peer.finish(task)
   end
 
-  # Trace the call's complete descendant tree rather than unrelated VM work.
-  # The child's spawned event precedes its sensitivity flag even when a
-  # sensitive parent suppresses its own spawn event. Keep socket and wire
-  # assertions independent of this tree.
+  # Trace ordinary descendants and merge the live custody handshake inventory.
+  # A sensitive guardian suppresses the spawn event for its sensitive runner;
+  # tracing alone cannot enumerate that branch. Keep socket and wire assertions
+  # independent of this inventory.
   defp call_workers(delivered, workers, at \\ System.monotonic_time(:millisecond) + 5_000) do
     left = at - System.monotonic_time(:millisecond)
     if left <= 0, do: flunk("call process trace did not reach its delivery barrier")

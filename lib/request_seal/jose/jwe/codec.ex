@@ -5,7 +5,6 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
   @algorithms ~w(RSA-OAEP RSA-OAEP-256 A128KW A256KW A128GCMKW A256GCMKW dir ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW)
   @reserved ~w(alg enc iv tag epk apu apv)
-  @non_whitespace for byte <- 0..255, byte not in [32, 9, 10, 13], do: <<byte>>
 
   @spec fail(atom()) :: no_return()
   @spec fail(atom(), atom()) :: no_return()
@@ -269,8 +268,22 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
   defp tree_list(_, _), do: fail(:invalid_header)
 
-  defp whitespace?(<<>>), do: true
-  defp whitespace?(bytes), do: :binary.match(bytes, @non_whitespace) == :nomatch
+  defp whitespace?(bytes), do: first_non_whitespace(bytes, 0) == :nomatch
+
+  # Skip eight bytes per recursive step without a compiled pattern set, a
+  # per-byte binary slice or wide-integer allocation. Guards classify every
+  # lane independently; a partial or mixed final word falls back to byte steps.
+  defp first_non_whitespace(<<a, b, c, d, e, f, g, h, rest::binary>>, at)
+       when a in [32, 9, 10, 13] and b in [32, 9, 10, 13] and c in [32, 9, 10, 13] and
+              d in [32, 9, 10, 13] and e in [32, 9, 10, 13] and f in [32, 9, 10, 13] and
+              g in [32, 9, 10, 13] and h in [32, 9, 10, 13],
+       do: first_non_whitespace(rest, at + 8)
+
+  defp first_non_whitespace(<<byte, rest::binary>>, at) when byte in [32, 9, 10, 13],
+    do: first_non_whitespace(rest, at + 1)
+
+  defp first_non_whitespace(<<byte, _::binary>>, at), do: {at, byte}
+  defp first_non_whitespace(<<>>, _), do: :nomatch
 
   defp depth(<<>>, d, string, _), do: ensure(d == 0 and not string, :invalid_header)
   defp depth(<<_, r::binary>>, d, true, true), do: depth(r, d, true, false)
@@ -299,15 +312,15 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     end
   end
 
-  # Classify the first non-whitespace byte, then find at most five dots. Native
-  # binary search needs no regular-expression compilation or backtracking and
+  # Classify leading whitespace eight bytes at a time, then find at most five
+  # dots. Native binary search needs no pattern-set compilation or backtracking and
   # allocates at most five part references, even for a token made only of dots.
   # Each native search returns into Codec, retaining its continuation while OTP
   # yields. The complete token and preflight accounting remain one bounded unit.
   defp separators(token) do
-    case :binary.match(token, @non_whitespace) do
-      {at, 1} ->
-        ensure(:binary.part(token, at, 1) not in ["{", "["], :unsupported_serialization)
+    case first_non_whitespace(token, 0) do
+      {at, byte} ->
+        ensure(byte not in [123, 91], :unsupported_serialization)
         separators(token, 0, at, 4, [])
 
       :nomatch ->

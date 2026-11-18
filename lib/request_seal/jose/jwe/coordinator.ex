@@ -427,9 +427,14 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp result(s, i, reason, layer, auth) do
     case :maps.find(i, map_get(:positions, s)) do
       {:ok, %{phase: phase, result: nil} = p} ->
-        if result_phase?(phase) and Bounds.now() < map_get(:d, s),
-          do: put(s, i, %{p | result: {reason, layer, auth}}, 0),
-          else: s
+        if result_phase?(phase) and Bounds.now() < map_get(:d, s) do
+          # A terminal result changes neither admission nor resolution. Keep
+          # those counters intact without rebuilding their HAMT paths per row.
+          positions = :maps.put(i, %{p | result: {reason, layer, auth}}, map_get(:positions, s))
+          %{s | positions: positions, settled: map_get(:settled, s) + 1}
+        else
+          s
+        end
 
       _ ->
         s
@@ -605,8 +610,20 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp expire_u(s) do
     rows = :maps.to_list(map_get(:groups, s))
     kill_groups(rows)
-    groups = expire_groups(rows, s, [])
+
+    # U belongs to the whole call. Wake each range once, including a range
+    # whose member messages are still queued, instead of sending one timeout
+    # per group after that range has already settled its prepared positions.
+    expire_workers(:maps.to_list(map_get(:workers, s)), map_get(:tag, s), map_get(:u, s))
+    groups = expire_groups(rows, [])
     %{s | groups: :maps.from_list(groups), expired_u: true}
+  end
+
+  defp expire_workers([], _, _), do: :ok
+
+  defp expire_workers([{_, {pid, _, _, alive}} | rest], tag, u) do
+    if alive, do: send(pid, {tag, :unwrap_expired, u})
+    expire_workers(rest, tag, u)
   end
 
   # Issue every independent cancellation before summary traffic competes with
@@ -622,20 +639,19 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
     kill_groups(rest)
   end
 
-  defp expire_groups([], _, groups), do: groups
+  defp expire_groups([], groups), do: groups
 
-  defp expire_groups([{g, group} | rest], s, groups) do
+  defp expire_groups([{g, group} | rest], groups) do
     group =
       case group do
         %{duration: nil, pid: pid} when pid != nil ->
-          group_notice(:maps.to_list(map_get(:workers, group)), s, g, :timeout)
           %{group | duration: max(0, Bounds.now() - map_get(:started, group))}
 
         _ ->
           group
       end
 
-    expire_groups(rest, s, [{g, group} | groups])
+    expire_groups(rest, [{g, group} | groups])
   end
 
   defp worker_down(s, pid, reason) do
