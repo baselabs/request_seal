@@ -7,8 +7,13 @@ defmodule RequestSeal.DiscoveryCacheTest do
   alias RequestSeal.DiscoveryPeer, as: Peer
 
   defp setup_cache(attrs \\ %{}, opts \\ []) do
-    {:ok, publisher} =
-      Agent.start_link(fn -> %{keys: [Peer.public_jwk()], cache: "max-age=1", status: 200} end)
+    publisher =
+      start_supervised!(
+        Supervisor.child_spec(
+          {Agent, fn -> %{keys: [Peer.public_jwk()], cache: "max-age=1", status: 200} end},
+          id: make_ref()
+        )
+      )
 
     p =
       Peer.start(fn socket, request ->
@@ -163,7 +168,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
 
   test "default freshness reuses the configured directory until 300 seconds elapse" do
     now = System.system_time(:second)
-    {:ok, clock} = Agent.start_link(fn -> now end)
+    clock = start_supervised!(Supervisor.child_spec({Agent, fn -> now end}, id: make_ref()))
     {_, publisher, source, cache, kid} = setup_cache(%{}, clock: fn -> Agent.get(clock, & &1) end)
     Agent.update(publisher, &%{&1 | cache: nil})
     resolver = Discovery.resolver({cache, source}, algorithms: ["ed25519"])
@@ -181,7 +186,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
 
   test "Expires keeps the directory cached only until its explicit expiry" do
     now = System.system_time(:second)
-    {:ok, clock} = Agent.start_link(fn -> now end)
+    clock = start_supervised!(Supervisor.child_spec({Agent, fn -> now end}, id: make_ref()))
     {_, publisher, source, cache, kid} = setup_cache(%{}, clock: fn -> Agent.get(clock, & &1) end)
     expires = Calendar.strftime(DateTime.from_unix!(now + 60), "%a, %d %b %Y %H:%M:%S GMT")
     Agent.update(publisher, &Map.merge(&1, %{cache: nil, expires: expires}))
@@ -204,7 +209,11 @@ defmodule RequestSeal.DiscoveryCacheTest do
   end
 
   test "freshness refetches, rotation removes old keys and tombstones survive refresh/invalidation" do
-    {:ok, clock} = Agent.start_link(fn -> System.system_time(:second) end)
+    clock =
+      start_supervised!(
+        Supervisor.child_spec({Agent, fn -> System.system_time(:second) end}, id: make_ref())
+      )
+
     {_, publisher, source, cache, kid} = setup_cache(%{}, clock: fn -> Agent.get(clock, & &1) end)
     assert {:ok, _} = Cache.resolve(cache, source, kid, [])
     assert accepts() == 1
@@ -259,7 +268,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
   test "no-store completion across a clock tick retains key expiry without creating freshness" do
     for type <- [:directory, :jwks_uri, :cimd], expired <- [false, true] do
       now = System.system_time(:second)
-      {:ok, ticks} = Agent.start_link(fn -> 0 end)
+      ticks = start_supervised!(Supervisor.child_spec({Agent, fn -> 0 end}, id: make_ref()))
 
       clock = fn ->
         Agent.get_and_update(ticks, fn tick -> {now + if(tick >= 3, do: 2, else: 0), tick + 1} end)
@@ -281,7 +290,11 @@ defmodule RequestSeal.DiscoveryCacheTest do
   end
 
   test "expiry plus outage never serves stale and negative entries stop new accepts" do
-    {:ok, clock} = Agent.start_link(fn -> System.system_time(:second) end)
+    clock =
+      start_supervised!(
+        Supervisor.child_spec({Agent, fn -> System.system_time(:second) end}, id: make_ref())
+      )
+
     {_, publisher, source, cache, kid} = setup_cache(%{}, clock: fn -> Agent.get(clock, & &1) end)
     assert {:ok, _} = Cache.resolve(cache, source, kid, [])
     assert accepts() == 1
@@ -300,8 +313,16 @@ defmodule RequestSeal.DiscoveryCacheTest do
 
   test "a stored ETag drives conditional revalidation on refresh" do
     now = System.system_time(:second)
-    {:ok, clock} = Agent.start_link(fn -> now end)
-    {:ok, seen} = Agent.start_link(fn -> %{requests: 0, conditional: false} end)
+    clock = start_supervised!(Supervisor.child_spec({Agent, fn -> now end}, id: make_ref()))
+
+    seen =
+      start_supervised!(
+        Supervisor.child_spec(
+          {Agent, fn -> %{requests: 0, conditional: false} end},
+          id: make_ref()
+        )
+      )
+
     media = {"Content-Type", "application/http-message-signatures-directory+json"}
 
     p =
@@ -366,8 +387,16 @@ defmodule RequestSeal.DiscoveryCacheTest do
 
   test "a stored ETag stops driving revalidation once any stored key expires" do
     now = System.system_time(:second)
-    {:ok, clock} = Agent.start_link(fn -> now end)
-    {:ok, seen} = Agent.start_link(fn -> %{requests: 0, conditional: false} end)
+    clock = start_supervised!(Supervisor.child_spec({Agent, fn -> now end}, id: make_ref()))
+
+    seen =
+      start_supervised!(
+        Supervisor.child_spec(
+          {Agent, fn -> %{requests: 0, conditional: false} end},
+          id: make_ref()
+        )
+      )
+
     media = {"Content-Type", "application/http-message-signatures-directory+json"}
 
     # The key's own exp lapses well before the set's max-age freshness does.
@@ -425,7 +454,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
 
   test "a failed refresh retains the observed directory without extending its freshness" do
     now = System.system_time(:second)
-    {:ok, clock} = Agent.start_link(fn -> now end)
+    clock = start_supervised!(Supervisor.child_spec({Agent, fn -> now end}, id: make_ref()))
     {_, publisher, source, cache, kid} = setup_cache(%{}, clock: fn -> Agent.get(clock, & &1) end)
     Agent.update(publisher, &%{&1 | cache: "max-age=60"})
     assert {:ok, _} = Cache.resolve(cache, source, kid, [])
@@ -494,7 +523,9 @@ defmodule RequestSeal.DiscoveryCacheTest do
     assert :ok = Cache.invalidate(cache, source)
     caller = spawn(fn -> Cache.resolve(cache, source, kid, []) end)
     assert_receive {:blocked, connection}, 1_000
+    caller_ref = Process.monitor(caller)
     Process.exit(caller, :kill)
+    assert_receive {:DOWN, ^caller_ref, :process, ^caller, :killed}, 1_000
     # The waiter monitor must release the single-flight slot without a timer.
     monitor = Process.monitor(connection)
     send(connection, :release)

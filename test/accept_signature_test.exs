@@ -182,12 +182,13 @@ defmodule RequestSeal.AcceptSignatureTest do
 
     chooser = fn _ -> {:ok, %{algorithm: "ed25519", created: nil, expires: nil}} end
     owner = self()
-    tracer = spawn_link(fn -> trace_calls(owner) end)
-    Code.ensure_loaded!(RequestSeal)
-    assert :erlang.trace_pattern({RequestSeal, :sign, 4}, true, []) == 1
-    :erlang.trace(self(), true, [:call, {:tracer, tracer}])
+    {tracer, tracer_monitor} = spawn_monitor(fn -> trace_calls(owner) end)
 
     try do
+      Code.ensure_loaded!(RequestSeal)
+      assert :erlang.trace_pattern({RequestSeal, :sign, 4}, true, []) == 1
+      :erlang.trace(self(), true, [:call, {:tracer, tracer}])
+
       error(
         AcceptSignature.fulfill(unsigned(), requests, chooser, signer("ed25519"), []),
         :negotiation_unfulfillable,
@@ -204,6 +205,7 @@ defmodule RequestSeal.AcceptSignatureTest do
       :erlang.trace(self(), false, [:call])
       :erlang.trace_pattern({RequestSeal, :sign, 4}, false, [])
       send(tracer, :stop)
+      receive do: ({:DOWN, ^tracer_monitor, :process, ^tracer, _} -> :ok)
     end
   end
 

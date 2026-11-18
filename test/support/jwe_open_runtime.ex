@@ -290,32 +290,34 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   def start(n, topology, options \\ []) do
     s = launch(n, topology, options)
 
-    s =
-      collect_until(s, fn s ->
-        s.resolver_count == n and s.resolver_spawns == n
-      end)
+    try do
+      s =
+        collect_until(s, fn s ->
+          s.resolver_count == n and s.resolver_spawns == n
+        end)
 
-    s =
-      case topology do
-        :resolvers ->
-          s
+      s =
+        case topology do
+          :resolvers ->
+            s
 
-        :queued ->
-          true = :erlang.suspend_process(s.guard)
-          Enum.each(s.resolvers, &send(&1, :continue))
-          await(fn -> info(s.guard, :message_queue_len) >= n end)
-          s
+          :queued ->
+            true = :erlang.suspend_process(s.guard)
+            Enum.each(s.resolvers, &send(&1, :continue))
+            await(fn -> info(s.guard, :message_queue_len) >= n end)
+            s
 
-        :custody ->
-          Enum.each(s.resolvers, &send(&1, :continue))
-          collect_until(s, fn s -> s.custody_count == n end)
-      end
+          :custody ->
+            Enum.each(s.resolvers, &send(&1, :continue))
+            collect_until(s, fn s -> s.custody_count == n end)
+        end
 
-    s
-  rescue
-    error ->
-      # The invoking peer is also stopped by with_peer/2 on a failed placement.
-      reraise error, __STACKTRACE__
+      s
+    rescue
+      error ->
+        cleanup(s)
+        reraise error, __STACKTRACE__
+    end
   end
 
   def trigger(s, trigger) do
@@ -333,7 +335,11 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     end
 
     if s.topology == :queued, do: :erlang.resume_process(s.guard)
-    s = collect_ends(s) |> delivered() |> drain_observations()
+    s = collect_ends(s)
+
+    # A capped collection is an incomplete teardown, not missing evidence for
+    # reductions. Leave the live mutant to cleanup; its oracle reports the cap.
+    s = if s.remaining == 0, do: delivered(s) |> drain_observations(), else: s
     {after_vm, _} = :erlang.statistics(:exact_reductions)
 
     %{
@@ -473,16 +479,28 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   end
 
   def collect_until(s, predicate, timeout \\ 60_000) do
-    if predicate.(s) do
-      s
-    else
-      receive do
-        event -> collect_until(observe(s, event), predicate, timeout)
-      after
-        timeout ->
-          raise "placement/end markers missing: #{inspect({s.n, s.resolver_count, s.custody_count, s.return})}"
-      end
+    collect_until_at(s, predicate, Bounds.now() + timeout * 1_000)
+  end
+
+  defp collect_until_at(s, predicate, at) do
+    cond do
+      predicate.(s) ->
+        s
+
+      Bounds.now() >= at ->
+        missing_placement(s)
+
+      true ->
+        receive do
+          event -> collect_until_at(observe(s, event), predicate, at)
+        after
+          Bounds.remaining(at) -> missing_placement(s)
+        end
     end
+  end
+
+  defp missing_placement(s) do
+    raise "placement/end markers missing: #{inspect({s.n, s.resolver_count, s.custody_count, s.return})}"
   end
 
   # Match each new event once. Scanning the accumulated history after every
@@ -496,6 +514,8 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   # Use this entry when the event cannot predate the caller's resume. Searching
   # the full history first can consume the whole production placement window.
   def receive_event(s, predicate, at) do
+    if Bounds.now() >= at, do: raise("placement event missing")
+
     receive do
       event ->
         current = observe(s, event)

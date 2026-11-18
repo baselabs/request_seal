@@ -413,7 +413,7 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
             assert match?({:ok, [{:ok, _}]}, result.return), "sent reply must survive F"
           else
             assert end_reason(result, s.guard) == :deadline
-            assert result.return_at <= f + Bounds.teardown(1) + 10_000
+            assert result.return_at <= f + Bounds.teardown(1)
 
             assert match?({:error, %{reason: :deadline_exceeded}}, result.return),
                    "missing reply must end by F plus B"

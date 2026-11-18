@@ -686,11 +686,12 @@ defmodule RequestSeal.JOSEGuardTest do
     key = rsa(fixture("rfc7516.json")["key"])
     [_, encrypted, _, _, _] = String.split(fixture("rfc7516.json")["compact"], ".")
     owner = self()
-    collector = spawn(fn -> collect(owner) end)
-    :erlang.trace_pattern({:public_key, :decrypt_private, 3}, true, [:local])
-    :erlang.trace(self(), true, [:call, {:tracer, collector}])
+    {collector, tracer_monitor} = spawn_monitor(fn -> collect(owner) end)
 
     try do
+      :erlang.trace_pattern({:public_key, :decrypt_private, 3}, true, [:local])
+      :erlang.trace(self(), true, [:call, {:tracer, collector}])
+
       assert {:ok, _} = KeyManagement.unwrap("RSA-OAEP", b64(encrypted), %{}, key)
       delivered = :erlang.trace_delivered(self())
       assert_receive {:trace_delivered, _, ^delivered}
@@ -711,6 +712,7 @@ defmodule RequestSeal.JOSEGuardTest do
       :erlang.trace(self(), false, [:call])
       :erlang.trace_pattern({:public_key, :decrypt_private, 3}, false, [:local])
       send(collector, :stop)
+      receive do: ({:DOWN, ^tracer_monitor, :process, ^collector, _} -> :ok)
     end
   end
 

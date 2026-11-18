@@ -54,6 +54,59 @@ defmodule RequestSeal.JWEOpenRuntimeTest do
     end)
   end
 
+  test "cleanup joins the end observer and destroys its trace session" do
+    Runtime.with_peer(fn ->
+      s = Runtime.start(1, :resolvers)
+      tracer = s.end_tracer
+      assert Process.alive?(tracer)
+      Runtime.cleanup(s)
+      refute Process.alive?(tracer)
+
+      assert_raise ArgumentError, fn ->
+        :trace.process(s.end_session, self(), true, [:receive])
+      end
+
+      for pid <- Map.keys(s.pids) ++ [s.caller], do: refute(Process.alive?(pid))
+    end)
+  end
+
+  test "failed placement releases the key processes and end trace session" do
+    Runtime.with_peer(fn ->
+      baseline = MapSet.new(Process.list())
+      sessions = :trace.session_info(:all)
+
+      assert_raise CaseClauseError, fn ->
+        Runtime.start(1, :invalid_topology)
+      end
+
+      assert :trace.session_info(:all) == sessions
+      assert MapSet.new(Process.list()) == baseline
+    end)
+  end
+
+  test "placement collectors cannot extend their cap with queued events" do
+    Runtime.with_peer(fn ->
+      s = Runtime.start(1, :resolvers)
+
+      try do
+        send(self(), :queued_event)
+        assert_raise RuntimeError, ~r/placement\/end markers missing/, fn ->
+          Runtime.collect_until(s, fn _ -> false end, 0)
+        end
+
+        assert :queued_event in elem(Process.info(self(), :messages), 1)
+
+        assert_raise RuntimeError, "placement event missing", fn ->
+          Runtime.receive_event(s, fn _ -> false end, Bounds.now())
+        end
+
+        assert_received :queued_event
+      after
+        Runtime.cleanup(s)
+      end
+    end)
+  end
+
   test "an unended birth consumes the collection cap without claiming an end" do
     Runtime.with_peer(fn ->
       s = Runtime.start(1, :resolvers)

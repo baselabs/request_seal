@@ -25,11 +25,16 @@ defmodule RequestSeal.DiscoveryPeer do
         }
       })
 
+    supervisor =
+      ExUnit.Callbacks.start_supervised!(
+        Supervisor.child_spec({Task.Supervisor, []}, id: make_ref())
+      )
+
     owner = self()
     ref = make_ref()
 
-    pid =
-      spawn(fn ->
+    {:ok, pid} =
+      Task.Supervisor.start_child(supervisor, fn ->
         {:ok, listen} =
           :ssl.listen(
             0,
@@ -39,27 +44,41 @@ defmodule RequestSeal.DiscoveryPeer do
 
         {:ok, {_, port}} = :ssl.sockname(listen)
         send(owner, {ref, listen, port})
-        accept(listen, owner, handler)
+        accept(listen, owner, handler, supervisor)
       end)
 
     receive do
       {^ref, listen, port} ->
-        %{pid: pid, listen: listen, port: port, cacerts: data.client_config[:cacerts]}
+        %{
+          pid: pid,
+          supervisor: supervisor,
+          listen: listen,
+          port: port,
+          cacerts: data.client_config[:cacerts]
+        }
     after
       5_000 -> raise "TLS publisher startup deadline"
     end
   end
 
   def stop(peer) do
+    # Stop and join the entire peer before closing its listening socket. A
+    # normal acceptor exit does not terminate linked connection handlers.
+    try do
+      Supervisor.stop(peer.supervisor)
+    catch
+      :exit, {:noproc, _} -> :ok
+    end
+
     :ssl.close(peer.listen)
-    Process.exit(peer.pid, :kill)
+    :ok
   end
 
-  defp accept(listen, owner, handler) do
+  defp accept(listen, owner, handler, supervisor) do
     case :ssl.transport_accept(listen) do
       {:ok, socket} ->
-        worker =
-          spawn_link(fn ->
+        {:ok, worker} =
+          Task.Supervisor.start_child(supervisor, fn ->
             receive do
               {:socket, socket} ->
                 case :ssl.handshake(socket, 5_000) do
@@ -77,7 +96,7 @@ defmodule RequestSeal.DiscoveryPeer do
 
         :ok = :ssl.controlling_process(socket, worker)
         send(worker, {:socket, socket})
-        accept(listen, owner, handler)
+        accept(listen, owner, handler, supervisor)
 
       _ ->
         :ok

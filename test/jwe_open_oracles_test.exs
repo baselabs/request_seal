@@ -131,6 +131,10 @@ defmodule RequestSeal.JWEOpenOraclesTest do
 
             try do
               result = Runtime.trigger(s, :caller)
+
+              assert result.guard_ended and not Process.alive?(result.guard),
+                     "VM teardown must fit a + 256n: guard incomplete at the collection hang cap"
+
               finishes = guard_calls(result.events, s.guard, :finish)
               kills = guard_calls(result.events, s.guard, :kill)
               assert finishes != [] and kills != [], "guard reductions need both endpoints"
@@ -299,8 +303,12 @@ defmodule RequestSeal.JWEOpenOraclesTest do
       :erlang.trace_pattern({Open, :wait_end, 1}, true, [:local])
       :erlang.trace_pattern({Open, :cleanup, 1}, true, [:local])
 
+      :erlang.trace_pattern({:erlang, :send_after, 4}, true, [])
+
       s =
         Runtime.start(1, :resolvers,
+          trace_input: false,
+          trace_messages: false,
           policy: %{timeout: 300, resolve_timeout: 200, unwrap_timeout: 50}
         )
 
@@ -322,6 +330,17 @@ defmodule RequestSeal.JWEOpenOraclesTest do
             _ -> nil
           end)
 
+        wakes =
+          for {:trace_ts, pid, :call, {:erlang, :send_after, [ms, _, {_, :wait_bound}, _]}, _} <-
+                s.events,
+              pid == s.caller,
+              do: ms * 1_000
+
+        assert wakes != [], "caller must arm its absolute wake before waiting"
+
+        assert Enum.all?(wakes, &(f + Bounds.teardown(1) - &1 > 9_000)),
+               "caller wake must leave scheduling margin inside F plus B"
+
         boundaries =
           for {:trace_ts, pid, :call, {Open, function, args}, _} <- Enum.reverse(s.events),
               pid == s.caller and function in [:wait_end, :cleanup],
@@ -335,6 +354,7 @@ defmodule RequestSeal.JWEOpenOraclesTest do
         assert at <= f + Bounds.teardown(1),
                "wait end must fit F plus B: #{inspect({at, f + Bounds.teardown(1)})}"
       after
+        :erlang.trace_pattern({:erlang, :send_after, 4}, false, [])
         :erlang.trace_pattern({Open, :wait_end, 1}, false, [:local])
         :erlang.trace_pattern({Open, :cleanup, 1}, false, [:local])
         Runtime.cleanup(s)
@@ -467,23 +487,28 @@ defmodule RequestSeal.JWEOpenOraclesTest do
   end
 
   defp pass_interval(s, function, start, at) do
-    receive do
-      event ->
-        current = Runtime.observe(s, event)
+    if Bounds.now() >= at do
+      flunk("coordinator passes must fit a + 512n: incomplete #{function} at the hang cap")
+    else
+      receive do
+        event ->
+          current = Runtime.observe(s, event)
 
-        case event do
-          {:trace_ts, _, :call, {Coordinator, ^function, _}, dump, _} when start == nil ->
-            pass_interval(current, function, reductions(dump), at)
+          case event do
+            {:trace_ts, _, :call, {Coordinator, ^function, _}, dump, _} when start == nil ->
+              pass_interval(current, function, reductions(dump), at)
 
-          {:trace_ts, _, :call, {Coordinator, next, _}, dump, _}
-          when is_integer(start) and next in [:loop, :finish] ->
-            reductions(dump) - start
+            {:trace_ts, _, :call, {Coordinator, next, _}, dump, _}
+            when is_integer(start) and next in [:loop, :finish] ->
+              reductions(dump) - start
 
-          _ ->
-            pass_interval(current, function, start, at)
-        end
-    after
-      Bounds.remaining(at) -> flunk("coordinator pass endpoints missing: #{function}")
+            _ ->
+              pass_interval(current, function, start, at)
+          end
+      after
+        Bounds.remaining(at) ->
+          flunk("coordinator passes must fit a + 512n: incomplete #{function} at the hang cap")
+      end
     end
   end
 

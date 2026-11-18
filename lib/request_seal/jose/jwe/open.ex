@@ -69,20 +69,32 @@ defmodule RequestSeal.JOSE.JWE.Open do
     tag = s.tag
     monitor = s.monitor
     guard = s.guard
-    at = s.f + Bounds.teardown(:atomics.get(s.flag, 2))
+    at = Bounds.caller_wait(s.f, :atomics.get(s.flag, 2))
 
-    receive do
-      {:"ETS-TRANSFER", notice, ^guard, {^tag, :caller}} ->
-        run(%{s | notice: notice}, input, p, expected)
+    timer = :erlang.send_after(Bounds.milliseconds(at), self(), {tag, :wait_bound}, abs: true)
 
-      {:DOWN, ^monitor, :process, ^guard, reason} ->
-        {answer, _} = wait(%{s | down: reason})
-        answer
+    try do
+      receive do
+        {:"ETS-TRANSFER", notice, ^guard, {^tag, :caller}} ->
+          run(%{s | notice: notice}, input, p, expected)
+
+        {:DOWN, ^monitor, :process, ^guard, reason} ->
+          {answer, _} = wait(%{s | down: reason})
+          wait_end(Bounds.now())
+          answer
+
+        {^tag, :wait_bound} ->
+          if Bounds.now() < at,
+            do: take_notice(s, input, p, expected),
+            else: expire_notice(s.guard, s.tag)
+      after
+        Bounds.remaining(at) ->
+          if Bounds.now() < at,
+            do: take_notice(s, input, p, expected),
+            else: expire_notice(s.guard, s.tag)
+      end
     after
-      Bounds.remaining(at) ->
-        if Bounds.now() < at,
-          do: take_notice(s, input, p, expected),
-          else: expire_notice(s.guard, s.tag)
+      :erlang.cancel_timer(timer)
     end
   end
 
@@ -97,6 +109,7 @@ defmodule RequestSeal.JOSE.JWE.Open do
       {:DOWN, ^ref, :process, ^guard, _} -> :ok
     end
 
+    wait_end(Bounds.now())
     drain(tag, nil)
     Codec.error(:deadline_exceeded, :crypto)
   end
@@ -139,7 +152,7 @@ defmodule RequestSeal.JOSE.JWE.Open do
     ref = :erlang.monitor(:process, s.guard)
 
     try do
-      await_guard(s.guard, ref, s.f + Bounds.teardown(:atomics.get(s.flag, 2)))
+      await_guard(s, ref)
     after
       :erlang.demonitor(ref, [:flush])
     end
@@ -147,12 +160,36 @@ defmodule RequestSeal.JOSE.JWE.Open do
     wait_end(Bounds.now())
   end
 
-  defp await_guard(guard, ref, at) do
-    receive do
-      {:DOWN, ^ref, :process, ^guard, _} -> :ok
+  defp await_guard(s, ref) do
+    at = Bounds.caller_wait(s.f, :atomics.get(s.flag, 2))
+    timer = :erlang.send_after(Bounds.milliseconds(at), self(), {s.tag, :wait_bound}, abs: true)
+
+    try do
+      await_guard(s, ref, at)
     after
-      Bounds.remaining(at) ->
-        if Bounds.now() < at, do: await_guard(guard, ref, at), else: :ok
+      :erlang.cancel_timer(timer)
+    end
+  end
+
+  defp await_guard(s, ref, at) do
+    guard = s.guard
+    tag = s.tag
+    current = Bounds.caller_wait(s.f, :atomics.get(s.flag, 2))
+
+    cond do
+      current != at ->
+        await_guard(s, ref)
+
+      Bounds.now() >= at ->
+        :ok
+
+      true ->
+        receive do
+          {:DOWN, ^ref, :process, ^guard, _} -> :ok
+          {^tag, :wait_bound} -> await_guard(s, ref, at)
+        after
+          Bounds.remaining(at) -> await_guard(s, ref, at)
+        end
     end
   end
 
@@ -194,31 +231,41 @@ defmodule RequestSeal.JOSE.JWE.Open do
     tag = s.tag
     monitor = s.monitor
     guard = s.guard
+    at = Bounds.caller_wait(s.f, :atomics.get(s.flag, 2))
 
-    receive do
-      {^tag, :preflight, pid} ->
-        send(pid, {tag, :policy, p})
-        send(pid, {tag, :count, count})
+    timer = :erlang.send_after(Bounds.milliseconds(at), self(), {tag, :wait_bound}, abs: true)
 
-        cond do
-          count in [:over_cap, :improper] ->
-            :ok
+    try do
+      receive do
+        {^tag, :preflight, pid} ->
+          send(pid, {tag, :policy, p})
+          send(pid, {tag, :count, count})
 
-          s.mode == :single ->
-            token = if is_binary(input), do: input, else: nil
-            if continue?(s), do: send(pid, {tag, :item, 0, :exact, token, expected})
-            send(pid, {tag, :input_end})
+          cond do
+            count in [:over_cap, :improper] ->
+              :ok
 
-          true ->
-            stream(input, 0, pid, s)
-        end
+            s.mode == :single ->
+              token = if is_binary(input), do: input, else: nil
+              if continue?(s), do: send(pid, {tag, :item, 0, :exact, token, expected})
+              send(pid, {tag, :input_end})
 
-        s
+            true ->
+              stream(input, 0, pid, s)
+          end
 
-      {:DOWN, ^monitor, :process, ^guard, reason} ->
-        %{s | down: reason}
+          s
+
+        {:DOWN, ^monitor, :process, ^guard, reason} ->
+          %{s | down: reason}
+
+        {^tag, :wait_bound} ->
+          if Bounds.now() < at, do: bootstrap(s, input, p, expected, count), else: s
+      after
+        Bounds.remaining(at) -> s
+      end
     after
-      Bounds.remaining(s.f + Bounds.teardown(:atomics.get(s.flag, 2))) -> s
+      :erlang.cancel_timer(timer)
     end
   end
 
@@ -250,9 +297,10 @@ defmodule RequestSeal.JOSE.JWE.Open do
   defp shape(_), do: {:not_item, nil, nil}
 
   defp wait(s) do
-    # An absolute wakeup avoids adding a new relative timer tick after the
-    # remaining duration was computed. Reserve its rounding quantum inside B.
-    at = s.f + Bounds.teardown(:atomics.get(s.flag, 2)) - 1_000
+    # Wake inside the public upper bound: ceil-to-millisecond rounding uses
+    # less than 1 ms of the 10 ms reserve, leaving over 9 ms to be scheduled
+    # and stamp wait-end. The absolute wake survives a stale relative wait.
+    at = Bounds.caller_wait(s.f, :atomics.get(s.flag, 2))
     timer = :erlang.send_after(Bounds.milliseconds(at), self(), {s.tag, :wait_bound}, abs: true)
 
     try do
@@ -265,7 +313,7 @@ defmodule RequestSeal.JOSE.JWE.Open do
   defp wait(s, at) do
     # Cardinality is published once. An early zero-cardinality timer can wake
     # us, but it cannot shorten the accepted batch's own wait.
-    current = s.f + Bounds.teardown(:atomics.get(s.flag, 2)) - 1_000
+    current = Bounds.caller_wait(s.f, :atomics.get(s.flag, 2))
 
     cond do
       current != at -> wait(s)

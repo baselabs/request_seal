@@ -1094,13 +1094,14 @@ defmodule RequestSeal.VerificationTest do
 
   test "real digest calls occur only after cryptography and full digest coverage" do
     owner = self()
-    tracer = spawn(fn -> digest_trace(owner, 0) end)
-    Code.ensure_loaded!(Digest)
-    assert :erlang.trace_pattern({Digest, :check_validated, 3}, true, [:local]) == 1
-    assert :erlang.trace_pattern({Digest, :check_stream_validated, 3}, true, [:local]) == 1
-    :erlang.trace(self(), true, [:call, {:tracer, tracer}])
+    {tracer, tracer_monitor} = spawn_monitor(fn -> digest_trace(owner, 0) end)
 
     try do
+      Code.ensure_loaded!(Digest)
+      assert :erlang.trace_pattern({Digest, :check_validated, 3}, true, [:local]) == 1
+      assert :erlang.trace_pattern({Digest, :check_stream_validated, 3}, true, [:local]) == 1
+      :erlang.trace(self(), true, [:call, {:tracer, tracer}])
+
       v = vector("B.2.3")
       m = rewrite(message(v), "signature", v["label"] <> "=:AA==:")
 
@@ -1135,6 +1136,7 @@ defmodule RequestSeal.VerificationTest do
       :erlang.trace_pattern({Digest, :check_validated, 3}, false, [:local])
       :erlang.trace_pattern({Digest, :check_stream_validated, 3}, false, [:local])
       send(tracer, :stop)
+      receive do: ({:DOWN, ^tracer_monitor, :process, ^tracer, _} -> :ok)
     end
   end
 

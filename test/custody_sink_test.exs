@@ -127,6 +127,43 @@ defmodule RequestSeal.CustodySinkTest do
     assert {:ok, [{:ok, @cek}, {:error, :decryption_failed}]} = Task.await(task)
   end
 
+  test "an unwrap holder awaiting delivery exits when its creator dies" do
+    observer = self()
+
+    creator = fn ->
+      handle = UnwrapCustodian.start(:ok, observer)
+      send(observer, {:owned_handle, handle})
+      receive do: (:stop -> :ok)
+    end
+
+    owner = start_supervised!(Supervisor.child_spec({Task, creator}, restart: :temporary))
+
+    assert_receive {:owned_handle, handle}, 1_000
+    task = Task.async(fn -> Custody.unwrap(handle, [@item], timeout: 5_000) end)
+
+    try do
+      assert_receive {:holder_ready, holder, runner, _, _}, 1_000
+      assert {:links, [middle]} = Process.info(runner, :links)
+      workers = for pid <- [runner, middle], do: {pid, Process.monitor(pid)}
+      assert Process.alive?(holder)
+      owner_ref = Process.monitor(owner)
+      holder_ref = Process.monitor(holder)
+      Process.exit(owner, :kill)
+      assert_receive {:DOWN, ^owner_ref, :process, ^owner, :killed}, 1_000
+      assert_receive {:DOWN, ^holder_ref, :process, ^holder, :normal}, 1_000
+      refute Process.alive?(holder)
+      Task.shutdown(task, :brutal_kill)
+
+      for {pid, monitor} <- workers do
+        assert_receive {:DOWN, ^monitor, :process, ^pid, _}, 1_000
+        refute Process.alive?(pid)
+      end
+    after
+      Task.shutdown(task, :brutal_kill)
+      Custody.release(handle)
+    end
+  end
+
   test "sink oracle observes the positive control then ICV failure with no CEK envelope" do
     kek = Base.decode16!("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F")
     {:ok, handle} = Custody.Local.new({:jwe, "A256KW"}, {:aes, kek})

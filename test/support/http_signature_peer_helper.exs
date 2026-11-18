@@ -117,7 +117,12 @@ defmodule RequestSeal.HTTPSignaturePeer do
         :gen_tcp.close(socket)
       end)
 
-    ExUnit.Callbacks.on_exit(fn -> :gen_tcp.close(socket) end)
+    ExUnit.Callbacks.on_exit(fn ->
+      monitor = Process.monitor(task.pid)
+      Process.exit(task.pid, :kill)
+      receive do: ({:DOWN, ^monitor, :process, _, _} -> :ok)
+      :gen_tcp.close(socket)
+    end)
     {origin, task}
   end
 

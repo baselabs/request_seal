@@ -702,8 +702,8 @@ defmodule RequestSeal.SignatureBaseTest do
   defp count_calls(mfa, fun) do
     parent = self()
 
-    worker =
-      spawn(fn ->
+    {worker, monitor} =
+      spawn_monitor(fn ->
         receive do
           :run ->
             send(parent, {:build_result, self(), fun.()})
@@ -733,6 +733,7 @@ defmodule RequestSeal.SignatureBaseTest do
     after
       :trace.session_destroy(session)
       Process.exit(worker, :kill)
+      receive do: ({:DOWN, ^monitor, :process, ^worker, _} -> :ok)
     end
   end
 

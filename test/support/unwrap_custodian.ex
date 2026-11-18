@@ -15,7 +15,12 @@ defmodule RequestSeal.Test.UnwrapCustodian do
         receive do
           {:unwrap, runner, items, sink, context} ->
             send(observer, {:holder_ready, self(), runner, sink, context})
-            receive do: (:deliver -> :ok)
+
+            receive do
+              :deliver -> :ok
+              {:DOWN, ^monitor, :process, ^owner, _} -> exit(:normal)
+            end
+
             [first | rest] = items
             deliver(first, sink)
             send(observer, {:prefix_sent, self()})

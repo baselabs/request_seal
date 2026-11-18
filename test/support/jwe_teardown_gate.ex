@@ -431,8 +431,9 @@ defmodule RequestSeal.Test.JWETeardownGate do
     last = if complete, do: last, else: max(last, Bounds.now())
 
     late =
-      for {:end, pid, at, _} <- s.events, at > anchor + Bounds.teardown(@cap),
-        do: %{role: s.pids[pid], end_us: at - anchor}
+      for {:end, pid, at, _} <- s.events,
+          at > anchor + Bounds.teardown(@cap),
+          do: %{role: s.pids[pid], end_us: at - anchor}
 
     %{
       elapsed: last - anchor,

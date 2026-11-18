@@ -1566,21 +1566,74 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert {:ok, req} = request(origin, h)
     assert {:ok, _} = Req.request(req)
     assert_receive {:wire_request, _, {:ok, _}}, 5_000
-    baseline = MapSet.new(Process.list())
+    owner = self()
+    original = h.ref
+
+    signer = %{
+      h
+      | ref: fn ->
+          {:links, links} = Process.info(self(), :links)
+          send(owner, {:signing_workers, self(), links})
+          original.()
+        end
+    }
+
+    assert {:ok, req} = request(origin, h, [], signer: signer)
     port = URI.parse(origin).port
     assert client_socket_count(port) == 0
-    {caller, ref} = spawn_monitor(fn -> Req.request(req) end)
-    assert_receive {:wire_request, _, {:ok, _}}, 5_000
-    assert_receive {:holding, _}, 5_000
-    assert client_socket_count(port) == 1
-    assert MapSet.member?(MapSet.difference(MapSet.new(Process.list()), baseline), caller)
-    Process.exit(caller, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^caller, :killed}, 5_000
-    assert_receive {:peer_closed, {:error, :closed}}, 1_000
-    assert_receive :no_connection, 1_500
-    refute_receive {:wire_request, _, _}
-    assert client_socket_count(port) == 0
-    assert MapSet.difference(MapSet.new(Process.list()), baseline) == MapSet.new()
+
+    {caller, ref} =
+      spawn_monitor(fn ->
+        receive do: (:go -> Req.request(req))
+      end)
+
+    :erlang.trace(caller, true, [:procs, :set_on_spawn, {:tracer, self()}])
+
+    try do
+      send(caller, :go)
+      assert_receive {:wire_request, _, {:ok, _}}, 5_000
+      assert_receive {:holding, _}, 5_000
+      assert_receive {:signing_workers, runner, [middle]}, 5_000
+      assert client_socket_count(port) == 1
+      assert Process.alive?(caller)
+      Process.exit(caller, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^caller, :killed}, 5_000
+      assert_receive {:peer_closed, {:error, :closed}}, 1_000
+      assert_receive :no_connection, 1_500
+      refute_receive {:wire_request, _, _}
+      assert client_socket_count(port) == 0
+      delivered = :erlang.trace_delivered(:all)
+      workers = call_workers(delivered, MapSet.new([caller]))
+
+      try do
+        assert MapSet.member?(workers, runner), "inventory must include sensitive runners"
+        assert MapSet.member?(workers, middle), "inventory must include custody guardians"
+
+        for pid <- workers do
+          monitor = Process.monitor(pid)
+          assert_receive {:DOWN, ^monitor, :process, ^pid, _}, 1_000
+          refute Process.alive?(pid)
+        end
+      after
+        for pid <- workers do
+          monitor = Process.monitor(pid)
+          Process.exit(pid, :kill)
+          receive do: ({:DOWN, ^monitor, :process, ^pid, _} -> :ok)
+        end
+      end
+    after
+      monitor = Process.monitor(caller)
+      Process.exit(caller, :kill)
+      receive do: ({:DOWN, ^monitor, :process, ^caller, _} -> :ok)
+      delivered = :erlang.trace_delivered(:all)
+
+      for pid <- call_workers(delivered, MapSet.new()) do
+        monitor = Process.monitor(pid)
+        Process.exit(pid, :kill)
+        receive do: ({:DOWN, ^monitor, :process, ^pid, _} -> :ok)
+      end
+    end
+
     Peer.finish(task)
   end
 
@@ -1727,6 +1780,25 @@ defmodule RequestSeal.ClientAdaptersTest do
     assert_receive :observed_response
     assert_receive {:wire_request, _, {:ok, _}}, 5_000
     Peer.finish(task)
+  end
+
+  # Trace the call's complete descendant tree rather than unrelated VM work.
+  # The child's spawned event precedes its sensitivity flag even when a
+  # sensitive parent suppresses its own spawn event. Keep socket and wire
+  # assertions independent of this tree.
+  defp call_workers(delivered, workers, at \\ System.monotonic_time(:millisecond) + 5_000) do
+    left = at - System.monotonic_time(:millisecond)
+    if left <= 0, do: flunk("call process trace did not reach its delivery barrier")
+
+    receive do
+      {:trace, _, :spawn, pid, _} -> call_workers(delivered, MapSet.put(workers, pid), at)
+      {:trace, pid, :spawned, _, _} -> call_workers(delivered, MapSet.put(workers, pid), at)
+      {:trace, _, _, _} -> call_workers(delivered, workers, at)
+      {:trace, _, _, _, _} -> call_workers(delivered, workers, at)
+      {:trace_delivered, :all, ^delivered} -> workers
+    after
+      left -> flunk("call process trace did not reach its delivery barrier")
+    end
   end
 
   defp client_socket_count(port) do

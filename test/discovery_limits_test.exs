@@ -467,7 +467,7 @@ defmodule RequestSeal.DiscoveryLimitsTest do
 
   test "Age is corrected by the response delay (RFC 9111 Section 4.2.3)" do
     now = System.system_time(:second)
-    {:ok, clock} = Agent.start_link(fn -> now end)
+    clock = start_supervised!(Supervisor.child_spec({Agent, fn -> now end}, id: make_ref()))
 
     # The peer advances the clock while it serves the request, so every read
     # before the request sees `now` and every read after the response sees now + 30.

@@ -153,6 +153,7 @@ defmodule RequestSeal.JWEOpenBoundsTest do
     for token <- [whitespace <> "{}", whitespace <> "[....]", whitespace] do
       reason =
         if token == whitespace, do: :invalid_serialization, else: :unsupported_serialization
+
       assert {:error, %{reason: ^reason}} = Codec.split(token)
     end
 
@@ -185,7 +186,9 @@ defmodule RequestSeal.JWEOpenBoundsTest do
     assert byte_size(token) == 1_048_576
     assert {:ok, [first, "b", "c", "d", "e"]} = Codec.split(token)
     assert byte_size(first) == 1_048_568
-    assert :binary.referenced_byte_size(first) == byte_size(token)
+    # Concatenation can leave spare capacity in the token's writable binary.
+    # A retained part references that allocation, not just the logical bytes.
+    assert :binary.referenced_byte_size(first) == :binary.referenced_byte_size(token)
     assert {:error, %{reason: :limit}} = Codec.split(token <> ".")
   end
 
@@ -341,6 +344,20 @@ defmodule RequestSeal.JWEOpenBoundsTest do
     for us <- [-1_001, -1_000, -999, -1, 0, 1, 999, 1_000, 1_001] do
       assert Bounds.milliseconds(us) * 1_000 >= us, "absolute timers must round up"
       assert Bounds.milliseconds(us) * 1_000 < us + 1_000
+    end
+  end
+
+  test "caller wake reserves scheduling time inside the unchanged wait bound" do
+    assert Bounds.teardown(0) == 20_000
+    assert Bounds.teardown(10_000) == 170_000
+
+    for f <- [-1_000_001, -1_001, -1, 0, 1, 1_001], n <- [0, 1, 1_000, 10_000] do
+      at = Bounds.caller_wait(f, n)
+      wake = Bounds.milliseconds(at) * 1_000
+      assert at == f + Bounds.teardown(n) - 10_000
+      assert wake >= at
+      assert f + Bounds.teardown(n) - wake > 9_000
+      assert at > f
     end
   end
 

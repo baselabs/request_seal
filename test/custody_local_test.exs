@@ -4,6 +4,8 @@ defmodule RequestSeal.CustodyLocalTest do
   require Logger
   alias RequestSeal.{Crypto, Custody, KeyIdentity, PublicKey}
   alias RequestSeal.Custody.Local
+  alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
+  @after_compile Runtime
 
   @root Path.join(__DIR__, "fixtures/crypto")
   @vectors :json.decode(File.read!(Path.join(@root, "rfc9421.json")))
@@ -618,68 +620,72 @@ defmodule RequestSeal.CustodyLocalTest do
   @tag :holder
   @tag :holder_lifecycle
   test "a live creator releases every holder and returns the process count to baseline" do
-    parent = self()
-    key = material("hmac")
-    count = 256
+    Runtime.with_peer(fn ->
+      parent = self()
+      key = material("hmac")
+      count = 256
 
-    creator =
-      spawn(fn ->
-        send(parent, {:creator_ready, self()})
+      creator =
+        spawn(fn ->
+          send(parent, {:creator_ready, self()})
 
-        receive do
-          :create -> :ok
-        end
-
-        handles =
-          for _ <- 1..count do
-            {:ok, handle} = Local.new("hmac-sha256", key)
-            handle
+          receive do
+            :create -> :ok
           end
 
-        send(parent, {:holders_created, Enum.map(handles, &holder/1)})
+          handles =
+            for _ <- 1..count do
+              {:ok, handle} = Local.new("hmac-sha256", key)
+              handle
+            end
 
-        receive do
-          :release -> :ok
-        end
+          send(parent, {:holders_created, Enum.map(handles, &holder/1)})
 
-        for handle <- handles, do: :ok = Local.release(handle)
-        send(parent, :holders_released)
+          receive do
+            :release -> :ok
+          end
 
-        receive do
-          :stop -> :ok
-        end
-      end)
+          for handle <- handles, do: :ok = Local.release(handle)
+          send(parent, :holders_released)
 
-    try do
-      assert_receive {:creator_ready, ^creator}, 1_000
-      baseline = MapSet.new(Process.list())
-      send(creator, :create)
-      assert_receive {:holders_created, holders}, 5_000
-      holder_set = MapSet.new(holders)
-      assert MapSet.size(holder_set) == count
-      assert Enum.all?(holders, &Process.alive?/1)
-      active = MapSet.new(Process.list())
-      assert MapSet.difference(active, baseline) == holder_set
-      assert MapSet.size(active) == MapSet.size(baseline) + count
-      monitors = Enum.map(holders, &Process.monitor/1)
-      send(creator, :release)
-      assert_receive :holders_released, 5_000
+          receive do
+            :stop -> :ok
+          end
+        end)
 
-      for {pid, monitor} <- Enum.zip(holders, monitors),
-          do: assert_receive({:DOWN, ^monitor, :process, ^pid, :normal}, 1_000)
+      try do
+        assert_receive {:creator_ready, ^creator}, 1_000
+        baseline = MapSet.new(Process.list())
+        send(creator, :create)
+        assert_receive {:holders_created, holders}, 5_000
+        holder_set = MapSet.new(holders)
+        assert MapSet.size(holder_set) == count
+        assert Enum.all?(holders, &Process.alive?/1)
+        active = MapSet.new(Process.list())
+        assert MapSet.difference(active, baseline) == holder_set
+        assert MapSet.size(active) == MapSet.size(baseline) + count
+        monitors = Enum.map(holders, &Process.monitor/1)
+        send(creator, :release)
+        assert_receive :holders_released, 5_000
 
-      assert Process.alive?(creator)
-      released = MapSet.new(Process.list())
-      assert MapSet.disjoint?(released, holder_set)
-      assert released == baseline
+        for {pid, monitor} <- Enum.zip(holders, monitors),
+            do: assert_receive({:DOWN, ^monitor, :process, ^pid, :normal}, 1_000)
 
-      IO.puts(
-        "LIFECYCLE: processes #{MapSet.size(baseline)} -> #{MapSet.size(active)} -> " <>
-          "#{MapSet.size(released)}; holders #{count} -> 0; creator alive"
-      )
-    after
-      Process.exit(creator, :kill)
-    end
+        assert Process.alive?(creator)
+        released = MapSet.new(Process.list())
+        assert MapSet.disjoint?(released, holder_set)
+        assert released == baseline
+
+        IO.puts(
+          "LIFECYCLE: processes #{MapSet.size(baseline)} -> #{MapSet.size(active)} -> " <>
+            "#{MapSet.size(released)}; holders #{count} -> 0; creator alive"
+        )
+      after
+        monitor = Process.monitor(creator)
+        Process.exit(creator, :kill)
+        receive do: ({:DOWN, ^monitor, :process, ^creator, _} -> :ok)
+      end
+    end)
   end
 
   @tag :holder
@@ -775,75 +781,79 @@ defmodule RequestSeal.CustodyLocalTest do
   defp reachable_functions(_), do: []
 
   test "owner monitoring precedes the linked runner and caller death leaves no custody processes" do
-    assert {:ok, handle} = Local.new("ed25519", material("ed25519"))
-    test_pid = self()
-    original = handle.ref
+    Runtime.with_peer(fn ->
+      assert {:ok, handle} = Local.new("ed25519", material("ed25519"))
+      test_pid = self()
+      original = handle.ref
 
-    delayed = %{
-      handle
-      | ref: fn ->
-          Process.flag(:trap_exit, true)
-          send(test_pid, {:blocked_runner, self()})
+      delayed = %{
+        handle
+        | ref: fn ->
+            Process.flag(:trap_exit, true)
+            send(test_pid, {:blocked_runner, self()})
 
-          receive do
-            :continue -> original.()
+            receive do
+              :continue -> original.()
+            end
+          end
+      }
+
+      before = MapSet.new(Process.list())
+      caller = spawn(fn -> Custody.sign(delayed, "sample", timeout: 5_000) end)
+      caller_ref = Process.monitor(caller)
+
+      try do
+        assert_receive {:blocked_runner, runner}, 1_000
+        runner_ref = Process.monitor(runner)
+        {:monitored_by, observers} = Process.info(caller, :monitored_by)
+        # Exclude this test's own monitor when identifying the cancellation process.
+        cancellation_monitors = observers -- [self()]
+        assert length(cancellation_monitors) == 1
+        [middle] = cancellation_monitors
+        assert {:links, [^middle]} = Process.info(runner, :links)
+
+        for pid <- [middle, runner] do
+          assert :erlang.suspend_process(pid)
+
+          try do
+            send(pid, {:sensitivity_probe, make_ref()})
+            assert Process.info(pid, :messages) == {:messages, []}
+          after
+            :erlang.resume_process(pid)
           end
         end
-    }
 
-    before = MapSet.new(Process.list())
-    caller = spawn(fn -> Custody.sign(delayed, "sample", timeout: 5_000) end)
-    caller_ref = Process.monitor(caller)
+        assert {:trap_exit, true} = Process.info(middle, :trap_exit)
+        assert {:monitors, monitors} = Process.info(middle, :monitors)
+        assert {:process, caller} in monitors
+        assert {:links, links} = Process.info(caller, :links)
+        refute middle in links
+        refute runner in links
 
-    try do
-      assert_receive {:blocked_runner, runner}, 1_000
-      runner_ref = Process.monitor(runner)
-      {:monitored_by, observers} = Process.info(caller, :monitored_by)
-      # Exclude this test's own monitor when identifying the cancellation process.
-      cancellation_monitors = observers -- [self()]
-      assert length(cancellation_monitors) == 1
-      [middle] = cancellation_monitors
-      assert {:links, [^middle]} = Process.info(runner, :links)
+        custody_processes = MapSet.new([caller, middle, runner])
+        assert MapSet.disjoint?(before, custody_processes)
+        active = MapSet.new(Process.list())
+        assert MapSet.difference(active, before) == custody_processes
+        assert MapSet.size(MapSet.intersection(active, custody_processes)) == 3
+        middle_ref = Process.monitor(middle)
+        Process.exit(caller, :kill)
+        assert_receive {:DOWN, ^caller_ref, :process, ^caller, :killed}, 1_000
+        assert_receive {:DOWN, ^runner_ref, :process, ^runner, :killed}, 1_000
+        assert_receive {:DOWN, ^middle_ref, :process, ^middle, _}, 1_000
+        after_death = MapSet.new(Process.list())
+        assert MapSet.size(MapSet.intersection(after_death, custody_processes)) == 0
+        assert MapSet.size(MapSet.difference(after_death, before)) == 0
 
-      for pid <- [middle, runner] do
-        assert :erlang.suspend_process(pid)
-
-        try do
-          send(pid, {:sensitivity_probe, make_ref()})
-          assert Process.info(pid, :messages) == {:messages, []}
-        after
-          :erlang.resume_process(pid)
-        end
+        IO.puts(
+          "OWNER DEATH: processes #{MapSet.size(before)} -> #{MapSet.size(active)} -> " <>
+            "#{MapSet.size(after_death)}; custody 3 -> 0"
+        )
+      after
+        monitor = Process.monitor(caller)
+        Process.exit(caller, :kill)
+        receive do: ({:DOWN, ^monitor, :process, ^caller, _} -> :ok)
       end
-
-      assert {:trap_exit, true} = Process.info(middle, :trap_exit)
-      assert {:monitors, monitors} = Process.info(middle, :monitors)
-      assert {:process, caller} in monitors
-      assert {:links, links} = Process.info(caller, :links)
-      refute middle in links
-      refute runner in links
-
-      custody_processes = MapSet.new([caller, middle, runner])
-      assert MapSet.disjoint?(before, custody_processes)
-      active = MapSet.new(Process.list())
-      assert MapSet.difference(active, before) == custody_processes
-      assert MapSet.size(MapSet.intersection(active, custody_processes)) == 3
-      middle_ref = Process.monitor(middle)
-      Process.exit(caller, :kill)
-      assert_receive {:DOWN, ^caller_ref, :process, ^caller, :killed}, 1_000
-      assert_receive {:DOWN, ^runner_ref, :process, ^runner, :killed}, 1_000
-      assert_receive {:DOWN, ^middle_ref, :process, ^middle, _}, 1_000
-      after_death = MapSet.new(Process.list())
-      assert MapSet.size(MapSet.intersection(after_death, custody_processes)) == 0
-      assert MapSet.size(MapSet.difference(after_death, before)) == 0
-
-      IO.puts(
-        "OWNER DEATH: processes #{MapSet.size(before)} -> #{MapSet.size(active)} -> " <>
-          "#{MapSet.size(after_death)}; custody 3 -> 0"
-      )
-    after
-      Process.exit(caller, :kill)
-    end
+    end)
   end
 
   test "real encrypted PEMs PKCS8 containers and malformed imports retain their boundaries" do
@@ -1100,11 +1110,10 @@ defmodule RequestSeal.CustodyLocalTest do
         end
       end)
 
-    {:module, ^module} = Code.ensure_loaded(module)
-    1 = :erlang.trace_pattern({module, function, arity}, true, [])
-    :erlang.trace(task.pid, true, [:call, :arity])
-
     try do
+      {:module, ^module} = Code.ensure_loaded(module)
+      1 = :erlang.trace_pattern({module, function, arity}, true, [])
+      :erlang.trace(task.pid, true, [:call, :arity])
       send(task.pid, :run)
       Task.await(task, 1_000)
       Process.sleep(20)
@@ -1123,12 +1132,17 @@ defmodule RequestSeal.CustodyLocalTest do
           end
         end)
 
-      :erlang.trace(positive.pid, true, [:call, :arity])
-      send(positive.pid, :probe)
-      Task.await(positive, 1_000)
-      assert_receive {:trace, _, :call, {^module, ^function, ^arity}}, 1_000
+      try do
+        :erlang.trace(positive.pid, true, [:call, :arity])
+        send(positive.pid, :probe)
+        Task.await(positive, 1_000)
+        assert_receive {:trace, _, :call, {^module, ^function, ^arity}}, 1_000
+      after
+        Task.shutdown(positive, :brutal_kill)
+      end
     after
       :erlang.trace_pattern({module, function, arity}, false, [])
+      Task.shutdown(task, :brutal_kill)
     end
   end
 

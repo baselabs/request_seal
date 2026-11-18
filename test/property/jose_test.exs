@@ -187,7 +187,11 @@ defmodule RequestSeal.JOSEPropertyTest do
           end
         end)
 
-      on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+      on_exit(fn ->
+        monitor = Process.monitor(pid)
+        Process.exit(pid, :kill)
+        receive do: ({:DOWN, ^monitor, :process, ^pid, _} -> :ok)
+      end)
       :erlang.trace(pid, true, [:call, {:tracer, self()}])
       send(pid, :go)
       assert_receive {:result, ^pid, ^expected}, 1_000
@@ -198,7 +202,9 @@ defmodule RequestSeal.JOSEPropertyTest do
         do: assert_received({:trace, ^pid, :call, {Support, :segments, _}, :split}),
         else: refute_received({:trace, ^pid, :call, {Support, :segments, _}, :split})
 
+      monitor = Process.monitor(pid)
       send(pid, :stop)
+      assert_receive {:DOWN, ^monitor, :process, ^pid, :normal}, 1_000
     end
   end
 

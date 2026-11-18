@@ -159,10 +159,14 @@ if Code.ensure_loaded?(AshHooks.Provider) do
         :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}, reuseaddr: true])
 
       {:ok, {_, port}} = :inet.sockname(listener)
-      ExUnit.Callbacks.on_exit(fn -> :gen_tcp.close(listener) end)
+
+      supervisor =
+        ExUnit.Callbacks.start_supervised!(
+          Supervisor.child_spec({Task.Supervisor, []}, id: make_ref())
+        )
 
       task =
-        Task.async(fn ->
+        Task.Supervisor.async_nolink(supervisor, fn ->
           {:ok, incoming} = :gen_tcp.accept(listener, 5_000)
 
           {:ok, outgoing} =
@@ -184,6 +188,8 @@ if Code.ensure_loaded?(AshHooks.Provider) do
             :gen_tcp.close(listener)
           end
         end)
+
+      ExUnit.Callbacks.on_exit(fn -> :gen_tcp.close(listener) end)
 
       {"http://localhost:#{port}/events?account=one", task}
     end

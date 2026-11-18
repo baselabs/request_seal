@@ -52,12 +52,15 @@ The caller stamps wait-end by F + B(n), before cleanup and telemetry handlers.
 The accepted cardinality is published once in a second atomics cell; before
 acceptance n = 0. The guard reads it once at the owner flip. Between a cause and
 that flip it uses B(10,000). Absolute timers and receive waits round upward to
-milliseconds from internal monotonic microseconds. The caller reserves one
-millisecond of receive rounding inside F + B(n), so its wait-end stamp remains
-inside that upper bound.
-The caller arms that wakeup as an absolute timer and cancels it when its wait
-ends. The coordinator also arms R, U and D wakeups, and the guard arms its stop
-deadline: descheduling between a clock read and a receive cannot start a fresh
+milliseconds from internal monotonic microseconds. Every caller wait phase
+(notice intake, bootstrap, cancellation and result intake) wakes 10 ms inside
+F + B(n). Upward rounding consumes less than 1 ms, leaving over 9 ms for timer
+delivery, scheduling and the wait-end stamp under the release gate's reference
+conditions. The public bound, accepted cardinality and K_pf remain unchanged.
+The caller arms each wakeup as an absolute timer and cancels it when that phase
+ends. Cancellation rechecks the accepted cardinality when waking, as result
+intake does. The coordinator also arms R, U and D wakeups, and the guard arms
+its stop deadline: descheduling between a clock read and a receive cannot start a fresh
 relative wait beyond the absolute deadline.
 The guard arms the temporary cancellation limit once as well, so it need not
 convert the remaining timeout again for every child notice.
@@ -155,6 +158,12 @@ After collecting, the gate judges the maximum end timestamp minus the original
 anchor against the unchanged B. It retains every sample, placement, missing or
 live role, late role and assertion failure before writing its final verdict.
 A capped, incomplete lifecycle fails even if its observed timestamps fit B.
+The linear-teardown reduction oracle reports an unfinished guard at the hang
+cap as a teardown failure before asking for its finish reduction endpoint.
+An incomplete coordinator pass likewise fails its linear-work assertion at its
+existing hang cap. Placement collectors check one absolute deadline before
+every dequeue, so queued traces cannot extend a cap. A capped trigger does not
+enter a trace barrier while the incomplete producer is still running.
 The caller stamps its own return immediately after the public call. The public
 bound applies to wait-end by F + B, before cleanup and telemetry handlers; the
 handler-free blocked-resolver peer checks both that marker and its return stamp.
@@ -189,6 +198,14 @@ the ended-state check clause remains necessary for the coordinator EXIT path.
 Load and steal share 30 host-condition attempts; invalid placements have 20
 attempts. Exhausting either budget fails and reports the observed attempts.
 These are verification obligations, not one-run performance claims.
+
+Whole-VM custody lifecycle assertions run in isolated peers and retain exact
+process-set equality. HTTP caller-death checks trace every descendant of the
+call while independently checking sockets and late wire requests. TLS test
+publishers supervise the acceptor and each connection handler together; test
+Agents and relays have test-supervisor lifetimes. Tracer and worker shutdowns
+join process death, and failed JWE runtime placement destroys its trace session
+and joins its processes through the same cleanup as a completed placement.
 
 ## Consequences
 

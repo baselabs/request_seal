@@ -1,10 +1,17 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -82,6 +82,6 @@
-       Bounds.remaining(at) ->
-         if Bounds.now() < at,
-           do: take_notice(s, input, p, expected),
--          else: expire_notice(s.guard, s.tag)
-+          else: Codec.error(:deadline_exceeded, :crypto)
-     end
-   end
+@@ -86,12 +86,12 @@
+         {^tag, :wait_bound} ->
+           if Bounds.now() < at,
+             do: take_notice(s, input, p, expected),
+-            else: expire_notice(s.guard, s.tag)
++            else: Codec.error(:deadline_exceeded, :crypto)
+       after
+         Bounds.remaining(at) ->
+           if Bounds.now() < at,
+             do: take_notice(s, input, p, expected),
+-            else: expire_notice(s.guard, s.tag)
++            else: Codec.error(:deadline_exceeded, :crypto)
+       end
+     after
+       :erlang.cancel_timer(timer)

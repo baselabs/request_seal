@@ -10,6 +10,7 @@ defmodule RequestSeal.JOSE.JWE.Bounds do
   @per_item_teardown_us 15
   @preflight_us 5_000
   @finalization_us 100_000
+  @caller_reserve_us 10_000
 
   def item_words, do: @item_words
   def policy_words, do: @policy_words
@@ -20,6 +21,7 @@ defmodule RequestSeal.JOSE.JWE.Bounds do
   def teardown(n), do: @base_teardown_us + @per_item_teardown_us * n
   def preflight, do: @preflight_us
   def finalization, do: @finalization_us
+  def caller_wait(f, n), do: f + teardown(n) - @caller_reserve_us
   def before?(now, deadline), do: now < deadline
   def now, do: :erlang.monotonic_time(:microsecond)
 

@@ -12,8 +12,13 @@ defmodule RequestSeal.DiscoveryDNSTest do
   test "vetted tuple connects and both-family DNS changes fail closed" do
     owner = self()
 
-    {:ok, records} =
-      Agent.start_link(fn -> %{a: {127, 0, 0, 1}, aaaa: {0, 0, 0, 0, 0, 0, 0, 1}} end)
+    records =
+      start_supervised!(
+        Supervisor.child_spec(
+          {Agent, fn -> %{a: {127, 0, 0, 1}, aaaa: {0, 0, 0, 0, 0, 0, 0, 1}} end},
+          id: make_ref()
+        )
+      )
 
     {:ok, udp} = :gen_udp.open(0, [:binary, active: false, ip: {127, 0, 0, 1}])
     {:ok, {_, port}} = :inet.sockname(udp)
@@ -21,8 +26,10 @@ defmodule RequestSeal.DiscoveryDNSTest do
     :ok = :gen_udp.controlling_process(udp, dns)
 
     on_exit(fn ->
-      :gen_udp.close(udp)
+      monitor = Process.monitor(dns)
       Process.exit(dns, :kill)
+      receive do: ({:DOWN, ^monitor, :process, ^dns, _} -> :ok)
+      :gen_udp.close(udp)
     end)
 
     :ok = :inet_db.set_resolv_conf(~c"")

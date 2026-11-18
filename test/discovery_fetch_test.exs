@@ -38,6 +38,35 @@ defmodule RequestSeal.DiscoveryFetchTest do
     refute inspect(error) =~ "canary"
   end
 
+  test "stopping a publisher joins its acceptor and every accepted handler" do
+    owner = self()
+
+    p =
+      peer(fn _, _ ->
+        send(owner, {:blocked_handler, self()})
+        receive do: (:release -> :ok)
+      end)
+
+    task =
+      Task.async(fn ->
+        Discovery.fetch(source(p, %{require_signed_directory: false}), [])
+      end)
+
+    try do
+      assert_receive {:blocked_handler, handler}, 5_000
+      acceptor_ref = Process.monitor(p.pid)
+      handler_ref = Process.monitor(handler)
+      assert Process.alive?(p.pid)
+      assert Process.alive?(handler)
+      assert :ok = Peer.stop(p)
+      assert_receive {:DOWN, ^acceptor_ref, :process, _, _}, 5_000
+      assert_receive {:DOWN, ^handler_ref, :process, ^handler, _}, 5_000
+      assert {:error, _} = Task.await(task, 5_000)
+    after
+      Task.shutdown(task, :brutal_kill)
+    end
+  end
+
   # A JWKS set legitimately carries keys for algorithms this library does not
   # verify with (encryption keys, unsupported signing names): those keys are
   # skipped, and the rest of the set still resolves.
@@ -674,7 +703,9 @@ defmodule RequestSeal.DiscoveryFetchTest do
     assert_receive {:connected, _}, 1_000
     # Drain the first connection notification before waiting for the second.
     assert_receive {:connected, _}, 1_000
+    monitor = Process.monitor(caller)
     Process.exit(caller, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^caller, :killed}, 1_000
     assert_receive {:closed, {:error, :closed}}, 1_000
   end
 end

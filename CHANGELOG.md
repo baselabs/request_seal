@@ -2,6 +2,11 @@
 
 ## Unreleased 2.0.0
 
+- Reserve 10 ms inside the unchanged JWE caller wait bound for upward timer
+  rounding and scheduling in every wait phase. Report incomplete guard and
+  coordinator work at collection caps as linear-teardown failures. Isolate
+  whole-VM custody counts and join test publishers, handlers and tracers at
+  teardown, including failed runtime placements.
 - Measure JWE teardown using VM exit timestamps and conservative VM monitor-delivery
   timestamps for sensitive children. Separate the collection hang cap from the
   unchanged runtime bounds, retain every timed sample with placement and lifecycle
