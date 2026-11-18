@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -655,7 +655,7 @@
+@@ -747,7 +747,7 @@
          drain_preflight(%{s | preflight_final: true}, at)
 
        {:EXIT, ^pid, _} ->

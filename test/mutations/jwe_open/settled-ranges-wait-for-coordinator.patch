@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/worker.ex
 +++ b/lib/request_seal/jose/jwe/worker.ex
-@@ -88,3 +88,3 @@
+@@ -89,3 +89,3 @@
 -    if map_size(map_get(:positions, s)) > 0 and Bounds.now() < map_get(:d, s) do
 +    if Bounds.now() < map_get(:d, s) do
        receive do

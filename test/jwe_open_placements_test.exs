@@ -160,7 +160,7 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
   defp ended(s, target) do
     Runtime.collect_event(s, fn
       {:end, pid, _, _} -> pid == target
-      {:DOWN, _, :process, pid, _} -> pid == target
+      {:end_observed, _, pid, _, _, _} -> pid == target
       _ -> false
     end)
   end

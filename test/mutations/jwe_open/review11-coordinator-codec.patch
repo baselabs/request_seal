@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -135,6 +135,7 @@
+@@ -159,6 +159,7 @@
    end
 
    defp loop(s) do

@@ -339,8 +339,12 @@ defmodule RequestSeal.JOSE.JWE.Worker do
   defp expire(s) do
     if Bounds.now() >= map_get(:u, s) do
       expire_routes(:maps.to_list(map_get(:routes, s)))
-      positions = expire_positions(:maps.to_list(map_get(:positions, s)), s, [])
-      %{s | groups: %{}, positions: :maps.from_list(positions), routes: %{}, u: nil}
+      rows = :maps.to_list(map_get(:positions, s))
+      # Authentication needs the rows and policy, not the revoked group/route
+      # maps or the original position HAMT. Do not keep them live across AEAD.
+      s = %{s | groups: %{}, positions: %{}, routes: %{}, u: nil}
+      positions = expire_positions(rows, s, [])
+      %{s | positions: :maps.from_list(positions)}
     else
       s
     end

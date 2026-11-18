@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/bounds.ex
 +++ b/lib/request_seal/jose/jwe/bounds.ex
-@@ -35,7 +35,6 @@
+@@ -37,7 +37,6 @@
      end
    end
 

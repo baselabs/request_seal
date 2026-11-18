@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -472,5 +472,13 @@
+@@ -479,5 +479,13 @@
    def expiry(:d, _phase), do: {:deadline_exceeded, :crypto, nil}
 
    defp expire_r(s) do

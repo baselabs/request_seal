@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/bounds.ex
 +++ b/lib/request_seal/jose/jwe/bounds.ex
-@@ -24,6 +24,6 @@
+@@ -26,6 +26,6 @@
    def now, do: :erlang.monotonic_time(:microsecond)
 
    # Monotonic time may be negative. Integer ceil must work on both sides of zero.

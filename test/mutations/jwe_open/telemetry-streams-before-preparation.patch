@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -357,6 +357,10 @@
+@@ -424,6 +424,10 @@
    defp emit(s, answer) do
      # Prepare every measurement before publishing any event. Telemetry itself
      # isolates and detaches raising handlers, as on the other library paths.

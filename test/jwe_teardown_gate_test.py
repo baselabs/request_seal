@@ -38,7 +38,10 @@ class JWETeardownGateTest(unittest.TestCase):
                               "preflight_exit_us": [200] * 5, "headroom": 1,
                               "placements": ["verified placement"] * 5,
                               "diagnostics": [{"remaining": 0, "missing_end_roles": [],
-                                               "live_roles": [], "failures": []} for _ in range(5)],
+                                               "live_roles": [], "failures": [],
+                                               "birth_roles": {"guard": 1},
+                                               "receiver_ends": [{"role": "guard", "count": 1}]}
+                                              for _ in range(5)],
                               "host_conditions": [[self.observation(online=online, offset=i * 1000)] for i in range(5)]})
         return {"scenarios": scenarios, "final_report_observer_queue": "off_heap",
                 "host_brackets": {
@@ -139,6 +142,33 @@ class JWETeardownGateTest(unittest.TestCase):
         report = self.report()
         report["constants"]["collection_cap_us"] += 1
         self.assertFalse(GATE.passes(report))
+
+    def test_dedicated_end_receiver_must_cover_the_birth_inventory_exactly(self):
+        report = self.report()
+        diagnostic = report["scenarios"][0]["diagnostics"][0]
+        diagnostic["birth_roles"] = {"guard": 1, "coordinator": 1, "preflight": 1,
+                                     "worker": 4, "resolver": 10000, "custody": 10000}
+        diagnostic["receiver_ends"] = [{"role": role, "count": count}
+                                       for role, count in diagnostic["birth_roles"].items()]
+        self.assertTrue(GATE.passes(report))
+        for kind in ("missing_role", "missing_process", "extra_role", "duplicate_role",
+                     "missing_inventory", "missing_receipts"):
+            changed = copy.deepcopy(report)
+            ends = changed["scenarios"][0]["diagnostics"][0]["receiver_ends"]
+            if kind == "missing_role":
+                ends.pop()
+            elif kind == "missing_process":
+                ends[-1]["count"] -= 1
+            elif kind == "extra_role":
+                ends.append({"role": "other", "count": 1})
+            elif kind == "duplicate_role":
+                ends.append(copy.deepcopy(ends[-1]))
+            elif kind == "missing_inventory":
+                del changed["scenarios"][0]["diagnostics"][0]["birth_roles"]
+            else:
+                del changed["scenarios"][0]["diagnostics"][0]["receiver_ends"]
+            with self.subTest(kind=kind):
+                self.assertFalse(GATE.passes(changed))
 
     def test_steal_rejection_retries_and_never_admits_rejected_measurement(self):
         rejected, accepted = self.observation(steal=6), self.observation(steal=5, offset=100)

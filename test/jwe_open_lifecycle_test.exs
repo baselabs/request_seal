@@ -577,6 +577,57 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
     end)
   end
 
+  test "a normally completed range does not scan other custody groups" do
+    Runtime.with_peer(
+      fn ->
+        s =
+          Runtime.start(32, :custody,
+            policy: %{timeout: 5_000, resolve_timeout: 3_000, unwrap_timeout: 1_000}
+          )
+
+        try do
+          worker = Enum.find_value(s.pids, fn {pid, role} -> if role == :worker, do: pid end)
+
+          owned =
+            for {:trace_ts, _, :send, {_, :member, _, _, pid, _, _}, ^worker, _} <- s.messages,
+                do: pid
+
+          assert length(owned) == 16
+          assert length(Enum.uniq(owned)) == 16
+
+          :erlang.trace_pattern({Coordinator, :worker_down, 3}, true, [:local, :call_count])
+          :erlang.trace_pattern({Coordinator, :dead_groups, 3}, true, [:local, :call_count])
+          Enum.each(owned, &send(&1, :continue))
+
+          Runtime.await(fn ->
+            handled = :erlang.trace_info({Coordinator, :worker_down, 3}, :call_count)
+
+            handled == {:call_count, 1} and
+              Runtime.info(s.coordinator, :current_function) == {Coordinator, :receive_one, 1}
+          end)
+
+          assert not Process.alive?(worker)
+          assert Process.alive?(s.coordinator), "another range must still have unfinished work"
+
+          assert :erlang.trace_info({Coordinator, :dead_groups, 3}, :call_count) ==
+                   {:call_count, 0},
+                 "a normal range end must not scan every custody group"
+
+          result = Runtime.collect_return(s) |> Runtime.delivered()
+          assert {:ok, results} = result.return
+          assert Enum.count(results, &match?({:ok, %{plaintext: "payload"}}, &1)) == 16
+
+          assert Enum.count(results, &match?({:error, %{reason: :decryption_failed}}, &1)) == 16
+        after
+          :erlang.trace_pattern({Coordinator, :worker_down, 3}, false, [:local, :call_count])
+          :erlang.trace_pattern({Coordinator, :dead_groups, 3}, false, [:local, :call_count])
+          Runtime.cleanup(s)
+        end
+      end,
+      2
+    )
+  end
+
   test "U notifies each range once while retaining every group outcome" do
     Runtime.with_peer(fn ->
       n = 32

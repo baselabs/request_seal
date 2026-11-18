@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -127,6 +127,7 @@
+@@ -151,6 +151,7 @@
      :ets.insert(map_get(:registry, s), {slot, pid, role})
 
      if role == :caller do

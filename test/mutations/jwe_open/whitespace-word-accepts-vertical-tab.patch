@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/codec.ex
 +++ b/lib/request_seal/jose/jwe/codec.ex
-@@ -279,4 +279,4 @@
+@@ -278,4 +278,4 @@
         when a in [32, 9, 10, 13] and b in [32, 9, 10, 13] and c in [32, 9, 10, 13] and
                d in [32, 9, 10, 13] and e in [32, 9, 10, 13] and f in [32, 9, 10, 13] and
 -              g in [32, 9, 10, 13] and h in [32, 9, 10, 13] do

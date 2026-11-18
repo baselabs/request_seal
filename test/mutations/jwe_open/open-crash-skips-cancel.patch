@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -117,7 +117,6 @@
+@@ -130,7 +130,6 @@
          Codec.error(reason, layer)
 
        _, _ ->

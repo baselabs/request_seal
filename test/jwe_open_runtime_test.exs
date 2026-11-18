@@ -10,6 +10,10 @@ defmodule RequestSeal.JWEOpenRuntimeTest do
 
       try do
         s = Runtime.delivered(s)
+        {:messages, caller_messages} = Process.info(s.caller, :messages)
+
+        refute Enum.any?(caller_messages, &match?({:custody_entry, _}, &1)),
+               "placement handshakes must not pollute the caller's selective receive"
 
         for {pids, role} <- [{s.resolvers, :resolver}, {s.custody, :custody}] do
           assert length(pids) == 8
@@ -52,6 +56,17 @@ defmodule RequestSeal.JWEOpenRuntimeTest do
         assert result.remaining == 0
         assert map_size(result.ends) == map_size(result.pids)
 
+        for {:end_observed, pid, at, dequeued_at, queue} <- result.events do
+          assert at < dequeue_at, "the dedicated receiver must stamp while the observer sleeps"
+          assert dequeued_at >= dequeue_at
+          assert dequeued_at >= at
+          assert is_integer(queue) and queue >= 0
+          assert Map.has_key?(result.pids, pid)
+        end
+
+        assert Enum.count(result.events, &match?({:end_observed, _, _, _, _}, &1)) ==
+                 map_size(result.pids)
+
         for {:end, pid, at, _} <- result.events do
           assert at < dequeue_at, "observer backlog must not become process lifetime"
           assert Map.has_key?(result.pids, pid)
@@ -88,6 +103,8 @@ defmodule RequestSeal.JWEOpenRuntimeTest do
       s = Runtime.start(1, :resolvers)
       tracer = s.end_tracer
       assert Process.alive?(tracer)
+      assert Process.info(tracer, :priority) == {:priority, :high}
+      assert Process.info(tracer, :message_queue_data) == {:message_queue_data, :off_heap}
       Runtime.cleanup(s)
       refute Process.alive?(tracer)
 

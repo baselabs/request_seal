@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -250,8 +250,12 @@
+@@ -271,8 +271,12 @@
    end
 
    defp cardinality(%{n: nil} = s, n, tc) when tc < map_get(:d, s) do

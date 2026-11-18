@@ -1,9 +1,9 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -674,9 +674,6 @@
+@@ -678,9 +678,6 @@
    defp dead_positions(i, hi, s, reason) do
      p = :maps.get(i, map_get(:positions, s))
- 
+
 -    if map_get(:result, p) == nil and map_get(:resolver, p) != nil,
 -      do: :erlang.exit(map_get(:resolver, p), :kill)
 -

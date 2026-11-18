@@ -11,10 +11,13 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     observer = self()
 
     {tracer, monitor} =
-      spawn_monitor(fn ->
-        owner = Process.monitor(observer)
-        forward_ends(observer, owner)
-      end)
+      :erlang.spawn_opt(
+        fn ->
+          owner = Process.monitor(observer)
+          forward_ends(observer, owner, %{})
+        end,
+        [:monitor, {:priority, :high}, {:message_queue_data, :off_heap}]
+      )
 
     session = :trace.session_create(:jwe_ends, tracer, [])
 
@@ -321,9 +324,9 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   end
 
   def trigger(s, trigger) do
-    stamp = Bounds.now()
     {before_vm, _} = :erlang.statistics(:exact_reductions)
     before_guard = info(s.guard, :reductions)
+    stamp = Bounds.now()
 
     case trigger do
       :caller -> Process.exit(s.caller, :kill)
@@ -364,22 +367,37 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     delivered(s) |> drain_observations()
   end
 
-  defp forward_ends(observer, owner) do
+  # This receiver does no lifecycle analysis and runs independently of the
+  # observer's birth/trace backlog. Its DOWN receipt is a conservative end
+  # upper bound even for sensitive children. Forwarding and analysis follow
+  # the stamp; neither can move the measured end later.
+  defp forward_ends(observer, owner, monitors) do
     receive do
-      {:trace_delivered, _, _} = event ->
-        send(observer, event)
-        forward_ends(observer, owner)
-
-      {:trace_ts, _, :receive, _, _} = event ->
-        send(observer, event)
-        forward_ends(observer, owner)
-
-      {:barrier, ^observer, ref} ->
-        send(observer, {:trace_delivered, :all, ref})
-        forward_ends(observer, owner)
+      {:watch, pid, token} ->
+        ref = Process.monitor(pid)
+        forward_ends(observer, owner, Map.put(monitors, ref, token))
 
       {:DOWN, ^owner, :process, ^observer, _} ->
         :ok
+
+      {:DOWN, ref, :process, pid, reason} ->
+        stamp = :erlang.monotonic_time()
+        {:message_queue_len, queue} = Process.info(self(), :message_queue_len)
+        {token, monitors} = :maps.take(ref, monitors)
+        send(observer, {:end_observed, token, pid, reason, stamp, queue})
+        forward_ends(observer, owner, monitors)
+
+      {:trace_delivered, _, _} = event ->
+        send(observer, event)
+        forward_ends(observer, owner, monitors)
+
+      {:trace_ts, _, :receive, _, _} = event ->
+        send(observer, event)
+        forward_ends(observer, owner, monitors)
+
+      {:barrier, ^observer, ref} ->
+        send(observer, {:trace_delivered, :all, ref})
+        forward_ends(observer, owner, monitors)
 
       :stop ->
         :ok
@@ -443,7 +461,6 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       end
     end
 
-    for {monitor, _} <- s.refs, do: Process.demonitor(monitor, [:flush])
     if ref != nil, do: Process.demonitor(ref, [:flush])
     stop_end_observer({s.end_session, s.end_tracer, s.end_monitor})
     Custody.release(s.handle)
@@ -559,7 +576,8 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     # Their parents emit these events even when the child immediately becomes
     # sensitive. Resolver/unwrap callbacks spawn no additional library workers;
     # the analyzer pins those entries and Custody.unwrap/4's direct dispatch.
-    ref = Process.monitor(pid)
+    ref = make_ref()
+    send(s.end_tracer, {:watch, pid, ref})
 
     role =
       case module do
@@ -630,14 +648,17 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     }
   end
 
-  # Sensitive children suppress exit traces. The VM timestamps their monitor
-  # delivery to this observer before it dequeues the DOWN. This is an exit
-  # upper bound, not a claim that the sensitive tracee emitted an exit event.
-  def observe(s, {:trace_ts, receiver, :receive, {:DOWN, ref, :process, pid, reason}, stamp})
-      when receiver == self() do
-    if Map.has_key?(s.refs, ref) and s.pids[pid] in [:preflight, :worker, :resolver, :custody],
-      do: record_end(s, pid, stamp, reason),
-      else: s
+  def observe(s, {:end_observed, ref, pid, reason, stamp, queue}) do
+    at = :erlang.convert_time_unit(stamp, :native, :microsecond)
+    event = {:end_observed, pid, at, Bounds.now(), queue}
+    s = %{s | events: [event | s.events]}
+
+    s =
+      if s.pids[pid] in [:preflight, :worker, :resolver, :custody],
+        do: record_end(s, pid, stamp, reason),
+        else: s
+
+    observe(s, {:DOWN, ref, :process, pid, reason})
   end
 
   def observe(s, {:trace_ts, pid, :exit, reason, stamp}) do
@@ -647,6 +668,10 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
 
       pid != s.caller and not Map.has_key?(s.pids, pid) ->
         %{s | early_exits: Map.put(s.early_exits, pid, {reason, stamp})}
+
+      pid == s.caller ->
+        at = :erlang.convert_time_unit(stamp, :native, :microsecond)
+        %{s | events: [{:caller_exit, at} | s.events]}
 
       true ->
         s
@@ -745,7 +770,6 @@ defmodule RequestSeal.Test.JWEOpenBlockingCustodian do
   def unwrap(ref, algorithm, items, sink, context) do
     # A real caller-selected custodian; no fake cryptographic result. The
     # test chooses whether its real Local unwrap starts before cancellation.
-    send(context.owner, {:custody_entry, self()})
     observer = :persistent_term.get({__MODULE__, :observer})
     send(observer, {:custody_entered, self()})
 

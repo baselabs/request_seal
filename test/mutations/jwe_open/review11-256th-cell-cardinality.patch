@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -249,7 +249,7 @@
+@@ -270,7 +270,7 @@
      end
    end
 

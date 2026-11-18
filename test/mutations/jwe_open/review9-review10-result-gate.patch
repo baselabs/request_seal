@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -401,7 +401,7 @@
+@@ -424,7 +424,7 @@
      {g, %{s | groups: :maps.put(g, group, map_get(:groups, s))}}
    end
 

@@ -9,7 +9,7 @@
            } = entry},
           expected
         )
-@@ -61,13 +61,13 @@
+@@ -58,13 +58,13 @@
        not Bounds.within?(handle, Bounds.handle_words(), Bounds.binary_bytes()) ->
          :key_resolver_failed
 

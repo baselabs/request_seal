@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/bounds.ex
 +++ b/lib/request_seal/jose/jwe/bounds.ex
-@@ -29,7 +29,7 @@
+@@ -31,7 +31,7 @@
    def remaining(at), do: max(0, milliseconds(at - now()))
 
    def within?(term, words, bytes \\ :infinity) do

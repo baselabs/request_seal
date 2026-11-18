@@ -6,9 +6,10 @@ most 5% over the sample window. Exhausted host-condition or placement budgets
 fail, never skip. Retain host identity, observations and absolute headroom.
 CPU counter windows span at least 20 ms; that observation delay is outside all
 timed units and does not alter the absolute runtime measurements.
-End markers use VM exit timestamps, or VM monitor-delivery upper bounds for
-sensitive children. Collection has a separate hang cap; all samples survive a
-bound violation, with placement and incomplete-lifecycle diagnostics.
+End markers use VM exit timestamps, or DOWN receipt upper bounds from a dedicated
+high-priority receiver for sensitive children. Collection has a separate hang cap;
+all samples survive a bound violation, with placement and incomplete-lifecycle
+diagnostics.
 """
 import argparse
 import json
@@ -184,9 +185,23 @@ def passes(report):
 
 
 def complete(diagnostic):
-    return (isinstance(diagnostic, dict) and diagnostic.get("remaining") == 0 and
+    if not (isinstance(diagnostic, dict) and diagnostic.get("remaining") == 0 and
             diagnostic.get("missing_end_roles") == [] and
-            diagnostic.get("live_roles") == [] and diagnostic.get("failures") == [])
+            diagnostic.get("live_roles") == [] and diagnostic.get("failures") == []):
+        return False
+    births, receipts = diagnostic.get("birth_roles"), diagnostic.get("receiver_ends")
+    if not isinstance(births, dict) or not births or not isinstance(receipts, list):
+        return False
+    observed = {}
+    for row in receipts:
+        if not isinstance(row, dict):
+            return False
+        role, count = row.get("role"), row.get("count")
+        if (not isinstance(role, str) or role in observed or
+                not isinstance(count, int) or isinstance(count, bool) or count <= 0):
+            return False
+        observed[role] = count
+    return observed == births
 
 
 def _passes(report):

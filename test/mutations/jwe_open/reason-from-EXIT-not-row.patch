@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -202,7 +202,7 @@
+@@ -271,7 +271,7 @@
 
    defp reason(s) do
      case :ets.lookup(map_get(:registry, s), :outcome) do

@@ -662,7 +662,11 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
         {^pid, lo, hi, _} = :maps.get(w, map_get(:workers, s))
         s = %{s | workers: :maps.put(w, {pid, lo, hi, false}, map_get(:workers, s))}
         s = dead_positions(lo, hi, s, reason)
-        dead_groups(:maps.to_list(map_get(:groups, s)), w, s)
+
+        # Normal completion follows the range's last result send. Its earlier
+        # contributions are already sent, or U/D has revoked them. Only an
+        # unexpected exit can leave a custodian waiting for this contributor.
+        if reason == :normal, do: s, else: dead_groups(:maps.to_list(map_get(:groups, s)), w, s)
 
       :error ->
         s
@@ -791,8 +795,10 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
 
   defp reply(s, outcome) do
     if outcome == :ok do
-      settled_messages(0, map_get(:n, s), s)
-      group_messages(:maps.to_list(map_get(:groups, s)), s)
+      tag = map_get(:tag, s)
+      address = map_get(:address, s)
+      settled_messages(0, map_get(:n, s), map_get(:positions, s), tag, address)
+      group_messages(:maps.to_list(map_get(:groups, s)), tag, address)
     end
 
     :ets.insert(map_get(:registry, s), {:outcome, :replied})
@@ -805,31 +811,26 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
     :replied
   end
 
-  defp settled_messages(n, n, _), do: :ok
+  defp settled_messages(n, n, _, _, _), do: :ok
 
-  defp settled_messages(i, n, s) do
-    p = :maps.get(i, map_get(:positions, s))
+  defp settled_messages(i, n, positions, tag, address) do
+    p = :maps.get(i, positions)
     {reason, layer, auth} = map_get(:result, p)
-    send(map_get(:address, s), {map_get(:tag, s), :settled, i, reason, layer, auth})
-    settled_messages(i + 1, n, s)
+    send(address, {tag, :settled, i, reason, layer, auth})
+    settled_messages(i + 1, n, positions, tag, address)
   end
 
-  defp group_messages([], _), do: :ok
+  defp group_messages([], _, _), do: :ok
 
-  defp group_messages([{_, group} | rest], s) do
+  defp group_messages([{_, group} | rest], tag, address) do
     duration =
       if map_get(:duration, group) == nil and map_get(:started, group) != nil,
         do: max(0, Bounds.now() - map_get(:started, group)),
         else: map_get(:duration, group)
 
-    if duration != nil,
-      do:
-        send(
-          map_get(:address, s),
-          {map_get(:tag, s), :group, duration, map_get(:members, group)}
-        )
+    if duration != nil, do: send(address, {tag, :group, duration, map_get(:members, group)})
 
-    group_messages(rest, s)
+    group_messages(rest, tag, address)
   end
 
   defp kill_registered({:outcome, _}), do: :ok

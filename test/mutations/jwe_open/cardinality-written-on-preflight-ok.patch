@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -190,6 +190,7 @@
+@@ -211,6 +211,7 @@
          loop(cardinality(s, n, tc))
 
        {^tag, :preflight, :ok} ->
@@ -8,7 +8,7 @@
          if Bounds.now() < map_get(:d, s),
            do: loop(start_workers(s, 0, worker_count(map_get(:n, s)))),
            else: deadline(s)
-@@ -250,6 +251,5 @@
+@@ -271,6 +272,5 @@
    end
 
    defp cardinality(%{n: nil} = s, n, tc) when tc < map_get(:d, s) do

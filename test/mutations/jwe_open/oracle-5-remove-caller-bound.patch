@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -269,7 +269,6 @@
+@@ -317,7 +317,6 @@
 
      cond do
        current != at -> wait(s)

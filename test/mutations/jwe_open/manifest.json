@@ -658,6 +658,15 @@
       "covers": [
         "independent normal range completion after final authentication; no coordinator exit dependency"
       ]
+    },
+    {
+      "patch": "normal-range-scans-all-groups.patch",
+      "file": "test/jwe_open_lifecycle_test.exs",
+      "test": "a normally completed range does not scan other custody groups",
+      "failure": "a normal range end must not scan every custody group",
+      "covers": [
+        "normal range completion has no remaining contributor obligation; no scan of unrelated groups"
+      ]
     }
   ],
   "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."

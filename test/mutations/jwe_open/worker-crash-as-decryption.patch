@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -594,7 +594,7 @@
+@@ -684,7 +684,7 @@
      failure =
        if reason == :normal,
          do: {:decryption_failed, :crypto, nil},

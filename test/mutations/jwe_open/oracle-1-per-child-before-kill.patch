@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -135,6 +135,7 @@
+@@ -143,6 +143,7 @@
    defp cause(s, _), do: s
 
    defp kill(s, cause, anchor) do

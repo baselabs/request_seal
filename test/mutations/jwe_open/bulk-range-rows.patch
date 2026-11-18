@@ -26,7 +26,7 @@
    defp owner([{_, {lo, hi, pid}} | _], i) when i >= lo and i <= hi, do: pid
 --- a/lib/request_seal/jose/jwe/worker.ex
 +++ b/lib/request_seal/jose/jwe/worker.ex
-@@ -36,6 +36,7 @@
+@@ -37,6 +37,7 @@
      receive do
        {^tag, :policy, policy} -> intake(tag, policy, rows)
        {^tag, :row, i, row} -> intake(tag, p, [{i, row} | rows])

@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -244,7 +244,7 @@
+@@ -291,7 +291,7 @@
          true -> :oversized
        end
 

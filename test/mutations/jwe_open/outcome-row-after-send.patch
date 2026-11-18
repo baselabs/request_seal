@@ -1,7 +1,7 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -702,12 +702,12 @@
-       group_messages(:maps.to_list(map_get(:groups, s)), s)
+@@ -801,12 +801,12 @@
+       group_messages(:maps.to_list(map_get(:groups, s)), tag, address)
      end
 
 -    :ets.insert(map_get(:registry, s), {:outcome, :replied})

@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/open.ex
 +++ b/lib/request_seal/jose/jwe/open.ex
-@@ -113,13 +113,13 @@
+@@ -126,13 +126,13 @@
        answer
      catch
        :throw, {:jose_error, reason, layer} ->

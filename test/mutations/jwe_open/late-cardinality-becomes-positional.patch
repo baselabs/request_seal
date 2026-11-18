@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -620,7 +620,7 @@
+@@ -712,7 +712,7 @@
      case s do
        :overrun -> :internal_failure
        :failed -> :internal_failure

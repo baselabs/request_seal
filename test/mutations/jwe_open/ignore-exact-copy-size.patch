@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/bounds.ex
 +++ b/lib/request_seal/jose/jwe/bounds.ex
-@@ -30,7 +30,7 @@
+@@ -32,7 +32,7 @@
 
    def within?(term, words, bytes \\ :infinity) do
      case walk([term], words, bytes) do

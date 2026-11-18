@@ -2,6 +2,13 @@
 
 ## Unreleased 2.0.0
 
+- Keep JWE custody placement handshakes out of the caller's mailbox. Stamp every
+  monitored end in a dedicated high-priority receiver, retaining receiver backlog,
+  observer lag, complete role counts and cancellation phase diagnostics. Keep
+  reduction-statistics setup outside the caller-death timing interval.
+- Skip custody-group scans after normal range completion, release revoked worker
+  state before fallback authentication, and read fixed reply fields once per pass.
+
 - End JWE range workers as soon as their final position settles, independently
   of coordinator reply and exit cleanup. Skip resolver kills and contributor
   notices for already settled work. Record closed exit reasons, role end ranges
@@ -20,7 +27,7 @@
   coordinator work at collection caps as linear-teardown failures. Isolate
   whole-VM custody counts and join test publishers, handlers and tracers at
   teardown, including failed runtime placements.
-- Measure JWE teardown using VM exit timestamps and conservative VM monitor-delivery
+- Measure JWE teardown using VM exit timestamps and conservative dedicated monitor-receipt
   timestamps for sensitive children. Separate the collection hang cap from the
   unchanged runtime bounds, retain every timed sample with placement and lifecycle
   diagnostics, and check caller-stamped return and wait-end times. Limit timed

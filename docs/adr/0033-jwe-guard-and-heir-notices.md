@@ -52,7 +52,12 @@ as soon as no positions remain, including after U authentication; it does not
 wait for the coordinator's reply, notice drain or reason-bearing link signal.
 Normal range completion follows its last result send, preserving sender order
 at the coordinator. Worker-end handling does not kill resolvers for settled
-positions or send contributor notices to completed groups. Other unfinished
+positions. A normal range has sent its contributions or expired them at U/D,
+so its end never scans the custody-group map for missing contributions. An
+unexpected range exit still notifies every unfinished group it contributed to.
+U expiry releases revoked route and group maps and the old position map before
+fallback authentication. The reply passes read their fixed tag and address once,
+while retaining every ordered positional and group message. Other unfinished
 ranges still end through D or the coordinator link during cancellation.
 Callback children check caller-notice ownership and their deadline
 immediately before entering caller code. After the registry flips, teardown ends
@@ -128,7 +133,7 @@ ETS and an off-heap guard mailbox keep reaction state independent of n. End
 notices avoid copying caller-sized exit reasons. The inherited registry remains
 complete even when the coordinator stops between process creation and handoff.
 
-The committed reduction oracles and 72 distinct reversing mutations check constant reaction,
+The committed reduction oracles and 73 distinct reversing mutations check constant reaction,
 linear complete teardown, queue bounds, guard heap and caller wait-end. A
 mutation selects its test by the manifest's exact test name, with an independent
 check that the name exists exactly once in its file. Moving test lines cannot
@@ -164,11 +169,20 @@ send traces and inherited receive traces. Coordinator sends establish placement,
 then stop before the trigger. Lifecycle and required call traces remain active;
 an isolated trace session filters receives to monitor deliveries and the single
 handoff marker. Untimed message and ownership oracles retain their full traces.
-Every observed birth receives a monitor and must have both a processed DOWN and
-an end timestamp. Ordinary roles use the VM's monotonic exit trace timestamp.
+Every observed birth receives a monitor owned by a dedicated high-priority,
+off-heap receiver and must have both a processed DOWN and an end timestamp.
+The receiver stamps the DOWN immediately, before forwarding it or inspecting
+its own queue length. It performs no birth or lifecycle analysis. Ordinary
+roles use the VM's monotonic exit trace timestamp.
 [Sensitive roles](https://www.erlang.org/doc/apps/erts/erlang.html#process_flag/2)
-suppress exit traces, so their end upper bound is the VM's timestamp when the
-monitor message reaches the observer, before observer dequeue. The timestamp is
+suppress exit traces, so their end upper bound is the dedicated receiver's
+DOWN receipt stamp. A receive trace in the scenario observer would instead
+include the time until that busy process processes its monitor signal; it
+cannot establish a sensitive process's exact exit time. The dedicated stamp
+remains an upper bound, including that receiver's own scheduling, signal and
+queue work. The gate retains the receiver queue length, independent observer
+dequeue lag and complete birth and receipt counts for every role. The Python
+consumer requires exact equality of those inventories. The timestamp is
 converted from native units to the same microseconds as Bounds. The preflight
 exit unit and cooperative exits use that same conservative upper bound. A trace
 barrier also joins the isolated tracer's forwarded events before inspection.
@@ -183,6 +197,20 @@ are labeled without retaining their payload. These observations distinguish
 normal worker completion from a shared coordinator exit without tracing
 sensitive worker data. Custody callbacks run in the Unwrap child itself; this
 path has no nested custody runner or guardian.
+Guard kill, owner-flip deadline calculation and finish calls, and coordinator
+range-end and post-kill-pass calls, retain arities and timestamps only. Before
+each timed placement, library-role snapshots retain queue lengths, memory and
+reductions. The guard's single registry-fold return stamps the end of its kill
+pass and retains only the scalar awaiting count. Caller exit-entry timestamps
+distinguish exit-request delay from guard reaction. The caller-death interval
+begins immediately before the kill request, conservatively before its notice
+transfer; it includes no VM-wide
+reduction-statistics barrier. Reduction oracles retain their separate barriers.
+Custody placement sends its handshake only to the observer. An unused message
+per custody group in the caller mailbox would force its selective receive to
+rescan those messages for each positional and group result, creating quadratic
+fixture work that competes with the library's teardown. No callback, sample,
+input, role, cryptographic operation or deadline is removed by that correction.
 A capped, incomplete lifecycle fails even if its observed timestamps fit B.
 The linear-teardown reduction oracle reports an unfinished guard at the hang
 cap as a teardown failure before asking for its finish reduction endpoint.

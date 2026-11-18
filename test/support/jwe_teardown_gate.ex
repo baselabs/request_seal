@@ -262,9 +262,17 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
     :erlang.trace_pattern({Open, :wait_end, 1}, true, [:local])
 
-    for {function, arity} <- [expire_u: 1, reply: 2, finish: 1] do
+    phases = [expire_u: 1, expire_workers: 3, worker_down: 3, reply: 2, finish: 1]
+
+    for {function, arity} <- phases do
       :erlang.trace_pattern({Coordinator, function, arity}, true, [:local])
     end
+
+    for {function, arity} <- [kill: 3, stop_at: 2, finish: 1] do
+      :erlang.trace_pattern({Guard, function, arity}, true, [:local])
+    end
+
+    :erlang.trace_pattern({:ets, :foldl, 3}, [{:_, [], [{:return_trace}]}], [:local])
 
     s =
       Runtime.start(@cap, topology,
@@ -283,7 +291,9 @@ defmodule RequestSeal.Test.JWETeardownGate do
         |> normalize_spawn()
 
       [tag, _caller, _address, _flag, _mode, _r, d, f, unwrap] = args
+      :erlang.trace(s.guard, true, [:arity])
       s = Runtime.quiet(s)
+      setup = library_snapshot(s)
 
       {anchor, s, placement} =
         case trigger do
@@ -341,10 +351,18 @@ defmodule RequestSeal.Test.JWETeardownGate do
             end
         end
 
-      result =
-        if trigger == :caller,
-          do: Runtime.trigger(s, :caller),
-          else: finish(s)
+      {anchor, result} =
+        if trigger == :caller do
+          # Reduction oracles use Runtime.trigger/2. Their VM-wide statistics
+          # barrier is setup, never caller-death announcement or teardown work.
+          at = Bounds.now()
+          Process.exit(s.caller, :kill)
+          {at, Runtime.collect_ends(s)}
+        else
+          {anchor, finish(s)}
+        end
+
+      result = if result.remaining == 0, do: Runtime.delivered(result), else: result
 
       {result, failures} =
         if trigger == :u and topology == :resolvers do
@@ -389,15 +407,22 @@ defmodule RequestSeal.Test.JWETeardownGate do
           {result, []}
         end
 
-      measurement(result, anchor, placement, failures)
+      measured = measurement(result, anchor, placement, failures)
+      put_in(measured, [:diagnostics, :library_before_trigger], setup)
     after
       Runtime.cleanup(s)
       :erlang.trace_pattern({Coordinator, :resolution_end, 2}, false, [:local])
       :erlang.trace_pattern({Open, :wait_end, 1}, false, [:local])
 
-      for {function, arity} <- [expire_u: 1, reply: 2, finish: 1] do
+      for {function, arity} <- phases do
         :erlang.trace_pattern({Coordinator, function, arity}, false, [:local])
       end
+
+      for {function, arity} <- [kill: 3, stop_at: 2, finish: 1] do
+        :erlang.trace_pattern({Guard, function, arity}, false, [:local])
+      end
+
+      :erlang.trace_pattern({:ets, :foldl, 3}, false, [:local])
     end
   end
 
@@ -435,6 +460,18 @@ defmodule RequestSeal.Test.JWETeardownGate do
     error in ExUnit.AssertionError -> [Exception.message(error)]
   end
 
+  defp library_snapshot(s) do
+    for {pid, role} <- [{s.caller, :caller} | Map.to_list(s.pids)],
+        role in [:caller, :guard, :coordinator, :worker],
+        do: %{
+          role: role,
+          pid: inspect(pid),
+          reductions: Runtime.info(pid, :reductions),
+          memory: Runtime.info(pid, :memory),
+          queue: Runtime.info(pid, :message_queue_len)
+        }
+  end
+
   defp measurement(s, anchor, placement, failures) do
     ended = for {:end, _, at, _} <- s.events, do: at
     missing = for {pid, role} <- s.pids, not is_map_key(s.ends, pid), do: role
@@ -467,11 +504,58 @@ defmodule RequestSeal.Test.JWETeardownGate do
     phases =
       for {:trace_ts, pid, :call, {Coordinator, function, arity}, at} <- s.events,
           pid == s.coordinator and is_integer(arity),
-          function in [:expire_u, :reply, :finish],
+          function in [:expire_u, :expire_workers, :worker_down, :reply, :finish],
           do: %{
             phase: function,
             at_us: :erlang.convert_time_unit(at, :native, :microsecond) - anchor
           }
+
+    guard_phases =
+      for {:trace_ts, pid, :call, {Guard, function, arity}, at} <- s.events,
+          pid == s.guard and is_integer(arity),
+          function in [:kill, :stop_at, :finish],
+          do: %{
+            phase: function,
+            at_us: :erlang.convert_time_unit(at, :native, :microsecond) - anchor
+          }
+
+    sweeps =
+      for {:trace_ts, pid, :return_from, {:ets, :foldl, 3}, awaiting, at} <- s.events,
+          pid == s.guard and is_integer(awaiting),
+          do: %{
+            at_us: :erlang.convert_time_unit(at, :native, :microsecond) - anchor,
+            awaiting: awaiting
+          }
+
+    observations =
+      for {:end_observed, pid, at, dequeued, queue} <- s.events,
+          do: %{
+            role: s.pids[pid],
+            end_us: at - anchor,
+            observer_dequeue_us: dequeued - anchor,
+            observer_lag_us: dequeued - at,
+            receiver_queue: queue
+          }
+
+    receiver_ends =
+      observations
+      |> Enum.group_by(& &1.role)
+      |> Enum.map(fn {role, rows} ->
+        %{
+          role: role,
+          count: length(rows),
+          first_us: Enum.min_by(rows, & &1.end_us).end_us,
+          last: Enum.max_by(rows, & &1.end_us),
+          max_observer_lag_us: Enum.max_by(rows, & &1.observer_lag_us).observer_lag_us,
+          max_receiver_queue: Enum.max_by(rows, & &1.receiver_queue).receiver_queue
+        }
+      end)
+
+    caller_exit =
+      Enum.find_value(s.events, fn
+        {:caller_exit, at} -> at - anchor
+        _ -> nil
+      end)
 
     %{
       elapsed: last - anchor,
@@ -485,6 +569,11 @@ defmodule RequestSeal.Test.JWETeardownGate do
         library_ends:
           Enum.filter(ends, &(&1.role in [:guard, :coordinator, :preflight, :worker])),
         coordinator_phases: Enum.reverse(phases),
+        guard_phases: Enum.reverse(guard_phases),
+        guard_sweeps: Enum.reverse(sweeps),
+        birth_roles: Enum.frequencies(Map.values(s.pids)),
+        receiver_ends: receiver_ends,
+        caller_exit_us: caller_exit || :null,
         return_us: if(is_integer(s.return_at), do: s.return_at - anchor, else: :null),
         failures: failures
       }
@@ -896,11 +985,20 @@ defmodule RequestSeal.Test.JWETeardownGate do
         {:exit_ready, ^pid} -> :ok
       end
 
+      {_, tracer, _} = end_observer
+      watch = make_ref()
+      send(tracer, {:watch, pid, watch})
+      send(tracer, {:barrier, self(), watch})
+
+      receive do
+        {:trace_delivered, :all, ^watch} -> :ok
+      end
+
       started = Bounds.now()
       send(pid, :exit)
 
       receive do
-        {:trace_ts, ^observer, :receive, {:DOWN, ^ref, :process, ^pid, :normal}, at} ->
+        {:end_observed, ^watch, ^pid, :normal, at, _} ->
           %{time: :erlang.convert_time_unit(at, :native, :microsecond) - started}
       after
         5_000 -> flunk("exit unit timed out")

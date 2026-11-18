@@ -7,5 +7,5 @@
 -      not Bounds.within?(handle, Bounds.handle_words(), Bounds.binary_bytes()) ->
 +      not Bounds.within?(handle, Bounds.handle_words()) ->
          :key_resolver_failed
- 
+
        a != {:jwe, expected} ->
