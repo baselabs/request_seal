@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -201,11 +201,14 @@
+@@ -201,10 +201,13 @@
          # Ends are needed as a set only until the one sweep. Afterwards the
          # immutable registry and awaiting counter record each notice directly.
          if ended_at == nil, do: :ets.insert(ended, {slot, from})
@@ -9,10 +9,9 @@
 +
          :ets.delete(tid)
 
-         s =
-           if ended_at == nil do
--            if map_get(:cause, s) == nil, do: send(coordinator, {tag, :ended, slot})
-+            :ok
-             s
-           else
-             case :ets.lookup(registry, slot) do
+         if ended_at == nil do
+-          if map_get(:cause, s) == nil, do: send(coordinator, {tag, :ended, slot})
++          :ok
+           loop(s)
+         else
+           case :ets.lookup(registry, slot) do

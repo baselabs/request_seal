@@ -244,7 +244,9 @@ defmodule RequestSeal.Test.JWETeardownGate do
     end
   end
 
-  defp sample(trigger, topology) do
+  # Verify lanes call this same driver, including its trace pattern, policy,
+  # near-cap inputs, placement, observer and end-marker deadline.
+  def sample(trigger, topology) do
     :erlang.trace_pattern({Coordinator, :resolution_end, 2}, [{:_, [], [{:return_trace}]}], [
       :local
     ])
@@ -264,7 +266,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         end)
         |> normalize_spawn()
 
-      [_tag, _caller, _address, _flag, _mode, _r, d, f, unwrap] = args
+      [tag, _caller, _address, _flag, _mode, _r, d, f, unwrap] = args
 
       {anchor, s, placement} =
         case trigger do
@@ -273,12 +275,13 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
           :f ->
             true = :erlang.suspend_process(s.coordinator)
-            wait_until(f)
+            s = Runtime.until(s, f)
             {f, s, "#{topology}: coordinator suspended through F"}
 
           :d ->
             true = :erlang.suspend_process(s.coordinator)
-            wait_until(d)
+            s = Runtime.until(s, d)
+            send(s.coordinator, {tag, :wake})
             :erlang.resume_process(s.coordinator)
             {d, s, "#{topology}: D before resuming coordinator"}
 
@@ -287,10 +290,19 @@ defmodule RequestSeal.Test.JWETeardownGate do
             # completing resolution; queued notices retain P3 until their join.
             case topology do
               :resolvers ->
-                true = :erlang.suspend_process(s.coordinator)
                 [_, _, _, _, _, r | _] = args
+                assert Bounds.now() < r, "all blocked resolvers must be placed before R"
+                true = :erlang.suspend_process(s.coordinator)
+                assert Enum.all?(s.resolvers, &Process.alive?/1)
                 at = r + unwrap
-                wait_until(at)
+                s = Runtime.until(s, at)
+
+                # Debug suspension pauses receive timers since OTP 28 and
+                # PID-addressed BIF timers since OTP 29, including abs: true.
+                # Ordinary descheduling leaves the due wake queued. Restore
+                # that event before resume; do not grant a fresh phase clock.
+                # https://www.erlang.org/doc/apps/erts/erlang.html#suspend_process/2
+                send(s.coordinator, {tag, :wake})
                 :erlang.resume_process(s.coordinator)
                 {at, s, "P2: coordinator held across R through U; resolvers blocked"}
 
@@ -302,17 +314,24 @@ defmodule RequestSeal.Test.JWETeardownGate do
                   end)
 
                 at = resolution_stamp(s) + unwrap
-                wait_until(at)
+                s = Runtime.until(s, at)
                 {at, s, "P2 end: resolver notices queued at guard through U"}
 
               :custody ->
                 at = member_u(s)
-                wait_until(at)
+                s = Runtime.until(s, at)
                 {at, s, "P3: custody callbacks blocked through U"}
             end
         end
 
-      result = if trigger == :caller, do: Runtime.trigger(s, :caller), else: finish(s)
+      result =
+        if trigger == :caller,
+          do: Runtime.trigger(s, :caller),
+          else: finish(s, anchor + Bounds.teardown(@cap))
+
+      assert result.remaining == 0,
+             "blocked processes must end within B(n) after the original trigger: " <>
+               inspect(live_roles(result))
 
       last =
         result.events
@@ -324,6 +343,21 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
       assert Enum.all?(Map.keys(result.pids), &(not Process.alive?(&1))),
              "gate: process survived teardown"
+
+      if trigger == :u and topology == :resolvers do
+        assert Bounds.now() < d, "teardown must not wait for D"
+        result = Runtime.collect_return(result, anchor + Bounds.teardown(@cap))
+        assert {:ok, results} = result.return
+        assert length(results) == @cap
+
+        assert Enum.all?(
+                 results,
+                 &match?({:error, %{reason: :key_resolver_failed, layer: :key}}, &1)
+               ),
+               "R must retain the resolver failure cell when the coordinator resumes after U"
+
+        refute Enum.any?(result.pids, fn {_, role} -> role == :custody end)
+      end
 
       %{elapsed: last - anchor, placement: placement}
     after
@@ -351,9 +385,20 @@ defmodule RequestSeal.Test.JWETeardownGate do
     end
   end
 
+  defp live_roles(s) do
+    s.pids
+    |> Enum.filter(fn {pid, _} -> Process.alive?(pid) end)
+    |> Enum.map(fn {pid, role} -> {role, Runtime.info(pid, :current_function)} end)
+  end
+
+  defp finish(s, at) do
+    if s.topology == :queued, do: :erlang.resume_process(s.guard)
+    Runtime.collect_ends(s, at)
+  end
+
   defp finish(s) do
     if s.topology == :queued, do: :erlang.resume_process(s.guard)
-    Runtime.collect_until(s, fn s -> s.remaining == 0 end)
+    Runtime.collect_until(s, &(&1.remaining == 0))
   end
 
   defp wait_until(at) do
@@ -408,7 +453,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
           if Runtime.info(s.preflight, :message_queue_len) < 2 or Bounds.now() >= d - 1_000 do
             :retry
           else
-            wait_until(d - 1_000)
+            s = Runtime.until(s, d - 1_000)
             :erlang.resume_process(s.preflight)
             result = finish(s) |> Runtime.delivered()
 
@@ -530,7 +575,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         placed = suspend_in_unit(s.preflight, functions, d)
 
         if placed do
-          wait_until(d)
+          s = Runtime.until(s, d)
           :erlang.resume_process(s.preflight)
           result = finish(s)
 

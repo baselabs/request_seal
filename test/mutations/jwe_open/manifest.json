@@ -5,7 +5,6 @@
       "patch": "oracle-1-per-child-before-kill.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 1 constant guard reaction before kill with queued notices",
-      "selection": "line:40",
       "failure": "guard reaction must be constant before kill",
       "covers": [
         "oracle 1; test 13"
@@ -15,7 +14,6 @@
       "patch": "oracle-1-dequeue-before-owner.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 1 constant guard reaction before kill with queued notices",
-      "selection": "line:40",
       "failure": "guard reaction must be constant before kill",
       "covers": [
         "oracle 1; queued backlog",
@@ -26,7 +24,6 @@
       "patch": "oracle-2-quadratic-sweep.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 2 complete topology and linear teardown in isolated peer",
-      "selection": "line:120",
       "failure": "VM teardown must fit a + 256n",
       "covers": [
         "oracle 2: n squared sweep",
@@ -37,7 +34,6 @@
       "patch": "oracle-2-omit-caller-slots.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 2 complete topology and linear teardown in isolated peer",
-      "selection": "line:120",
       "failure": "every created process needs an end marker",
       "covers": [
         "oracle 2: omitted slot kind"
@@ -47,7 +43,6 @@
       "patch": "oracle-3-bulk-bootstrap.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 3 guard coordinator and caller queues have bounded terms",
-      "selection": "line:171",
       "failure": "bootstrap messages must be bounded",
       "covers": [
         "oracle 3; bounded bootstrap at cap",
@@ -58,7 +53,6 @@
       "patch": "oracle-3-single-policy-expected.patch",
       "file": "test/jwe_open_bootstrap_test.exs",
       "test": "single policy carries no expected and keeps both word bounds",
-      "selection": "line:62",
       "failure": "single policy must not carry expected",
       "covers": [
         "oracle 3; single policy bound"
@@ -68,7 +62,6 @@
       "patch": "oracle-3-raw-resolver-answer.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "callback ingress bounds at production resolver and full call",
-      "selection": "line:218",
       "failure": "resolver answer must be bounded at its producer",
       "covers": [
         "oracle 3; callback ingress producer and full call"
@@ -78,7 +71,6 @@
       "patch": "oracle-3-raw-sink-outcome.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "Sink deliver normalizes in the sender",
-      "selection": "line:301",
       "failure": "sink must normalize before send",
       "covers": [
         "oracle 3; callback ingress sink"
@@ -88,7 +80,6 @@
       "patch": "oracle-3-child-monitor.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "R12-1 callback exit reasons never enter library queues",
-      "selection": "line:363",
       "failure": "caller reason must not enter a library queue",
       "covers": [
         "oracle 3; reason disposal",
@@ -99,7 +90,6 @@
       "patch": "oracle-4-ended-map.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 4 guard heap stays constant with queued notices after GC",
-      "selection": "line:206",
       "failure": "guard heap must be constant at the cap",
       "covers": [
         "oracle 4: ended set map",
@@ -110,7 +100,6 @@
       "patch": "oracle-4-on-heap-mailbox.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 4 guard heap stays constant with queued notices after GC",
-      "selection": "line:206",
       "failure": "guard mailbox must be off heap",
       "covers": [
         "oracle 4: on heap mailbox"
@@ -120,7 +109,6 @@
       "patch": "oracle-5-remove-caller-bound.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "caller bound holds with guard suspended",
-      "selection": "line:295",
       "failure": "caller wait must be bounded with guard suspended",
       "covers": [
         "oracle 5"
@@ -130,7 +118,6 @@
       "patch": "anchor-at-end-instead-of-D.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "anchors use D and accepted n exactly once at the coordinator flip",
-      "selection": "line:383",
       "failure": "D must remain the teardown anchor",
       "covers": [
         "anchors: now plus B at delayed end"
@@ -140,7 +127,6 @@
       "patch": "causes-reopen-during-sweep.patch",
       "file": "test/jwe_open_placements_test.exs",
       "test": "9b second triggers retain the first anchor and reason during sweep",
-      "selection": "line:199",
       "failure": "second trigger must not reopen causes",
       "covers": [
         "test 9b; causes close"
@@ -150,7 +136,6 @@
       "patch": "learn-end-from-EXIT.patch",
       "file": "test/jwe_open_structure_test.exs",
       "test": "reaction reads owners before dequeue and closes causes at the flip",
-      "selection": "line:58",
       "failure": "registry owner is the end marker",
       "covers": [
         "causes close: owner read"
@@ -160,7 +145,6 @@
       "patch": "reason-from-EXIT-not-row.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "causes close and outcome row wins with transfer and EXIT still queued",
-      "selection": "line:406",
       "failure": "causes close at the owner flip and reason comes from outcome row",
       "covers": [
         "causes close: outcome row"
@@ -170,7 +154,6 @@
       "patch": "outcome-row-after-send.patch",
       "file": "test/jwe_open_structure_test.exs",
       "test": "outcome row is immediately before reply send",
-      "selection": "line:172",
       "failure": "outcome row must precede reply",
       "covers": [
         "outcome row precedes reply"
@@ -180,7 +163,6 @@
       "patch": "accept-forged-registry.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "registry is the guards own table and forged transfer is ignored",
-      "selection": "line:432",
       "failure": "guard must sweep its own registry after a forged transfer",
       "covers": [
         "registry is guard owned"
@@ -190,7 +172,6 @@
       "patch": "ignore-input-stop-flag.patch",
       "file": "test/jwe_open_bootstrap_test.exs",
       "test": "input stop flag bounds remaining bootstrap sends at the cap",
-      "selection": "line:24",
       "failure": "caller must read the input stop flag",
       "covers": [
         "input stop flag"
@@ -200,7 +181,6 @@
       "patch": "ignore-fun-environment.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "policy bound starts no process",
-      "selection": "line:51",
       "failure": "fun environment must be counted",
       "covers": [
         "policy bound"
@@ -210,7 +190,6 @@
       "patch": "bulk-range-rows.patch",
       "file": "test/jwe_open_placements_test.exs",
       "test": "S5c D during one scheduler row handoff cooperates with N results",
-      "selection": "line:484",
       "failure": "handoff must exit by D plus K_pf",
       "covers": [
         "S5c one rows message per range"
@@ -220,7 +199,6 @@
       "patch": "marker-drops-token.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "markers keep what accounting reads",
-      "selection": "line:94",
       "failure": "marker must preserve binary token accounting",
       "covers": [
         "markers retain accounting bytes"
@@ -230,7 +208,6 @@
       "patch": "ignore-expected-binary-bytes.patch",
       "file": "test/jwe_open_bootstrap_test.exs",
       "test": "oversized expected is marked before copying or UTF-8 work",
-      "selection": "line:129",
       "failure": "expected binary bytes must be bounded before copying",
       "covers": [
         "byte units: 64 MB string marked before copying"
@@ -240,7 +217,6 @@
       "patch": "ignore-permitted-name-bytes.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "byte-bound units reject before UTF-8 work",
-      "selection": "line:115",
       "failure": "permitted name bytes must be bounded",
       "covers": [
         "byte units: name byte bound before UTF-8"
@@ -250,7 +226,6 @@
       "patch": "retain-inherited-notices.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "notices freed at P3 and resolver custody phases do not overlap",
-      "selection": "line:345",
       "failure": "resolver notices must be freed before P3",
       "covers": [
         "notices freed at P3",
@@ -261,7 +236,6 @@
       "patch": "forward-ended-before-delete.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "notice delete call precedes each ended forward in production",
-      "selection": "line:566",
       "failure": "notice deletion must precede ended forward",
       "covers": [
         "notice deletion order"
@@ -271,7 +245,6 @@
       "patch": "preflight-clock-only-between-phases.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "preflight cooperates at its next checkpoint at D",
-      "selection": "line:136",
       "failure": "preflight must cooperate at D",
       "covers": [
         "D route: cooperative preflight each unit",
@@ -282,7 +255,6 @@
       "patch": "cardinality-written-on-preflight-ok.patch",
       "file": "test/jwe_open_structure_test.exs",
       "test": "cardinality accepted before preflight ok",
-      "selection": "line:81",
       "failure": "accepted cardinality must be written at acceptance",
       "covers": [
         "accepted n before preflight ok"
@@ -292,7 +264,6 @@
       "patch": "ignore-handle-binary-bytes.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "callback ingress counts binary bytes",
-      "selection": "line:265",
       "failure": "handle binary bytes must be bounded",
       "covers": [
         "callback handle binary sum"
@@ -302,7 +273,6 @@
       "patch": "unbounded-shared-tree-walk.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "bounded word walk counts shared occurrences and closure environments",
-      "selection": "line:15",
       "failure": "walk must stop at W_item",
       "covers": [
         "bounded bootstrap: shared depth 25 walk"
@@ -312,7 +282,6 @@
       "patch": "resolver-ignore-caller-gate.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "zero start gate refuses caller death and expired R before callback",
-      "selection": "line:157",
       "failure": "callback must not start past its zero start gate",
       "covers": [
         "zero start caller"
@@ -322,7 +291,6 @@
       "patch": "resolver-ignore-R-gate.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "zero start gate refuses caller death and expired R before callback",
-      "selection": "line:157",
       "failure": "callback must not start past its zero start gate",
       "covers": [
         "zero start R"
@@ -332,7 +300,6 @@
       "patch": "custody-ignore-caller-gate.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "zero start custody gate refuses caller death and U before callback",
-      "selection": "line:689",
       "failure": "custody callback must not start past its gate",
       "covers": [
         "zero start custody caller"
@@ -342,7 +309,6 @@
       "patch": "custody-ignore-U-gate.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "zero start custody gate refuses caller death and U before callback",
-      "selection": "line:689",
       "failure": "custody callback must not start past its gate",
       "covers": [
         "zero start U"
@@ -352,7 +318,6 @@
       "patch": "review11-coordinator-codec.patch",
       "file": "test/jwe_open_structure_test.exs",
       "test": "coordinator has no input codec digest or CEK work",
-      "selection": "line:24",
       "failure": "codec work belongs in preflight or range worker",
       "covers": [
         "review11 codec reproductions; test 23 routing and test 25 boundary"
@@ -362,7 +327,6 @@
       "patch": "review9-review10-result-gate.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "16 and 24 strict admission boundary and 18 late result gate",
-      "selection": "line:359",
       "failure": "result gate must reject unresolved positions",
       "covers": [
         "review9 late resolution",
@@ -374,7 +338,6 @@
       "patch": "review9-admission-table.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "16 and 24 strict admission boundary and 18 late result gate",
-      "selection": "line:359",
       "failure": "admission must be strictly before R",
       "covers": [
         "review9 admission table; test 24",
@@ -385,7 +348,6 @@
       "patch": "review9-R-during-bootstrap.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "17 R during bootstrap preserves every accepted position",
-      "selection": "line:496",
       "failure": "R must not return before bootstrap ends",
       "covers": [
         "review9 R during bootstrap; test 17"
@@ -395,7 +357,6 @@
       "patch": "review9-review10-quadratic-R.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "19 every coordinator expiry and dead worker pass is linear",
-      "selection": "line:395",
       "failure": "coordinator passes must fit a + 512n",
       "covers": [
         "review9 F3 and review10 R10-2 expiry loops; test 19"
@@ -405,7 +366,6 @@
       "patch": "review10-cardinality-dequeue-clock.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "R12-7 queued stamped cardinality is accepted in the D drain",
-      "selection": "line:112",
       "failure": "D drain must preserve accepted cardinality",
       "covers": [
         "review10 cardinality cases; test 21"
@@ -415,7 +375,6 @@
       "patch": "review11-256th-cell-cardinality.patch",
       "file": "test/jwe_open_structure_test.exs",
       "test": "cardinality accepted before preflight ok",
-      "selection": "line:81",
       "failure": "cardinality stamp must decide the D boundary",
       "covers": [
         "review11 256th cell cardinality; test 21 late counting"
@@ -425,7 +384,6 @@
       "patch": "R12-2-depth-accumulator-message.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 3 guard coordinator and caller queues have bounded terms",
-      "selection": "line:171",
       "failure": "library control queue must be constant size",
       "covers": [
         "R12-2 reproduction"
@@ -435,7 +393,6 @@
       "patch": "R12-4-replied-skips-sweep.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "R12-4 D at cap sweeps even on replied end",
-      "selection": "line:540",
       "failure": "D reply must still sweep every child",
       "covers": [
         "R12-4 reproduction"
@@ -445,7 +402,6 @@
       "patch": "R12-5-remove-used-MFA.patch",
       "file": "test/jwe_open_structure_test.exs",
       "test": "14 derived roots no caller code and exact notice sites",
-      "selection": "line:16",
       "failure": "caller code reachable",
       "covers": [
         "R12-5 throw/process_flag and exact used MFA; test 14"
@@ -455,7 +411,6 @@
       "patch": "R12-5-unregistered-process.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 2 complete topology and linear teardown in isolated peer",
-      "selection": "line:120",
       "failure": "every created process must have a registered role",
       "covers": [
         "R12-5 traced topology above cap"
@@ -465,7 +420,6 @@
       "patch": "R12-7-old-crypto-cell.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "21 R12-7 terminal map retains input key and crypto layers",
-      "selection": "line:607",
       "failure": "R admission must retain the input cell",
       "covers": [
         "R12-7 single preflight past R and D"
@@ -475,7 +429,6 @@
       "patch": "R12-8-count-notices-without-W.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "R12-8 down after contribution does not complete another contributor",
-      "selection": "line:231",
       "failure": "contributor and down must share one key",
       "covers": [
         "R12-8 death after contributing"
@@ -485,7 +438,6 @@
       "patch": "worker-down-keeps-resolvers.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "worker death kills its live resolvers before R",
-      "selection": "line:791",
       "failure": "worker death must kill its resolvers before R",
       "covers": [
         "worker death; original tests 2,3,4"
@@ -495,7 +447,6 @@
       "patch": "absolute-timer-rounds-down.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "rounding never fires early on either side of monotonic zero",
-      "selection": "line:326",
       "failure": "absolute timers must round up",
       "covers": [
         "amendment 2: no early timer"
@@ -505,7 +456,6 @@
       "patch": "UTF8-external-Elixir-call.patch",
       "file": "test/jwe_open_structure_test.exs",
       "test": "14 derived roots no caller code and exact notice sites",
-      "selection": "line:16",
       "failure": "caller code reachable",
       "covers": [
         "own UTF-8 paths"
@@ -518,8 +468,7 @@
       "failure": "late cardinality must retain the outer deadline",
       "covers": [
         "review11 late counting; R12-7 single preflight after D; full terminal outcome"
-      ],
-      "selection": "line:618"
+      ]
     },
     {
       "patch": "ignore-exact-copy-size.patch",
@@ -528,14 +477,12 @@
       "failure": "the copy bound must use exact flat size",
       "covers": [
         "exact copy bound for references and HAMT maps"
-      ],
-      "selection": "line:15"
+      ]
     },
     {
       "patch": "open-crash-as-policy.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "open result assembly crashes preserve internal failure after real custody",
-      "selection": "line:66",
       "failure": "open crashes must report internal failure",
       "covers": [
         "library crash classification in open"
@@ -545,7 +492,6 @@
       "patch": "preflight-crash-as-policy.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "preflight crashes escape without a validation verdict",
-      "selection": "line:130",
       "failure": "preflight crashes must exit non-normally",
       "covers": [
         "preflight crash classification"
@@ -555,7 +501,6 @@
       "patch": "open-forgets-notice-on-crash.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "open library crashes clear the received notice before returning",
-      "selection": "line:10",
       "failure": "open crash must delete the received caller notice",
       "covers": [
         "received notice cleanup and cancellation on bootstrap exception"
@@ -565,7 +510,6 @@
       "patch": "guard-handoff-past-F.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "a guard starting past F never transfers a caller notice",
-      "selection": "line:426",
       "failure": "past F the guard must retain and delete its notice",
       "covers": [
         "deadline gate immediately before caller notice handoff"
@@ -575,7 +519,6 @@
       "patch": "final-intake-does-not-loop.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "final intake retries every early deadline wait",
-      "selection": "line:459",
       "failure": "final intake must loop after an early timeout",
       "covers": [
         "absolute final intake wait"
@@ -585,7 +528,6 @@
       "patch": "D-drain-loses-preflight-crash.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "D drain keeps a preflight crash internal after accepted cardinality",
-      "selection": "line:256",
       "failure": "D drain must retain internal failure",
       "covers": [
         "preflight crash at the absolute D drain"
@@ -595,7 +537,6 @@
       "patch": "reply-before-final-handoff.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "an empty cardinality waits for the final preflight handoff",
-      "selection": "line:318",
       "failure": "cardinality alone must not complete preflight",
       "covers": [
         "no reply before successful final handoff"
@@ -605,7 +546,6 @@
       "patch": "codec-library-crashes-as-input.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "codec validation catches do not disguise broken library state",
-      "selection": "line:352",
       "failure": "Expected exception KeyError",
       "covers": [
         "validation boundaries preserve unexpected library crashes"
@@ -618,8 +558,7 @@
       "failure": "preflight validation crash must use a closed exit",
       "covers": [
         "error-class validation crashes are closed and never logged"
-      ],
-      "selection": "line:130"
+      ]
     },
     {
       "patch": "preflight-handoff-logs-crash.patch",
@@ -628,8 +567,7 @@
       "failure": "preflight handoff crash must use a closed exit",
       "covers": [
         "error-class handoff crashes are closed and never logged"
-      ],
-      "selection": "line:195"
+      ]
     },
     {
       "patch": "resolver-logs-internal-crash.patch",
@@ -638,8 +576,7 @@
       "failure": "resolver normalization crash must use a closed exit",
       "covers": [
         "unexpected resolver errors never expose reason or stacktrace"
-      ],
-      "selection": "line:379"
+      ]
     },
     {
       "patch": "resolver-malformed-handle-crashes.patch",
@@ -648,8 +585,7 @@
       "failure": "malformed resolver handle must be refused promptly",
       "covers": [
         "malformed struct callback answers are rejected before the resolution deadline"
-      ],
-      "selection": "line:478"
+      ]
     },
     {
       "patch": "worker-crash-as-decryption.patch",
@@ -658,8 +594,7 @@
       "failure": "worker internal crash must remain an internal failure",
       "covers": [
         "worker errors preserve positional internal failure in ready and resolved phases"
-      ],
-      "selection": "line:525"
+      ]
     },
     {
       "patch": "open-crash-skips-cancel.patch",
@@ -668,8 +603,7 @@
       "failure": "open crash must await guard DOWN before returning",
       "covers": [
         "crash cancellation joins the guard even when notice deletion remains intact"
-      ],
-      "selection": "line:10"
+      ]
     },
     {
       "patch": "notice-timeout-skips-cancel.patch",
@@ -678,8 +612,7 @@
       "failure": "the expired notice receive must cancel and drain the guard",
       "covers": [
         "receive timeout calls production guard cancellation and late-transfer cleanup"
-      ],
-      "selection": "line:549"
+      ]
     },
     {
       "patch": "notice-timeout-retains-transfer.patch",
@@ -688,8 +621,7 @@
       "failure": "notice timeout must drain the late transfer",
       "covers": [
         "a handoff after the timeout leaves neither a table nor a transfer message"
-      ],
-      "selection": "line:549"
+      ]
     },
     {
       "patch": "telemetry-streams-before-preparation.patch",
@@ -698,8 +630,7 @@
       "failure": "telemetry preparation failure must publish no events",
       "covers": [
         "all telemetry measurements are prepared before publishing any outcome"
-      ],
-      "selection": "line:66"
+      ]
     }
   ],
   "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."

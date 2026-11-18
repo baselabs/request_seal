@@ -331,13 +331,51 @@ defmodule RequestSeal.JOSE.JWE.Worker do
   defp expire(%{u: nil} = s), do: s
 
   defp expire(s) do
-    if Bounds.now() >= map_get(:u, s),
-      do: expire_groups(:maps.to_list(map_get(:groups, s)), %{s | u: nil}),
-      else: s
+    if Bounds.now() >= map_get(:u, s) do
+      expire_routes(:maps.to_list(map_get(:routes, s)))
+      positions = expire_positions(:maps.to_list(map_get(:positions, s)), s, [])
+      %{s | groups: %{}, positions: :maps.from_list(positions), routes: %{}, u: nil}
+    else
+      s
+    end
   end
 
-  defp expire_groups([], s), do: s
-  defp expire_groups([{g, _} | rest], s), do: expire_groups(rest, close(s, g, :timeout))
+  defp expire_routes([]), do: :ok
+
+  defp expire_routes([{_, route} | rest]) do
+    revoke(route)
+    expire_routes(rest)
+  end
+
+  # All groups have the same U. A prepared position may still have its member
+  # message queued. Settle it now as well, so those late messages cannot cause
+  # another full expiry pass or grant a new delivery window.
+  defp expire_positions([], _, positions), do: positions
+
+  defp expire_positions([{i, position} | rest], s, positions) do
+    positions =
+      if map_get(:fallback, position) == nil do
+        [{i, position} | positions]
+      else
+        report(
+          map_get(:tag, s),
+          map_get(:parent, s),
+          map_get(:address, s),
+          i,
+          authenticate(
+            map_get(:token, position),
+            map_get(:fallback, position),
+            :timeout,
+            map_get(:p, s)
+          ),
+          map_get(:d, s)
+        )
+
+        positions
+      end
+
+    expire_positions(rest, s, positions)
+  end
 
   def fallback(token) do
     width = Codec.width(map_get(:enc, token))

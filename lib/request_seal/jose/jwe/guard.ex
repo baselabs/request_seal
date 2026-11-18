@@ -203,25 +203,22 @@ defmodule RequestSeal.JOSE.JWE.Guard do
         if ended_at == nil, do: :ets.insert(ended, {slot, from})
         :ets.delete(tid)
 
-        s =
-          if ended_at == nil do
-            if map_get(:cause, s) == nil, do: send(coordinator, {tag, :ended, slot})
-            s
-          else
-            case :ets.lookup(registry, slot) do
-              [{^slot, ^from, :caller}] ->
-                %{s | awaiting: awaiting - 1}
+        if ended_at == nil do
+          if map_get(:cause, s) == nil, do: send(coordinator, {tag, :ended, slot})
+          loop(s)
+        else
+          case :ets.lookup(registry, slot) do
+            [{^slot, ^from, :caller}] ->
+              join(s, awaiting - 1, map_get(:exit_seen, s))
 
-              [{^slot, pid, :caller}] ->
-                :erlang.monitor(:process, pid)
-                s
+            [{^slot, pid, :caller}] ->
+              :erlang.monitor(:process, pid)
+              join(s, awaiting, map_get(:exit_seen, s))
 
-              _ ->
-                s
-            end
+            _ ->
+              join(s, awaiting, map_get(:exit_seen, s))
           end
-
-        loop(s)
+        end
 
       {:EXIT, ^coordinator, _atom} ->
         loop(%{s | exit_seen: true})
@@ -231,6 +228,44 @@ defmodule RequestSeal.JOSE.JWE.Guard do
 
       _ ->
         loop(s)
+    end
+  end
+
+  # After the sole sweep the registry, anchor and reason cannot change. Carry
+  # only the join counters between notices instead of copying the state map
+  # for every child. The absolute stop is still checked before every dequeue.
+  defp join(s, awaiting, exit_seen) do
+    if (awaiting == 0 and exit_seen) or Bounds.now() >= map_get(:stop_at, s) do
+      reason(s)
+    else
+      tag = map_get(:tag, s)
+      coordinator = map_get(:coordinator, s)
+
+      receive do
+        {:"ETS-TRANSFER", tid, from, {^tag, :slot, slot}} ->
+          :ets.delete(tid)
+
+          case :ets.lookup(map_get(:registry, s), slot) do
+            [{^slot, ^from, :caller}] ->
+              join(s, awaiting - 1, exit_seen)
+
+            [{^slot, pid, :caller}] ->
+              :erlang.monitor(:process, pid)
+              join(s, awaiting, exit_seen)
+
+            _ ->
+              join(s, awaiting, exit_seen)
+          end
+
+        {:EXIT, ^coordinator, _atom} ->
+          join(s, awaiting, true)
+
+        {:DOWN, _, :process, _, _atom} ->
+          join(s, awaiting - 1, exit_seen)
+
+        _ ->
+          join(s, awaiting, exit_seen)
+      end
     end
   end
 

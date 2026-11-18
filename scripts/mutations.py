@@ -25,7 +25,7 @@ def prove(entry, *, green=None, root=ROOT, directory=DIRECTORY,
           test_command=("mix", "test")):
     patch = directory / entry["patch"]
     clean(root)
-    argv = [*test_command, entry["file"], "--only", entry["selection"]]
+    argv = [*test_command, entry["file"], "--only", "test:test " + entry["test"]]
     # The cache belongs to this run, whose baseline and command stay unchanged.
     # Never cache a failing or tree-dirtying baseline.
     head = command(["git", "rev-parse", "HEAD"], root=root).stdout.strip()

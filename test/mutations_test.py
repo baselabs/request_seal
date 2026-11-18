@@ -118,10 +118,10 @@ class MutationsTest(unittest.TestCase):
                 self.assertTrue(entry["failure"].strip())
                 self.assertNotIn("/", entry["patch"])
                 test_file = ROOT / entry["file"]
-                self.assertIn('test "' + entry["test"] + '"', test_file.read_text())
-                self.assertRegex(entry["selection"], r"^line:\d+$")
-                line = int(entry["selection"].split(":")[1])
-                self.assertIn('test "' + entry["test"] + '"', test_file.read_text().splitlines()[line - 1])
+                tests = re.findall(r'^\s*test\s+"([^"\n]+)"', test_file.read_text(), re.MULTILINE)
+                self.assertEqual(tests.count(entry["test"]), 1,
+                                 "mutation must name exactly one test in its file")
+                self.assertNotIn("selection", entry, "line selections must not retarget mutations")
                 result = processes.run(["git", "apply", "--check", directory / entry["patch"]],
                     cwd=ROOT, capture_output=True, text=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -137,15 +137,18 @@ class MutationRunnerTest(unittest.TestCase):
         self.directory = folder / "patches"
         self.directory.mkdir()
         self.log = folder / "executions"
+        self.arguments = folder / "arguments"
         self.run_git("init", "-q")
         self.run_git("config", "user.name", "Test")
         self.run_git("config", "user.email", "test@example.invalid")
         self.baseline = "value = 0\n"
         (self.root / "value.py").write_text(self.baseline)
         (self.root / "selected.py").write_text(
-            "from pathlib import Path\nimport sys\nfrom value import value\n"
+            "from pathlib import Path\nimport json, sys\nfrom value import value\n"
             f"log = Path({str(self.log)!r})\n"
             "with log.open('a') as output: output.write(str(value) + '\\n')\n"
+            f"arguments = Path({str(self.arguments)!r})\n"
+            "with arguments.open('a') as output: output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
             "if value == 3: print('unrelated failure'); sys.exit(1)\n"
             "if value == 4: Path('residue').write_text('dirty')\n"
             "if value in (1, 2, 4): print('guard rejected mutation'); sys.exit(1)\n")
@@ -161,7 +164,7 @@ class MutationRunnerTest(unittest.TestCase):
             self.baseline.splitlines(True), [f"value = {value}\n"],
             fromfile="a/value.py", tofile="b/value.py"))
         (self.directory / name).write_text(patch)
-        return {"patch": name, "file": "selected.py", "selection": "line:1",
+        return {"patch": name, "file": "selected.py", "test": "guard rejects value",
                 "failure": "guard rejected mutation"}
 
     def prove(self, entry, green=None):
@@ -174,15 +177,29 @@ class MutationRunnerTest(unittest.TestCase):
             self.assertIn("GREEN baseline; RED", self.prove(self.entry(value), green))
         self.assertEqual(self.log.read_text().splitlines(), ["0", "1", "2"])
         different = self.entry(1)
-        different["selection"] = "line:2"
+        different["test"] = 'another named case: spaces and "quotes"'
         self.prove(different, green)
         self.assertEqual(self.log.read_text().splitlines()[-2:], ["0", "1"])
+        argv = [json.loads(line) for line in self.arguments.read_text().splitlines()]
+        self.assertEqual(argv[:3], [["--only", "test:test guard rejects value"]] * 3)
+        self.assertEqual(argv[3:], [["--only", "test:test " + different["test"]]] * 2)
         self.assertEqual(self.run_git("status", "--porcelain"), "")
         (self.root / "revision").write_text("new baseline\n")
         self.run_git("add", "revision")
         self.run_git("commit", "-qm", "Next baseline")
         self.prove(self.entry(2), green)
         self.assertEqual(self.log.read_text().splitlines()[-2:], ["0", "2"])
+
+    def test_line_changes_keep_the_named_test_in_runner_arguments(self):
+        entry = self.entry(1)
+        self.prove(entry)
+        selected = self.root / "selected.py"
+        selected.write_text("\n\n" + selected.read_text())
+        self.run_git("add", "selected.py")
+        self.run_git("commit", "-qm", "Move fixture lines")
+        self.prove(entry)
+        argv = [json.loads(line) for line in self.arguments.read_text().splitlines()]
+        self.assertEqual(argv, [["--only", "test:test " + entry["test"]]] * 4)
 
     def test_non_green_baseline_never_applies_mutant(self):
         (self.root / "selected.py").write_text("print('guard rejected mutation'); raise SystemExit(1)\n")

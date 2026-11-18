@@ -13,4 +13,4 @@
 +        :erlang.put(:ended_acc, :maps.put(slot, from, ended))
          :ets.delete(tid)
 
-         s =
+         if ended_at == nil do

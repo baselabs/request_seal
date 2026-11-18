@@ -20,9 +20,10 @@ empty ordered set avoids the hash-set segment scan charge per child. Its exit
 transfers the empty table to the guard. Before the registry sweep, the guard
 records the end, deletes the notice and only then forwards completion. After
 that sole sweep, it deletes each notice and joins it against the immutable
-registry without growing the ended set. A custody slot proves that P3 already
-joined every resolver notice, so the sweep skips ended-set reads for resolver
-slots while retaining every registry row. Ended-set checks read only the
+registry with scalar awaiting and coordinator-exit counters, without copying
+the state map or growing the ended set per child. A custody slot proves that P3
+already joined every resolver notice, so the sweep skips ended-set reads for
+resolver slots while retaining every registry row. Ended-set checks read only the
 stored pid; registry joins still require the caller-code role. Library processes
 exit with closed atoms. The guard
 checks ownership before every dequeue, kills the coordinator once, then sweeps
@@ -36,8 +37,12 @@ coordinator. An early resolution barrier retains its original U even if its end
 notices arrive after R. R expiry is independent of an existing barrier and
 preserves its original U. Every range shares that U; group intake counts members
 directly. R and D rebuild positional state once per expiry; U likewise rebuilds
-group state once, with one kill and summary per unfinished group. Revoking a
-route prevents new deliveries; the main worker receive discards queued outcomes for removed
+group state once, issuing all unfinished-group kills before summary traffic.
+At U, each worker revokes all remaining routes, authenticates each undelivered
+prepared position once under its fallback, and rebuilds positional state once.
+This includes positions whose member message is still queued, so late members
+cannot start another expiry pass. An accepted delivery remains settled. Revoking
+a route prevents new deliveries; the main worker receive discards queued outcomes for removed
 positions without a separate mailbox scan per route.
 Callback children check caller-notice ownership and their deadline
 immediately before entering caller code. After the registry flips, teardown ends
@@ -102,7 +107,12 @@ complete even when the coordinator stops between process creation and handoff.
 
 The committed reduction oracles and 69 distinct reversing mutations check constant reaction,
 linear complete teardown, queue bounds, guard heap and caller wait-end. A
-reaction sample pauses the guard at its receive and joins caller death before
+mutation selects its test by the manifest's exact test name, with an independent
+check that the name exists exactly once in its file. Moving test lines cannot
+change the selection. The past-F oracle first joins the guard, then rejects any
+caller-notice transfer before asserting its deadline exit: a forbidden transfer
+allows the already-expired coordinator and the guard's F check to race.
+A reaction sample pauses the guard at its receive and joins caller death before
 resuming it; the receive entry after the kill ends the measured interval before
 another dequeue or the registry sweep. Topology samples install only the kill
 and finish reduction dumps after placement, so setup does not trace every queued
@@ -130,6 +140,23 @@ Timed topology samples keep the observer mailbox off heap and omit caller input
 send traces, whose copies would make the observer retain the entire batch.
 Coordinator control traces and a monitor for every observed birth remain active.
 The observer consumes each event once without selective scans for end notices.
+It continues observing while advancing to the trigger: a monitor end stamp is
+the observer's dequeue time, whereas a trace timestamp belongs to its tracee.
+All traced births, including sensitive children, receive an end monitor and
+contribute to the remaining count.
+Verify and the gate share the blocked-resolver driver, including the 30/20/5 s
+policy, trace pattern, near-cap inputs and original U + B(10,000) end deadline.
+The driver holds the coordinator across R through U, queues its bounded wake,
+then resumes it. This restores the due timer event of ordinary descheduling:
+[debug suspension](https://www.erlang.org/doc/apps/erts/erlang.html#suspend_process/2)
+pauses receive timeouts since OTP 28 and PID-addressed BIF timers since OTP 29,
+including absolute timers. Without that event, the fixture can wait for a
+worker's D exit to wake the coordinator instead of exercising its U transition.
+Deadline placements consume events while waiting and poll the last two
+milliseconds. An upward-rounded receive timeout and its timer tick must not
+place a requested D - 1 ms resume after D. The K_pf derivation retains every
+byte-unit, report and exit sample, including the first sample and residual
+cooperative work.
 
 Samples require Linux load average at most available host logical CPUs
 (falling back to the main node's online schedulers when availability is unknown) and aggregate CPU

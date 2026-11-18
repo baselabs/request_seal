@@ -3,6 +3,7 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
   alias RequestSeal.{Custody, JOSE.JWE}
   alias RequestSeal.JOSE.JWE.{Bounds, Codec, Coordinator, Guard, Resolver, Unwrap}
   alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
+  alias RequestSeal.Test.JWETeardownGate
   @after_compile Runtime
   @moduletag timeout: 600_000
 
@@ -519,46 +520,104 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
 
   test "blocked resolvers held across R through U end within the original U bound" do
     Runtime.with_peer(fn ->
-      n = Bounds.max_tokens()
+      sample = JWETeardownGate.sample(:u, :resolvers)
+      assert sample.elapsed <= Bounds.teardown(Bounds.max_tokens())
+    end)
+  end
+
+  test "shared U preserves authenticated deliveries and expires every remaining group once" do
+    Runtime.with_peer(fn ->
+      n = 32
 
       s =
-        Runtime.start(n, :resolvers,
-          trace_input: false,
-          near_cap: true,
-          policy: %{timeout: 15_000, resolve_timeout: 10_000, unwrap_timeout: 1_000}
+        Runtime.start(n, :custody,
+          policy: %{timeout: 5_000, resolve_timeout: 3_000, unwrap_timeout: 1_000}
         )
 
       try do
-        [_, _, _, _, _, r, d, _, unwrap] =
-          Enum.find_value(s.events, fn
-            {:spawn, _, _, Guard, :run, args, _} -> args
+        send(hd(s.custody), :continue)
+
+        s =
+          Runtime.collect_event(s, fn
+            {:trace_ts, pid, :receive, {_, :payload, _, _}, _} -> pid == s.caller
+            _ -> false
+          end)
+
+        u =
+          Enum.find_value(s.messages, fn
+            {:trace_ts, _, :send, {_, :member, _, _, _, u, _}, _, _} -> u
             _ -> nil
           end)
 
-        u = r + unwrap
-        assert Bounds.now() < r, "all blocked resolvers must be placed before R"
-        true = :erlang.suspend_process(s.coordinator)
-        assert Enum.all?(s.resolvers, &Process.alive?/1)
-        s = Runtime.until(s, u)
-        true = :erlang.resume_process(s.coordinator)
-        result = Runtime.collect_ends(s, u + Bounds.teardown(n))
+        assert Bounds.now() < u
+        result = Runtime.collect_return(s, u + Bounds.teardown(n)) |> Runtime.delivered()
+        assert {:ok, results} = result.return
+        assert length(results) == n
+        assert Enum.count(results, &match?({:ok, %{plaintext: "payload"}}, &1)) == 1
 
-        assert result.remaining == 0,
-               "blocked resolvers must end within B(n) after U rather than wait for D"
+        assert Enum.count(
+                 results,
+                 &match?({:error, %{reason: :decryption_failed, layer: :crypto}}, &1)
+               ) == n - 1
 
-        assert Bounds.now() < d, "teardown must not wait for D"
+        settled =
+          for {:trace_ts, pid, :receive, {_, :settled, i, _, _, _}, _} <- result.messages,
+              pid == result.caller,
+              do: i
+
+        assert Enum.sort(settled) == Enum.to_list(0..(n - 1))
         assert Enum.all?(Map.keys(result.pids), &(not Process.alive?(&1)))
-        result = Runtime.collect_return(result, u + Bounds.teardown(n)) |> Runtime.delivered()
+        result = Runtime.collect_ends(result, u + Bounds.teardown(n))
+        assert result.remaining == 0
+      after
+        Runtime.cleanup(s)
+      end
+    end)
+  end
+
+  test "U expires prepared positions with member messages still queued at workers" do
+    Runtime.with_peer(fn ->
+      n = 1_000
+
+      s =
+        Runtime.start(n, :queued,
+          trace_input: false,
+          policy: %{timeout: 5_000, resolve_timeout: 3_000, unwrap_timeout: 1_000}
+        )
+
+      try do
+        workers = for {pid, :worker} <- s.pids, do: pid
+        Enum.each(workers, &:erlang.suspend_process/1)
+        :erlang.resume_process(s.guard)
+        s = %{s | topology: :resolvers}
+
+        s =
+          Runtime.collect_event(s, fn
+            {:trace_ts, _, :send, {_, :member, i, _, _, _, _}, _, _} -> i == n - 1
+            _ -> false
+          end)
+
+        u =
+          Enum.find_value(s.messages, fn
+            {:trace_ts, _, :send, {_, :member, _, _, _, u, _}, _, _} -> u
+            _ -> nil
+          end)
+
+        assert Bounds.now() < u
+        s = Runtime.until(s, u)
+        Enum.each(workers, &:erlang.resume_process/1)
+        result = Runtime.collect_return(s, u + Bounds.teardown(n)) |> Runtime.delivered()
         assert {:ok, results} = result.return
         assert length(results) == n
 
         assert Enum.all?(
                  results,
-                 &match?({:error, %{reason: :key_resolver_failed, layer: :key}}, &1)
-               ),
-               "R must retain the resolver failure cell when the coordinator resumes after U"
+                 &match?({:error, %{reason: :decryption_failed, layer: :crypto}}, &1)
+               )
 
-        refute Enum.any?(result.pids, fn {_, role} -> role == :custody end)
+        assert Enum.all?(Map.keys(result.pids), &(not Process.alive?(&1)))
+        result = Runtime.collect_ends(result, u + Bounds.teardown(n))
+        assert result.remaining == 0
       after
         Runtime.cleanup(s)
       end

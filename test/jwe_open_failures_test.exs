@@ -438,11 +438,15 @@ defmodule RequestSeal.JWEOpenFailuresTest do
       )
 
     try do
-      assert_receive {:DOWN, ^ref, :process, ^pid, :deadline}
+      # A forbidden handoff lets the already-expired coordinator race F. Check
+      # the transfer first so either exit reason exposes that same violation.
+      assert_receive {:DOWN, ^ref, :process, ^pid, reason}
 
       refute_receive {:"ETS-TRANSFER", _, ^pid, {^tag, :caller}},
                      0,
                      "past F the guard must retain and delete its notice"
+
+      assert reason == :deadline
     after
       :erlang.unalias(address)
       Process.exit(pid, :kill)

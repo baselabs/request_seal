@@ -422,7 +422,8 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   end
 
   # Advance to a production deadline while continuing to consume trace/end
-  # events. The absolute clock, rather than a sleep interval, decides arrival.
+  # events. Poll the last two milliseconds: an upward-rounded receive timeout
+  # plus its timer tick must not place a requested D - 1 ms resume after D.
   def until(s, at) do
     if Bounds.now() >= at do
       s
@@ -430,7 +431,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       receive do
         event -> until(observe(s, event), at)
       after
-        Bounds.remaining(at) -> until(s, at)
+        max(0, Bounds.remaining(at) - 2) -> until(s, at)
       end
     end
   end

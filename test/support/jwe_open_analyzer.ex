@@ -130,6 +130,7 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
       {Coordinator, :resolved, 3},
       {Coordinator, :expire_positions, 2},
       {Coordinator, :finish_group, 4},
+      {Coordinator, :kill_groups, 1},
       {Coordinator, :dead_positions, 4},
       {Coordinator, :drain_preflight, 2},
       {Coordinator, :kill_registered, 1}
@@ -441,7 +442,9 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
           {:call, _, {:remote, _, {:atom, _, :ets}, {:atom, _, :delete}}, [_]} <- calls(body),
           do: {m, f}
 
-    unless Enum.sort(deletes) == Enum.sort([{Guard, :receive_one}, {Open, :drain}]),
+    expected_deletes = [{Guard, :receive_one}, {Guard, :join}, {Open, :drain}]
+
+    unless Enum.sort(deletes) == Enum.sort(expected_deletes),
       do: raise("notice deletion inventory differs: #{inspect(deletes)}")
   end
 end

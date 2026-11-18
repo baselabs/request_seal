@@ -603,8 +603,23 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   end
 
   defp expire_u(s) do
-    groups = expire_groups(:maps.to_list(map_get(:groups, s)), s, [])
+    rows = :maps.to_list(map_get(:groups, s))
+    kill_groups(rows)
+    groups = expire_groups(rows, s, [])
     %{s | groups: :maps.from_list(groups), expired_u: true}
+  end
+
+  # Issue every independent cancellation before summary traffic competes with
+  # callback exit and notice deletion on the schedulers.
+  defp kill_groups([]), do: :ok
+
+  defp kill_groups([{_, group} | rest]) do
+    case group do
+      %{duration: nil, pid: pid} when pid != nil -> :erlang.exit(pid, :kill)
+      _ -> :ok
+    end
+
+    kill_groups(rest)
   end
 
   defp expire_groups([], _, groups), do: groups
@@ -612,8 +627,12 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp expire_groups([{g, group} | rest], s, groups) do
     group =
       case group do
-        %{duration: nil, pid: pid} when pid != nil -> finish_group(group, s, g, :timeout)
-        _ -> group
+        %{duration: nil, pid: pid} when pid != nil ->
+          group_notice(:maps.to_list(map_get(:workers, group)), s, g, :timeout)
+          %{group | duration: max(0, Bounds.now() - map_get(:started, group))}
+
+        _ ->
+          group
       end
 
     expire_groups(rest, s, [{g, group} | groups])

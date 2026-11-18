@@ -2,6 +2,14 @@
 
 ## Unreleased 2.0.0
 
+- Join JWE child notices with scalar counters after the registry sweep. At U,
+  cancel all unfinished custody groups before sending summaries, revoke worker
+  routes first, and rebuild remaining positions once after authentication.
+  Share the blocked-resolver placement between verify and the teardown gate;
+  preserve the due wake that debug suspension pauses on OTP 29.
+  Select reversing mutations by test name so moving test lines cannot retarget
+  them, and check a forbidden past-F notice transfer before its racing exit reason.
+
 - Rebuild JWE expiry state once per phase and preserve the original unwrap clock
   across R. Join custody teardown without repeated resolver lookups or growing
   the ended set after its sweep. Scan compact separators and leading JSON

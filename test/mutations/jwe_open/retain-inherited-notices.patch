@@ -7,5 +7,5 @@
 -        :ets.delete(tid)
 +        _ = tid
 
-         s =
-           if ended_at == nil do
+         if ended_at == nil do
+           if map_get(:cause, s) == nil, do: send(coordinator, {tag, :ended, slot})
