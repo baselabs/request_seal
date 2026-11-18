@@ -15,8 +15,9 @@ The admission, resolution, unwrap and content outcomes of
 A raw-monitored guard creates the caller notice, an ETS ended set and a protected
 registry whose heir is the guard. The coordinator owns that registry while it
 runs and registers every library-owned child. Each callback child receives a
-private notice table before its library link is removed. Its exit transfers the
-empty table to the guard; the guard records the end, deletes the notice and only
+private ordered-set notice table before its library link is removed. Deleting an
+empty ordered set avoids the hash-set segment scan charge per child. Its exit
+transfers the empty table to the guard; the guard records the end, deletes the notice and only
 then forwards completion. Library processes exit with closed atoms. The guard
 checks ownership before every dequeue, kills the coordinator once, then sweeps
 the inherited registry once. Coordinator ownership changing is the end marker;
@@ -58,8 +59,10 @@ violations are `:invalid_policy`. Resolvers validate and digest their answer
 before forwarding it, with the same word and binary-byte bounds for handles;
 oversized answers are `:key_resolver_failed`. Sink delivery normalizes in its
 sender. RequestSeal owns UTF-8 traversal on every library path.
-Serialization detection uses bounded native binary scans, including mixed JSON
-whitespace at the token byte cap, rather than a recursive walk over every byte.
+Serialization detection compiles its non-whitespace pattern once and searches
+at most 256 bytes per recursive codec step, including mixed whitespace at the
+token byte cap. The whole byte unit remains observable by production-sensitive
+suspension placement; it cannot be fused into a whole-token native call.
 
 Validation catches only explicit input failures. Unexpected library exceptions
 and exits become `:internal_failure`, including a preflight exit without a final
@@ -90,8 +93,13 @@ resuming it; the receive entry after the kill ends the measured interval before
 another dequeue or the registry sweep. Topology samples install only the kill
 and finish reduction dumps after placement, so setup does not trace every queued
 end notice.
-Placement collectors match each new event once. A second trigger during a sweep
-requires both a verified registry owner flip and a guard still paused in the sweep.
+Placement collectors match each new event once; sweep placement starts with new
+events after resume rather than scanning retained history. The return collector
+checks its absolute deadline before each dequeue, including under continuous
+receive-timeout traces from a caller-bound mutation. It checks the caller result
+before a trace barrier, then stops the producer before cleanup drains the queue.
+A second trigger during a sweep requires both a verified registry owner flip
+and a guard still paused in the sweep.
 OTP fold helpers may have different arities; a helper frame must retain the
 enclosing guard check. Native byte-scan placements likewise require the codec
 unit on the suspended process's stack.

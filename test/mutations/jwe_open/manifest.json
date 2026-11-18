@@ -47,7 +47,7 @@
       "patch": "oracle-3-bulk-bootstrap.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 3 guard coordinator and caller queues have bounded terms",
-      "selection": "line:170",
+      "selection": "line:171",
       "failure": "bootstrap messages must be bounded",
       "covers": [
         "oracle 3; bounded bootstrap at cap",
@@ -88,7 +88,7 @@
       "patch": "oracle-3-child-monitor.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "R12-1 callback exit reasons never enter library queues",
-      "selection": "line:356",
+      "selection": "line:361",
       "failure": "caller reason must not enter a library queue",
       "covers": [
         "oracle 3; reason disposal",
@@ -99,7 +99,7 @@
       "patch": "oracle-4-ended-map.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 4 guard heap stays constant with queued notices after GC",
-      "selection": "line:205",
+      "selection": "line:206",
       "failure": "guard heap must be constant at the cap",
       "covers": [
         "oracle 4: ended set map",
@@ -110,7 +110,7 @@
       "patch": "oracle-4-on-heap-mailbox.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 4 guard heap stays constant with queued notices after GC",
-      "selection": "line:205",
+      "selection": "line:206",
       "failure": "guard mailbox must be off heap",
       "covers": [
         "oracle 4: on heap mailbox"
@@ -120,7 +120,7 @@
       "patch": "oracle-5-remove-caller-bound.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "caller bound holds with guard suspended",
-      "selection": "line:294",
+      "selection": "line:295",
       "failure": "caller wait must be bounded with guard suspended",
       "covers": [
         "oracle 5"
@@ -140,7 +140,7 @@
       "patch": "causes-reopen-during-sweep.patch",
       "file": "test/jwe_open_placements_test.exs",
       "test": "9b second triggers retain the first anchor and reason during sweep",
-      "selection": "line:194",
+      "selection": "line:198",
       "failure": "second trigger must not reopen causes",
       "covers": [
         "test 9b; causes close"
@@ -210,7 +210,7 @@
       "patch": "bulk-range-rows.patch",
       "file": "test/jwe_open_placements_test.exs",
       "test": "S5c D during one scheduler row handoff cooperates with N results",
-      "selection": "line:477",
+      "selection": "line:481",
       "failure": "handoff must exit by D plus K_pf",
       "covers": [
         "S5c one rows message per range"
@@ -250,7 +250,7 @@
       "patch": "retain-inherited-notices.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "notices freed at P3 and resolver custody phases do not overlap",
-      "selection": "line:338",
+      "selection": "line:343",
       "failure": "resolver notices must be freed before P3",
       "covers": [
         "notices freed at P3",
@@ -261,7 +261,7 @@
       "patch": "forward-ended-before-delete.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "notice delete call precedes each ended forward in production",
-      "selection": "line:559",
+      "selection": "line:564",
       "failure": "notice deletion must precede ended forward",
       "covers": [
         "notice deletion order"
@@ -395,7 +395,7 @@
       "patch": "review9-review10-quadratic-R.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "19 every coordinator expiry and dead worker pass is linear",
-      "selection": "line:388",
+      "selection": "line:393",
       "failure": "coordinator passes must fit a + 512n",
       "covers": [
         "review9 F3 and review10 R10-2 expiry loops; test 19"
@@ -425,7 +425,7 @@
       "patch": "R12-2-depth-accumulator-message.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "oracle 3 guard coordinator and caller queues have bounded terms",
-      "selection": "line:170",
+      "selection": "line:171",
       "failure": "library control queue must be constant size",
       "covers": [
         "R12-2 reproduction"
@@ -435,7 +435,7 @@
       "patch": "R12-4-replied-skips-sweep.patch",
       "file": "test/jwe_open_oracles_test.exs",
       "test": "R12-4 D at cap sweeps even on replied end",
-      "selection": "line:533",
+      "selection": "line:538",
       "failure": "D reply must still sweep every child",
       "covers": [
         "R12-4 reproduction"

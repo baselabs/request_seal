@@ -359,7 +359,9 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   end
 
   def collect_return(s, at) do
-    if s.return != nil do
+    # A continuously populated trace queue must not starve the observer's
+    # deadline, particularly when a reversing mutation spins on receive after 0.
+    if s.return != nil or Bounds.now() >= at do
       s
     else
       receive do
@@ -403,7 +405,9 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       else: receive_event(s, predicate, Bounds.now() + timeout * 1_000)
   end
 
-  defp receive_event(s, predicate, at) do
+  # Use this entry when the event cannot predate the caller's resume. Searching
+  # the full history first can consume the whole production placement window.
+  def receive_event(s, predicate, at) do
     receive do
       event ->
         current = observe(s, event)

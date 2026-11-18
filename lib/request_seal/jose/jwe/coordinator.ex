@@ -81,6 +81,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
 
   # All process creation is in this closed role dispatch. Every spawn argument is
   # an atom, bounded integer, pid, reference or table id, never input or a handle.
+  # Empty ordered-set notices avoid the hash segment charge during deletion.
   defp start_child(kind, s, a, b, c, _e) do
     tag = map_get(:tag, s)
     guard = map_get(:guard, s)
@@ -116,7 +117,9 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
 
         :resolver ->
           slot = {:resolver, a}
-          notice = :ets.new(:child_notice, [:private, {:heir, guard, {tag, :slot, slot}}])
+
+          notice =
+            :ets.new(:child_notice, [:ordered_set, :private, {:heir, guard, {tag, :slot, slot}}])
 
           pid =
             :erlang.spawn_opt(
@@ -130,7 +133,9 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
 
         :custody ->
           slot = {:custody, a}
-          notice = :ets.new(:child_notice, [:private, {:heir, guard, {tag, :slot, slot}}])
+
+          notice =
+            :ets.new(:child_notice, [:ordered_set, :private, {:heir, guard, {tag, :slot, slot}}])
 
           pid =
             :erlang.spawn_opt(

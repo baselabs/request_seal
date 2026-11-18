@@ -1,11 +1,9 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -111,7 +111,7 @@
-
+@@ -112,5 +112,5 @@
      if :ets.info(map_get(:registry, s), :owner) == self() do
        anchor =
 -        if map_get(:anchor, s) == nil, do: min(now, map_get(:d, s)), else: map_get(:anchor, s)
 +        if map_get(:anchor, s) == nil, do: now, else: map_get(:anchor, s)
 
        stop_at = stop_at(anchor, :atomics.get(map_get(:flag, s), 2))
-       :erlang.send_after(Bounds.milliseconds(stop_at), self(), {map_get(:tag, s), :stop}, abs: true)

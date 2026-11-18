@@ -300,6 +300,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
                     {:trace_ts, _, :return_from, {Coordinator, :resolution_end, 2}, _, _} -> true
                     _ -> false
                   end)
+
                 at = resolution_stamp(s) + unwrap
                 wait_until(at)
                 {at, s, "P2 end: resolver notices queued at guard through U"}

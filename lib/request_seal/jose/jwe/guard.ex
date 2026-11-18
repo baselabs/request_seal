@@ -114,7 +114,11 @@ defmodule RequestSeal.JOSE.JWE.Guard do
         if map_get(:anchor, s) == nil, do: min(now, map_get(:d, s)), else: map_get(:anchor, s)
 
       stop_at = stop_at(anchor, :atomics.get(map_get(:flag, s), 2))
-      :erlang.send_after(Bounds.milliseconds(stop_at), self(), {map_get(:tag, s), :stop}, abs: true)
+
+      :erlang.send_after(Bounds.milliseconds(stop_at), self(), {map_get(:tag, s), :stop},
+        abs: true
+      )
+
       awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, map_get(:registry, s))
       %{s | ended_at: now, anchor: anchor, stop_at: stop_at, awaiting: awaiting}
     else
@@ -174,14 +178,16 @@ defmodule RequestSeal.JOSE.JWE.Guard do
     end
   end
 
-  defp receive_one(%{
-         tag: tag,
-         coordinator: coordinator,
-         ended: ended,
-         registry: registry,
-         ended_at: ended_at,
-         awaiting: awaiting
-       } = s) do
+  defp receive_one(
+         %{
+           tag: tag,
+           coordinator: coordinator,
+           ended: ended,
+           registry: registry,
+           ended_at: ended_at,
+           awaiting: awaiting
+         } = s
+       ) do
     # F, cancellation and the owner flip each arm an absolute wakeup once.
     # Per-notice timeout conversion adds work without changing that deadline.
     receive do

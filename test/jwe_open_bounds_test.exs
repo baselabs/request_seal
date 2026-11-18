@@ -294,7 +294,7 @@ defmodule RequestSeal.JWEOpenBoundsTest do
   test "serialization scan preserves JSON whitespace and compact refusals at the byte cap" do
     prefixes =
       for unit <- [" ", "\t", "\r", "\n", " \t\r\n"],
-          size <- [0, 1, 7, 8, 31, 32, 33, 1_048_568],
+          size <- [0, 1, 7, 8, 31, 32, 33, 255, 256, 257, 511, 512, 513, 1_048_568],
           do: binary_part(:binary.copy(unit, div(size, byte_size(unit)) + 1), 0, size)
 
     for prefix <- prefixes do
@@ -305,8 +305,10 @@ defmodule RequestSeal.JWEOpenBoundsTest do
       assert {:ok, [^prefix, "b", "c", "d", "e"]} = Codec.split(prefix <> ".b.c.d.e")
     end
 
-    for byte <- 0..255, byte not in [32, 9, 10, 13] do
-      first = <<byte>> <> "{}"
+    for size <- [0, 255, 256, 257, 511, 512, 513],
+        byte <- 0..255,
+        byte not in [32, 9, 10, 13] do
+      first = :binary.copy(" ", size) <> <<byte>> <> "{}"
 
       case byte do
         46 ->
@@ -319,6 +321,12 @@ defmodule RequestSeal.JWEOpenBoundsTest do
         _ ->
           assert {:ok, [^first, "b", "c", "d", "e"]} = Codec.split(first <> ".b.c.d.e")
       end
+    end
+
+    for size <- [255, 256, 257, 511, 512, 513] do
+      suffix = binary_part(:binary.copy(" \t\r\n", div(size, 4) + 1), 0, size)
+      assert {:ok, %{}} = Codec.object("{}" <> suffix, 16_384)
+      assert {:error, %{reason: :invalid_header}} = Codec.object("{}" <> suffix <> "x", 16_384)
     end
   end
 

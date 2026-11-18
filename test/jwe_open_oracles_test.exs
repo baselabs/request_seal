@@ -160,6 +160,7 @@ defmodule RequestSeal.JWEOpenOraclesTest do
 
         for {n, work, guard_work} <- tl(samples) do
           assert work - base <= 256 * (n - 1), "VM teardown must fit a + 256n"
+
           assert guard_work - guard_base <= 32 * (n - 1),
                  "guard teardown must fit a + 32n: #{inspect({topology, samples})}"
         end
@@ -306,10 +307,14 @@ defmodule RequestSeal.JWEOpenOraclesTest do
       true = :erlang.suspend_process(s.guard)
 
       try do
-        s = Runtime.collect_return(s, Bounds.now() + 1_000_000) |> Runtime.delivered()
+        s = Runtime.collect_return(s, Bounds.now() + 1_000_000)
 
         assert {:error, %{reason: :deadline_exceeded}} = s.return,
                "caller wait must be bounded with guard suspended"
+
+        # Fail before a trace barrier when a mutant is still producing traces.
+        # The after block stops that producer before draining its finite queue.
+        s = Runtime.delivered(s)
 
         [_, _, _, _, _, _, _, f, _] =
           Enum.find_value(s.events, fn

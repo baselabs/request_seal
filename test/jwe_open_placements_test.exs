@@ -167,10 +167,14 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
 
   defp sweep(s) do
     s =
-      Runtime.collect_event(s, fn
-        {:trace_ts, pid, :call, {Guard, :sweep, _}, _} -> pid == s.guard
-        _ -> false
-      end)
+      Runtime.receive_event(
+        s,
+        fn
+          {:trace_ts, pid, :call, {Guard, :sweep, _}, _} -> pid == s.guard
+          _ -> false
+        end,
+        Bounds.now() + 60_000_000
+      )
 
     if pause(s.guard) do
       # A queued call trace alone does not prove the guard is still sweeping.
