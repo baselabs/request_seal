@@ -673,6 +673,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
 
   defp dead_positions(i, hi, s, reason) do
     p = :maps.get(i, map_get(:positions, s))
+
     if map_get(:result, p) == nil and map_get(:resolver, p) != nil,
       do: :erlang.exit(map_get(:resolver, p), :kill)
 
@@ -695,7 +696,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp dead_groups([{_, group} | rest], w, s) do
     if map_get(:duration, group) == nil and map_get(:pid, group) != nil and
          is_map_key(map_get(:workers, group), w),
-      do: send(map_get(:pid, group), {map_get(:tag, s), :contributor_down, w})
+       do: send(map_get(:pid, group), {map_get(:tag, s), :contributor_down, w})
 
     dead_groups(rest, w, s)
   end

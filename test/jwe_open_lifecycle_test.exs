@@ -588,6 +588,28 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
 
       try do
         workers = for {pid, :worker} <- s.pids, do: pid
+
+        u =
+          Enum.find_value(s.messages, fn
+            {:trace_ts, _, :send, {_, :member, _, _, _, u, _}, _, _} -> u
+            _ -> nil
+          end)
+
+        # Each range also wakes at U and may settle and exit before the
+        # coordinator reaches its own U. Hold every range until the coordinator
+        # has expired U, so each one is live at U and the count is exact.
+        assert Bounds.now() < u
+        Enum.each(workers, &(true = :erlang.suspend_process(&1)))
+
+        s =
+          Runtime.collect_until(s, fn s ->
+            Enum.count(s.messages, fn
+              {:trace_ts, pid, :send, {_, :unwrap_expired, _}, _, _} -> pid == s.coordinator
+              _ -> false
+            end) >= length(workers)
+          end)
+
+        Enum.each(workers, &:erlang.resume_process/1)
         result = Runtime.collect_return(s) |> Runtime.delivered()
 
         notifications =
