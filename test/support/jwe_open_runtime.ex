@@ -2,6 +2,43 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   @moduledoc false
   alias RequestSeal.{Custody, JOSE.JWE}
   alias RequestSeal.JOSE.JWE.{Bounds, Codec}
+  @collection_us 10_000_000
+
+  def collection_cap, do: @collection_us
+  def collection_deadline, do: Bounds.now() + collection_cap()
+
+  def end_observer do
+    observer = self()
+
+    {tracer, monitor} =
+      spawn_monitor(fn ->
+        owner = Process.monitor(observer)
+        forward_ends(observer, owner)
+      end)
+
+    session = :trace.session_create(:jwe_ends, tracer, [])
+
+    :trace.recv(
+      session,
+      [
+        {[:_, :_, {:DOWN, :_, :process, :_, :_}], [], []},
+        {[:_, :_, {:_, :handed_off}], [], []}
+      ],
+      []
+    )
+
+    :trace.process(session, observer, true, [:receive, :monotonic_timestamp])
+    {session, tracer, monitor}
+  end
+
+  def stop_end_observer({session, tracer, monitor}) do
+    :trace.session_destroy(session)
+    send(tracer, :stop)
+
+    receive do
+      {:DOWN, ^monitor, :process, ^tracer, _} -> :ok
+    end
+  end
 
   def policy(handle, extra \\ %{}) do
     Map.merge(
@@ -177,13 +214,16 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     single = Keyword.get(options, :single, false)
     p = if single, do: single(p, expected), else: p
     hold_caller = Keyword.get(options, :hold_caller, false)
+    trace_messages = Keyword.get(options, :trace_messages, true)
+    {end_session, end_tracer, end_monitor} = end_observer()
 
     {caller, monitor} =
       spawn_monitor(fn ->
         receive do
           :go ->
             result = if single, do: JWE.decrypt(token, p), else: JWE.decrypt_many(items, p)
-            send(observer, {:returned, self(), result})
+            returned_at = Bounds.now()
+            send(observer, {:returned, self(), result, returned_at})
 
             if hold_caller,
               do:
@@ -196,12 +236,12 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     flags = [
       :procs,
       :set_on_spawn,
-      :receive,
       :call,
       :monotonic_timestamp,
       {:tracer, observer}
     ]
 
+    flags = if trace_messages, do: [:receive | flags], else: flags
     flags = if Keyword.get(options, :trace_input, true), do: [:send | flags], else: flags
     :erlang.trace(caller, true, flags)
 
@@ -216,8 +256,14 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       n: n,
       topology: topology,
       trace_input: Keyword.get(options, :trace_input, true),
+      trace_messages: trace_messages,
+      end_tracer: end_tracer,
+      end_monitor: end_monitor,
+      end_session: end_session,
       pids: %{},
       refs: %{},
+      ends: %{},
+      early_exits: %{},
       remaining: 0,
       guard_ended: false,
       guard: nil,
@@ -234,7 +280,8 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       peak_tables: 0,
       baseline_tables: baseline_tables,
       baseline_processes: baseline_processes,
-      return: nil
+      return: nil,
+      return_at: nil
     }
 
     s
@@ -286,8 +333,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     end
 
     if s.topology == :queued, do: :erlang.resume_process(s.guard)
-    s = collect_until(s, fn s -> s.guard_ended end)
-    s = delivered(s) |> collect_ends() |> delivered() |> drain_observations()
+    s = collect_ends(s) |> delivered() |> drain_observations()
     {after_vm, _} = :erlang.statistics(:exact_reductions)
 
     %{
@@ -298,13 +344,53 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     }
   end
 
+  # Timed placements retain only lifecycle traces, the resolution stamp and
+  # the single handed_off receive. Full message oracles use the default flags.
+  def quiet(s) do
+    if is_pid(s.coordinator) do
+      try do
+        :erlang.trace(s.coordinator, false, [:send])
+      catch
+        :error, :badarg -> :ok
+      end
+    end
+
+    delivered(s) |> drain_observations()
+  end
+
+  defp forward_ends(observer, owner) do
+    receive do
+      {:trace_delivered, _, _} = event ->
+        send(observer, event)
+        forward_ends(observer, owner)
+
+      {:trace_ts, _, :receive, _, _} = event ->
+        send(observer, event)
+        forward_ends(observer, owner)
+
+      {:barrier, ^observer, ref} ->
+        send(observer, {:trace_delivered, :all, ref})
+        forward_ends(observer, owner)
+
+      {:DOWN, ^owner, :process, ^observer, _} ->
+        :ok
+
+      :stop ->
+        :ok
+    end
+  end
+
   def delivered(s) do
     ref = :erlang.trace_delivered(:all)
+    s = delivered_wait(s, ref)
+    ref = :trace.delivered(s.end_session, :all)
+    s = delivered_wait(s, ref)
 
-    receive do
-      {:trace_delivered, :all, ^ref} -> s
-      event -> delivered_wait(observe(s, event), ref)
-    end
+    # The VM barrier reaches the tracer, not necessarily its forwarded queue.
+    # A following mailbox barrier joins those forwards before inspecting them.
+    ref = make_ref()
+    send(s.end_tracer, {:barrier, self(), ref})
+    delivered_wait(s, ref)
   end
 
   defp delivered_wait(s, ref) do
@@ -353,13 +439,14 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
 
     for {monitor, _} <- s.refs, do: Process.demonitor(monitor, [:flush])
     if ref != nil, do: Process.demonitor(ref, [:flush])
+    stop_end_observer({s.end_session, s.end_tracer, s.end_monitor})
     Custody.release(s.handle)
     :persistent_term.erase({RequestSeal.Test.JWEOpenBlockingCustodian, :observer})
     Process.demonitor(s.monitor, [:flush])
     flush()
   end
 
-  def collect_return(s, at) do
+  def collect_return(s, at \\ collection_deadline()) do
     # A continuously populated trace queue must not starve the observer's
     # deadline, particularly when a reversing mutation spins on receive after 0.
     if s.return != nil or Bounds.now() >= at do
@@ -373,8 +460,8 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     end
   end
 
-  def collect_ends(s, at \\ Bounds.now() + 1_000_000) do
-    if s.remaining == 0 or Bounds.now() >= at do
+  def collect_ends(s, at \\ collection_deadline()) do
+    if (s.remaining == 0 and map_size(s.ends) == map_size(s.pids)) or Bounds.now() >= at do
       s
     else
       receive do
@@ -471,6 +558,14 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
       end
     end
 
+    if role == :coordinator and not s.trace_messages do
+      try do
+        :trace.process(s.end_session, pid, true, [:receive, :monotonic_timestamp])
+      catch
+        :error, :badarg -> :ok
+      end
+    end
+
     s = %{
       s
       | pids: Map.put(s.pids, pid, role),
@@ -481,6 +576,19 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     }
 
     s = if role in [:guard, :coordinator, :preflight], do: Map.put(s, role, pid), else: s
+
+    {early, pending} = Map.pop(s.early_exits, pid)
+    s = %{s | early_exits: pending}
+
+    s =
+      case early do
+        {reason, stamp} when role in [:guard, :coordinator, :other] ->
+          record_end(s, pid, stamp, reason)
+
+        _ ->
+          s
+      end
+
     # The isolated peer has no unrelated workload. A VM count avoids making the
     # observer's own setup quadratic; the traced pid map proves the role and
     # lifetime inventories independently, and each pid still has an end monitor.
@@ -496,6 +604,29 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
           ),
         messages: [event | s.messages]
     }
+  end
+
+  # Sensitive children suppress exit traces. The VM timestamps their monitor
+  # delivery to this observer before it dequeues the DOWN. This is an exit
+  # upper bound, not a claim that the sensitive tracee emitted an exit event.
+  def observe(s, {:trace_ts, receiver, :receive, {:DOWN, ref, :process, pid, reason}, stamp})
+      when receiver == self() do
+    if Map.has_key?(s.refs, ref) and s.pids[pid] in [:preflight, :worker, :resolver, :custody],
+      do: record_end(s, pid, stamp, reason),
+      else: s
+  end
+
+  def observe(s, {:trace_ts, pid, :exit, reason, stamp}) do
+    cond do
+      s.pids[pid] in [:guard, :coordinator, :other] ->
+        record_end(s, pid, stamp, reason)
+
+      pid != s.caller and not Map.has_key?(s.pids, pid) ->
+        %{s | early_exits: Map.put(s.early_exits, pid, {reason, stamp})}
+
+      true ->
+        s
+    end
   end
 
   def observe(s, {:trace_ts, pid, :receive, message, _} = event) do
@@ -514,20 +645,28 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
   def observe(s, {:custody_entered, pid}),
     do: %{s | custody: [pid | s.custody], custody_count: s.custody_count + 1}
 
-  def observe(s, {:DOWN, ref, :process, pid, reason}) do
+  def observe(s, {:DOWN, ref, :process, pid, _reason}) do
     if :maps.get(ref, s.refs, true) == false,
       do: %{
         s
         | refs: Map.put(s.refs, ref, true),
           remaining: s.remaining - 1,
-          guard_ended: s.guard_ended or pid == s.guard,
-          events: [{:end, pid, Bounds.now(), reason} | s.events]
+          guard_ended: s.guard_ended or pid == s.guard
       },
       else: s
   end
 
-  def observe(s, {:returned, _, result}), do: %{s | return: result}
+  def observe(s, {:returned, _, result, at}), do: %{s | return: result, return_at: at}
   def observe(s, event), do: %{s | events: [event | s.events]}
+
+  defp record_end(s, pid, stamp, reason) do
+    if is_map_key(s.ends, pid) do
+      s
+    else
+      at = :erlang.convert_time_unit(stamp, :native, :microsecond)
+      %{s | ends: :maps.put(pid, true, s.ends), events: [{:end, pid, at, reason} | s.events]}
+    end
+  end
 
   defp drain_observations(s) do
     receive do

@@ -1,11 +1,10 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -109,7 +109,7 @@
-     end
-   end
-
--  defp check(s), do: s
-+  defp check(s), do: cause(s, Bounds.now())
-
-   defp cause(%{cause: nil} = s, now) do
-     cond do
+@@ -235,6 +235,7 @@
+   # only the join counters between notices instead of copying the state map
+   # for every child. The absolute stop is still checked before every dequeue.
+   defp join(s, awaiting, exit_seen) do
++    s = cause(s, Bounds.now())
+     if (awaiting == 0 and exit_seen) or Bounds.now() >= map_get(:stop_at, s) do
+       reason(s)
+     else

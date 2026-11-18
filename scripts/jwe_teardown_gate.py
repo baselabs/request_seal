@@ -6,6 +6,9 @@ most 5% over the sample window. Exhausted host-condition or placement budgets
 fail, never skip. Retain host identity, observations and absolute headroom.
 CPU counter windows span at least 20 ms; that observation delay is outside all
 timed units and does not alter the absolute runtime measurements.
+End markers use VM exit timestamps, or VM monitor-delivery upper bounds for
+sensitive children. Collection has a separate hang cap; all samples survive a
+bound violation, with placement and incomplete-lifecycle diagnostics.
 """
 import argparse
 import json
@@ -143,6 +146,12 @@ def markdown(report):
             ", ".join(map(str, sample["times_us"])),
             max(sample["times_us"]) / constants["b_us"],
             ", ".join(map(str, sample["loads"])), ", ".join(map(str, sample["steals"]))))
+    for sample in report["scenarios"]:
+        for index, (elapsed, placement, diagnostic) in enumerate(zip(
+                sample["times_us"], sample["placements"], sample["diagnostics"]), 1):
+            if elapsed > constants["b_us"] or not complete(diagnostic):
+                rows.append(f"\n{sample['scenario']} sample {index}: {elapsed} us; "
+                            f"{placement}; {json.dumps(diagnostic, sort_keys=True)}")
     rows += ["", "| Unit | Five times (us) | Load | CPU steal (%) |", "|---|---|---|---|"]
     for name, values in report["units_us"].items():
         loads, steals = report["units_loads"][name], report["units_steals"][name]
@@ -169,6 +178,12 @@ def passes(report):
         return False
 
 
+def complete(diagnostic):
+    return (isinstance(diagnostic, dict) and diagnostic.get("remaining") == 0 and
+            diagnostic.get("missing_end_roles") == [] and
+            diagnostic.get("live_roles") == [] and diagnostic.get("failures") == [])
+
+
 def _passes(report):
     expected = {f"{trigger}/{topology}" for trigger in ("S1", "S4", "S5", "S7")
                 for topology in ("resolvers", "queued", "custody")}
@@ -185,6 +200,7 @@ def _passes(report):
     if (not isinstance(cpus, int) or not 0 < cpus <= host["logical_cpus"] or
             not os.cpu_count() or cpus > os.cpu_count() or
             report["final_report_observer_queue"] != "off_heap" or
+            constants["collection_cap_us"] != 10_000_000 or
             attempts != 30 or constants["placement_attempts"] != 20):
         return False
     brackets = report["host_brackets"]
@@ -202,6 +218,9 @@ def _passes(report):
                   else host["schedulers_online"])
         if len(row["times_us"]) != 5 or any(
                 not math.isfinite(value) or not 0 <= value <= bound for value in row["times_us"]):
+            return False
+        if (len(row["placements"]) != 5 or not all(row["placements"]) or
+                len(row["diagnostics"]) != 5 or not all(complete(d) for d in row["diagnostics"])):
             return False
         if row["headroom"] != max(row["times_us"]) / bound or not host_samples(
                 row["host_conditions"], row["loads"], row["steals"], {online}, attempts, cpus, brackets):

@@ -1,7 +1,7 @@
 defmodule RequestSeal.Test.JWETeardownGate do
   @moduledoc false
   import ExUnit.Assertions
-  alias RequestSeal.JOSE.JWE.{Bounds, Codec, Coordinator, Guard, Worker}
+  alias RequestSeal.JOSE.JWE.{Bounds, Codec, Coordinator, Guard, Open, Worker}
   alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
   @samples 5
   @load_attempts 30
@@ -24,7 +24,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
           loads: Enum.map(samples, & &1.load),
           steals: Enum.map(samples, & &1.steal),
           host_conditions: Enum.map(samples, & &1.host_conditions),
-          placements: Enum.map(samples, & &1.placement)
+          placements: Enum.map(samples, & &1.placement),
+          diagnostics: Enum.map(samples, & &1.diagnostics)
         }
       end
 
@@ -52,7 +53,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
           steals: Enum.map(samples, & &1.steal),
           host_conditions: Enum.map(samples, & &1.host_conditions),
           placements: Enum.map(samples, & &1.placement),
-          preflight_exit_us: Enum.map(samples, & &1.exit)
+          preflight_exit_us: Enum.map(samples, & &1.exit),
+          diagnostics: Enum.map(samples, & &1.diagnostics)
         }
       end
 
@@ -102,7 +104,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
             loads: Enum.map(handoffs, & &1.load),
             steals: Enum.map(handoffs, & &1.steal),
             host_conditions: Enum.map(handoffs, & &1.host_conditions),
-            placements: Enum.map(handoffs, & &1.placement)
+            placements: Enum.map(handoffs, & &1.placement),
+            diagnostics: Enum.map(handoffs, & &1.diagnostics)
           }
         ]
 
@@ -138,7 +141,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
         k_pf_us: Bounds.preflight(),
         load_attempts: @load_attempts,
         placement_attempts: @placement_attempts,
-        cpu_window_min_us: @cpu_window_us
+        cpu_window_min_us: @cpu_window_us,
+        collection_cap_us: Runtime.collection_cap()
       },
       host: host(),
       final_report_observer_queue: observer_queue
@@ -245,15 +249,18 @@ defmodule RequestSeal.Test.JWETeardownGate do
   end
 
   # Verify lanes call this same driver, including its trace pattern, policy,
-  # near-cap inputs, placement, observer and end-marker deadline.
+  # near-cap inputs, placement, timestamped ends and independent collection cap.
   def sample(trigger, topology) do
     :erlang.trace_pattern({Coordinator, :resolution_end, 2}, [{:_, [], [{:return_trace}]}], [
       :local
     ])
 
+    :erlang.trace_pattern({Open, :wait_end, 1}, true, [:local])
+
     s =
       Runtime.start(@cap, topology,
         trace_input: false,
+        trace_messages: false,
         near_cap: true,
         policy: %{timeout: 30_000, resolve_timeout: 20_000, unwrap_timeout: 5_000}
       )
@@ -267,6 +274,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         |> normalize_spawn()
 
       [tag, _caller, _address, _flag, _mode, _r, d, f, unwrap] = args
+      s = Runtime.quiet(s)
 
       {anchor, s, placement} =
         case trigger do
@@ -327,42 +335,56 @@ defmodule RequestSeal.Test.JWETeardownGate do
       result =
         if trigger == :caller,
           do: Runtime.trigger(s, :caller),
-          else: finish(s, anchor + Bounds.teardown(@cap))
+          else: finish(s)
 
-      assert result.remaining == 0,
-             "blocked processes must end within B(n) after the original trigger: " <>
-               inspect(live_roles(result))
+      {result, failures} =
+        if trigger == :u and topology == :resolvers do
+          result = Runtime.collect_return(result) |> Runtime.delivered()
 
-      last =
-        result.events
-        |> Enum.flat_map(fn
-          {:end, _, at, _} -> [at]
-          _ -> []
-        end)
-        |> Enum.max()
+          failures =
+            checks(fn ->
+              assert is_integer(result.return_at) and result.return_at < d,
+                     "teardown must not wait for D"
 
-      assert Enum.all?(Map.keys(result.pids), &(not Process.alive?(&1))),
-             "gate: process survived teardown"
+              # The public bound is wait-end, before cleanup and handlers.
+              # This peer has no handlers; retain its return stamp as well.
+              wait_end =
+                Enum.find_value(result.events, fn
+                  {:trace_ts, pid, :call, {Open, :wait_end, [at]}, _}
+                  when pid == s.caller ->
+                    at
 
-      if trigger == :u and topology == :resolvers do
-        assert Bounds.now() < d, "teardown must not wait for D"
-        result = Runtime.collect_return(result, anchor + Bounds.teardown(@cap))
-        assert {:ok, results} = result.return
-        assert length(results) == @cap
+                  _ ->
+                    nil
+                end)
 
-        assert Enum.all?(
-                 results,
-                 &match?({:error, %{reason: :key_resolver_failed, layer: :key}}, &1)
-               ),
-               "R must retain the resolver failure cell when the coordinator resumes after U"
+              assert is_integer(wait_end) and wait_end <= f + Bounds.teardown(@cap),
+                     "caller wait must end by F plus B"
 
-        refute Enum.any?(result.pids, fn {_, role} -> role == :custody end)
-      end
+              assert wait_end <= result.return_at
+              assert result.return_at <= f + Bounds.teardown(@cap)
+              assert {:ok, results} = result.return
+              assert length(results) == @cap
 
-      %{elapsed: last - anchor, placement: placement}
+              assert Enum.all?(
+                       results,
+                       &match?({:error, %{reason: :key_resolver_failed, layer: :key}}, &1)
+                     ),
+                     "R must retain the resolver failure cell when the coordinator resumes after U"
+
+              refute Enum.any?(result.pids, fn {_, role} -> role == :custody end)
+            end)
+
+          {result, failures}
+        else
+          {result, []}
+        end
+
+      measurement(result, anchor, placement, failures)
     after
       Runtime.cleanup(s)
       :erlang.trace_pattern({Coordinator, :resolution_end, 2}, false, [:local])
+      :erlang.trace_pattern({Open, :wait_end, 1}, false, [:local])
     end
   end
 
@@ -388,17 +410,47 @@ defmodule RequestSeal.Test.JWETeardownGate do
   defp live_roles(s) do
     s.pids
     |> Enum.filter(fn {pid, _} -> Process.alive?(pid) end)
-    |> Enum.map(fn {pid, role} -> {role, Runtime.info(pid, :current_function)} end)
+    |> Enum.map(fn {pid, role} ->
+      %{role: role, function: inspect(Runtime.info(pid, :current_function))}
+    end)
   end
 
-  defp finish(s, at) do
-    if s.topology == :queued, do: :erlang.resume_process(s.guard)
-    Runtime.collect_ends(s, at)
+  defp checks(fun) do
+    fun.()
+    []
+  rescue
+    error in ExUnit.AssertionError -> [Exception.message(error)]
+  end
+
+  defp measurement(s, anchor, placement, failures) do
+    ended = for {:end, _, at, _} <- s.events, do: at
+    missing = for {pid, role} <- s.pids, not is_map_key(s.ends, pid), do: role
+    live = live_roles(s)
+    complete = s.remaining == 0 and missing == [] and live == []
+    last = Enum.max(ended, fn -> anchor end)
+    last = if complete, do: last, else: max(last, Bounds.now())
+
+    late =
+      for {:end, pid, at, _} <- s.events, at > anchor + Bounds.teardown(@cap),
+        do: %{role: s.pids[pid], end_us: at - anchor}
+
+    %{
+      elapsed: last - anchor,
+      placement: placement,
+      diagnostics: %{
+        remaining: s.remaining,
+        missing_end_roles: missing,
+        live_roles: live,
+        late_roles: late,
+        return_us: if(is_integer(s.return_at), do: s.return_at - anchor, else: :null),
+        failures: failures
+      }
+    }
   end
 
   defp finish(s) do
     if s.topology == :queued, do: :erlang.resume_process(s.guard)
-    Runtime.collect_until(s, &(&1.remaining == 0))
+    Runtime.collect_ends(s)
   end
 
   defp wait_until(at) do
@@ -423,6 +475,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
   defp handoff(attempts, seen) do
     s =
       Runtime.launch(@cap, :resolvers,
+        trace_input: false,
+        trace_messages: false,
         near_cap: true,
         policy: %{timeout: 10_000, resolve_timeout: 5_000, unwrap_timeout: 1_000}
       )
@@ -453,15 +507,11 @@ defmodule RequestSeal.Test.JWETeardownGate do
           if Runtime.info(s.preflight, :message_queue_len) < 2 or Bounds.now() >= d - 1_000 do
             :retry
           else
-            s = Runtime.until(s, d - 1_000)
+            s = Runtime.quiet(s) |> Runtime.until(d - 1_000)
             :erlang.resume_process(s.preflight)
             result = finish(s) |> Runtime.delivered()
 
-            result =
-              Runtime.collect_return(
-                result,
-                d + Bounds.finalization() + Bounds.teardown(@cap)
-              )
+            result = Runtime.collect_return(result)
 
             exit_at =
               Enum.find_value(result.events, fn
@@ -478,34 +528,33 @@ defmodule RequestSeal.Test.JWETeardownGate do
             if handed do
               {:retry, :handoff_finished_before_d}
             else
-              assert is_integer(exit_at),
-                     "handoff must exit by D plus K_pf: cooperative exit missing"
+              failures =
+                checks(fn ->
+                  assert is_integer(exit_at),
+                         "handoff must exit by D plus K_pf: cooperative exit missing"
 
-              assert {:ok, results} = result.return, "S5c must return the accepted cardinality"
-              assert length(results) == @cap, "S5c must return the accepted cardinality"
+                  assert {:ok, results} = result.return,
+                         "S5c must return the accepted cardinality"
 
-              assert Enum.all?(
-                       results,
-                       &match?({:error, %{reason: :deadline_exceeded, layer: :crypto}}, &1)
-                     ),
-                     "S5c must fill the D crypto cells"
+                  assert length(results) == @cap, "S5c must return the accepted cardinality"
 
-              end_at =
-                result.events
-                |> Enum.flat_map(fn
-                  {:end, _, at, _} -> [at]
-                  _ -> []
+                  assert Enum.all?(
+                           results,
+                           &match?({:error, %{reason: :deadline_exceeded, layer: :crypto}}, &1)
+                         ),
+                         "S5c must fill the D crypto cells"
                 end)
-                |> Enum.max()
 
-              %{
-                exit: max(0, exit_at - d),
-                elapsed: end_at - d,
-                placement:
-                  "one scheduler; workers_done queued; resumed 1 ms before D; " <>
-                    "attempt #{@placement_attempts - attempts + 1}/#{@placement_attempts}",
+              placement =
+                "one scheduler; workers_done queued; resumed 1 ms before D; " <>
+                  "attempt #{@placement_attempts - attempts + 1}/#{@placement_attempts}"
+
+              result
+              |> measurement(d, placement, failures)
+              |> Map.merge(%{
+                exit: max(0, (exit_at || Bounds.now()) - d),
                 placement_attempts: @placement_attempts - attempts + 1
-              }
+              })
             end
           end
         else
@@ -555,6 +604,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
     s =
       Runtime.launch(1, :resolvers,
+        trace_input: false,
+        trace_messages: false,
         policy: Map.merge(%{timeout: 500, resolve_timeout: 300, unwrap_timeout: 100}, extra),
         items: [%{token: token, expected: expected}]
       )
@@ -575,17 +626,9 @@ defmodule RequestSeal.Test.JWETeardownGate do
         placed = suspend_in_unit(s.preflight, functions, d)
 
         if placed do
-          s = Runtime.until(s, d)
+          s = Runtime.quiet(s) |> Runtime.until(d)
           :erlang.resume_process(s.preflight)
           result = finish(s)
-
-          last =
-            result.events
-            |> Enum.flat_map(fn
-              {:end, _, at, _} -> [at]
-              _ -> []
-            end)
-            |> Enum.max()
 
           exit_at =
             Enum.find_value(result.events, fn
@@ -593,15 +636,15 @@ defmodule RequestSeal.Test.JWETeardownGate do
               _ -> nil
             end)
 
-          assert exit_at != nil, "byte unit must end cooperatively"
+          failures = checks(fn -> assert exit_at != nil, "byte unit must end cooperatively" end)
 
-          %{
-            elapsed: last - d,
-            exit: exit_at - d,
-            placement:
-              "production sensitive preflight suspended inside #{unit} across D; " <>
-                "attempt #{@placement_attempts - attempts + 1}/#{@placement_attempts}"
-          }
+          placement =
+            "production sensitive preflight suspended inside #{unit} across D; " <>
+              "attempt #{@placement_attempts - attempts + 1}/#{@placement_attempts}"
+
+          result
+          |> measurement(d, placement, failures)
+          |> Map.put(:exit, (exit_at || Bounds.now()) - d)
         else
           :retry
         end
@@ -769,6 +812,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
   defp exit_unit do
     observer = self()
+    end_observer = Runtime.end_observer()
 
     {pid, ref} =
       spawn_monitor(fn ->
@@ -790,10 +834,14 @@ defmodule RequestSeal.Test.JWETeardownGate do
       send(pid, :exit)
 
       receive do
-        {:DOWN, ^ref, :process, ^pid, :normal} -> %{time: Bounds.now() - started}
+        {:trace_ts, ^observer, :receive, {:DOWN, ^ref, :process, ^pid, :normal}, at} ->
+          %{time: :erlang.convert_time_unit(at, :native, :microsecond) - started}
+      after
+        5_000 -> flunk("exit unit timed out")
       end
     after
       stop_unit(pid, ref)
+      Runtime.stop_end_observer(end_observer)
     end
   end
 

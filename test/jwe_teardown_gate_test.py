@@ -36,6 +36,9 @@ class JWETeardownGateTest(unittest.TestCase):
             scenarios.append({"scenario": name, "times_us": [170_000] * 5,
                               "loads": [0.5] * 5, "steals": [0] * 5,
                               "preflight_exit_us": [200] * 5, "headroom": 1,
+                              "placements": ["verified placement"] * 5,
+                              "diagnostics": [{"remaining": 0, "missing_end_roles": [],
+                                               "live_roles": [], "failures": []} for _ in range(5)],
                               "host_conditions": [[self.observation(online=online, offset=i * 1000)] for i in range(5)]})
         return {"scenarios": scenarios, "final_report_observer_queue": "off_heap",
                 "host_brackets": {
@@ -43,7 +46,8 @@ class JWETeardownGateTest(unittest.TestCase):
                     "after": {"stat": "cpu 100000 100000 100000 100000 100000 100000 100000 100000",
                               "loadavg": "0.5 0.5 0.5 1/10 1"}},
                 "constants": {"n": 10_000, "b_us": 170_000, "k_pf_us": 5_000,
-                              "load_attempts": 30, "placement_attempts": 20},
+                              "load_attempts": 30, "placement_attempts": 20,
+                              "collection_cap_us": 10_000_000},
                 "host": {"schedulers_online": 2, "logical_cpus": os.cpu_count(),
                          "admission_cpus": os.cpu_count(), "cpu_model": "Test CPU", "otp": "28"},
                 "units_us": {key: [200 if key == "preflight_exit" else 100] * 5 for key in units},
@@ -103,6 +107,38 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertIsNone(GATE.steal_percent(observation["cpu_before"], observation["cpu_before"]))
         with self.assertRaises(ValueError):
             GATE.cpu_times("cpu0 1 2 3 4 5 6 7 8\n")
+
+    def test_failed_samples_retain_the_full_matrix_and_placement_diagnostics(self):
+        report = self.report()
+        row = report["scenarios"][0]
+        row["times_us"][0] = 170_001
+        row["headroom"] = 170_001 / 170_000
+        row["diagnostics"][0]["live_roles"] = [{"role": "resolver", "function": "blocked"}]
+        self.assertFalse(GATE.passes(report))
+        summary = GATE.markdown(report)
+        for scenario in report["scenarios"]:
+            self.assertIn(scenario["scenario"], summary)
+            self.assertEqual(len(scenario["times_us"]), 5)
+        for text in ("sample 1: 170001 us", "verified placement", '"role": "resolver"'):
+            self.assertIn(text, summary)
+
+    def test_incomplete_lifecycles_and_content_failures_fail_even_inside_the_bound(self):
+        for field, value in (("remaining", 1), ("missing_end_roles", ["preflight"]),
+                             ("live_roles", [{"role": "custody", "function": "blocked"}]),
+                             ("failures", ["S5c must fill the D crypto cells"])):
+            report = self.report()
+            report["scenarios"][0]["diagnostics"][0][field] = value
+            with self.subTest(field=field):
+                self.assertFalse(GATE.passes(report))
+                self.assertIn(str(value[0]) if field == "failures" else field,
+                              GATE.markdown(report))
+        for field in ("placements", "diagnostics"):
+            report = self.report()
+            del report["scenarios"][0][field]
+            self.assertFalse(GATE.passes(report))
+        report = self.report()
+        report["constants"]["collection_cap_us"] += 1
+        self.assertFalse(GATE.passes(report))
 
     def test_steal_rejection_retries_and_never_admits_rejected_measurement(self):
         rejected, accepted = self.observation(steal=6), self.observation(steal=5, offset=100)

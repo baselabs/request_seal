@@ -346,7 +346,8 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
                            "causes must close after replied"
 
                     if second == :f do
-                      result = Runtime.collect_return(result, f + Bounds.teardown(10_000))
+                      result = Runtime.collect_return(result)
+                      assert result.return_at <= f + Bounds.teardown(10_000)
                       assert match?({:ok, _}, result.return), "post reply F must retain the reply"
                     end
 
@@ -404,7 +405,7 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
               result
             else
               true = :erlang.suspend_process(s.coordinator)
-              Runtime.collect_return(s, f + Bounds.teardown(1) + 10_000) |> complete()
+              Runtime.collect_return(s) |> complete()
             end
 
           if replied do
@@ -412,6 +413,7 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
             assert match?({:ok, [{:ok, _}]}, result.return), "sent reply must survive F"
           else
             assert end_reason(result, s.guard) == :deadline
+            assert result.return_at <= f + Bounds.teardown(1) + 10_000
 
             assert match?({:error, %{reason: :deadline_exceeded}}, result.return),
                    "missing reply must end by F plus B"
@@ -497,6 +499,10 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
       fn ->
         sample = JWETeardownGate.handoff_sample()
         assert sample.exit <= Bounds.preflight(), "handoff must exit by D plus K_pf"
+        assert sample.diagnostics.remaining == 0
+        assert sample.diagnostics.missing_end_roles == []
+        assert sample.diagnostics.live_roles == []
+        assert sample.diagnostics.failures == []
 
         assert sample.elapsed <= Bounds.teardown(10_000),
                "handoff must end every process by D plus B"
@@ -511,6 +517,10 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
         for unit <- [:token_scan, :expected, :name] do
           sample = JWETeardownGate.byte_sample(unit)
           assert sample.exit <= Bounds.preflight(), "byte unit must exit by D plus K_pf"
+          assert sample.diagnostics.remaining == 0
+          assert sample.diagnostics.missing_end_roles == []
+          assert sample.diagnostics.live_roles == []
+          assert sample.diagnostics.failures == []
         end
       end,
       2

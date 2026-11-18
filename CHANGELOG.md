@@ -2,6 +2,15 @@
 
 ## Unreleased 2.0.0
 
+- Measure JWE teardown using VM exit timestamps and conservative VM monitor-delivery
+  timestamps for sensitive children. Separate the collection hang cap from the
+  unchanged runtime bounds, retain every timed sample with placement and lifecycle
+  diagnostics, and check caller-stamped return and wait-end times. Limit timed
+  message tracing while retaining the full untimed message oracles.
+- Find compact separators with bounded native binary searches, without per-token
+  regular-expression compilation or rescanning classified leading whitespace.
+  Retarget the second-trigger mutation to the reached post-sweep join loop.
+
 - Join JWE child notices with scalar counters after the registry sweep. At U,
   cancel all unfinished custody groups before sending summaries, revoke worker
   routes first, and rebuild remaining positions once after authentication.
@@ -12,8 +21,8 @@
 
 - Rebuild JWE expiry state once per phase and preserve the original unwrap clock
   across R. Join custody teardown without repeated resolver lookups or growing
-  the ended set after its sweep. Scan compact separators and leading JSON
-  whitespace together with bounded index captures and shared token bytes.
+  the ended set after its sweep. Preserve compact parts and leading JSON
+  whitespace with bounded searches and shared token bytes.
 
 - Verify JWE byte placements on suspended Codec stacks and drain earlier traces
   before sweep placement. Preserve the caller-bound mutation's claimed assertion.

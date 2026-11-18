@@ -289,7 +289,8 @@ defmodule RequestSeal.JOSEPolicyTest do
           s = Runtime.until(s, r)
           assert Bounds.now() < d, "admission placement must cross R before D"
           :erlang.resume_process(s.coordinator)
-          s = Runtime.collect_return(s, f + Bounds.teardown(1))
+          s = Runtime.collect_return(s)
+          assert s.return_at <= f + Bounds.teardown(1)
           assert s.resolver_count == 0, "expired admission must not start resolution"
           s.return
         end

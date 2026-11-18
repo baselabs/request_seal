@@ -521,6 +521,11 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
   test "blocked resolvers held across R through U end within the original U bound" do
     Runtime.with_peer(fn ->
       sample = JWETeardownGate.sample(:u, :resolvers)
+      assert sample.diagnostics.remaining == 0
+      assert sample.diagnostics.missing_end_roles == []
+      assert sample.diagnostics.live_roles == []
+      assert sample.diagnostics.failures == []
+
       assert sample.elapsed <= Bounds.teardown(Bounds.max_tokens())
     end)
   end
@@ -550,7 +555,8 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
           end)
 
         assert Bounds.now() < u
-        result = Runtime.collect_return(s, u + Bounds.teardown(n)) |> Runtime.delivered()
+        result = Runtime.collect_return(s) |> Runtime.delivered()
+        assert result.return_at <= u + Bounds.teardown(n)
         assert {:ok, results} = result.return
         assert length(results) == n
         assert Enum.count(results, &match?({:ok, %{plaintext: "payload"}}, &1)) == 1
@@ -567,8 +573,13 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
 
         assert Enum.sort(settled) == Enum.to_list(0..(n - 1))
         assert Enum.all?(Map.keys(result.pids), &(not Process.alive?(&1)))
-        result = Runtime.collect_ends(result, u + Bounds.teardown(n))
+        result = Runtime.collect_ends(result)
         assert result.remaining == 0
+
+        assert Enum.all?(result.events, fn
+                 {:end, _, at, _} -> at <= u + Bounds.teardown(n)
+                 _ -> true
+               end)
       after
         Runtime.cleanup(s)
       end
@@ -606,7 +617,8 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
         assert Bounds.now() < u
         s = Runtime.until(s, u)
         Enum.each(workers, &:erlang.resume_process/1)
-        result = Runtime.collect_return(s, u + Bounds.teardown(n)) |> Runtime.delivered()
+        result = Runtime.collect_return(s) |> Runtime.delivered()
+        assert result.return_at <= u + Bounds.teardown(n)
         assert {:ok, results} = result.return
         assert length(results) == n
 
@@ -616,8 +628,13 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
                )
 
         assert Enum.all?(Map.keys(result.pids), &(not Process.alive?(&1)))
-        result = Runtime.collect_ends(result, u + Bounds.teardown(n))
+        result = Runtime.collect_ends(result)
         assert result.remaining == 0
+
+        assert Enum.all?(result.events, fn
+                 {:end, _, at, _} -> at <= u + Bounds.teardown(n)
+                 _ -> true
+               end)
       after
         Runtime.cleanup(s)
       end

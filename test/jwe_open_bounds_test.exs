@@ -137,9 +137,23 @@ defmodule RequestSeal.JWEOpenBoundsTest do
   end
 
   test "compact scanning keeps exact parts and JSON refusal precedence" do
-    for token <- ["....", "a.b.c.d.e", " \t\r\na.b.c.d.e", <<255, 0, ?., ?., ?., ?.>>] do
+    whitespace = :binary.copy(" \t\r\n", 262_141) <> " \t\n"
+
+    for token <- [
+          "....",
+          "a.b.c.d.e",
+          " \t\r\na.b.c.d.e",
+          <<255, 0, ?., ?., ?., ?.>>,
+          whitespace <> "a.b.c.d.e"
+        ] do
       assert {:ok, parts} = Codec.split(token)
       assert parts == :binary.split(token, ".", [:global])
+    end
+
+    for token <- [whitespace <> "{}", whitespace <> "[....]", whitespace] do
+      reason =
+        if token == whitespace, do: :invalid_serialization, else: :unsupported_serialization
+      assert {:error, %{reason: ^reason}} = Codec.split(token)
     end
 
     for token <- ["", "...", ".....", "a.b.c.d.e.f", :binary.copy(".", 1_048_576)] do

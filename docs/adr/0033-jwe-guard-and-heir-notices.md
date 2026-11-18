@@ -72,16 +72,17 @@ violations are `:invalid_policy`. Resolvers validate and digest their answer
 before forwarding it, with the same word and binary-byte bounds for handles;
 oversized answers are `:key_resolver_failed`. Sink delivery normalizes in its
 sender. RequestSeal owns UTF-8 traversal on every library path.
-Serialization detection and compact splitting share one anchored native byte
-pattern over the capped token. Possessive whitespace and part runs avoid
-backtracking; six index captures bound allocation independently of the number
-of dots. Leading whitespace remains part of the original protected bytes,
-and parts reference the original token. The pattern refuses a JSON opening
-before attempting compact form. The Codec function consumes the native result,
-retaining its continuation while OTP yields. Placement suspends first, then
-checks that stack for the actual Codec unit; it never depends on the native
-continuation's current function name. The checkpoint unit remains one whole
-token, including its separator scan and accounting.
+Serialization detection finds the first non-whitespace byte with native binary
+search and refuses a JSON opening before attempting compact form. At most five
+scoped dot searches then establish exactly four separators; the first search
+starts after the already-classified whitespace. There is no per-token regular
+expression compilation or backtracking. Allocation is bounded independently of
+the number of dots. Leading whitespace remains part of the original protected
+bytes, and parts reference the original token. The Codec function consumes each
+native result, retaining its continuation while OTP yields. Placement suspends
+first, then checks that stack for the actual Codec unit; it never depends on the
+native continuation's current function name. The checkpoint unit remains one
+whole token, including its separator scan and accounting.
 
 Validation catches only explicit input failures. Unexpected library exceptions
 and exits become `:internal_failure`, including a preflight exit without a final
@@ -137,15 +138,30 @@ recomputes the longest unit + maximum report send + maximum preflight exit.
 Token units cover both compact input and a JSON candidate with mixed whitespace;
 each sample retains the slower scan.
 Timed topology samples keep the observer mailbox off heap and omit caller input
-send traces, whose copies would make the observer retain the entire batch.
-Coordinator control traces and a monitor for every observed birth remain active.
-The observer consumes each event once without selective scans for end notices.
-It continues observing while advancing to the trigger: a monitor end stamp is
-the observer's dequeue time, whereas a trace timestamp belongs to its tracee.
-All traced births, including sensitive children, receive an end monitor and
-contribute to the remaining count.
+send traces and inherited receive traces. Coordinator sends establish placement,
+then stop before the trigger. Lifecycle and required call traces remain active;
+an isolated trace session filters receives to monitor deliveries and the single
+handoff marker. Untimed message and ownership oracles retain their full traces.
+Every observed birth receives a monitor and must have both a processed DOWN and
+an end timestamp. Ordinary roles use the VM's monotonic exit trace timestamp.
+[Sensitive roles](https://www.erlang.org/doc/apps/erts/erlang.html#process_flag/2)
+suppress exit traces, so their end upper bound is the VM's timestamp when the
+monitor message reaches the observer, before observer dequeue. The timestamp is
+converted from native units to the same microseconds as Bounds. The preflight
+exit unit and cooperative exits use that same conservative upper bound. A trace
+barrier also joins the isolated tracer's forwarded events before inspection.
+Collection has a separate 10 s hang cap; it never uses B as its dequeue deadline.
+After collecting, the gate judges the maximum end timestamp minus the original
+anchor against the unchanged B. It retains every sample, placement, missing or
+live role, late role and assertion failure before writing its final verdict.
+A capped, incomplete lifecycle fails even if its observed timestamps fit B.
+The caller stamps its own return immediately after the public call. The public
+bound applies to wait-end by F + B, before cleanup and telemetry handlers; the
+handler-free blocked-resolver peer checks both that marker and its return stamp.
+Return collection has its own hang cap and cannot lose a result because an end
+collection consumed a previously passed deadline.
 Verify and the gate share the blocked-resolver driver, including the 30/20/5 s
-policy, trace pattern, near-cap inputs and original U + B(10,000) end deadline.
+policy, trace patterns, near-cap inputs and original U + B(10,000) end bound.
 The driver holds the coordinator across R through U, queues its bounded wake,
 then resumes it. This restores the due timer event of ordinary descheduling:
 [debug suspension](https://www.erlang.org/doc/apps/erts/erlang.html#suspend_process/2)
@@ -168,6 +184,8 @@ load against both the recorded admission capacity and its own CPU count.
 Counter windows span at least 20 ms, outside the timed units, to admit short
 units only with a measurable CPU accounting denominator. A zero elapsed window
 is rejected and consumes a host-condition attempt on both sides.
+The second-trigger reversing mutation reopens causes in the reached join loop;
+the ended-state check clause remains necessary for the coordinator EXIT path.
 Load and steal share 30 host-condition attempts; invalid placements have 20
 attempts. Exhausting either budget fails and reports the observed attempts.
 These are verification obligations, not one-run performance claims.
