@@ -355,9 +355,11 @@ defmodule RequestSeal.Test.JWETeardownGate do
         if trigger == :caller do
           # Reduction oracles use Runtime.trigger/2. Their VM-wide statistics
           # barrier is setup, never caller-death announcement or teardown work.
+          # The queued topology holds the guard suspended until the trigger,
+          # exactly as Runtime.trigger/2 and finish/1 release it.
           at = Bounds.now()
           Process.exit(s.caller, :kill)
-          {at, Runtime.collect_ends(s)}
+          {at, finish(s)}
         else
           {anchor, finish(s)}
         end

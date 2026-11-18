@@ -515,7 +515,14 @@ defmodule RequestSeal.JWEOpenOraclesTest do
   test "29 caller death during D settlement and reply sends ends every child" do
     Runtime.with_peer(fn ->
       for function <- [:fill_deadline, :settled_messages, :group_messages, :reply] do
-        arity = if function in [:reply, :group_messages], do: 2, else: 3
+        arity =
+          case function do
+            :fill_deadline -> 3
+            :settled_messages -> 5
+            :group_messages -> 3
+            :reply -> 2
+          end
+
         :erlang.trace_pattern({Coordinator, function, arity}, true, [:local])
 
         s =

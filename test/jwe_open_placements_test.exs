@@ -161,6 +161,8 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
     Runtime.collect_event(s, fn
       {:end, pid, _, _} -> pid == target
       {:end_observed, _, pid, _, _, _} -> pid == target
+      # The caller is monitored by the observer itself, not the end receiver.
+      {:DOWN, _, :process, pid, _} -> pid == target
       _ -> false
     end)
   end

@@ -48,6 +48,7 @@ defmodule RequestSeal.JWEOpenRuntimeTest do
         {:flags, flags} = :erlang.trace_info(s.coordinator, :flags)
         refute :send in flags
         refute :receive in flags
+        killed_at = Bounds.now()
         Process.exit(s.caller, :kill)
         Runtime.await(fn -> Enum.all?(Map.keys(s.pids), &(not Process.alive?(&1))) end)
         Process.sleep(30)
@@ -58,8 +59,9 @@ defmodule RequestSeal.JWEOpenRuntimeTest do
 
         for {:end_observed, pid, at, dequeued_at, queue} <- result.events do
           assert at < dequeue_at, "the dedicated receiver must stamp while the observer sleeps"
-          assert dequeued_at >= dequeue_at
           assert dequeued_at >= at
+          # Preflight ends during setup, and quiet/1 dequeues it before the kill.
+          if at >= killed_at, do: assert(dequeued_at >= dequeue_at)
           assert is_integer(queue) and queue >= 0
           assert Map.has_key?(result.pids, pid)
         end
