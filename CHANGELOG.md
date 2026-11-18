@@ -2,6 +2,11 @@
 
 ## Unreleased 2.0.0
 
+- Rebuild JWE expiry state once per phase and preserve the original unwrap clock
+  across R. Join custody teardown without repeated resolver lookups or growing
+  the ended set after its sweep. Scan compact separators and leading JSON
+  whitespace together with bounded index captures and shared token bytes.
+
 - Verify JWE byte placements on suspended Codec stacks and drain earlier traces
   before sweep placement. Preserve the caller-bound mutation's claimed assertion.
 - Arm absolute JWE phase, guard and caller wakeups across descheduling. Reduce

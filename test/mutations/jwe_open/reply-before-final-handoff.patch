@@ -1,6 +1,6 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -141,8 +141,7 @@
+@@ -165,8 +165,7 @@
        now >= map_get(:d, s) ->
          deadline(s)
 
@@ -9,4 +9,4 @@
 +      map_get(:n, s) != nil and map_get(:settled, s) == map_get(:n, s) ->
          reply(s, :ok)
 
-       map_get(:rprime, s) == nil and not map_get(:expired_r, s) and
+       not map_get(:expired_r, s) and now >= map_get(:r, s) and map_get(:handed_off, s) ->

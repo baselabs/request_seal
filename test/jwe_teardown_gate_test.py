@@ -226,7 +226,10 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertNotIn(":gate_final_report", source)
         self.assertNotIn("assert not handed", source)
         self.assertIn("{:retry, :handoff_finished_before_d}", source)
-        self.assertIn("Runtime.info(pid, :current_function)", source)
+        self.assertIn("Runtime.in_codec_unit?(pid, functions)", source)
+        runtime = (ROOT / "test/support/jwe_open_runtime.ex").read_text()
+        self.assertIn("info(pid, :current_stacktrace)", runtime)
+        self.assertIn("{Codec, function, _, _} -> function in functions", runtime)
         self.assertNotIn("process_flag(:sensitive, false)", source)
 
     def test_runner_owns_commands_and_retains_failure_output(self):

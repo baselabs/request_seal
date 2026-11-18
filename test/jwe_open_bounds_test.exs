@@ -136,6 +136,45 @@ defmodule RequestSeal.JWEOpenBoundsTest do
              JWE.decrypt_many([%{token: :binary.copy("x", 1_048_577), expected: %{}}], p)
   end
 
+  test "compact scanning keeps exact parts and JSON refusal precedence" do
+    for token <- ["....", "a.b.c.d.e", " \t\r\na.b.c.d.e", <<255, 0, ?., ?., ?., ?.>>] do
+      assert {:ok, parts} = Codec.split(token)
+      assert parts == :binary.split(token, ".", [:global])
+    end
+
+    for token <- ["", "...", ".....", "a.b.c.d.e.f", :binary.copy(".", 1_048_576)] do
+      assert {:error, %{reason: :invalid_serialization}} = Codec.split(token)
+    end
+
+    for byte <- 0..255 do
+      prefix = <<byte>>
+      token = prefix <> "{a.b.c.d.e}"
+
+      cond do
+        byte in [32, 9, 10, 13, 123, 91] ->
+          assert {:error, %{reason: :unsupported_serialization}} = Codec.split(token)
+
+        byte == ?. ->
+          assert {:error, %{reason: :invalid_serialization}} = Codec.split(token)
+
+        true ->
+          assert {:ok, [first | _]} = Codec.split(token)
+          assert first == prefix <> "{a"
+      end
+    end
+
+    for opening <- ["{", "["], prefix <- ["", " \t\r\n", :binary.copy(" \t\r\n", 262_143)] do
+      assert {:error, %{reason: :unsupported_serialization}} = Codec.split(prefix <> opening)
+    end
+
+    token = :binary.copy(" ", 1_048_568) <> ".b.c.d.e"
+    assert byte_size(token) == 1_048_576
+    assert {:ok, [first, "b", "c", "d", "e"]} = Codec.split(token)
+    assert byte_size(first) == 1_048_568
+    assert :binary.referenced_byte_size(first) == byte_size(token)
+    assert {:error, %{reason: :limit}} = Codec.split(token <> ".")
+  end
+
   test "RequestSeal owns every UTF-8 path", %{p: p, token: token} do
     for bytes <- [<<255>>, <<192, 128>>, <<237, 160, 128>>, <<244, 144, 128, 128>>] do
       refute Codec.utf8?(bytes)

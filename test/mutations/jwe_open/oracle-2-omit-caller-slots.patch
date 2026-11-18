@@ -1,8 +1,8 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -149,7 +149,9 @@
-     n + 1
-   end
+@@ -167,7 +167,9 @@
+
+   defp sweep({{:resolver, _}, _, :caller}, %{resolvers_ended: true}, n), do: n
 
 -  defp sweep({slot, pid, :caller}, s, n) do
 +  defp sweep({_slot, _pid, :caller}, _s, n), do: n
@@ -10,4 +10,4 @@
 +  defp omitted_sweep({slot, pid, :caller}, s, n) do
      %{ended: ended} = s
 
-     case :ets.lookup(ended, slot) do
+     case :ets.lookup_element(ended, slot, 2, :undefined) do

@@ -68,7 +68,7 @@
       "patch": "oracle-3-raw-resolver-answer.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "callback ingress bounds at production resolver and full call",
-      "selection": "line:179",
+      "selection": "line:218",
       "failure": "resolver answer must be bounded at its producer",
       "covers": [
         "oracle 3; callback ingress producer and full call"
@@ -78,7 +78,7 @@
       "patch": "oracle-3-raw-sink-outcome.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "Sink deliver normalizes in the sender",
-      "selection": "line:262",
+      "selection": "line:301",
       "failure": "sink must normalize before send",
       "covers": [
         "oracle 3; callback ingress sink"
@@ -292,7 +292,7 @@
       "patch": "ignore-handle-binary-bytes.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "callback ingress counts binary bytes",
-      "selection": "line:226",
+      "selection": "line:265",
       "failure": "handle binary bytes must be bounded",
       "covers": [
         "callback handle binary sum"
@@ -332,7 +332,7 @@
       "patch": "custody-ignore-caller-gate.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "zero start custody gate refuses caller death and U before callback",
-      "selection": "line:644",
+      "selection": "line:689",
       "failure": "custody callback must not start past its gate",
       "covers": [
         "zero start custody caller"
@@ -342,7 +342,7 @@
       "patch": "custody-ignore-U-gate.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "zero start custody gate refuses caller death and U before callback",
-      "selection": "line:644",
+      "selection": "line:689",
       "failure": "custody callback must not start past its gate",
       "covers": [
         "zero start U"
@@ -465,7 +465,7 @@
       "patch": "R12-7-old-crypto-cell.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "21 R12-7 terminal map retains input key and crypto layers",
-      "selection": "line:562",
+      "selection": "line:607",
       "failure": "R admission must retain the input cell",
       "covers": [
         "R12-7 single preflight past R and D"
@@ -485,7 +485,7 @@
       "patch": "worker-down-keeps-resolvers.patch",
       "file": "test/jwe_open_lifecycle_test.exs",
       "test": "worker death kills its live resolvers before R",
-      "selection": "line:746",
+      "selection": "line:791",
       "failure": "worker death must kill its resolvers before R",
       "covers": [
         "worker death; original tests 2,3,4"
@@ -495,7 +495,7 @@
       "patch": "absolute-timer-rounds-down.patch",
       "file": "test/jwe_open_bounds_test.exs",
       "test": "rounding never fires early on either side of monotonic zero",
-      "selection": "line:287",
+      "selection": "line:326",
       "failure": "absolute timers must round up",
       "covers": [
         "amendment 2: no early timer"
@@ -519,7 +519,7 @@
       "covers": [
         "review11 late counting; R12-7 single preflight after D; full terminal outcome"
       ],
-      "selection": "line:573"
+      "selection": "line:618"
     },
     {
       "patch": "ignore-exact-copy-size.patch",
@@ -565,7 +565,7 @@
       "patch": "guard-handoff-past-F.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "a guard starting past F never transfers a caller notice",
-      "selection": "line:444",
+      "selection": "line:426",
       "failure": "past F the guard must retain and delete its notice",
       "covers": [
         "deadline gate immediately before caller notice handoff"
@@ -575,7 +575,7 @@
       "patch": "final-intake-does-not-loop.patch",
       "file": "test/jwe_open_failures_test.exs",
       "test": "final intake retries every early deadline wait",
-      "selection": "line:477",
+      "selection": "line:459",
       "failure": "final intake must loop after an early timeout",
       "covers": [
         "absolute final intake wait"
@@ -649,7 +649,7 @@
       "covers": [
         "malformed struct callback answers are rejected before the resolution deadline"
       ],
-      "selection": "line:496"
+      "selection": "line:478"
     },
     {
       "patch": "worker-crash-as-decryption.patch",
@@ -659,7 +659,7 @@
       "covers": [
         "worker errors preserve positional internal failure in ready and resolved phases"
       ],
-      "selection": "line:543"
+      "selection": "line:525"
     },
     {
       "patch": "open-crash-skips-cancel.patch",
@@ -679,7 +679,7 @@
       "covers": [
         "receive timeout calls production guard cancellation and late-transfer cleanup"
       ],
-      "selection": "line:567"
+      "selection": "line:549"
     },
     {
       "patch": "notice-timeout-retains-transfer.patch",
@@ -689,7 +689,7 @@
       "covers": [
         "a handoff after the timeout leaves neither a table nor a transfer message"
       ],
-      "selection": "line:567"
+      "selection": "line:549"
     },
     {
       "patch": "telemetry-streams-before-preparation.patch",

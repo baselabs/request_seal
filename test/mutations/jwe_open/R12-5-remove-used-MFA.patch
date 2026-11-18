@@ -7,4 +7,4 @@
 -    {:ets, :info, 2} => "constant owner read before dequeue or callback",
      {:ets, :insert, 2} => "record child, end marker or reply outcome",
      {:ets, :lookup, 2} => "read one slot or outcome",
-     {:ets, :foldl, 3} => "one registry sweep with a literal library function",
+     {:ets, :lookup_element, 4} =>

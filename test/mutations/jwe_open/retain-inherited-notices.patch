@@ -1,9 +1,9 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -187,7 +187,7 @@
-     receive do
-       {:"ETS-TRANSFER", tid, from, {^tag, :slot, slot}} ->
-         :ets.insert(ended, {slot, from})
+@@ -201,7 +201,7 @@
+         # Ends are needed as a set only until the one sweep. Afterwards the
+         # immutable registry and awaiting counter record each notice directly.
+         if ended_at == nil, do: :ets.insert(ended, {slot, from})
 -        :ets.delete(tid)
 +        _ = tid
 

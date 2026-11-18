@@ -119,6 +119,10 @@ defmodule RequestSeal.JOSE.JWE.Guard do
         abs: true
       )
 
+      # A registered custody child proves P3 joined every resolver notice.
+      # Retain the complete registry, but do not look up those ended pids again.
+      resolvers_ended = :ets.lookup(map_get(:registry, s), {:custody, 0}) != []
+      s = :maps.put(:resolvers_ended, resolvers_ended, s)
       awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, map_get(:registry, s))
       %{s | ended_at: now, anchor: anchor, stop_at: stop_at, awaiting: awaiting}
     else
@@ -161,19 +165,21 @@ defmodule RequestSeal.JOSE.JWE.Guard do
     n + 1
   end
 
+  defp sweep({{:resolver, _}, _, :caller}, %{resolvers_ended: true}, n), do: n
+
   defp sweep({slot, pid, :caller}, s, n) do
     %{ended: ended} = s
 
-    case :ets.lookup(ended, slot) do
-      [{^slot, ^pid}] ->
+    case :ets.lookup_element(ended, slot, 2, :undefined) do
+      ^pid ->
         n
 
-      [{^slot, _}] ->
-        :erlang.monitor(:process, pid)
+      :undefined ->
+        :erlang.exit(pid, :kill)
         n + 1
 
-      [] ->
-        :erlang.exit(pid, :kill)
+      _ ->
+        :erlang.monitor(:process, pid)
         n + 1
     end
   end
@@ -192,7 +198,9 @@ defmodule RequestSeal.JOSE.JWE.Guard do
     # Per-notice timeout conversion adds work without changing that deadline.
     receive do
       {:"ETS-TRANSFER", tid, from, {^tag, :slot, slot}} ->
-        :ets.insert(ended, {slot, from})
+        # Ends are needed as a set only until the one sweep. Afterwards the
+        # immutable registry and awaiting counter record each notice directly.
+        if ended_at == nil, do: :ets.insert(ended, {slot, from})
         :ets.delete(tid)
 
         s =

@@ -1,8 +1,9 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -120,5 +120,9 @@
-       )
-
+@@ -123,7 +123,11 @@
+       # Retain the complete registry, but do not look up those ended pids again.
+       resolvers_ended = :ets.lookup(map_get(:registry, s), {:custody, 0}) != []
+       s = :maps.put(:resolvers_ended, resolvers_ended, s)
 -      awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, map_get(:registry, s))
 +      awaiting =
 +        case :ets.lookup(map_get(:registry, s), :outcome) do
@@ -11,3 +12,4 @@
 +        end
        %{s | ended_at: now, anchor: anchor, stop_at: stop_at, awaiting: awaiting}
      else
+       cause(s, now)

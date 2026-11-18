@@ -487,7 +487,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
       case unit do
         :token_scan ->
           {%{}, :binary.copy(" ", 1_048_568) <> ".b.c.d.e", %{},
-           [:json_serialization?, :separators]}
+           [:separators]}
 
         :expected ->
           {%{"" => :binary.copy("x", 16_384)}, "", %{}, [:utf8?, :depth, :tree]}

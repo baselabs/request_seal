@@ -517,6 +517,51 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
     end
   end
 
+  test "blocked resolvers held across R through U end within the original U bound" do
+    Runtime.with_peer(fn ->
+      n = Bounds.max_tokens()
+
+      s =
+        Runtime.start(n, :resolvers,
+          trace_input: false,
+          near_cap: true,
+          policy: %{timeout: 15_000, resolve_timeout: 10_000, unwrap_timeout: 1_000}
+        )
+
+      try do
+        [_, _, _, _, _, r, d, _, unwrap] =
+          Enum.find_value(s.events, fn
+            {:spawn, _, _, Guard, :run, args, _} -> args
+            _ -> nil
+          end)
+
+        u = r + unwrap
+        assert Bounds.now() < r, "all blocked resolvers must be placed before R"
+        true = :erlang.suspend_process(s.coordinator)
+        assert Enum.all?(s.resolvers, &Process.alive?/1)
+        s = Runtime.until(s, u)
+        true = :erlang.resume_process(s.coordinator)
+        result = Runtime.collect_ends(s, u + Bounds.teardown(n))
+
+        assert result.remaining == 0,
+               "blocked resolvers must end within B(n) after U rather than wait for D"
+
+        assert Bounds.now() < d, "teardown must not wait for D"
+        assert Enum.all?(Map.keys(result.pids), &(not Process.alive?(&1)))
+        result = Runtime.collect_return(result, u + Bounds.teardown(n)) |> Runtime.delivered()
+        assert {:ok, results} = result.return
+        assert length(results) == n
+
+        assert Enum.all?(results, &match?({:error, %{reason: :key_resolver_failed, layer: :key}}, &1)),
+               "R must retain the resolver failure cell when the coordinator resumes after U"
+
+        refute Enum.any?(result.pids, fn {_, role} -> role == :custody end)
+      after
+        Runtime.cleanup(s)
+      end
+    end)
+  end
+
   test "an early resolution barrier keeps U when its notices arrive after R" do
     Runtime.with_peer(fn ->
       s =

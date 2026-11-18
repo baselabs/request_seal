@@ -17,8 +17,14 @@ registry whose heir is the guard. The coordinator owns that registry while it
 runs and registers every library-owned child. Each callback child receives a
 private ordered-set notice table before its library link is removed. Deleting an
 empty ordered set avoids the hash-set segment scan charge per child. Its exit
-transfers the empty table to the guard; the guard records the end, deletes the notice and only
-then forwards completion. Library processes exit with closed atoms. The guard
+transfers the empty table to the guard. Before the registry sweep, the guard
+records the end, deletes the notice and only then forwards completion. After
+that sole sweep, it deletes each notice and joins it against the immutable
+registry without growing the ended set. A custody slot proves that P3 already
+joined every resolver notice, so the sweep skips ended-set reads for resolver
+slots while retaining every registry row. Ended-set checks read only the
+stored pid; registry joins still require the caller-code role. Library processes
+exit with closed atoms. The guard
 checks ownership before every dequeue, kills the coordinator once, then sweeps
 the inherited registry once. Coordinator ownership changing is the end marker;
 queued transfer and EXIT messages cannot reopen causes. A reply outcome row
@@ -27,9 +33,11 @@ precedes the reply send and determines the guard's final reason.
 R ends admission and resolution. U is the accepted resolution barrier plus the
 unwrap budget. D ends content work. F = D + 100 ms independently ends a stalled
 coordinator. An early resolution barrier retains its original U even if its end
-notices arrive after R. Every range shares that U; group intake counts members
-directly and expiry visits each remaining group once. Revoking a route prevents
-new deliveries; the main worker receive discards queued outcomes for removed
+notices arrive after R. R expiry is independent of an existing barrier and
+preserves its original U. Every range shares that U; group intake counts members
+directly. R and D rebuild positional state once per expiry; U likewise rebuilds
+group state once, with one kill and summary per unfinished group. Revoking a
+route prevents new deliveries; the main worker receive discards queued outcomes for removed
 positions without a separate mailbox scan per route.
 Callback children check caller-notice ownership and their deadline
 immediately before entering caller code. After the registry flips, teardown ends
@@ -59,12 +67,16 @@ violations are `:invalid_policy`. Resolvers validate and digest their answer
 before forwarding it, with the same word and binary-byte bounds for handles;
 oversized answers are `:key_resolver_failed`. Sink delivery normalizes in its
 sender. RequestSeal owns UTF-8 traversal on every library path.
-Serialization detection uses one native scan of the capped token, including
-mixed whitespace. The Codec function consumes the native result, retaining its
-continuation while OTP yields in `erlang:binary_find_trap/3`. Placement suspends
-first, then checks that stack for the actual Codec unit; it never depends on
-the native continuation's current function name. The checkpoint unit remains
-one whole token, including its separator scan and accounting.
+Serialization detection and compact splitting share one anchored native byte
+pattern over the capped token. Possessive whitespace and part runs avoid
+backtracking; six index captures bound allocation independently of the number
+of dots. Leading whitespace remains part of the original protected bytes,
+and parts reference the original token. The pattern refuses a JSON opening
+before attempting compact form. The Codec function consumes the native result,
+retaining its continuation while OTP yields. Placement suspends first, then
+checks that stack for the actual Codec unit; it never depends on the native
+continuation's current function name. The checkpoint unit remains one whole
+token, including its separator scan and accounting.
 
 Validation catches only explicit input failures. Unexpected library exceptions
 and exits become `:internal_failure`, including a preflight exit without a final

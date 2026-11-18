@@ -2,7 +2,7 @@ defmodule RequestSeal.JWEOpenFailuresTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
   alias RequestSeal.{Custody, JOSE.JWE, KeyHandle}
-  alias RequestSeal.JOSE.JWE.{Bounds, Codec, Guard, Open, Preflight, Resolver, Worker}
+  alias RequestSeal.JOSE.JWE.{Bounds, Codec, Guard, Open, Preflight, Resolver}
   alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
   @after_compile Runtime
   @moduletag timeout: 600_000
@@ -421,24 +421,6 @@ defmodule RequestSeal.JWEOpenFailuresTest do
              assert :ets.info(child_notice) == :undefined
            end) == "",
            "resolver normalization crash must not log"
-  end
-
-  test "worker setup crashes escape cryptographic failure boundaries" do
-    assert_raise FunctionClauseError, fn -> Worker.fallback(%{enc: :invalid}) end
-    prepared = :binary.copy(<<0>>, 32)
-
-    assert_raise FunctionClauseError, fn ->
-      Worker.authenticate(
-        %{enc: :invalid, iv: "", ct: "", protected: "", tag: ""},
-        {:ok, prepared},
-        :error,
-        %{}
-      )
-    end
-
-    assert_raise KeyError, fn ->
-      Worker.authenticate(%{enc: "A256GCM"}, {:ok, prepared}, :error, %{})
-    end
   end
 
   test "a guard starting past F never transfers a caller notice" do

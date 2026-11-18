@@ -583,7 +583,7 @@ defmodule RequestSeal.JWEOpenPlacementsTest do
 
               functions =
                 case scenario do
-                  :prefix -> [:json_serialization?]
+                  :prefix -> [:separators]
                   :tree -> [:tree, :tree_pairs, :tree_list]
                   _ -> [:object, :tree, :depth, :utf8?]
                 end

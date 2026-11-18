@@ -1,10 +1,10 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -150,6 +150,7 @@
-   end
+@@ -168,6 +168,7 @@
+   defp sweep({{:resolver, _}, _, :caller}, %{resolvers_ended: true}, n), do: n
 
    defp sweep({slot, pid, :caller}, s, n) do
 +    :ets.foldl(fn _, count -> count + 1 end, 0, map_get(:registry, s))
      %{ended: ended} = s
 
-     case :ets.lookup(ended, slot) do
+     case :ets.lookup_element(ended, slot, 2, :undefined) do

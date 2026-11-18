@@ -169,8 +169,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
           map_get(:handed_off, s) ->
         reply(s, :ok)
 
-      map_get(:rprime, s) == nil and not map_get(:expired_r, s) and
-        now >= map_get(:r, s) and map_get(:handed_off, s) ->
+      not map_get(:expired_r, s) and now >= map_get(:r, s) and map_get(:handed_off, s) ->
         loop(expire_r(s))
 
       true ->
@@ -473,33 +472,45 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   def expiry(:d, _phase), do: {:deadline_exceeded, :crypto, nil}
 
   defp expire_r(s) do
-    s = expire_positions(:maps.to_list(map_get(:positions, s)), s)
-    u = map_get(:r, s) + map_get(:unwrap, s)
-    wake(map_get(:tag, s), u)
-    %{s | expired_r: true, rprime: map_get(:r, s), u: u}
+    {positions, admissions, resolutions, settled} =
+      expire_positions(:maps.to_list(map_get(:positions, s)), {[], 0, 0, 0})
+
+    # An early resolution barrier owns its original U, including when its
+    # resolver notices arrive after R. R still closes unresolved callbacks.
+    rprime = if map_get(:rprime, s) == nil, do: map_get(:r, s), else: map_get(:rprime, s)
+    u = rprime + map_get(:unwrap, s)
+    if map_get(:u, s) == nil, do: wake(map_get(:tag, s), u)
+
+    %{
+      s
+      | positions: :maps.from_list(positions),
+        admissions_left: map_get(:admissions_left, s) - admissions,
+        resolutions_left: map_get(:resolutions_left, s) - resolutions,
+        settled: map_get(:settled, s) + settled,
+        expired_r: true,
+        rprime: rprime,
+        u: u
+    }
   end
 
-  defp expire_positions([], s), do: s
+  # Rebuild the position map once. Updating the large coordinator map and its
+  # HAMT for every expired index adds allocations to the deadline critical path.
+  defp expire_positions([], acc), do: acc
 
-  defp expire_positions([{i, p} | rest], s) do
-    s =
-      if map_get(:result, p) == nil do
-        case map_get(:phase, p) do
-          :unadmitted ->
-            put(s, i, %{p | phase: :refused, result: expiry(:r, :unadmitted)}, 0)
+  defp expire_positions([{i, p} | rest], {positions, admissions, resolutions, settled}) do
+    case {map_get(:result, p), map_get(:phase, p)} do
+      {nil, :unadmitted} ->
+        p = %{p | phase: :refused, result: expiry(:r, :unadmitted)}
+        expire_positions(rest, {[{i, p} | positions], admissions + 1, resolutions, settled + 1})
 
-          :ready ->
-            if map_get(:resolver, p) != nil, do: :erlang.exit(map_get(:resolver, p), :kill)
-            put(s, i, %{p | phase: :refused, result: expiry(:r, :ready)}, 0)
+      {nil, :ready} ->
+        if map_get(:resolver, p) != nil, do: :erlang.exit(map_get(:resolver, p), :kill)
+        p = %{p | phase: :refused, result: expiry(:r, :ready)}
+        expire_positions(rest, {[{i, p} | positions], admissions, resolutions + 1, settled + 1})
 
-          _ ->
-            s
-        end
-      else
-        s
-      end
-
-    expire_positions(rest, s)
+      _ ->
+        expire_positions(rest, {[{i, p} | positions], admissions, resolutions, settled})
+    end
   end
 
   defp start_groups(s) do
@@ -569,14 +580,18 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp summary(s, g, kind) do
     case :maps.find(g, map_get(:groups, s)) do
       {:ok, %{duration: nil} = group} when map_get(:pid, group) != nil ->
-        :erlang.exit(map_get(:pid, group), :kill)
-        group_notice(:maps.to_list(map_get(:workers, group)), s, g, kind)
-        duration = max(0, Bounds.now() - map_get(:started, group))
-        %{s | groups: :maps.put(g, %{group | duration: duration}, map_get(:groups, s))}
+        group = finish_group(group, s, g, kind)
+        %{s | groups: :maps.put(g, group, map_get(:groups, s))}
 
       _ ->
         s
     end
+  end
+
+  defp finish_group(group, s, g, kind) do
+    :erlang.exit(map_get(:pid, group), :kill)
+    group_notice(:maps.to_list(map_get(:workers, group)), s, g, kind)
+    %{group | duration: max(0, Bounds.now() - map_get(:started, group))}
   end
 
   defp group_notice([], _, _, _), do: :ok
@@ -588,12 +603,21 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   end
 
   defp expire_u(s) do
-    s = expire_groups(:maps.to_list(map_get(:groups, s)), s)
-    %{s | expired_u: true}
+    groups = expire_groups(:maps.to_list(map_get(:groups, s)), s, [])
+    %{s | groups: :maps.from_list(groups), expired_u: true}
   end
 
-  defp expire_groups([], s), do: s
-  defp expire_groups([{g, _} | rest], s), do: expire_groups(rest, summary(s, g, :timeout))
+  defp expire_groups([], _, groups), do: groups
+
+  defp expire_groups([{g, group} | rest], s, groups) do
+    group =
+      case group do
+        %{duration: nil, pid: pid} when pid != nil -> finish_group(group, s, g, :timeout)
+        _ -> group
+      end
+
+    expire_groups(rest, s, [{g, group} | groups])
+  end
 
   defp worker_down(s, pid, reason) do
     case :maps.find(pid, map_get(:pids, s)) do
@@ -700,11 +724,16 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
     end
   end
 
-  defp fill_deadline(n, n, s), do: s
-
   defp fill_deadline(i, n, s) do
+    positions = deadline_positions(i, n, map_get(:positions, s), [])
+    %{s | positions: :maps.from_list(positions), settled: n}
+  end
+
+  defp deadline_positions(n, n, _, acc), do: acc
+
+  defp deadline_positions(i, n, positions, acc) do
     p =
-      :maps.get(i, map_get(:positions, s), %{
+      :maps.get(i, positions, %{
         w: 0,
         phase: :unadmitted,
         result: nil,
@@ -712,12 +741,12 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
         group: nil
       })
 
-    s =
+    p =
       if map_get(:result, p) == nil,
-        do: put(s, i, %{p | result: expiry(:d, map_get(:phase, p))}, 0),
-        else: s
+        do: %{p | result: expiry(:d, map_get(:phase, p))},
+        else: p
 
-    fill_deadline(i + 1, n, s)
+    deadline_positions(i + 1, n, positions, [{i, p} | acc])
   end
 
   defp reply(s, outcome) do

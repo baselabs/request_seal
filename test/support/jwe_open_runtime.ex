@@ -101,6 +101,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
           :lists,
           :maps,
           :binary,
+          :re,
           :base64,
           :json,
           RequestSeal.JOSE.JWE.Bounds,
@@ -535,7 +536,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     end
   end
 
-  # OTP may run a native scan as erlang:binary_find_trap/3. Match the retained
+  # OTP may yield inside a native byte scan. Match the retained
   # Codec continuation regardless of the current MFA, on the suspended stack.
   # A queued call trace or an OTP frame alone never proves placement.
   def in_codec_unit?(pid, functions) do

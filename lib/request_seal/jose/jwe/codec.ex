@@ -6,6 +6,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
   @algorithms ~w(RSA-OAEP RSA-OAEP-256 A128KW A256KW A128GCMKW A256GCMKW dir ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW)
   @reserved ~w(alg enc iv tag epk apu apv)
   @non_whitespace for byte <- 0..255, byte not in [32, 9, 10, 13], do: <<byte>>
+  @compact ~S/\A[ \t\r\n]*+(?:([\[{])|([^.]*+)\.([^.]*+)\.([^.]*+)\.([^.]*+)\.([^.]*+)\z)/
 
   @spec fail(atom()) :: no_return()
   @spec fail(atom(), atom()) :: no_return()
@@ -293,37 +294,42 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     try do
       ensure(is_binary(token), :invalid_serialization)
       ensure(byte_size(token) <= 1_048_576, :limit)
-      ensure(not json_serialization?(token), :unsupported_serialization)
-      {:ok, separators(token, 0, 0, [])}
+      {:ok, separators(token)}
     catch
       :throw, {:jose_error, reason, layer} -> error(reason, layer)
     end
   end
 
-  # The checkpoint unit is the whole capped token, not a native scan's chunk.
-  # Consume the BIF result here so this Codec continuation stays on the stack
-  # even when OTP yields in erlang:binary_find_trap/3 instead of binary:match/2.
-  defp json_serialization?(<<b, _::binary>> = bytes) when b in [32, 9, 10, 13] do
-    case :binary.match(bytes, @non_whitespace) do
-      {at, 1} -> :binary.part(bytes, at, 1) in ["{", "["]
-      :nomatch -> false
-    end
-  end
+  # One anchored byte scan consumes leading JSON whitespace and then either
+  # refuses JSON or finds exactly four separators. Possessive runs never
+  # backtrack. Index captures allocate at most six pairs, even for a token made
+  # entirely of dots; an all-matches scan would allocate in proportion to dots.
+  # Keep this continuation on the stack across OTP's native scan. The complete
+  # capped token, including accounting by preflight, remains one bounded unit.
+  defp separators(token) do
+    case :re.run(token, @compact, [{:capture, [1, 2, 3, 4, 5, 6], :index}, :report_errors]) do
+      {:match, [{at, 1} | _]} when at >= 0 ->
+        fail(:unsupported_serialization)
 
-  defp json_serialization?(<<b, _::binary>>), do: b in [123, 91]
-  defp json_serialization?(_), do: false
-
-  defp separators(token, offset, n, acc) do
-    case :binary.match(token, ".", [{:scope, {offset, byte_size(token) - offset}}]) do
-      {at, 1} ->
-        ensure(n < 4, :invalid_serialization)
-        separators(token, at + 1, n + 1, [:binary.part(token, offset, at - offset) | acc])
+      {:match, [{-1, 0}, {at, size}, b, c, d, e]} ->
+        # The prefix consumed before capture 2 belongs to the protected bytes.
+        [
+          :binary.part(token, 0, at + size),
+          part(token, b),
+          part(token, c),
+          part(token, d),
+          part(token, e)
+        ]
 
       :nomatch ->
-        ensure(n == 4, :invalid_serialization)
-        :lists.reverse([:binary.part(token, offset, byte_size(token) - offset) | acc])
+        fail(:invalid_serialization)
+
+      {:error, _} ->
+        :erlang.error(:compact_scan_failed)
     end
   end
+
+  defp part(token, {at, size}), do: :binary.part(token, at, size)
 
   def decode(value) when is_binary(value) do
     ensure(base64url?(value) and canonical?(value), :invalid_base64)
