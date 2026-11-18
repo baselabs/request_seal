@@ -649,6 +649,15 @@
       "covers": [
         "U expiry notification is once per live range, independently of custody-group count"
       ]
+    },
+    {
+      "patch": "settled-ranges-wait-for-coordinator.patch",
+      "file": "test/jwe_open_lifecycle_test.exs",
+      "test": "settled ranges end at U without waiting for coordinator exit",
+      "failure": "settled ranges must end without coordinator exit",
+      "covers": [
+        "independent normal range completion after final authentication; no coordinator exit dependency"
+      ]
     }
   ],
   "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."

@@ -2,6 +2,14 @@
 
 ## Unreleased 2.0.0
 
+- End JWE range workers as soon as their final position settles, independently
+  of coordinator reply and exit cleanup. Skip resolver kills and contributor
+  notices for already settled work. Record closed exit reasons, role end ranges
+  and coordinator phase stamps in teardown diagnostics.
+- Skip repeated validated whitespace words with a native common-prefix search.
+  Load the byte-unit modules before the unit checkpoint, as production does,
+  and report that setup separately without executing or discarding a sample.
+
 - Classify JWE whitespace eight bytes per step without compiling a large binary
   pattern set. Preserve compact token slices and JSON refusal precedence.
   Register sensitive signing runners through their live custody handshake in
@@ -60,7 +68,7 @@
   Join a guard before draining a caller-notice handoff that raced its timeout.
   Prepare all JWE telemetry measurements before publishing outcome events;
   raising handlers retain telemetry's normal isolation and the caller's result.
-- Verify 71 distinct JWE reversing mutations with a passing clean baseline per
+- Verify 72 distinct JWE reversing mutations with a passing clean baseline per
   selected test and commit, then the named rejection and a clean reversal.
   The teardown gate measures absolute Bounds limits with load and CPU steal
   admission based on host logical CPUs, host identity, retry evidence, and an

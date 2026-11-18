@@ -268,6 +268,30 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertIn("{Codec, function, _, _} -> function in functions", runtime)
         self.assertNotIn("process_flag(:sensitive, false)", source)
 
+    def test_entry_loading_and_both_scan_times_remain_visible_without_warmup(self):
+        report = self.report()
+        report["unit_setup"] = [
+            {"module": "Elixir.RequestSeal.JOSE.JWE.Codec", "loaded_before": False, "load_us": 1600},
+            {"module": "Elixir.RequestSeal.JOSE.JWE.Worker", "loaded_before": False, "load_us": 2300}]
+        details = [{"compact_us": 80, "json_us": 100} for _ in range(5)]
+        report["units_details"] = {"separator_and_accounting": details}
+        summary = GATE.markdown(report)
+        for value in ("loaded_before", "1600", "2300", "compact_us", "json_us"):
+            self.assertIn(value, summary)
+        self.assertEqual(summary.count('"compact_us"'), 5)
+        self.assertTrue(GATE.passes(report))
+        source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
+        setup = source[source.index("  def prepare_units do"):source.index("  def units do")]
+        self.assertIn("for module <- [Codec, Worker] do", setup)
+        self.assertIn(":code.is_loaded(module)", setup)
+        self.assertIn(":code.ensure_loaded(module)", setup)
+        for operation in ("Codec.split(", "Worker.authenticate(", "measure(", "host_sample("):
+            self.assertNotIn(operation, setup)
+        self.assertIn("setup = prepare_units()", source)
+        self.assertIn("{:measured, max(compact, json), %{compact_us: compact, json_us: json}}", source)
+        self.assertIn("reason: end_reason(reason)", source)
+        self.assertIn("coordinator_phases: Enum.reverse(phases)", source)
+
     def test_runner_owns_commands_and_retains_failure_output(self):
         source = (ROOT / "scripts/jwe_teardown_gate.py").read_text()
         tree = ast.parse(source)

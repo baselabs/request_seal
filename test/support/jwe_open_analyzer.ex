@@ -76,6 +76,8 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
     {:lists, :reverse, 1} => "bounded rows or JSON accumulator",
     {:lists, :all, 2} => "literal library JSON predicate",
     {:lists, :any, 2} => "literal library JSON predicate",
+    {:binary, :longest_common_prefix, 1} =>
+      "skip repetition of one validated whitespace word in a capped binary",
     {:binary, :match, 3} => "at most five scoped separator searches in one capped token",
     {:binary, :part, 3} => "binary slice without caller code",
     {:binary, :last, 1} => "canonical base64 tail bits",

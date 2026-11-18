@@ -103,7 +103,7 @@ Headless assertions establish neither interactive UI behavior nor deployed-peer 
 
 ## JWE lifecycle gates
 
-`python3 -B scripts/mutations.py` verifies 71 distinct reversing patches. It
+`python3 -B scripts/mutations.py` verifies 72 distinct reversing patches. It
 first requires the selected test to pass on a clean tree, once per distinct
 command and baseline commit. Each applied patch must then fail with its named
 assertion; reversal must leave a clean tree. Equivalent changed lines are

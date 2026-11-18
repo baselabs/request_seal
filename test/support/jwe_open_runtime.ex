@@ -576,7 +576,7 @@ defmodule RequestSeal.Test.JWEOpenRuntime do
     # observable before the blocked resolvers are released into the barrier.
     if role == :coordinator and not s.trace_input do
       try do
-        :erlang.trace(pid, true, [:send])
+        :erlang.trace(pid, true, [:send, :arity])
       catch
         :error, :badarg -> :ok
       end

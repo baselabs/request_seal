@@ -47,7 +47,13 @@ prepared position once under its fallback, and rebuilds positional state once.
 This includes positions whose member message is still queued, so late members
 cannot start another expiry pass. An accepted delivery remains settled. Revoking
 a route prevents new deliveries; the main worker receive discards queued outcomes for removed
-positions without a separate mailbox scan per route.
+positions without a separate mailbox scan per route. A range returns normally
+as soon as no positions remain, including after U authentication; it does not
+wait for the coordinator's reply, notice drain or reason-bearing link signal.
+Normal range completion follows its last result send, preserving sender order
+at the coordinator. Worker-end handling does not kill resolvers for settled
+positions or send contributor notices to completed groups. Other unfinished
+ranges still end through D or the coordinator link during cancellation.
 Callback children check caller-notice ownership and their deadline
 immediately before entering caller code. After the registry flips, teardown ends
 by anchor + B(n), where B(n) = 20 ms + 15 microseconds × n. The anchor is the
@@ -79,13 +85,17 @@ violations are `:invalid_policy`. Resolvers validate and digest their answer
 before forwarding it, with the same word and binary-byte bounds for handles;
 oversized answers are `:key_resolver_failed`. Sink delivery normalizes in its
 sender. RequestSeal owns UTF-8 traversal on every library path.
-Serialization detection skips eight whitespace bytes per recursive step, then
-uses byte steps for a partial word, and refuses a JSON opening before attempting
-compact form. Each byte lane accepts only space, tab, LF and CR. This avoids
-compiling a 252-pattern automaton and traversing it for every byte, without
-allocating wide integers or copying a prefix. JSON trailing whitespace uses the
-same classifier. At most five scoped dot searches then establish exactly four
-separators; the first search starts after the already-classified whitespace.
+Serialization detection validates eight whitespace bytes, then compares the
+binary with its eight-byte tail using OTP's native common-prefix search when
+the next word repeats. A common prefix of length k proves that the first k + 8
+bytes repeat that validated word, including a partial final repetition. The
+classifier skips those bytes without copying them. Nonperiodic input advances
+one word; a partial word uses byte steps. Each byte lane accepts only space,
+tab, LF and CR. JSON openings are refused before attempting compact form. This
+avoids compiling a 252-pattern automaton or allocating wide integers. JSON
+trailing whitespace uses the same classifier. At most five scoped dot searches
+then establish exactly four separators; the first search starts after the
+already-classified whitespace.
 There is no per-token regular expression compilation or backtracking. Allocation
 is bounded independently of the number of dots. Leading whitespace remains part
 of the original protected bytes, and parts reference the original token. Byte
@@ -118,7 +128,7 @@ ETS and an off-heap guard mailbox keep reaction state independent of n. End
 notices avoid copying caller-sized exit reasons. The inherited registry remains
 complete even when the coordinator stops between process creation and handoff.
 
-The committed reduction oracles and 71 distinct reversing mutations check constant reaction,
+The committed reduction oracles and 72 distinct reversing mutations check constant reaction,
 linear complete teardown, queue bounds, guard heap and caller wait-end. A
 mutation selects its test by the manifest's exact test name, with an independent
 check that the name exists exactly once in its file. Moving test lines cannot
@@ -166,6 +176,13 @@ Collection has a separate 10 s hang cap; it never uses B as its dequeue deadline
 After collecting, the gate judges the maximum end timestamp minus the original
 anchor against the unchanged B. It retains every sample, placement, missing or
 live role, late role and assertion failure before writing its final verdict.
+Every sample also retains closed exit reasons, first and last end stamps per
+role and reason, every library-only end, and arity-only coordinator U, reply
+and finish call stamps. Caller-code reasons outside the known lifecycle atoms
+are labeled without retaining their payload. These observations distinguish
+normal worker completion from a shared coordinator exit without tracing
+sensitive worker data. Custody callbacks run in the Unwrap child itself; this
+path has no nested custody runner or guardian.
 A capped, incomplete lifecycle fails even if its observed timestamps fit B.
 The linear-teardown reduction oracle reports an unfinished guard at the hang
 cap as a teardown failure before asking for its finish reduction endpoint.
@@ -190,7 +207,16 @@ Deadline placements consume events while waiting and poll the last two
 milliseconds. An upward-rounded receive timeout and its timer tick must not
 place a requested D - 1 ms resume after D. The K_pf derivation retains every
 byte-unit, report and exit sample, including the first sample and residual
-cooperative work.
+cooperative work. Unit setup records module-load state and loading time for
+Codec and Worker before taking any byte-unit time.
+Production enters Codec for policy and checkpoints before splitting a token,
+and enters Worker.run before authentication, so loading those entry modules
+is not part of either measured unit. Other helper loading remains in its
+unit. Setup invokes no measured operation. Each scan sample retains both
+compact and JSON timings as well as their maximum.
+The token, JSON candidate and AEAD ciphertext are built before timing. All
+five samples still include their own first data access, allocation, heap
+growth and garbage collection within the unit; no sample is warmed or dropped.
 
 Samples require Linux load average at most available host logical CPUs
 (falling back to the main node's online schedulers when availability is unknown) and aggregate CPU

@@ -58,6 +58,20 @@ defmodule RequestSeal.JOSEPropertyTest do
     end
   end
 
+  test "JWE whitespace runs retain the first mismatching byte at the byte cap" do
+    for pattern <- [" ", "\t", "\r\n", " \t\r\n", " \t\t\r\n   "] do
+      prefix = :binary.copy(pattern, div(1_048_560, byte_size(pattern)))
+
+      for suffix <- ["a.b.c.d.e", "{}", "\v{a.b.c.d.e}", "\n.a.b.c.d"] do
+        token = prefix <> suffix
+        assert byte_size(token) <= 1_048_576
+
+        assert Codec.split(token) == reference_split(token),
+               "whitespace classification must match the bytewise reference"
+      end
+    end
+  end
+
   defp reference_split(token) do
     first =
       token

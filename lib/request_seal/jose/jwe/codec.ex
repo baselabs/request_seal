@@ -270,14 +270,24 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
   defp whitespace?(bytes), do: first_non_whitespace(bytes, 0) == :nomatch
 
-  # Skip eight bytes per recursive step without a compiled pattern set, a
-  # per-byte binary slice or wide-integer allocation. Guards classify every
-  # lane independently; a partial or mixed final word falls back to byte steps.
-  defp first_non_whitespace(<<a, b, c, d, e, f, g, h, rest::binary>>, at)
+  # Validate one word before skipping a repeated run in native code. The
+  # common prefix of bytes and its eight-byte tail proves repetition of that
+  # validated word, including a partial final repetition. Nonperiodic input
+  # still advances eight bytes; no prefix is copied or pattern set compiled.
+  defp first_non_whitespace(<<a, b, c, d, e, f, g, h, rest::binary>> = bytes, at)
        when a in [32, 9, 10, 13] and b in [32, 9, 10, 13] and c in [32, 9, 10, 13] and
               d in [32, 9, 10, 13] and e in [32, 9, 10, 13] and f in [32, 9, 10, 13] and
-              g in [32, 9, 10, 13] and h in [32, 9, 10, 13],
-       do: first_non_whitespace(rest, at + 8)
+              g in [32, 9, 10, 13] and h in [32, 9, 10, 13] do
+    case rest do
+      <<^a, ^b, ^c, ^d, ^e, ^f, ^g, ^h, _::binary>> ->
+        skip = 8 + :binary.longest_common_prefix([bytes, rest])
+        tail = :binary.part(bytes, skip, byte_size(bytes) - skip)
+        first_non_whitespace(tail, at + skip)
+
+      _ ->
+        first_non_whitespace(rest, at + 8)
+    end
+  end
 
   defp first_non_whitespace(<<byte, rest::binary>>, at) when byte in [32, 9, 10, 13],
     do: first_non_whitespace(rest, at + 1)
@@ -312,7 +322,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
     end
   end
 
-  # Classify leading whitespace eight bytes at a time, then find at most five
+  # Classify leading whitespace in words and native repeated runs, then find at most five
   # dots. Native binary search needs no pattern-set compilation or backtracking and
   # allocates at most five part references, even for a token made only of dots.
   # Each native search returns into Codec, retaining its continuation while OTP

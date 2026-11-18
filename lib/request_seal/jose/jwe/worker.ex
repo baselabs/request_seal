@@ -83,7 +83,10 @@ defmodule RequestSeal.JOSE.JWE.Worker do
     tag = map_get(:tag, s)
     wait = if map_get(:u, s) == nil, do: map_get(:d, s), else: min(map_get(:d, s), map_get(:u, s))
 
-    if Bounds.now() < map_get(:d, s) do
+    # A settled range has no remaining delivery or authentication work. Return
+    # before the coordinator drains notices and replies: its exit/link phase
+    # must not be the event that finally releases every empty worker.
+    if map_size(map_get(:positions, s)) > 0 and Bounds.now() < map_get(:d, s) do
       receive do
         {^tag, :resolver, i, pid} ->
           case :maps.find(i, map_get(:positions, s)) do

@@ -58,7 +58,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         }
       end
 
-    {measured_units, observer_queue} = units()
+    {measured_units, observer_queue, setup} = units()
     # Preserve five exit upper bounds, including every cooperative placement.
     exits =
       for i <- 0..(@samples - 1) do
@@ -115,6 +115,11 @@ defmodule RequestSeal.Test.JWETeardownGate do
     %{
       scenarios: scenarios,
       units_us: units,
+      unit_setup: setup,
+      units_details:
+        Map.new(measured_units, fn {name, samples} ->
+          {name, Enum.map(samples, &Map.get(&1, :details, %{}))}
+        end),
       units_loads:
         Map.new(measured_units, fn {name, samples} ->
           {name, Enum.map(samples, & &1.load)}
@@ -257,6 +262,10 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
     :erlang.trace_pattern({Open, :wait_end, 1}, true, [:local])
 
+    for {function, arity} <- [expire_u: 1, reply: 2, finish: 1] do
+      :erlang.trace_pattern({Coordinator, function, arity}, true, [:local])
+    end
+
     s =
       Runtime.start(@cap, topology,
         trace_input: false,
@@ -385,6 +394,10 @@ defmodule RequestSeal.Test.JWETeardownGate do
       Runtime.cleanup(s)
       :erlang.trace_pattern({Coordinator, :resolution_end, 2}, false, [:local])
       :erlang.trace_pattern({Open, :wait_end, 1}, false, [:local])
+
+      for {function, arity} <- [expire_u: 1, reply: 2, finish: 1] do
+        :erlang.trace_pattern({Coordinator, function, arity}, false, [:local])
+      end
     end
   end
 
@@ -430,10 +443,35 @@ defmodule RequestSeal.Test.JWETeardownGate do
     last = Enum.max(ended, fn -> anchor end)
     last = if complete, do: last, else: max(last, Bounds.now())
 
-    late =
-      for {:end, pid, at, _} <- s.events,
-          at > anchor + Bounds.teardown(@cap),
-          do: %{role: s.pids[pid], end_us: at - anchor}
+    ends =
+      for {:end, pid, at, reason} <- s.events,
+          do: %{role: s.pids[pid], end_us: at - anchor, reason: end_reason(reason)}
+
+    late = Enum.filter(ends, &(&1.end_us > Bounds.teardown(@cap)))
+
+    role_ends =
+      ends
+      |> Enum.group_by(&{&1.role, &1.reason})
+      |> Enum.map(fn {{role, reason}, rows} ->
+        times = Enum.map(rows, & &1.end_us)
+
+        %{
+          role: role,
+          reason: reason,
+          count: length(rows),
+          first_us: Enum.min(times),
+          last_us: Enum.max(times)
+        }
+      end)
+
+    phases =
+      for {:trace_ts, pid, :call, {Coordinator, function, arity}, at} <- s.events,
+          pid == s.coordinator and is_integer(arity),
+          function in [:expire_u, :reply, :finish],
+          do: %{
+            phase: function,
+            at_us: :erlang.convert_time_unit(at, :native, :microsecond) - anchor
+          }
 
     %{
       elapsed: last - anchor,
@@ -443,11 +481,23 @@ defmodule RequestSeal.Test.JWETeardownGate do
         missing_end_roles: missing,
         live_roles: live,
         late_roles: late,
+        role_ends: role_ends,
+        library_ends:
+          Enum.filter(ends, &(&1.role in [:guard, :coordinator, :preflight, :worker])),
+        coordinator_phases: Enum.reverse(phases),
         return_us: if(is_integer(s.return_at), do: s.return_at - anchor, else: :null),
         failures: failures
       }
     }
   end
+
+  # Caller-code exit payloads never belong in an artifact. Library reasons are
+  # closed atoms; keep only those known lifecycle reasons for every role.
+  defp end_reason(reason)
+       when reason in [:normal, :killed, :replied, :deadline, :internal_failure],
+       do: reason
+
+  defp end_reason(_), do: :caller_code_failure
 
   defp finish(s) do
     if s.topology == :queued, do: :erlang.resume_process(s.guard)
@@ -687,7 +737,20 @@ defmodule RequestSeal.Test.JWETeardownGate do
     end
   end
 
+  def prepare_units do
+    # These modules are entered before the production byte-unit checkpoint:
+    # Codec.unit/2 and policy precede split, and Worker.run precedes AEAD.
+    # Load code only; never invoke a measured operation or discard a sample.
+    for module <- [Codec, Worker] do
+      loaded = :code.is_loaded(module) != false
+      started = Bounds.now()
+      {:module, ^module} = :code.ensure_loaded(module)
+      %{module: module, loaded_before: loaded, load_us: Bounds.now() - started}
+    end
+  end
+
   def units do
+    setup = prepare_units()
     flag = :atomics.new(2, [])
     token = :binary.copy(" ", 1_048_568) <> ".b.c.d.e"
     json = :binary.copy(" \t\r\n", 262_143) <> "  {}"
@@ -719,7 +782,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
             compact = Bounds.now() - compact_at
             json_at = Bounds.now()
             Codec.split(json)
-            {:measured, max(compact, Bounds.now() - json_at)}
+            json = Bounds.now() - json_at
+            {:measured, max(compact, json), %{compact_us: compact, json_us: json}}
           end),
         expected_validation_and_serialization: measure(fn -> Codec.expected(expected, []) end),
         permitted_name_validation:
@@ -731,7 +795,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         aead: for(_ <- 1..@samples, do: host_sample(fn -> aead_unit() end))
       }
 
-      {samples, observer_queue}
+      {samples, observer_queue, setup}
     after
       stop_unit(observer, ref)
       RequestSeal.Custody.release(handle)
@@ -778,13 +842,14 @@ defmodule RequestSeal.Test.JWETeardownGate do
         result = fun.()
         elapsed = Bounds.now() - started
 
-        time =
+        {time, details} =
           case result do
-            {:measured, time} -> time
-            _ -> elapsed
+            {:measured, time, details} -> {time, details}
+            {:measured, time} -> {time, %{}}
+            _ -> {elapsed, %{}}
           end
 
-        send(observer, {:unit_time, self(), time})
+        send(observer, {:unit_time, self(), time, details})
       end)
 
     try do
@@ -796,9 +861,9 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
   defp await_unit(pid, ref) do
     receive do
-      {:unit_time, ^pid, time} ->
+      {:unit_time, ^pid, time, details} ->
         receive do
-          {:DOWN, ^ref, :process, ^pid, :normal} -> %{time: time}
+          {:DOWN, ^ref, :process, ^pid, :normal} -> %{time: time, details: details}
         end
 
       {:DOWN, ^ref, :process, ^pid, reason} ->

@@ -345,8 +345,8 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp put(s, i, p, pending) do
     old = :maps.get(i, map_get(:positions, s), %{phase: :unadmitted, result: nil})
 
-    admissions =
-      if map_get(:phase, old) == :unadmitted and map_get(:phase, p) != :unadmitted, do: 1, else: 0
+    # Every caller moves the position into an admitted phase.
+    admissions = if map_get(:phase, old) == :unadmitted, do: 1, else: 0
 
     resolution =
       cond do
@@ -355,7 +355,9 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
         true -> 0
       end
 
-    settled = if map_get(:result, old) == nil and map_get(:result, p) != nil, do: 1, else: 0
+    # Admission, resolution, a ready resolver end and an unfinished dead slot
+    # are the only callers. Each starts with result: nil.
+    settled = if map_get(:result, p) == nil, do: 0, else: 1
 
     %{
       s
@@ -671,7 +673,8 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
 
   defp dead_positions(i, hi, s, reason) do
     p = :maps.get(i, map_get(:positions, s))
-    if map_get(:resolver, p) != nil, do: :erlang.exit(map_get(:resolver, p), :kill)
+    if map_get(:result, p) == nil and map_get(:resolver, p) != nil,
+      do: :erlang.exit(map_get(:resolver, p), :kill)
 
     failure =
       if reason == :normal,
@@ -690,7 +693,8 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp dead_groups([], _, s), do: s
 
   defp dead_groups([{_, group} | rest], w, s) do
-    if map_get(:pid, group) != nil and is_map_key(map_get(:workers, group), w),
+    if map_get(:duration, group) == nil and map_get(:pid, group) != nil and
+         is_map_key(map_get(:workers, group), w),
       do: send(map_get(:pid, group), {map_get(:tag, s), :contributor_down, w})
 
     dead_groups(rest, w, s)

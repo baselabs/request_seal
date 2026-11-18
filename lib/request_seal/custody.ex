@@ -140,8 +140,9 @@ defmodule RequestSeal.Custody do
   @doc false
   @spec unwrap(KeyHandle.t(), [item()], Sink.t(), Context.t()) :: {:ok, :ok} | {:error, term()}
   def unwrap(handle, items, sink, context) do
-    # JWE owns this runner, its cancellation watcher and both monitors. Public
-    # unwrap/3 retains Custody.run's independent caller-owned boundary.
+    # JWE invokes this directly in its sensitive, notice-owned custody child.
+    # Its coordinator and guard own cancellation; no nested runner is created.
+    # Public unwrap/3 retains Custody.run's independent caller-owned boundary.
     Support.safe(
       fn ->
         ensure(Context.remaining(context) > 0, :deadline_exceeded)

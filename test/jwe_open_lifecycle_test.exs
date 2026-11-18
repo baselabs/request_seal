@@ -530,6 +530,53 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
     end)
   end
 
+  test "settled ranges end at U without waiting for coordinator exit" do
+    Runtime.with_peer(fn ->
+      n = 32
+
+      s =
+        Runtime.start(n, :custody,
+          policy: %{timeout: 5_000, resolve_timeout: 3_000, unwrap_timeout: 1_000}
+        )
+
+      try do
+        workers = for {pid, :worker} <- s.pids, do: pid
+        assert length(workers) == min(n, min(32, System.schedulers_online()))
+
+        u =
+          Enum.find_value(s.messages, fn
+            {:trace_ts, _, :send, {_, :member, _, _, _, u, _}, _, _} -> u
+            _ -> nil
+          end)
+
+        assert Bounds.now() < u
+        assert Enum.all?(workers, &Process.alive?/1)
+        true = :erlang.suspend_process(s.coordinator)
+        result = Runtime.until(s, u + Bounds.teardown(n)) |> Runtime.delivered()
+
+        assert Enum.all?(workers, &(not Process.alive?(&1))),
+               "settled ranges must end without coordinator exit"
+
+        for worker <- workers do
+          assert Enum.any?(result.events, fn
+                   {:end, ^worker, at, :normal} -> at <= u + Bounds.teardown(n)
+                   _ -> false
+                 end)
+        end
+
+        assert Process.alive?(s.coordinator)
+        :erlang.resume_process(s.coordinator)
+        result = Runtime.collect_return(result) |> Runtime.collect_ends()
+        assert {:ok, results} = result.return
+        assert length(results) == n
+        assert Enum.all?(results, &match?({:error, %{reason: :decryption_failed}}, &1))
+        assert result.remaining == 0
+      after
+        Runtime.cleanup(s)
+      end
+    end)
+  end
+
   test "U notifies each range once while retaining every group outcome" do
     Runtime.with_peer(fn ->
       n = 32

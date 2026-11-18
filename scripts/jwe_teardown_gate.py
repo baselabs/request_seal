@@ -159,6 +159,11 @@ def markdown(report):
     for sample in report["scenarios"]:
         if sample["scenario"].startswith("D/"):
             rows.append(f"| {sample['scenario']} cooperative exit | {sample['preflight_exit_us']} | | |")
+    rows += ["", "Unit entry-module setup (no measured operation executed):", "```json",
+             json.dumps(report.get("unit_setup", []), indent=2), "```",
+             "Retained scan timings:", "```json",
+             json.dumps(report.get("units_details", {}).get("separator_and_accounting", []), indent=2),
+             "```"]
     rows += ["", f"Derived K_pf: {report['derived_k_pf_us']} us; "
              f"{report['derived_k_pf_us'] / constants['k_pf_us']:.3%} of Bounds K_pf.",
              f"S5c preflight exits: {report['s5c_exit_us']} us.", "",
