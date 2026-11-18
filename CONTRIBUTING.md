@@ -33,9 +33,8 @@ Conformance claims require independent evidence beyond a local self-round-trip.
 Maintainers publish through a separate approved dispatch. Repeating it can finish
 an untagged release with identical package bytes by uploading only missing files;
 retired versions and differing bytes refuse. Both package and docs are read back.
-Consumer assets are available from the GitHub release for `v<version>`; see the
-[release runbook](docs/operations/releases.md) and
-[verification guide](docs/guides/verifying-releases.md).
+Consumer assets are available from the GitHub release for `v<version>`; the
+[verification guide](docs/guides/verifying-releases.md) shows how to check them.
 
 The public document list in mix.exs is shared by ExDoc and the Hex package. New public
 guides and notebooks require deliberate inclusion. A notebook that needs credentials
