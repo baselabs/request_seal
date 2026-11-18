@@ -1,8 +1,6 @@
 # Executable Livebooks
 
-Open the `.livemd` files in [Livebook](https://livebook.dev). Hosted qualification
-runs all of them through the repository gate; do not run repository builds on a
-workstation or the build box:
+Open the `.livemd` files in [Livebook](https://livebook.dev), or run all of them through the repository gate:
 
 ```sh
 python3 scripts/check.py --notebooks-only

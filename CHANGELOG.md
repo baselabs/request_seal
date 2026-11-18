@@ -12,7 +12,8 @@
   package and documentation archives without a key; upload only those archives
   outside the project. Refuse existing versions, tags and absent registry names.
   Retain corpus, SBOM, release notes and attestations in the publication artifact;
-  infra tags after reading publication back. Tag pushes execute no workflow.
+  the maintainers tag the published commit after reading publication back. Tag
+  pushes execute no workflow.
 
 - Keep JWE custody placement handshakes out of the caller's mailbox. Stamp every
   monitored end in a dedicated high-priority receiver, retaining receiver backlog,

@@ -523,7 +523,7 @@ HTTP signature algorithms (`RequestSeal.Crypto.algorithms/0`): `ed25519`, `ecdsa
 
 ## Compatibility
 
-Elixir 1.18 or newer, below 2.0 (`elixir: "~> 1.18"`), on OTP 27 or newer. CI tests Elixir 1.18, 1.19 and 1.20, each with the OTP release paired with it in `.tool-versions`. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Repository builds and tests run only in hosted qualification; contributors edit and inspect source locally. What each major release line keeps stable, what a minor release may add, and how APIs are deprecated is in [compatibility and deprecation](docs/reference/compatibility.md); supported versions for security fixes are in [SECURITY.md](SECURITY.md).
+Elixir 1.18 or newer, below 2.0 (`elixir: "~> 1.18"`), on OTP 27 or newer. CI tests Elixir 1.18, 1.19 and 1.20, each with the OTP release paired with it in `.tool-versions`. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Development instructions work on macOS and Linux; Windows developers use WSL2. What each major release line keeps stable, what a minor release may add, and how APIs are deprecated is in [compatibility and deprecation](docs/reference/compatibility.md); supported versions for security fixes are in [SECURITY.md](SECURITY.md).
 
 ## Security model
 

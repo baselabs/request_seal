@@ -14,7 +14,7 @@ and bounded standalone Elixir execution, with no Livebook web server.
 ## Consequences
 
 Root, notebook tooling and independent JOSE peer tooling maintain separate lockfiles
-and audit surfaces. Development identity is unambiguous. Package metadata can eventually support more runtime pairs than development uses, but only with receipts. Repository builds run only in hosted qualification; exercised-platform claims name the actual run.
+and audit surfaces. Development identity is unambiguous. Package metadata can eventually support more runtime pairs than development uses, but only with receipts. macOS/Linux setup commands remain the same; exercised-platform claims name the actual run.
 
 ## Acceptance
 

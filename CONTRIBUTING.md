@@ -24,7 +24,7 @@ ordered/raw transport information, caller-owned custody, explicit profiles, and 
 results. Document each option and error at its public boundary. Add the corresponding
 guide, executable example, notebook, and corpus case as capabilities are implemented.
 
-The hosted qualification runs `python3 scripts/check.py`; [testing and evidence](docs/guides/testing.md) covers focused checks.
+Run `python3 scripts/check.py` before opening a pull request; qualification runs the same gate, and [testing and evidence](docs/guides/testing.md) covers focused checks.
 Conformance claims require independent evidence beyond a local self-round-trip.
 
 The public document list in mix.exs is shared by ExDoc and the Hex package. New public

@@ -2,34 +2,42 @@
 
 This guide is for contributors. To use RequestSeal in your application, start with the [README](../../README.md#installation).
 
-Contributors edit and inspect source locally. Repository builds and tests run only
-in GitHub-hosted qualification on a `kci/` ref, never on a workstation or build box.
-Pull requests execute no project code. A maintainer reviews a contribution and
-submits the candidate through the landing process; `qualified` must pass before
-it reaches the default branch.
+**What you will build:** A local development environment for RequestSeal, with the full verification gate and generated documentation. You will run the same commands on macOS and Linux (or WSL2), then explore the tested APIs and notebooks before making changes.
 
-## Runtime and checks
+## Prerequisites
 
-`.tool-versions` is the single source for exact Elixir/OTP pairs in the floor,
-mid and latest lanes and for Node. Hosted jobs install each pair strictly and
-refuse differing installed versions. Python 3.12 runs the gate. Linux jobs use
-OpenSSL and OpenSSH tools (`ssh-agent`, `ssh-add`, `ssh-keygen`) for actual peers;
-Node runs reciprocal JOSE checks. The full gate runs on Linux, with separate
-Python process-ownership coverage on macOS.
+To develop this repository, use the latest Elixir/OTP pair and Node pin from
+`.tool-versions`, Python 3.12 (the version CI runs), Git, Hex, the OpenSSL
+command-line tool, and OpenSSH tools (`ssh-agent`,
+`ssh-add`, and `ssh-keygen`). Node is required for the
+reciprocal JOSE tests against the independent Node WebCrypto peer; OpenSSL runs
+reciprocal signature checks. `.tool-versions` lists the exact Elixir/OTP pair of every CI
+lane, the development default first, and the Node version; Python is not pinned there, and CI uses 3.12. Use a version manager such as asdf
+or mise, then confirm `elixir --version` from this checkout. macOS and Linux use the
+same commands; Windows developers use a clone inside WSL2's filesystem.
+For the supported consumer range, see the [README](../../README.md).
 
-The latest qualification lane executes these commands from the repository root:
+## Run the actual checks
 
+Clone the repository and run from its root:
 ```sh
-mix deps.get --check-locked
+git clone https://github.com/baselabs/request_seal.git
+cd request_seal
+mix deps.get
 python3 scripts/check.py
 ```
+For focused development:
 
-The gate compiles, tests, checks formatting and static analysis, builds documentation,
-executes notebooks, audits dependencies through both feeds, and inspects the package.
-Floor and mid lanes run the suite on their exact runtimes. The
-[testing guide](testing.md) describes each proof and its evidence limits.
-Read the [Livebooks](../../livebooks/overview.md) and generated documentation to
-explore the APIs; browser accessibility requires a separate inspection.
+```sh
+mix format --check-formatted
+mix compile --warnings-as-errors
+mix test --warnings-as-errors
+mix docs --warnings-as-errors
+python3 scripts/check.py --notebooks-only
+```
+
+Open `doc/index.html` for generated docs and the [Livebooks](../../livebooks/overview.md) for interactive use.
+The headless gate checks code assertions; browser accessibility needs a separate check.
 
 ## Use RequestSeal in an application
 

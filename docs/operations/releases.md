@@ -26,9 +26,9 @@ never publish, release, tag or dispatch. Workflow changes require infra review.
    gate and publishing guard reject invalid notes. Confirm explicit public
    document inventory, supported profiles, package/source disclosure and complete
    history, including deleted content and commit messages, before accepting a cut.
-3. Land only through `kimosabe-land --repo . --sha <full sha>`. Builds and tests
-   run only in GitHub-hosted qualification on a `kci/` ref, never on a workstation
-   or build box. Every runtime lane, mutation and teardown proof must pass.
+3. Land only through `kimosabe-land --repo . --sha <full sha>`. The candidate
+   qualifies in one GitHub-hosted run on a `kci/` ref. Every runtime lane,
+   mutation and teardown proof must pass.
    The final check is `qualified`; the default-branch ruleset requires it without
    bypass. Only the landing command watches the run; sessions never poll GitHub.
 4. Send infra the repository, full commit, version, publication contents and green
