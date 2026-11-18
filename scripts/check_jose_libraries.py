@@ -3,7 +3,7 @@
 npm jose 6.2.17 and Erlang jose 1.11.13 are tooling only, pinned by version and
 by content: scripts/jose_libraries/package-lock.json carries the npm tarball's
 integrity and scripts/jose_libraries/mix.lock the Hex checksums, so a changed
-artifact fails to install. Installations and Mix.install state live in a
+artifact fails to install. Installations and build state live in a
 TemporaryDirectory and are removed on every exit.
 Use --generate once to replace the checked-in independent fixture set; the
 normal gate checks those fixtures and fresh RequestSeal output with both peers.
@@ -25,26 +25,27 @@ def main():
     options = parser.parse_args()
     with temporary_directory(prefix="requestseal-jose-peers-") as temp:
         temp = Path(temp)
-        env = dict(os.environ, MIX_INSTALL_DIR=str(temp / "mix-install"))
-        for name in ("package.json", "package-lock.json"):
+        env = os.environ.copy()
+        for name in ("package.json", "package-lock.json", "mix.exs", "mix.lock"):
             shutil.copy(ROOT / "scripts/jose_libraries" / name, temp / name)
         run(["npm", "ci", "--prefix", temp, "--ignore-scripts", "--no-audit", "--no-fund"], env=env, timeout=300)
         env["REQUESTSEAL_NPM_JOSE"] = str(temp / "node_modules/jose/dist/webapi/index.js")
         node = ["node", ROOT / "scripts/jose_libraries/npm.mjs"]
-        # Select the project's runtime before Mix.install leaves project scope.
-        bootstrap = ("[directory, script | args] = System.argv(); System.argv(args); "
-                     "File.cd!(directory); Code.require_file(script)")
-        erlang = ["elixir", "-e", bootstrap, "--", temp, ROOT / "scripts/jose_libraries/erlang.exs"]
+        # A real isolated Mix project fetches its committed lock and audits both feeds.
+        for command in (["mix", "deps.get", "--check-locked"], ["mix", "hex.audit"], ["mix", "deps.audit"]):
+            run(command, env=env, cwd=temp, check=True, timeout=300)
+        # Start JOSE and its crypto application, as Mix.install did for the old runner.
+        erlang = ["mix", "run", ROOT / "scripts/jose_libraries/erlang.exs"]
         if options.generate:
             npm, erl = temp / "npm.json", temp / "erlang.json"
             run(node + ["make", "-", npm], env=env, timeout=300)
-            run(erlang + ["make", "-", erl], env=env, cwd=ROOT, timeout=300)
+            run(erlang + ["make", "-", erl], env=env, cwd=temp, timeout=300)
             SOURCE.parent.mkdir(parents=True, exist_ok=True)
             SOURCE.write_text(json.dumps(json.loads(npm.read_text()) + json.loads(erl.read_text()), indent=2) + "\n")
         produced = temp / "request-seal.json"
         run(["mix", "run", "--no-start", ROOT / "scripts/jose_libraries/request_seal.exs", SOURCE, produced], env=env, timeout=300)
         run(node + ["verify", produced, "-"], env=env, timeout=300)
-        run(erlang + ["verify", produced, "-"], env=env, cwd=ROOT, timeout=300)
+        run(erlang + ["verify", produced, "-"], env=env, cwd=temp, timeout=300)
         print("PASS both directions: npm jose 6.2.17 and Erlang jose 1.11.13; isolated tools removed", flush=True)
 
 

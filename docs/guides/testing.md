@@ -1,14 +1,16 @@
 # Testing and evidence
 
-## Run the current gate
+## Hosted qualification
 
 Use the Elixir/OTP pairs and Node pin in `.tool-versions`, with OpenSSL and
 OpenSSH tools (`ssh-agent`, `ssh-add`, `ssh-keygen`) on `PATH`.
-Commands support macOS and Linux; Windows development uses WSL2.
+Repository builds and tests run only in GitHub-hosted qualification on a `kci/` ref.
+Do not run these commands on a workstation or the build box.
+The commands below describe hosted checks and separately authorized hosted diagnostics.
 CI runs the full gate on Linux and the Python process-ownership tests on macOS,
 including kqueue timeout and closed-descriptor cleanup checks.
 ```sh
-mix deps.get
+mix deps.get --check-locked
 python3 scripts/check.py
 ```
 Tests use real local cryptography and temporary integration processes; no service starts automatically.
@@ -22,11 +24,10 @@ generated cases with an explicit fixed seed and no elapsed-time cutoff:
 
 ```sh
 mix test test/property --warnings-as-errors
-ASDF_ELIXIR_VERSION="$(awk '$1 == "elixir" {print $NF}' .tool-versions)" ASDF_ERLANG_VERSION="$(awk '$1 == "erlang" {print $NF}' .tool-versions)" MIX_BUILD_ROOT=_build/floor mix test test/property --warnings-as-errors
 MIX_ENV=test mix run bench/ceilings.exs
 ```
 
-The benchmark reports local resource use and OAEP timing; it establishes no conformance claim.
+The benchmark reports runner resource use and OAEP timing; it establishes no conformance claim.
 Generated-key measurements and independent published vectors are distinct evidence.
 Replay properties race 64 tasks over shared and distinct nonces, checking every stored
 claim, exclusive expiry, and reclaimed ETS memory or PostgreSQL storage.

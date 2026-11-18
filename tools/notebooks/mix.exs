@@ -11,6 +11,7 @@ defmodule RequestSealNotebooks.MixProject do
       # The Livebook Hex release pins earmark_parser; isolate it from ExDoc.
       # Exact Livebook identity binds the internal importer/exporter we execute.
       deps: [
+        {:mix_audit, "~> 2.1.5", only: [:dev, :test], runtime: false},
         {:livebook, "== 0.19.10", runtime: false},
         {:aws_credentials, "~> 1.1.1", override: true, runtime: false},
         # Override upstream application pins with advisory-fixed releases.

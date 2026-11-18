@@ -1,19 +1,22 @@
 # Verifying releases
 
-Starting with 2.0, each RequestSeal GitHub release carries these assets:
+The dispatch-only `Publish` workflow retains a `release-assets` artifact with:
 
 - `request_seal-<version>.tar`: the Hex package, compared byte for byte with Hex
-  before GitHub publication.
+  after Hex publication.
+- `request_seal-<version>-docs.tar.gz`: the inspected documentation archive.
 - `corpus.tar.gz`: the deterministic public conformance corpus archive.
 - `corpus.sha256`: the SHA-256 checksum of that archive.
 - `sbom.cdx.json`: a CycloneDX 1.6 software bill of materials for the package's
   locked production dependency closure, including optional integrations.
 
-The package tarball, corpus archive, and SBOM have GitHub build-provenance
+The package tarball, docs archive, corpus archive, and SBOM have GitHub build-provenance
 attestations. The package tarball also has a CycloneDX SBOM attestation binding
 it to the dependency inventory. The release notes come from its dated CHANGELOG
-section, with documentation links pinned to the release tag. Pre-release tags
-create GitHub pre-releases.
+section, retained as `release-notes.md`. Publication runs on the default branch;
+infra creates the version tag after reading it back. Tag pushes start no workflow.
+GitHub release attachment is not performed by this workflow. Artifacts follow
+the repository retention policy; a missing or expired artifact cannot be verified.
 
 The 1.0.0 release predates this pipeline: it carries the corpus archive and
 checksum, but no package tarball, SBOM, or attestations. A missing attestation
@@ -22,16 +25,21 @@ provides no provenance verification; it is not a successful verification.
 ## Download and check the corpus
 
 Set `VERSION` to the published version you intend to verify, without the leading
-`v`. Run the following commands in the same shell. They require the GitHub CLI,
+`v`. Set `RUN_ID` to its successful `Publish` run and `SOURCE_COMMIT` to the full
+commit that infra published and tagged. Confirm that run’s conclusion, workflow
+and head SHA before downloading; the branch ref alone does not select a version.
+Run the following commands in the same shell. They require the GitHub CLI,
 Mix with Hex, and either GNU `sha256sum` or macOS `shasum`. The temporary directory
 and downloads are removed when the shell exits.
 
 ```sh
 : "${VERSION:?Set VERSION to the published version to verify}"
+: "${RUN_ID:?Set RUN_ID to the successful publication run}"
+: "${SOURCE_COMMIT:?Set SOURCE_COMMIT to the full published commit}"
 assets_dir=$(mktemp -d)
 trap 'rm -rf "$assets_dir"' EXIT
-gh release view "v$VERSION" --repo baselabs/request_seal --json assets --jq '.assets[].name'
-gh release download "v$VERSION" --repo baselabs/request_seal --dir "$assets_dir"
+gh run view "$RUN_ID" --repo baselabs/request_seal --json conclusion,headSha,workflowName
+gh run download "$RUN_ID" --repo baselabs/request_seal --name release-assets --dir "$assets_dir"
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "$assets_dir" && sha256sum --check corpus.sha256)
 else
@@ -45,23 +53,23 @@ and cases described in the [corpus format](../reference/corpus-format.md).
 
 ## Verify both attestation types
 
-Check build provenance for all three subjects, and then verify the SBOM predicate
+Check build provenance for all four subjects, and then verify the SBOM predicate
 on the package tarball. Keep the predicate URLs exactly as shown:
 
 ```sh
-for file in "request_seal-$VERSION.tar" corpus.tar.gz sbom.cdx.json; do
+for file in "request_seal-$VERSION.tar" "request_seal-$VERSION-docs.tar.gz" corpus.tar.gz sbom.cdx.json; do
   gh attestation verify "$assets_dir/$file" --repo baselabs/request_seal --predicate-type https://slsa.dev/provenance/v1 \
-    --signer-workflow baselabs/request_seal/.github/workflows/release.yml \
-    --source-ref "refs/tags/v$VERSION" --deny-self-hosted-runners
+    --signer-workflow baselabs/request_seal/.github/workflows/publish.yml \
+    --source-ref refs/heads/main --source-digest "$SOURCE_COMMIT" --deny-self-hosted-runners
 done
 gh attestation verify "$assets_dir/request_seal-$VERSION.tar" --repo baselabs/request_seal --predicate-type https://cyclonedx.org/bom \
-  --signer-workflow baselabs/request_seal/.github/workflows/release.yml \
-  --source-ref "refs/tags/v$VERSION" --deny-self-hosted-runners
+  --signer-workflow baselabs/request_seal/.github/workflows/publish.yml \
+  --source-ref refs/heads/main --source-digest "$SOURCE_COMMIT" --deny-self-hosted-runners
 ```
 
 Each command must succeed. These flags require the signer workflow
-`baselabs/request_seal/.github/workflows/release.yml`, the selected release tag
-as the source ref, and a GitHub-hosted runner. See GitHub's [attestation verification documentation](https://cli.github.com/manual/gh_attestation_verify)
+`baselabs/request_seal/.github/workflows/publish.yml`, the default branch
+as the source ref, the full published commit as source digest, and a GitHub-hosted runner. See GitHub's [attestation verification documentation](https://cli.github.com/manual/gh_attestation_verify)
 for the verifier's trust policy and output. These checks establish artifact
 origin and the attested dependency inventory; callers still choose which
 release and dependencies they trust.
@@ -78,8 +86,9 @@ cmp "$assets_dir/request_seal-$VERSION.tar" "$assets_dir/hex/request_seal-$VERSI
 ```
 
 `cmp` exits successfully only when both package files are byte-identical. The
-same comparison is enforced before the release pipeline creates attestations.
-For 1.0.0, the Hex fetch can be exercised, but there is no GitHub package asset
+same comparison is enforced by publication readback after upload. Attestations
+bind inspected build bytes; byte comparison separately proves registry identity.
+For 1.0.0, the Hex fetch can be exercised, but there is no workflow package artifact
 to compare.
 
 ## Interpret SBOM scope

@@ -1134,7 +1134,7 @@ def verify_published_destinations(body, version, event="push", root=ROOT, deadli
         raise ValueError("\n".join(failures))
 
 
-def verify_identity(root, event, ref):
+def verify_identity(root, event, ref, default_branch="main"):
     version = package_version((root / "mix.exs").read_text())
     if development_snapshot(version):
         raise ValueError("release verification refuses development snapshots")
@@ -1143,22 +1143,12 @@ def verify_identity(root, event, ref):
     index = json.loads((root / "corpus/index.json").read_text())
     if index.get("elixir_release") != tag:
         raise ValueError("corpus elixir_release must equal " + tag)
-    if event not in ("push", "workflow_dispatch"):
-        raise ValueError("release verification requires a tag push or workflow_dispatch")
-    if event == "push" and ref != "refs/tags/" + tag:
-        raise ValueError("release tag must equal " + tag)
-
-    def git(*args):
-        return run(["git", *args], cwd=root, capture_output=True, text=True, check=True, timeout=30).stdout.strip()
-
-    exists = run(["git", "show-ref", "--verify", "--quiet", "refs/tags/" + tag], cwd=root, check=False, timeout=30)
-    if exists.returncode not in (0, 1):
-        raise ValueError("cannot inspect release tag")
-    if exists.returncode == 0:
-        if git("rev-parse", "refs/tags/" + tag + "^{commit}") != git("rev-parse", "HEAD"):
-            raise ValueError("release tag must point at the checked-out commit")
-    elif event == "push":
-        raise ValueError("release tag is missing")
+    if event != "workflow_dispatch":
+        raise ValueError("publication requires workflow_dispatch")
+    if not default_branch or ref != "refs/heads/" + default_branch:
+        raise ValueError("publication requires the default branch")
+    if ref_exists(root, "refs/tags/" + tag):
+        raise ValueError("version is already tagged: " + tag)
     return version
 
 
@@ -1215,7 +1205,8 @@ if __name__ == "__main__":
             else:
                 print(notes, end="")
         elif args.verify:
-            version = verify_identity(ROOT, os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"])
+            version = verify_identity(ROOT, os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"],
+                                      os.environ["DEFAULT_BRANCH"])
             if args.notes_file:
                 args.notes_file.write_text(release_notes((ROOT / "CHANGELOG.md").read_text(), version))
             print("PASS: release identity " + version)

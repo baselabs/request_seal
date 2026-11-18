@@ -134,10 +134,10 @@ def ci_action_errors(workflow, required_actions=None):
 
 def check_ci_actions():
     workflows = ROOT / ".github/workflows"
-    errors = ci_action_errors((workflows / "proofs.yml").read_text())
-    errors += ci_action_errors((workflows / "release.yml").read_text(), {
+    errors = ci_action_errors((workflows / "ci.yml").read_text())
+    errors += ci_action_errors((workflows / "publish.yml").read_text(), {
         "actions/checkout", "erlef/setup-beam", "actions/setup-python",
-        "actions/upload-artifact", "actions/download-artifact", "actions/attest",
+        "actions/upload-artifact", "actions/attest",
     })
     for workflow in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
         errors += [f"{workflow.name}: {error}" for error in ci_action_errors(workflow.read_text(), set())]
@@ -147,7 +147,7 @@ def check_ci_actions():
 
 
 def corpus_release_errors(sources):
-    """The corpus release workflow refuses a tag unless these agree; fail before tagging."""
+    """Publication refuses mismatched package, corpus, or release-note identities."""
     import json
     try:
         version = package_version(sources["mix.exs"])
@@ -315,15 +315,18 @@ def check_documentation():
 
 
 def notebooks():
+    from check_optional_clients import packed_source, running_toolchain
     tooling = ROOT / "tools/notebooks"
     run(["mix", "deps.get", "--check-locked"], tooling)
     run(["mix", "hex.audit"], tooling)
+    run(["mix", "deps.audit"], tooling)
     run(["mix", "format", "--check-formatted"], tooling)
     run(["mix", "run", "--no-start", "check.exs", "--self-test"], tooling)
-    with temporary_directory(prefix="requestseal-notebooks-") as temporary:
+    _, runtime_path = running_toolchain()
+    with packed_source(runtime_path) as source, temporary_directory(prefix="requestseal-notebooks-") as temporary:
         scratch = Path(temporary)
         run(["mix", "run", "--no-start", "check.exs", str(scratch)], tooling,
-            extra_env={"REQUESTSEAL_PYTHON": sys.executable})
+            extra_env={"REQUESTSEAL_PYTHON": sys.executable, "REQUESTSEAL_PACKED_SOURCE": str(source)})
         execute_notebooks(scratch)
 
 
@@ -376,6 +379,7 @@ if __name__ == "__main__":
             run([sys.executable, "-m", "unittest", "discover", "-s", "test", "-p", "*_test.py"])
             check_documentation()
             run(["mix", "hex.audit"])
+            run(["mix", "deps.audit"])
             check_package()
             check_sbom()
         notebooks()

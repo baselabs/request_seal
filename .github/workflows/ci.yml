@@ -10,14 +10,174 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  proofs:
-    uses: ./.github/workflows/proofs.yml
-  qualified:
-    name: qualified
-    if: always()
-    needs: [proofs]
+  process-ownership-macos:
+    runs-on: macos-15
+    timeout-minutes: 5 # run 44281082286: cold 1m11s (<2.5m)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python3 -B -m unittest discover -s test -p processes_test.py
+  toolchain:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 5 # run 44170631454: cold 10s (<2.5m)
+    outputs:
+      matrix: ${{ steps.pins.outputs.matrix }}
+      node: ${{ steps.pins.outputs.node }}
+      elixir: ${{ steps.pins.outputs.elixir }}
+      otp: ${{ steps.pins.outputs.otp }}
+      postgres_image: ${{ steps.pins.outputs.postgres_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pins
+        run: python3 scripts/toolchain.py --github-output "$GITHUB_OUTPUT"
+  verify:
+    name: verify (${{ matrix.lane }})
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    # run 44281082286: floor cold 14m02s; mid cold 9m00s.
+    # Latest restored a PLT: 18m55s + 10m cold PLT allowance; remeasure first cold green.
+    timeout-minutes: ${{ matrix.lane == 'latest' && 58 || matrix.lane == 'floor' && 29 || 18 }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.toolchain.outputs.matrix) }}
+    services:
+      postgres:
+        image: ${{ needs.toolchain.outputs.postgres_image }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+          version-type: strict
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ needs.toolchain.outputs.node }}
+      - name: Refuse a differing installed runtime
+        env:
+          EXPECTED_ELIXIR: ${{ matrix.elixir }}
+          EXPECTED_OTP: ${{ matrix.otp }}
+        run: python3 scripts/toolchain.py --verify-installed
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get --check-locked
+      # The declared gate runs dialyzer; its PLT is worth caching on the lane
+      # that runs the gate (floor/mid lanes do not analyze).
+      - if: matrix.lane == 'latest'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            _build/dev/dialyxir_*.plt
+            _build/dev/dialyxir_*.plt.hash
+          key: dialyzer-plt-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
+      - if: matrix.lane == 'floor'
+        run: mix test --warnings-as-errors
+        env:
+          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      - if: matrix.lane == 'mid'
+        run: mix test --warnings-as-errors
+        env:
+          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      - if: matrix.lane == 'floor'
+        run: python3 scripts/check_optional_clients.py
+        env:
+          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      # The latest gate also invokes check_optional_clients.py, including the
+      # ash_onetime and ash_hooks floors available on that toolchain.
+      - if: matrix.lane == 'latest'
+        run: python3 scripts/check.py
+        env:
+          REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+  mutations:
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16 # run 44281082286: cold 7m43s
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ needs.toolchain.outputs.elixir }}
+          otp-version: ${{ needs.toolchain.outputs.otp }}
+          version-type: strict
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Refuse a differing installed runtime
+        env:
+          EXPECTED_ELIXIR: ${{ needs.toolchain.outputs.elixir }}
+          EXPECTED_OTP: ${{ needs.toolchain.outputs.otp }}
+        run: python3 scripts/toolchain.py --verify-installed
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get --check-locked
+      - name: Require every reversing mutation to turn its named test red
+        run: python3 scripts/mutations.py
+  teardown:
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 46 # run 44281082286: cold 22m47s
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ needs.toolchain.outputs.elixir }}
+          otp-version: ${{ needs.toolchain.outputs.otp }}
+          version-type: strict
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Refuse a differing installed runtime
+        env:
+          EXPECTED_ELIXIR: ${{ needs.toolchain.outputs.elixir }}
+          EXPECTED_OTP: ${{ needs.toolchain.outputs.otp }}
+        run: python3 scripts/toolchain.py --verify-installed
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get --check-locked
+      - name: Measure near-cap teardown against the library bounds
+        run: python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: jwe-teardown
+          if-no-files-found: error
+          path: ${{ runner.temp }}/jwe-teardown.json
+  qualified:
+    if: always()
+    needs: [process-ownership-macos, toolchain, verify, mutations, teardown]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5 # run 44281082286: cold 5s (<2.5m)
     permissions:
       actions: read
       contents: read
@@ -28,5 +188,5 @@ jobs:
       - name: Require every proof job in this run to have succeeded
         env:
           GH_TOKEN: ${{ github.token }}
-          PROOFS_RESULT: ${{ needs.proofs.result }}
+          PROOFS_RESULTS: ${{ toJSON(needs) }}
         run: python3 scripts/qualify.py

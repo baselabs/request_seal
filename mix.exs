@@ -181,6 +181,7 @@ defmodule RequestSeal.MixProject do
 
     [
       {:ex_doc, "~> 0.40.4", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1.5", only: [:dev, :test], runtime: false},
       # Static analysis in the declared gate; PLT is cached in CI.
       {:dialyxir, ">= 1.4.8 and < 2.0.0", only: [:dev, :test], runtime: false},
       # The only required dependency: the versioned telemetry contract emits

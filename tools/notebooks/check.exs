@@ -65,7 +65,7 @@ defmodule RequestSeal.NotebookCheck do
     end
   end
 
-  def local_source!(source, root, version \\ nil) do
+  def local_source!(source, root, version \\ nil, packed_source \\ nil) do
     if String.contains?(source, "Mix.install") and String.contains?(source, ":request_seal") do
       # RequestSeal is the first dependency; optional integrations may follow it.
       install = "Mix.install([" <> inspect({:request_seal, install_requirement(root, version)})
@@ -77,7 +77,7 @@ defmodule RequestSeal.NotebookCheck do
       String.replace(
         source,
         install,
-        "Mix.install([" <> inspect({:request_seal, [path: root]})
+        "Mix.install([" <> inspect({:request_seal, [path: packed_source || root]})
       )
     else
       source
@@ -177,6 +177,13 @@ if "--self-test" in System.argv() do
   unless local != source and String.contains?(local, inspect({:request_seal, [path: root]})),
     do: raise("Local notebook execution must select the actual checkout")
 
+  packed = Path.join(root, "packed-notebook-source")
+  packed_local = RequestSeal.NotebookCheck.local_source!(source, root, nil, packed)
+
+  unless String.contains?(packed_local, inspect({:request_seal, [path: packed]})) and
+           not String.contains?(packed_local, inspect({:request_seal, [path: root]})),
+         do: raise("Notebook consumer must install the selected packed source")
+
   for {name, changed} <- [
         {"duplicate install", source <> source},
         {"install version drift", String.replace(source, "~> ", "== ")},
@@ -241,6 +248,11 @@ if "--self-test" in System.argv() do
   IO.puts("PASS: Hex install cell validation and explicit local execution selection")
 else
   [scratch] = System.argv()
+  packed_source = System.fetch_env!("REQUESTSEAL_PACKED_SOURCE")
+
+  unless File.regular?(Path.join(packed_source, "mix.exs")) and
+           not File.exists?(Path.join(packed_source, "mix.lock")),
+         do: raise("Notebook consumer requires an unpacked archive without a seed lock")
 
   manifest =
     for {file, index} <- Enum.with_index(files) do
@@ -249,7 +261,7 @@ else
       File.mkdir!(directory)
       script = Path.join(directory, "notebook.exs")
       completion = "REQUESTSEAL_COMPLETED_" <> Base.encode16(:crypto.strong_rand_bytes(24))
-      local_source = RequestSeal.NotebookCheck.local_source!(source, root)
+      local_source = RequestSeal.NotebookCheck.local_source!(source, root, nil, packed_source)
       File.write!(script, local_source <> "\nIO.puts(" <> inspect("\n" <> completion) <> ")\n")
 
       %{

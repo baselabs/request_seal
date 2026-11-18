@@ -1,0 +1,140 @@
+name: Publish
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: contains(fromJSON('["corepay","palermo-git"]'), github.actor) && contains(fromJSON('["corepay","palermo-git"]'), github.triggering_actor)
+    environment: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90 # no green run yet; measure the first green publication
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Refuse any ref except the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: pins
+        run: python3 scripts/toolchain.py --github-output "$GITHUB_OUTPUT"
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ steps.pins.outputs.elixir }}
+          otp-version: ${{ steps.pins.outputs.otp }}
+          version-type: strict
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Refuse a differing installed runtime
+        env:
+          EXPECTED_ELIXIR: ${{ steps.pins.outputs.elixir }}
+          EXPECTED_OTP: ${{ steps.pins.outputs.otp }}
+        run: python3 scripts/toolchain.py --verify-installed
+      - name: Verify unpublished release identity
+        id: identity
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 scripts/release.py --verify --notes-file release-notes.md
+      - name: Refuse an absent Hex name or published version
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: python3 scripts/publication.py --check-registry --version "$VERSION"
+      - name: Verify dependencies and corpus pin
+        env:
+          MIX_ENV: test
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get --check-locked
+          mix hex.audit
+          mix deps.audit
+          mix test test/corpus_test.exs --warnings-as-errors
+      - name: Verify corpus and create deterministic assets
+        run: |
+          metadata=$(find corpus -name .DS_Store -print)
+          if [ -n "$metadata" ]; then
+            echo "Refusing to package corpus containing .DS_Store" >&2
+            exit 1
+          fi
+          python3 scripts/verify_corpus.py
+          umask 022
+          tar -C corpus --format=gnu --sort=name --mtime='2000-01-01 00:00Z' --owner=0 --group=0 --numeric-owner --mode='u=rwX,go=rX' --exclude=.DS_Store -cf - index.json sources cases | gzip -n > corpus.tar.gz
+          sha256sum corpus.tar.gz > corpus.sha256
+      - name: Build and inspect the package and documentation without a key
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+          MIX_ENV: dev
+        run: |
+          mkdir "$RUNNER_TEMP/requestseal-archives" "$RUNNER_TEMP/requestseal-upload"
+          mix deps.get --check-locked
+          mix run --no-start -e 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])'
+          mix hex.build --output "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar"
+          mix docs --warnings-as-errors --formatter html --output "$RUNNER_TEMP/requestseal-docs"
+          python3 scripts/check_docs.py --docs-output "$RUNNER_TEMP/requestseal-docs"
+          python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from check import normalize_exdoc_inventory, check_doc_links; output = Path(sys.argv[1]); normalize_exdoc_inventory(output); check_doc_links(output)' "$RUNNER_TEMP/requestseal-docs"
+          python3 scripts/publication.py --version "$VERSION" --directory "$RUNNER_TEMP/requestseal-archives" --docs "$RUNNER_TEMP/requestseal-docs"
+          cp scripts/publish_hex.exs "$RUNNER_TEMP/requestseal-upload/publish_hex.exs"
+          cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" .
+          cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz" .
+      - name: Generate and verify package dependency SBOM
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+          MIX_ENV: prod
+        run: python3 scripts/sbom.py --tarball "request_seal-$VERSION.tar" --output sbom.cdx.json
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            request_seal-${{ steps.identity.outputs.version }}.tar
+            request_seal-${{ steps.identity.outputs.version }}-docs.tar.gz
+            corpus.tar.gz
+            sbom.cdx.json
+      - name: Attest the package SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: request_seal-${{ steps.identity.outputs.version }}.tar
+          sbom-path: sbom.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets
+          if-no-files-found: error
+          path: |
+            request_seal-${{ steps.identity.outputs.version }}.tar
+            request_seal-${{ steps.identity.outputs.version }}-docs.tar.gz
+            corpus.tar.gz
+            corpus.sha256
+            sbom.cdx.json
+            release-notes.md
+      - name: Upload only the inspected package and documentation
+        working-directory: ${{ runner.temp }}/requestseal-upload
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: mix run --no-mix-exs --no-start publish_hex.exs "$VERSION" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz"
+      - name: Read back the package and verify pre-tag release destinations
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          published=$(mktemp -d)
+          trap 'rm -rf "$published"' EXIT
+          mix hex.package fetch request_seal "$VERSION" --output "$published"
+          cmp "request_seal-$VERSION.tar" "$published/request_seal-$VERSION.tar"
+          sha256sum "request_seal-$VERSION.tar" "$published/request_seal-$VERSION.tar"
+          python3 scripts/release.py --check-destinations --for-version "$VERSION" --destination-event workflow_dispatch
+      - name: Remove publication scratch
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/requestseal-archives" "$RUNNER_TEMP/requestseal-upload" "$RUNNER_TEMP/requestseal-docs"

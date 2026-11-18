@@ -1,5 +1,4 @@
-# Isolated independent producer/consumer, pinned by version and Hex checksum (mix.lock). No runtime dependency.
-Mix.install([{:jose, "== 1.11.13"}], lockfile: Path.join(__DIR__, "mix.lock"))
+# Independent producer/consumer; the isolated Mix project fetches its committed lock.
 :jose.json_module(:jose_json_otp)
 [mode, input, output] = System.argv()
 decode = fn value -> Base.url_decode64!(value, padding: false) end

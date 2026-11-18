@@ -2,6 +2,18 @@
 
 ## Unreleased 2.0.0
 
+- Qualify each candidate in one hosted run, with every runtime lane, mutation and
+  teardown proof feeding the exact final verdict. Pull requests execute no project
+  code. Enforce installed runtime identity, measured timeouts, locked tooling and
+  both dependency advisory feeds. Add development-only mix_audit and isolate
+  fresh packed-archive consumers from committed locks. Warm the analysis cache
+  only on the default branch.
+- Replace tag-triggered publication with default-branch dispatch. Build and inspect
+  package and documentation archives without a key; upload only those archives
+  outside the project. Refuse existing versions, tags and absent registry names.
+  Retain corpus, SBOM, release notes and attestations in the publication artifact;
+  infra tags after reading publication back. Tag pushes execute no workflow.
+
 - Keep JWE custody placement handshakes out of the caller's mailbox. Stamp every
   monitored end in a dedicated high-priority receiver, retaining receiver backlog,
   observer lag, complete role counts and cancellation phase diagnostics. Keep

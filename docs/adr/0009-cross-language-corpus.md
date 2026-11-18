@@ -32,7 +32,9 @@ Named batch formats cover HTTP WG Structured Fields, Wycheproof, and RFC 9421 ba
 Numbers are tagged decimal strings; bytes use unpadded base64url objects.
 Verification facts use fixed members, canonical objects, and ordered component/parameter arrays.
 The [format reference](../reference/corpus-format.md) defines schemas and refusal rules.
-Release tags publish digest-verified deterministic `corpus.tar.gz` and `corpus.sha256` assets.
+Dispatch-only publication builds digest-verified deterministic `corpus.tar.gz` and
+`corpus.sha256` assets in its `release-assets` workflow artifact. Infra tags the
+published commit after reading publication back; tag pushes execute no workflow.
 Neither runtime package ships the corpus; the TypeScript repository vendors its selected release.
 The Elixir runner's pin changes atomically with the local index and protects inventory integrity.
 The independent TypeScript pin protects cross-language identity by tag, commit, and index digest.

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Prove core isolation and exact published dependency floors in fresh consumers."""
+from contextlib import contextmanager
+import io
 import os
+import tarfile
 import json
 import shutil
 from pathlib import Path
@@ -55,17 +58,6 @@ end)
 IO.puts(["REQUESTSEAL_DEPENDENCIES\t", :json.encode(dependencies)])
 '''
 
-LOCK_GRAPH = r'''
-{lock, _} = Code.eval_file("mix.lock")
-graph = Map.new(lock, fn
-  {name, {:hex, _package, version, _inner, _managers, dependencies, _repo, _outer}} ->
-    {name, %{version: version, dependencies: Enum.map(dependencies, &elem(&1, 0))}}
-  {name, entry} ->
-    raise "mix.lock entry #{name} is not a Hex package: #{inspect(entry)}"
-end)
-IO.puts(["REQUESTSEAL_LOCK\t", :json.encode(graph)])
-'''
-
 
 def running_toolchain():
     result = run(
@@ -96,37 +88,31 @@ def dependency_metadata(runtime_path):
     return {dependency["name"]: dependency for dependency in data[0]}
 
 
-def lock_graph(runtime_path):
-    env = os.environ.copy()
-    env["PATH"] = runtime_path
-    result = run(
-        ["elixir", "-e", LOCK_GRAPH], cwd=ROOT, env=env,
-        check=True, capture_output=True, text=True, timeout=30,
-    )
-    marker = "REQUESTSEAL_LOCK\t"
-    data = [json.loads(line[len(marker):]) for line in result.stdout.splitlines() if line.startswith(marker)]
-    if len(data) != 1 or not data[0]:
-        raise ValueError("Elixir must report a nonempty mix.lock graph")
-    return data[0]
-
-
-def floor_unlocks(lock, floors):
-    """Lock entries a floor consumer must re-resolve.
-
-    A published dependency whose floor differs from its locked version moves,
-    and so must every locked package that requires it, directly or through
-    another moved package: its locked release may require more than the floor.
-    Everything else keeps the version the suite was run against.
-    """
-    unlocks = {name for name, floor in floors.items() if name in lock and lock[name]["version"] != floor}
-    while True:
-        dependents = {
-            name for name, entry in lock.items()
-            if name not in unlocks and unlocks.intersection(entry["dependencies"])
-        }
-        if not dependents:
-            return sorted(unlocks)
-        unlocks |= dependents
+@contextmanager
+def packed_source(runtime_path):
+    """Both fresh consumers install the inspected packed archive, with no seed lock."""
+    from check_docs import public_configuration
+    from publication import inspect_package, members
+    from release import package_version
+    with temporary_directory(prefix="requestseal-consumer-package-") as name:
+        directory = Path(name)
+        tarball = directory / "package.tar"
+        env = dict(os.environ, PATH=runtime_path, MIX_ENV="dev")
+        run(["mix", "deps.get", "--check-locked"], cwd=ROOT, env=env, check=True, timeout=300)
+        run(["mix", "hex.build", "--output", tarball], cwd=ROOT, env=env, check=True, timeout=300)
+        version = package_version((ROOT / "mix.exs").read_text())
+        inspect_package(tarball, version, public_configuration(ROOT)["files"])
+        source = directory / "source"
+        source.mkdir()
+        with tarfile.open(tarball) as outer:
+            contents = outer.extractfile("contents.tar.gz").read()
+        with tarfile.open(fileobj=io.BytesIO(contents), mode="r:gz") as archive:
+            for relative, member in members(archive).items():
+                target = source / relative
+                if member.isfile():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(archive.extractfile(member).read())
+        yield source
 
 
 def floor_files(dependencies):
@@ -136,7 +122,7 @@ def floor_files(dependencies):
     return sorted({relative for name in dependencies for relative in FLOOR_COVERAGE[name]})
 
 
-def check(elixir, runtime_path):
+def check(elixir, runtime_path, source):
     with temporary_directory(prefix="requestseal-consumer-") as name:
         project = Path(name)
         (project / "config").mkdir()
@@ -155,7 +141,7 @@ def check(elixir, runtime_path):
         for key in ("MIX_BUILD_PATH", "MIX_BUILD_ROOT", "MIX_DEPS_PATH", "ERL_LIBS"):
             env.pop(key, None)
         env["MIX_ENV"] = "prod"
-        env["REQUESTSEAL_CONSUMER_PATH"] = str(ROOT)
+        env["REQUESTSEAL_CONSUMER_PATH"] = str(source)
         commands = [
             ["mix", "deps.get"],
             ["mix", "compile", "--warnings-as-errors"],
@@ -209,7 +195,7 @@ IO.puts("PASS: fresh consumer builds, signs, and verifies core without Req/Finch
             run(command, cwd=project, env=env, check=True, timeout=180)
 
 
-def check_client_floors(elixir, runtime_path):
+def check_client_floors(elixir, runtime_path, source):
     metadata = dependency_metadata(runtime_path)
     published = {name: dependency for name, dependency in metadata.items() if dependency["published"]}
     files = floor_files(published)
@@ -222,8 +208,6 @@ def check_client_floors(elixir, runtime_path):
         dependencies.append(f"{{:{name}, {json.dumps(requirement)}{runtime}}}")
     floors = {name: dependency["floor"] for name, dependency in published.items()}
     print("PUBLISHED DEPENDENCY FLOORS: " + json.dumps(floors, sort_keys=True), flush=True)
-    unlocks = floor_unlocks(lock_graph(runtime_path), floors)
-    print("FLOOR CONSUMER UNLOCKS: " + json.dumps(unlocks), flush=True)
     if not os.environ.get("REQUESTSEAL_REPLAY_PG_URL"):
         print("NOT VERIFIED: REQUESTSEAL_REPLAY_PG_URL is not set; PostgreSQL floor tests need a real database", flush=True)
 
@@ -241,10 +225,7 @@ def check_client_floors(elixir, runtime_path):
             "  def application, do: [extra_applications: [:request_seal]]\n"
             "end\n"
         )
-        # The consumer starts from the repository lock with the floor unlocks
-        # removed, so Mix re-resolves only those; test tools and unrelated
-        # transitive packages stay at the versions the suite was run against.
-        shutil.copyfile(ROOT / "mix.lock", project / "mix.lock")
+        # A fresh packed-archive installation has no committed or copied lock.
         for relative in files + ["test/test_helper.exs", "test/support/multi_signature_helper.exs",
                                  "test/support/system_command.ex", "scripts/processes.py"]:
             target = project / relative
@@ -261,11 +242,10 @@ def check_client_floors(elixir, runtime_path):
         for key in ("MIX_BUILD_PATH", "MIX_BUILD_ROOT", "MIX_DEPS_PATH", "ERL_LIBS"):
             env.pop(key, None)
         env["MIX_ENV"] = "test"
-        env["REQUESTSEAL_CONSUMER_PATH"] = str(ROOT)
+        env["REQUESTSEAL_CONSUMER_PATH"] = str(source)
         env["REQUESTSEAL_DEPENDENCY_FLOORS"] = json.dumps(floors)
         test_files = [relative for relative in files if relative.endswith("_test.exs")]
         commands = [
-            *([["mix", "deps.unlock", *unlocks]] if unlocks else []),
             ["mix", "deps.get"],
             ["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", """
 lock = Mix.Dep.Lock.read()
@@ -289,5 +269,6 @@ end
 if __name__ == "__main__":
     install_signal_handlers()
     elixir, runtime_path = running_toolchain()
-    check(elixir, runtime_path)
-    check_client_floors(elixir, runtime_path)
+    with packed_source(runtime_path) as source:
+        check(elixir, runtime_path, source)
+        check_client_floors(elixir, runtime_path, source)

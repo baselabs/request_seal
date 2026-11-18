@@ -34,7 +34,7 @@ defmodule RequestSeal.AshConsumerTest do
     # The consumer fetches request_seal's one required Hex dependency from Hex
     # before compiling.
     {deps_output, deps_status} =
-      RequestSeal.SystemCommand.run(mix, ["deps.get"],
+      RequestSeal.SystemCommand.run(mix, ["deps.get", "--check-locked"],
         cd: warning_consumer,
         env: warning_env,
         stderr_to_stdout: true
@@ -62,7 +62,7 @@ defmodule RequestSeal.AshConsumerTest do
     {mix, env} = consumer(scratch, root)
 
     {deps_output, deps_status} =
-      RequestSeal.SystemCommand.run(mix, ["deps.get"],
+      RequestSeal.SystemCommand.run(mix, ["deps.get", "--check-locked"],
         cd: scratch,
         env: env,
         stderr_to_stdout: true
@@ -129,8 +129,9 @@ defmodule RequestSeal.AshConsumerTest do
 
     # The consumer resolves online, as an installing application does, against
     # the repository's lock, so it builds with the versions this suite ran
-    # against; newest-release resolution is the latest lane's claim, not this
-    # test's. Offline resolution would depend on a registry cache that an
+    # against; fresh packed-archive consumers separately exercise new resolution.
+    # The fetch refuses any change to this copied committed lock.
+    # Offline resolution would depend on a registry cache that an
     # earlier `mix deps.get` may exit before writing.
     File.cp!(Path.expand("../mix.lock", __DIR__), Path.join(scratch, "mix.lock"))
 

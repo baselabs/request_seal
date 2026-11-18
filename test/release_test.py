@@ -100,15 +100,16 @@ class ReleaseIdentityTest(unittest.TestCase):
     def verify(self, event="workflow_dispatch", ref="refs/heads/main"):
         return release.verify_identity(self.root, event, ref)
 
-    def test_dispatch_before_tag_and_tag_push_support_annotated_tags(self):
+    def test_dispatch_refuses_an_existing_annotated_tag_even_at_head(self):
         self.assertEqual("2.3.4", self.verify())
         self.git("tag", "-a", "v2.3.4", "-m", "Release fixture")
-        self.assertEqual("2.3.4", self.verify())
-        self.assertEqual("2.3.4", self.verify("push", "refs/tags/v2.3.4"))
+        with self.assertRaisesRegex(ValueError, "already tagged"):
+            self.verify()
 
-    def test_lightweight_tag_identity(self):
+    def test_dispatch_refuses_an_existing_lightweight_tag_even_at_head(self):
         self.git("tag", "v2.3.4")
-        self.assertEqual("2.3.4", self.verify("push", "refs/tags/v2.3.4"))
+        with self.assertRaisesRegex(ValueError, "already tagged"):
+            self.verify()
 
     def test_verify_cli_emits_version_and_semantic_prerelease_outputs(self):
         scripts = self.root / "scripts"
@@ -123,23 +124,28 @@ class ReleaseIdentityTest(unittest.TestCase):
                 result = run(
                     [sys.executable, "-B", str(scripts / "release.py"), "--verify"],
                     env=dict(os.environ, GITHUB_EVENT_NAME="workflow_dispatch",
-                             GITHUB_REF="refs/heads/main", GITHUB_OUTPUT=str(output)),
+                             GITHUB_REF="refs/heads/main", DEFAULT_BRANCH="main", GITHUB_OUTPUT=str(output)),
                     capture_output=True, text=True, check=False, timeout=30,
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertEqual(f"version={version}\nprerelease={prerelease}\n", output.read_text())
 
-    def test_tag_at_another_commit_refuses_dispatch_and_push(self):
+    def test_tag_at_another_commit_also_refuses_dispatch(self):
         self.git("tag", "v2.3.4")
         self.git("commit", "--quiet", "--allow-empty", "-m", "Another commit")
-        for event, ref in (("workflow_dispatch", "refs/heads/release"), ("push", "refs/tags/v2.3.4")):
-            with self.subTest(event=event), self.assertRaisesRegex(ValueError, "checked-out commit"):
-                self.verify(event, ref)
+        with self.assertRaisesRegex(ValueError, "already tagged"):
+            self.verify()
 
-    def test_push_requires_the_matching_existing_tag(self):
-        for ref in ("refs/tags/v2.3.5", "refs/heads/v2.3.4", "refs/tags/v2.3.4"):
-            with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, "release tag"):
-                self.verify("push", ref)
+    def test_only_dispatch_of_the_explicit_default_branch_is_allowed(self):
+        for event in ("push", "pull_request", "schedule", "workflow_call"):
+            with self.subTest(event=event), self.assertRaisesRegex(ValueError, "workflow_dispatch"):
+                self.verify(event, "refs/heads/main")
+        for ref in ("refs/tags/v2.3.4", "refs/heads/topic", "refs/heads/main/other", ""):
+            with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, "default branch"):
+                self.verify(ref=ref)
+        self.assertEqual("2.3.4", release.verify_identity(self.root, "workflow_dispatch", "refs/heads/trunk", "trunk"))
+        with self.assertRaisesRegex(ValueError, "default branch"):
+            release.verify_identity(self.root, "workflow_dispatch", "refs/heads/main", "")
 
     def test_shared_version_cases(self):
         cases = json.loads((ROOT / "test/fixtures/release_versions.json").read_text())
@@ -155,8 +161,6 @@ class ReleaseIdentityTest(unittest.TestCase):
                         self.verify()
                 else:
                     self.assertEqual(version, self.verify())
-                    self.git("tag", "v" + version)
-                    self.assertEqual(version, self.verify("push", "refs/tags/v" + version))
                 sources = {path: (self.root / path).read_text() for path in ("mix.exs", "corpus/index.json", "CHANGELOG.md")}
                 self.assertEqual([], gate.corpus_release_errors(sources))
 
@@ -322,7 +326,7 @@ class ReleaseIdentityTest(unittest.TestCase):
                 for arguments in (("--release-notes", "--for-version", "2.3.4"),
                                   ("--verify", "--notes-file", str(self.root / "notes.md"))):
                     result = run([sys.executable, "-B", str(self.root / "scripts/release.py"), *arguments],
-                                            env=dict(os.environ, GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/main"),
+                                            env=dict(os.environ, GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/main", DEFAULT_BRANCH="main"),
                                             capture_output=True, text=True, check=False, timeout=30)
                     self.assertEqual(target == valid, result.returncode == 0, result.stderr)
                     if target != valid:
@@ -676,22 +680,15 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("Release notes are the CHANGELOG section\n  verbatim, and documentation links are versioned.", current)
         self.assertNotIn("CommonMark", current)
 
-    def test_live_destination_check_follows_hex_verification_and_precedes_publication(self):
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    def test_destination_readback_follows_upload_and_hex_byte_comparison(self):
+        workflow = (ROOT / ".github/workflows/publish.yml").read_text()
         command = 'python3 scripts/release.py --check-destinations --for-version "$VERSION"'
-        self.assertIn(command, workflow)
+        self.assertLess(workflow.index("run: mix run --no-mix-exs"), workflow.index('cmp "request_seal-$VERSION.tar"'))
         self.assertLess(workflow.index('cmp "request_seal-$VERSION.tar"'), workflow.index(command))
-        self.assertLess(workflow.index(command), workflow.index("gh release create"))
-        self.assertIn("if: github.event_name == 'workflow_dispatch'", workflow)
         self.assertIn(command + " --destination-event workflow_dispatch", workflow)
-        step = workflow.split("- name: Verify published release destinations", 1)[1].split("- name:", 1)[0]
-        self.assertIn("if: github.event_name == 'push'", step)
-        self.assertIn(command + " --destination-event push", step)
+        self.assertNotIn("--destination-event push", workflow)
         self.assertIn("python3 scripts/release.py --verify --notes-file release-notes.md", workflow)
-        self.assertIn("--notes-file release-notes.md", workflow)
-        self.assertIn("            release-notes.md", workflow)
-        ci = (ROOT / ".github/workflows/proofs.yml").read_text().split("\n  verify:\n", 1)[1]
-        self.assertIn("fetch-depth: 0", ci, "offline historical destination checks require local tags and branch refs")
+        self.assertIn("fetch-depth: 0", (ROOT / ".github/workflows/ci.yml").read_text())
         runbook = (ROOT / "docs/operations/releases.md").read_text()
         for contract in ("verbatim", "same line", "inside fences", "no CommonMark conformance claim",
                          "Each real HTTP GET must return 200", "own release notes", "Code spans and code blocks"):
@@ -944,56 +941,6 @@ class ReleaseWorkflowTest(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 2)
             self.assertEqual(["/slow"], requests)
 
-    def test_prerelease_flag_uses_the_verified_job_output(self):
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        verify, publish = workflow.split("\n  publish:\n")
-        self.assertIn("prerelease: ${{ steps.identity.outputs.prerelease }}", verify)
-        self.assertIn("PRERELEASE: ${{ needs.verify.outputs.prerelease }}", publish)
-        self.assertIn('if [ "$PRERELEASE" = true ]; then\n              flags+=(--prerelease)', publish)
-        self.assertIn('"${flags[@]}" "${assets[@]}"', publish)
-        self.assertNotRegex(publish, r"\$\{?VERSION[^\n]*(?:rc|alpha|beta)")
-
-    def test_existing_release_http_status_is_fail_closed_and_reused(self):
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        publish = workflow.split("\n  publish:\n")[1]
-        self.assertEqual(1, publish.count('gh api --include "repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME"'))
-        self.assertNotIn("gh release view", publish)
-        detection = publish.split("- name: Detect existing release", 1)[1].split("- name: Compare existing", 1)[0]
-        self.assertIn('if [ "$status" = 404 ]; then', detection)
-        self.assertIn('gh api --paginate "repos/$GH_REPO/releases" > "$response"', detection)
-        self.assertIn('select(.draft and .tag_name == $tag)', detection)
-        self.assertIn('--arg tag "$GITHUB_REF_NAME"', detection)
-        self.assertRegex(detection, r'Refusing to publish over draft release: \$draft[^\n]*\n\s+exit 1')
-        self.assertLess(detection.index('gh api --paginate'), detection.index("echo 'exists=false'"))
-        self.assertEqual(1, publish.count('id: existing'))
-        self.assertIn('HTTP ${status:-unavailable}', publish)
-        self.assertRegex(publish, r'HTTP \$\{status:-unavailable\}[^\n]*\n\s+exit 1')
-        self.assertIn("if: steps.existing.outputs.exists == 'true'", publish)
-        self.assertIn("EXISTS: ${{ steps.existing.outputs.exists }}", publish)
-        self.assertIn('if [ "$EXISTS" = true ]; then', publish)
-        self.assertEqual(2, publish.count("NAMES: ${{ steps.existing.outputs.names }}"))
-
-    def test_draft_filter_executes_real_jq_on_paginated_release_lists(self):
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        detection = workflow.split("- name: Detect existing release", 1)[1].split("- name: Compare existing", 1)[0]
-        program = re.search(r"draft=\$\(jq -sr --arg tag \"\$GITHUB_REF_NAME\" '([^']+)'", detection)[1]
-        # gh api --paginate emits consecutive JSON arrays, one per page.
-        cases = (
-            ([[{"draft": False, "tag_name": "v1.0.0", "id": 1}],
-              [{"draft": True, "tag_name": "v2.0.0", "id": 2}], []], "v2.0.0\n"),
-            ([[]], ""),
-            ([[{"draft": False, "tag_name": "v2.0.0", "id": 3}]], ""),
-            ([[{"draft": True, "tag_name": "v2.0.0", "id": 4}]], "v2.0.0\n"),
-            ([[{"draft": True, "tag_name": "v2.1.0", "id": 5}]], ""),
-        )
-        for pages, expected in cases:
-            with self.subTest(pages=pages):
-                with temporary_directory(prefix="release-jq-") as directory:
-                    source = Path(directory) / "pages.json"
-                    source.write_text("\n".join(json.dumps(page) for page in pages))
-                    result = run(["jq", "-sr", "--arg", "tag", "v2.0.0", program, source],
-                                 capture_output=True, text=True, check=True, timeout=10)
-                self.assertEqual(expected, result.stdout)
 
     def test_sbom_platform_assets_and_aliases(self):
         platforms = (
@@ -1020,16 +967,10 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertEqual(2, result.returncode)
                 self.assertIn("not allowed with argument", result.stderr)
 
-    def test_existing_assets_are_compared_before_either_attestation(self):
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        publish = workflow.split("\n  publish:\n")[1]
-        self.assertLess(publish.index('cmp "$asset"'), publish.index("uses: actions/attest@"))
-        self.assertLess(publish.rindex("uses: actions/attest@"), publish.index("gh release upload"))
-
     def test_release_actions_use_immutable_commits(self):
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        workflow = (ROOT / ".github/workflows/publish.yml").read_text()
         required = {"actions/checkout", "erlef/setup-beam", "actions/setup-python",
-                    "actions/upload-artifact", "actions/download-artifact", "actions/attest"}
+                    "actions/upload-artifact", "actions/attest"}
         self.assertEqual([], gate.ci_action_errors(workflow, required))
         for action in required:
             import re
@@ -1037,18 +978,19 @@ class ReleaseWorkflowTest(unittest.TestCase):
             with self.subTest(action=action):
                 self.assertTrue(gate.ci_action_errors(changed, required))
 
-    def test_write_permissions_and_attestations_are_confined_to_tag_job(self):
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        verify, publish = workflow.split("\n  publish:\n")
-        self.assertIn("workflow_dispatch:\n", verify)
-        self.assertNotIn("inputs:", verify)
-        self.assertNotIn(": write", verify)
-        self.assertNotIn("uses: actions/attest@", verify)
-        self.assertIn("if: github.event_name == 'push'", publish)
-        self.assertIn("needs: verify", publish)
-        for permission in ("contents", "id-token", "attestations", "artifact-metadata"):
-            self.assertIn(permission + ": write", publish)
-        self.assertIn("sbom-path: sbom.cdx.json", publish)
+    def test_attestations_and_artifacts_precede_the_keyed_upload_without_creating_tags(self):
+        workflow = (ROOT / ".github/workflows/publish.yml").read_text()
+        self.assertNotIn("gh release", workflow)
+        self.assertNotIn("git tag", workflow)
+        self.assertNotIn("git push", workflow)
+        self.assertNotIn("contents: write", workflow)
+        for permission in ("id-token", "attestations"):
+            self.assertIn(permission + ": write", workflow)
+        self.assertIn("sbom-path: sbom.cdx.json", workflow)
+        self.assertLess(workflow.index("scripts/publication.py --version"), workflow.index("uses: actions/attest@"))
+        self.assertLess(workflow.rindex("uses: actions/attest@"), workflow.index("run: mix run --no-mix-exs"))
+        for artifact in ("corpus.tar.gz", "corpus.sha256", "sbom.cdx.json", "release-notes.md"):
+            self.assertIn("            " + artifact, workflow)
 
     def test_sbom_serial_binds_package_identity_and_bytes_and_sorts_graph(self):
         bom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,

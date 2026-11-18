@@ -2,207 +2,92 @@
 
 ## Release conditions
 
-Release acceptance exercises advertised public entry points, the package artifact,
-documentation, and required counterparts. Named provider profiles use extension packages.
-The native TypeScript counterpart is `@request-seal/core` from `baselabs/request-seal-typescript`;
-both repositories use the [conformance corpus](../reference/corpus-format.md).
+Release acceptance exercises advertised public entry points, package bytes,
+documentation and required counterparts. Named provider profiles use extension
+packages. The native TypeScript counterpart is `@request-seal/core` from
+`baselabs/request-seal-typescript`; both use the
+[conformance corpus](../reference/corpus-format.md).
 
-1. Set `@version` in `mix.exs` to the release version. A pre-release whose first
-   identifier starts with `dev` is a development snapshot: its source links use
-   `main`, and publishing and release verification refuse it. Other pre-releases
-   and stable releases use `v<version>` source links and can be published.
-   Pre-release tags create GitHub pre-releases; stable tags create regular releases.
-   Snapshot installs select the coming stable line. Stable installs use `~> X.Y.Z`
-   before 1.0 and `~> MAJOR.MINOR` thereafter; other pre-releases use
-   `~> MAJOR.MINOR.PATCH-<pre-release>` so Elixir matches that pre-release.
-   Match `corpus/index.json`'s `elixir_release` to `v<version>`, including `-dev`
-   between releases; the gate and release workflow enforce this identity.
-   Update `test/support/conformance_pin.ex` whenever the index digest changes.
-   In this release commit, rename `## Unreleased <version>` to
-   `## <version> - YYYY-MM-DD` (substitute the version and actual release date), and
-   finish the release and migration guidance beneath it. This dated, nonempty
-   section becomes the GitHub release notes verbatim. Finalize every documentation
-   link to `https://request-seal.hexdocs.pm/<version>/<page>` and source or
-   asset links to `https://github.com/baselabs/request_seal/blob/v<version>/<path>`
-   or `https://raw.githubusercontent.com/baselabs/request_seal/v<version>/<path>`. Unreleased entries may use absolute GitHub `main`
-   URLs; replace them when cutting the release. Both `mix hex.publish` and the release gate reject a missing,
-   undated, or empty section before publishing or tagging. Publishing requires
-   `python3` for this shared validation.
-   Confirm the explicit public document inventory and supported profiles.
-2. Use the latest Elixir/OTP pair and Node pin from `.tool-versions`.
-   Run the release gate and inspect generated docs in a browser separately:
-   ```sh
-   python3 scripts/check.py
-   ```
-3. Build and publish with Elixir 1.20+ so optional integrations appear in Hex metadata:
-   ```sh
-   mix run --no-start -e 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])' && mix hex.build
-   ```
-   Inspect the artifact against the explicit package file list in `mix.exs`, then delete it.
-   `hex_metadata.config` must mark both `ash_onetime` and `ash_hooks` optional.
+Follow infra's baselabs/docs/ci.md, “What infra requires of every product”, at
+commit 8d941a4. A product session prepares and lands a version commit; infra owns
+publication, owner approval, registry credentials and the later tag. Sessions
+never publish, release, tag or dispatch. Workflow changes require infra review.
 
-4. Before publishing, scan the full history of every branch and tag,
-   including commit messages. Use a nonempty literal private-term list kept outside
-   public source, referenced by `RELEASE_PRIVATE_TERMS_FILE`. Keep scan output local;
-   resolve every match before proceeding. Fetch complete history first:
+1. Set `@version` in `mix.exs`. Development snapshots (first pre-release identifier
+   starts with `dev`) use `main` source links and cannot publish. Other releases
+   use `v<version>` source links. Stable installs use `~> X.Y.Z` before 1.0 and
+   `~> MAJOR.MINOR` thereafter; pre-releases use `~> MAJOR.MINOR.PATCH-<pre-release>`.
+   Match `corpus/index.json`'s `elixir_release` to `v<version>` and update
+   `test/support/conformance_pin.ex` when its index digest changes.
+2. Stamp `## Unreleased <version>` as `## <version> - YYYY-MM-DD`. Its dated,
+   nonempty section becomes `release-notes.md` verbatim. Finalize documentation
+   links to `https://request-seal.hexdocs.pm/<version>/<page>` and source/asset
+   links to the `v<version>` GitHub blob or raw form below. The shared release
+   gate and publishing guard reject invalid notes. Confirm explicit public
+   document inventory, supported profiles, package/source disclosure and complete
+   history, including deleted content and commit messages, before accepting a cut.
+3. Land only through `kimosabe-land --repo . --sha <full sha>`. Builds and tests
+   run only in GitHub-hosted qualification on a `kci/` ref, never on a workstation
+   or build box. Every runtime lane, mutation and teardown proof must pass.
+   The final check is `qualified`; the default-branch ruleset requires it without
+   bypass. Only the landing command watches the run; sessions never poll GitHub.
+4. Send infra the repository, full commit, version, publication contents and green
+   qualification run. Infra declares the `publish` environment and its registry
+   key through its secret declaration and obtains owner approval. Publication is
+   only a no-input dispatch of `.github/workflows/publish.yml` on the default
+   branch. Every job requires both initiating actors to be approved owners and
+   refuses any other ref as its first step. It trusts the default-branch ruleset
+   without re-checking `qualified`. A package name absent from Hex is refused;
+   first publication is the owner's decision.
+5. The unkeyed publication steps install the exact latest `.tool-versions` pair,
+   refuse differing installed releases, fetch `--check-locked`, audit both feeds,
+   verify the corpus pin and build deterministic corpus assets. They validate
+   version, cut notes and absence of the version tag or published version. They
+   build ExDoc and the Hex archive, run disclosure and link checks, compare the
+   archive's checksum, metadata, explicit inventory and every source byte, and
+   build and inspect the docs archive. No cache is read or written.
+6. The same unkeyed steps generate and verify CycloneDX 1.6 against the production
+   dependency closure, including optional integrations. `scripts/sbom.py` verifies
+   the platform-specific digest of upstream's prebuilt tool before execution.
+   SBOM paths are refused, timestamps removed, ordering normalized and a UUIDv5
+   serial binds package identity and bytes. Build provenance covers package,
+   docs, corpus and SBOM; a second attestation binds the SBOM to the package.
+   The `release-assets` workflow artifact retains those four files, the corpus
+   checksum and `release-notes.md`.
+7. Only the upload step receives the registry key in its environment. It runs
+   `scripts/publish_hex.exs` with `mix run --no-mix-exs --no-start` from a scratch
+   directory with no `mix.exs`; it loads no project and uploads only the inspected
+   package and docs archives. The key never appears on a command line or in
+   another step. Unkeyed readback compares the published Hex package byte for
+   byte and checks the first-party destinations in its own release notes.
+8. Infra reads publication back and creates `v<version>` on that exact published
+   commit. No workflow creates a tag, and a tag push starts no workflow. Future
+   GitHub release creation and asset attachment require infra's defined process;
+   this workflow preserves assets and attestations without creating a GitHub
+   release or assuming a tag exists. Follow the
+   [consumer verification guide](../guides/verifying-releases.md) for workflow
+   artifact retrieval, attestation and Hex-byte checks. After release, advance
+   `@version` to the next development version and update documented installs,
+   corpus release identity and its digest pin.
 
-   ```sh
-   set -eu
-   set -o pipefail
-   : "${RELEASE_PRIVATE_TERMS_FILE:?Set the private-term file path}"
-   : "${RELEASE_SCAN_DIR:?Set a private output directory outside public source}"
-   test -s "$RELEASE_PRIVATE_TERMS_FILE"
-   rg --quiet --fixed-strings --ignore-case --file "$RELEASE_PRIVATE_TERMS_FILE" "$RELEASE_PRIVATE_TERMS_FILE"
-   if test "$(git rev-parse --is-shallow-repository)" = true; then
-     git fetch --unshallow origin
-   fi
-   git fetch --all --tags
-   mkdir -p "$RELEASE_SCAN_DIR"
-   git rev-list --all > "$RELEASE_SCAN_DIR/release-history-commits.txt"
-   test -s "$RELEASE_SCAN_DIR/release-history-commits.txt"
-   : > "$RELEASE_SCAN_DIR/release-history-matches.txt"
-   while IFS= read -r revision; do
-     if git grep --line-number --ignore-case --fixed-strings --file "$RELEASE_PRIVATE_TERMS_FILE" "$revision" >> "$RELEASE_SCAN_DIR/release-history-matches.txt"; then
-       :
-     else
-       result=$?
-       test "$result" -eq 1 || exit "$result"
-     fi
-   done < "$RELEASE_SCAN_DIR/release-history-commits.txt"
-   if git log --all --format='%H %B' | rg --line-number --ignore-case --fixed-strings --file "$RELEASE_PRIVATE_TERMS_FILE" >> "$RELEASE_SCAN_DIR/release-history-matches.txt"; then
-     :
-   else
-     result=$?
-     test "$result" -eq 1 || exit "$result"
-   fi
-   test ! -s "$RELEASE_SCAN_DIR/release-history-matches.txt"
-   ```
+Before the tag exists, `scripts/release.py --check-destinations --for-version
+<version> --destination-event workflow_dispatch` checks HexDocs and the Hex package
+page by real HTTP GET, while future tagged source and raw paths are regular files
+in the published commit's HEAD tree. No future tag URL is requested. After infra
+creates the tag, its separately authorized readback can use `--destination-event
+push` to request all first-party destinations. That option describes destination
+resolution; it does not enable a tag-triggered workflow.
 
-   This scans all fetched history, including deleted file contents. The term-file
-   self-match is the scanner's positive control. An empty result establishes only
-   that the configured terms were not found; inspect package/source disclosure too.
-5. Publish to Hex. From the latest toolchain selected by `.tool-versions`, export `HEX_API_KEY` from
-   your secret store into the publishing shell only; never write it to a file or
-   print it. Verify the security
-   reporting channel and package ownership, then run:
-
-   ```sh
-   : "${HEX_API_KEY:?Export HEX_API_KEY from your secret store for this command}"
-   export VERSION=$(python3 scripts/release.py --version)
-   mix hex.publish --yes
-   mix hex.info request_seal "$VERSION"
-   ```
-
-   Confirm Hex reports that version and check each versioned page linked by its
-   own release notes, not only the documentation landing page:
-
-   ```sh
-   python3 scripts/release.py --check-destinations --for-version "$VERSION" --destination-event workflow_dispatch
-   ```
-
-   Before the tag exists, this mode checks HexDocs and the current version's Hex
-   package page by real HTTP GET, and tagged source and raw-asset paths as regular
-   files in the checked-out commit's HEAD tree. Step 7 checks that same commit,
-   which step 8 will tag. No future GitHub tag URL is requested. The prepublication
-   guard validates authored targets without requesting future URLs, including the
-   current version's Hex package
-   page. Dispatch runs after Hex publication, so that page must already exist.
-   Inspect registry checksums and optional metadata.
-   After the tag push, use `--destination-event push` to GET every first-party
-   destination. Each real HTTP GET must return 200; redirects fail immediately
-   without following them. HTTP 404, 5xx and transport errors retry with 1, 2, 4,
-   8, then at most 10 seconds of backoff, within a 180-second scheduling budget
-   for the check. Response bodies are read in chunks with a deadline check and
-   a refreshed socket timeout before each read, including slow-drip responses.
-   HTTP 429 also retries, honoring `Retry-After` (seconds or HTTP date) within
-   that deadline. The requests honor `http_proxy`, `https_proxy`, and `no_proxy`
-   through the standard library's proxy discovery and bypass rules. An HTTP
-   proxy forwards HTTP requests and uses CONNECT tunnels for HTTPS destinations;
-   proxy credentials stay in request headers and require both a user and password.
-   As in Python's standard opener, HTTPS destinations use plaintext CONNECT then
-   TLS to the destination, even with an `https://` proxy URL. An omitted proxy
-   port uses the selected connection class's default (443 for HTTPS destinations).
-   Other 4xx statuses are final. A permanent failure stops retries
-   after collecting that round's results, even if another URL still returns 404.
-   A socket timeout at or after the scheduling deadline reports destination
-   deadline expiry, including connection setup, CONNECT, response headers and
-   body reads. An idle timeout before the deadline remains a transport timeout.
-   The socket timeout is set to `min(15, remaining_seconds)` before each request
-   and body chunk. That timeout applies per socket operation.
-   Python's standard library does not bound DNS resolution. After resolution,
-   each connection attempt to a resolved address gets the socket timeout;
-   multiple addresses can therefore require multiple timeouts. Socket reads also
-   use that timeout per operation, including while parsing response headers.
-   There is no guaranteed total wall-clock bound of 180 or 195 seconds. Body
-   reads and retries stop when the deadline is observed. Transport errors include
-   TLS errors and malformed or prematurely closed HTTP responses. A decode error
-   fails only its target. The final failure message lists every destination's own
-   last outcome, including successful 200 responses. The workflow selects its mode explicitly by event.
-6. Install from Hex in a clean consumer, without a path or Git override. Use an
-   empty Mix install directory and verify the installed application version and
-   an actual public entry point:
-
-   ```sh
-   export VERSION=$(python3 scripts/release.py --version)
-   export REQUIREMENT=$(python3 scripts/release.py --install-requirement)
-   consumer_dir=$(mktemp -d)
-   trap 'rm -rf "$consumer_dir"' EXIT
-   MIX_INSTALL_DIR="$consumer_dir" elixir -e '
-   version = System.fetch_env!("VERSION")
-   Mix.install([{:request_seal, System.fetch_env!("REQUIREMENT")}])
-   ^version = Application.spec(:request_seal, :vsn) |> to_string()
-   {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
-   "GET" = message.method
-   IO.puts("PASS: RequestSeal #{version} clean-consumer install and request construction")
-   '
-   ```
-7. Push the release commit to its branch, then dispatch the `Release` workflow
-   (`.github/workflows/release.yml`) on that branch, after the Hex publication above:
-
-   ```sh
-   : "${RELEASE_BRANCH:?Set the branch holding the release commit}"
-   gh workflow run release.yml --ref "$RELEASE_BRANCH"
-   ```
-
-   Confirm the completed run is for that exact commit and passed. Dispatch uses
-   read-only repository permissions and produces a workflow artifact for inspection;
-   it creates no attestations or release assets. It refuses development snapshots,
-   invalid release notes, mismatched corpus identity, or an existing version tag
-   pointing at another commit. HexDocs URLs are checked over HTTP; tagged source
-   and raw assets are checked as regular files in that commit's HEAD tree.
-   It rebuilds the package and compares it byte for byte with the published Hex
-   tarball before attestation or publication of release assets. Inspect the
-   SBOM using the scope definitions in the
-   [consumer verification guide](../guides/verifying-releases.md).
-   `python3 scripts/sbom.py` downloads upstream's prebuilt binary and verifies
-   its platform-specific checksum before execution. The version, asset names,
-   and digests live in `scripts/sbom.py`. CI's latest lane uses the same entry
-   point for development tarballs; only releases compare against Hex.
-   Every component, version, and scope is checked against the locked production
-   closure, and filesystem paths are rejected. The timestamp is removed,
-   ordering is normalized, and a UUIDv5 serial binds the package identity and bytes.
-   The artifact also contains `release-notes.md` for the publishing job; that file
-   is used verbatim as release notes and is not uploaded as a release asset.
-8. Only after the dry run passes, push the annotated release tag from that commit:
-
-   ```sh
-   git tag -a "v$VERSION" -m "RequestSeal $VERSION"
-   git push origin "v$VERSION"
-   ```
-
-   After the tag push, confirm HexDocs source links resolve to the `v<version>`
-   tag (`source_ref` in `mix.exs`). Confirm the tag's `Release` run passed and its
-   title and notes match the version and dated CHANGELOG section.
-   Its read-only verification job repeats the dry run, including the Hex byte
-   comparison, then checks all first-party destinations by real HTTP, including
-   tagged GitHub source and raw assets. Only the tag publishing job receives release and attestation write
-   permissions. On re-runs it checks existing assets before attestation; only an
-   HTTP 404 means the release is absent. Other API failures stop publication.
-   Follow the [consumer verification guide](../guides/verifying-releases.md)
-   to check the downloaded assets, both attestations, and the Hex package bytes.
-
-   After release, advance `@version` to the next `-dev` version and update
-   documented install requirements, the corpus release identity, and its digest pin.
+Each real HTTP GET must return 200; redirects fail without being followed. HTTP
+404, 5xx, 429 and transport failures retry within a 180-second scheduling budget,
+with bounded backoff and `Retry-After`. Other 4xx failures are final. Connection
+and body reads refresh their socket timeout to the smaller of 15 seconds and the
+remaining budget. Slow bodies stop at the observed deadline. Standard proxy
+settings are honored and proxy credentials remain in headers. DNS resolution
+is not bounded by Python's socket timeout, and each resolved address can consume
+its own connection timeout, so the budget is not a guaranteed wall-clock bound.
+Diagnostics retain each destination's last result. The workflow selects pre-tag
+resolution explicitly after upload and Hex byte comparison.
 
 ## CHANGELOG authoring format
 
@@ -408,8 +293,13 @@ punctuation, unbalanced closing parentheses and trailing entity references.
 
 ## Dependency updates
 
-Root and `tools/notebooks` have separate lockfiles and advisory surfaces.
-Run `mix hex.outdated` and `mix hex.audit` in both projects after dependency changes.
+Root, `tools/notebooks` and `scripts/jose_libraries` have separate lockfiles and
+advisory surfaces. Hosted qualification fetches each with `--check-locked` and
+runs both `mix hex.audit` and `mix deps.audit`. Fresh consumers install the
+inspected packed archive without a seed lock. Only a separate default-branch
+scheduled or dispatched drift report may otherwise resolve fresh; it has no
+secret, environment, cache or qualification verdict. An advisory without a fixed
+release needs a reasoned `hex: [ignore_advisories: [...]]` project entry.
 Security overrides require a reason and real Livebook importer/exporter checks.
 Rebuild incompatible build artifacts and analysis caches when the toolchain or major dependencies change.
 
@@ -424,9 +314,8 @@ automatic rollback semantics. Changing an installed application's dependency is 
 
 ## Conformance release assets
 
-Confirm `gh release view v<version>` lists the assets described in the
-[consumer verification guide](../guides/verifying-releases.md), and execute its
-checks before accepting a release. Existing assets must be byte-identical;
-missing ones are uploaded without replacing others. The TypeScript repository
-pins tag, commit and index SHA-256 together; its corpus is repository tooling
-and excluded from the npm package.
+Retrieve the successful publication's `release-assets` workflow artifact and
+execute the [consumer verification guide](../guides/verifying-releases.md).
+Existing historical GitHub releases retain their assets. The publication workflow
+does not attach assets to a future tag. The TypeScript repository pins tag, commit
+and index SHA-256 together; its corpus is tooling, excluded from the npm package.

@@ -20,6 +20,16 @@ updates:
           - "*"
     commit-message:
       prefix: "Notebooks"
+  - package-ecosystem: "mix"
+    directory: "/scripts/jose_libraries"
+    schedule:
+      interval: "weekly"
+    groups:
+      hex-peers:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "Peers"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

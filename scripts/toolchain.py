@@ -3,6 +3,8 @@
 .github/service-images: the one home of every pin a workflow uses."""
 import argparse
 import json
+import os
+import subprocess
 from pathlib import Path
 import re
 
@@ -66,10 +68,34 @@ def service_images(source):
     return {f"{name}_image": image for name, image in images.items()}
 
 
+def installed_errors(expected_elixir, expected_otp, installed):
+    """Compare full releases, including every OTP patch component."""
+    expected = [expected_elixir, expected_otp]
+    return [] if installed == expected else [f"Runtime differs: expected {expected}, installed {installed}"]
+
+
+def verify_installed():
+    expression = ('IO.puts(System.version()); '
+                  'IO.puts(File.read!(Path.join([to_string(:code.root_dir()), '
+                  '"releases", System.otp_release(), "OTP_VERSION"])) |> String.trim())')
+    installed = subprocess.run(["elixir", "-e", expression], check=True, capture_output=True,
+                               text=True, timeout=30).stdout.splitlines()
+    errors = installed_errors(os.environ["EXPECTED_ELIXIR"], os.environ["EXPECTED_OTP"], installed)
+    if errors:
+        raise SystemExit("; ".join(errors))
+    print("PASS: installed Elixir and full OTP release match .tool-versions")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--verify-installed", action="store_true")
     args = parser.parse_args()
+    if args.verify_installed:
+        if args.github_output:
+            parser.error("--verify-installed cannot write GitHub outputs")
+        verify_installed()
+        return
     configuration = toolchain((ROOT / ".tool-versions").read_text())
     configuration |= service_images((ROOT / ".github/service-images").read_text())
     if args.github_output:

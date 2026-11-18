@@ -85,8 +85,8 @@ class PublicDocsTest(unittest.TestCase):
         self.assertEqual(2, len(commands))
         for command in commands:
             with self.subTest(command=command):
-                self.assertIn("--signer-workflow baselabs/request_seal/.github/workflows/release.yml", command)
-                self.assertIn('--source-ref "refs/tags/v$VERSION"', command)
+                self.assertIn("--signer-workflow baselabs/request_seal/.github/workflows/publish.yml", command)
+                self.assertIn('--source-ref refs/heads/main --source-digest "$SOURCE_COMMIT"', command)
                 self.assertIn("--deny-self-hosted-runners", command)
         self.assertNotIn("HEX_API_KEY", source)
         self.assertNotIn("gh attestation verify", (ROOT / runbook).read_text())
@@ -611,45 +611,30 @@ class BuildContractsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "need floor coverage"):
             clients.floor_files(["unmapped_dependency"])
 
-    def test_floor_consumer_unlocks_moved_floors_and_their_dependents(self):
+    def test_fresh_consumers_install_an_inspected_packed_archive_without_seed_locks(self):
         spec = importlib.util.spec_from_file_location("optional_clients", ROOT / "scripts/check_optional_clients.py")
         clients = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(clients)
-        lock = {
-            "ash": {"version": "3.37.6", "dependencies": ["ecto", "telemetry"]},
-            "ash_sql": {"version": "0.8.9", "dependencies": ["ash", "ecto"]},
-            "ash_postgres": {"version": "2.16.0", "dependencies": ["ash", "ash_sql", "ecto"]},
-            "migrator": {"version": "1.0.0", "dependencies": ["ash_postgres"]},
-            "ecto": {"version": "3.14.0", "dependencies": ["telemetry"]},
-            "telemetry": {"version": "1.4.2", "dependencies": []},
-            "plug": {"version": "1.20.3", "dependencies": ["telemetry"]},
-            "bandit": {"version": "1.15.0", "dependencies": ["plug", "telemetry"]},
-        }
-        floors = {"ash": "3.37.4", "plug": "1.20.3", "telemetry": "1.4.2", "ash_hooks": "3.0.0"}
-        self.assertEqual(["ash", "ash_postgres", "ash_sql", "migrator"], clients.floor_unlocks(lock, floors))
-        self.assertEqual([], clients.floor_unlocks(lock, {"plug": "1.20.3", "telemetry": "1.4.2"}))
-        self.assertEqual(
-            ["ash", "ash_postgres", "ash_sql", "bandit", "ecto", "migrator", "plug", "telemetry"],
-            clients.floor_unlocks(lock, {"telemetry": "1.4.1"}),
-        )
         _, runtime_path = clients.running_toolchain()
-        graph = clients.lock_graph(runtime_path)
-        self.assertIn("ash", graph["ash_postgres"]["dependencies"])
-        self.assertEqual([], graph["telemetry"]["dependencies"])
+        with clients.packed_source(runtime_path) as source:
+            self.assertNotEqual(ROOT, source)
+            self.assertFalse((source / "mix.lock").exists())
+            self.assertEqual((ROOT / "mix.exs").read_bytes(), (source / "mix.exs").read_bytes())
+            self.assertEqual((ROOT / "lib/request_seal.ex").read_bytes(), (source / "lib/request_seal.ex").read_bytes())
+        self.assertFalse(source.exists())
+        script = (ROOT / "scripts/check_optional_clients.py").read_text()
+        self.assertNotIn("deps.unlock", script)
+        self.assertNotIn('shutil.copyfile(ROOT / "mix.lock"', script)
+        self.assertEqual(2, script.count('env["REQUESTSEAL_CONSUMER_PATH"] = str(source)'))
 
     def test_actual_action_refs_reject_mutable_tags_and_missing_checkout(self):
-        original = (ROOT / ".github/workflows/proofs.yml").read_text()
+        original = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertEqual([], gate.ci_action_errors(original))
         import re
         checkout = re.search(r"actions/checkout@[0-9a-f]{40}", original).group()
         # A commented-out reference is not a step, mutable or not.
         self.assertEqual([], gate.ci_action_errors(original.replace(
             "- uses: " + checkout, "- uses: " + checkout + "  # was @v4\n      # - uses: actions/checkout@v4")))
-        for name in ("ci.yml", "contributions.yml"):
-            caller = (ROOT / ".github/workflows" / name).read_text()
-            self.assertEqual([], gate.ci_action_errors(caller, set()), name)
-            self.assertTrue(gate.ci_action_errors(caller.replace(
-                "./.github/workflows/proofs.yml", "baselabs/request_seal/.github/workflows/proofs.yml@main"), set()))
         for changed in (original.replace(checkout, "actions/checkout@v4"), original.replace(checkout, "other/action@" + "a" * 40),
                         original.replace(checkout, "./.github/workflows/../../evil.yml"),
                         original.replace("- uses: " + checkout, "# - uses: " + checkout),

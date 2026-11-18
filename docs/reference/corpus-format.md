@@ -305,18 +305,21 @@ non-applicable counts supersede implicit adapter outcomes.
 
 ## Publication and vendoring
 
-The `Release` workflow (`.github/workflows/release.yml`) verifies a dispatch dry run
-after Hex publication and publishes assets on a subsequent `v*` tag push. It requires the index release tag
-and package version to match the pushed tag, runs the Elixir corpus test against
-its pinned index digest, and verifies the inventory, creates a deterministic
-`corpus.tar.gz` with fixed timestamp and numeric ownership, and publishes that
-asset plus `corpus.sha256`, the byte-identical published package tarball, and a
-CycloneDX 1.6 dependency SBOM on the tag's GitHub release. Build provenance covers
-the package, corpus archive, and SBOM; an SBOM attestation binds the dependency
-graph to the package tarball. The archive root contains exactly `index.json`, `sources/`, and `cases/`;
-both consumers refuse other paths in the corpus root. Existing assets are downloaded
-and compared byte for byte; a differing digest fails publication without replacement.
-Missing assets are uploaded to existing releases. A tag whose package version differs from `elixir_release` fails this workflow and publishes nothing. Corpus assets are attached to every GitHub release of v0.3.0 and later except v0.4.1. The TypeScript package `@request-seal/core` vendors `conformance/` from one
+The dispatch-only `Publish` workflow (`.github/workflows/publish.yml`) runs on the
+default branch before infra creates the version tag. It refuses an existing tag or
+published version and requires `elixir_release` to match the package version.
+It runs the Elixir corpus test against the pinned index digest, verifies inventory,
+and builds deterministic `corpus.tar.gz` with fixed timestamp and numeric ownership
+plus `corpus.sha256`. Its `release-assets` workflow artifact also retains the
+inspected Hex package and documentation archives, dated CHANGELOG notes, and a
+CycloneDX 1.6 dependency SBOM. Build provenance covers the package, documentation,
+corpus archive and SBOM; a second attestation binds the SBOM to the package.
+The archive root contains exactly `index.json`, `sources/`, and `cases/`;
+both consumers refuse other paths in the corpus root. Infra reads the publication
+back and tags the published commit. Tag pushes execute no workflow.
+See the [verification guide](../guides/verifying-releases.md) for artifact retrieval
+and verification. Earlier GitHub releases retain their existing assets.
+The TypeScript package `@request-seal/core` vendors `conformance/` from one
 release tag. Its source pin records tag, commit and index SHA-256; updating the
 pin and vendored bytes is a reviewed commit. Corpus data stays outside published
 runtime packages.

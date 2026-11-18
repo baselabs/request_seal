@@ -15,8 +15,8 @@ publishing a nonstandard private signing profile, verification-to-authorization 
 or private retry/recovery, key-purpose, or address-selection mechanism. Public sources
 establish protocol requirements; private consumer implementations do not establish them.
 
-Run the covering parts of `python3 scripts/check.py` for your change.
-Publishing to Hex, deploying, and pushes to mirrors require owner approval.
+The hosted qualification runs the covering parts of `python3 scripts/check.py`.
+Publishing, deploying, and pushes to mirrors require owner approval.
 Update the CHANGELOG when behavior, a dependency, or a contract changes.
 
 Commands support macOS and Linux; Windows development uses WSL2. CI runs on Linux.
@@ -34,3 +34,33 @@ Keep internal work plans, review history, local tooling state, and personal work
 out of public source, package contents, and generated documentation.
 No business material, named customer/prospect/sponsor/champion assessment, pricing,
 confidential design detail, machine path, or link into a private path belongs here.
+
+## CI/CD and releases
+
+Follow infra's baselabs/docs/ci.md, “What infra requires of every product”
+(commit 8d941a4). Send workflow changes to infra with repository, branch and full
+commit for review before landing. Land only through `kimosabe-land --repo . --sha <full sha>`;
+the default-branch ruleset requires the exact `qualified` check with no bypass.
+Never use classic branch protection alongside that ruleset.
+
+This public repository builds and tests only in GitHub-hosted qualification on a
+`kci/` ref, never on a developer's machine or the build box. Pure Python source
+checks that compile nothing may run locally with `python3 -I -B`. Only
+`kimosabe-land` watches a run; sessions do not poll GitHub. Outside pull requests
+execute no project code. Use the exact `.tool-versions` runtimes, locked dependency
+fetches, both advisory feeds, immutable action pins and measured job timeouts.
+Qualification only restores caches; the default-branch cache warmer is their sole writer.
+The separate default-branch publication and cache-warmer workflows perform only their
+specified work on hosted runners; neither decides a landing.
+
+Sessions never release, publish, tag, dispatch workflows or hold registry keys.
+After a qualified version commit lands, send infra the repository, full commit,
+version, publication contents and green qualification run. Infra declares the
+`publish` environment and secrets through its declaration, obtains owner approval,
+dispatches `publish.yml`, reads publication back and tags the published commit.
+No tag push starts a workflow. A first registry publication belongs to the owner.
+A registry key appears only in the upload step's environment; never put any
+secret on a command line or list process arguments. Project code, archive builds
+and inspections run without the key. The upload loads no project and only uploads
+the two inspected archives. Sessions do not publish or deploy. Mirror pushes
+require the owner's explicit authorization.

@@ -523,7 +523,7 @@ HTTP signature algorithms (`RequestSeal.Crypto.algorithms/0`): `ed25519`, `ecdsa
 
 ## Compatibility
 
-Elixir 1.18 or newer, below 2.0 (`elixir: "~> 1.18"`), on OTP 27 or newer. CI tests Elixir 1.18, 1.19 and 1.20, each with the OTP release paired with it in `.tool-versions`. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Development instructions work on macOS and Linux; Windows developers use WSL2. What each major release line keeps stable, what a minor release may add, and how APIs are deprecated is in [compatibility and deprecation](docs/reference/compatibility.md); supported versions for security fixes are in [SECURITY.md](SECURITY.md).
+Elixir 1.18 or newer, below 2.0 (`elixir: "~> 1.18"`), on OTP 27 or newer. CI tests Elixir 1.18, 1.19 and 1.20, each with the OTP release paired with it in `.tool-versions`. The optional ash_onetime and ash_hooks integrations require Elixir 1.20; floor and mid toolchains omit those dependencies and tests. The latest CI lane executes them. Repository builds and tests run only in hosted qualification; contributors edit and inspect source locally. What each major release line keeps stable, what a minor release may add, and how APIs are deprecated is in [compatibility and deprecation](docs/reference/compatibility.md); supported versions for security fixes are in [SECURITY.md](SECURITY.md).
 
 ## Security model
 
@@ -531,7 +531,7 @@ A valid signature proves which key signed which covered bytes; a trusted associa
 
 ## Conformance corpus
 
-RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. Each GitHub release attaches it as `corpus.tar.gz` with `corpus.sha256`. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
+RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. Publication retains `corpus.tar.gz` and `corpus.sha256` in the `release-assets` workflow artifact; the [verification guide](docs/guides/verifying-releases.md) describes download and attestation checks. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
 
 ## Documentation
 

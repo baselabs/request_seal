@@ -107,16 +107,14 @@ class WorkflowYamlTest(unittest.TestCase):
 
     def test_all_real_workflows_load_with_known_values(self):
         sources = {name: load((ROOT / ".github/workflows" / name).read_text()) for name in
-                   ("ci.yml", "contributions.yml", "proofs.yml", "release.yml")}
+                   ("ci.yml", "cache-warmer.yml", "publish.yml")}
         self.assertEqual(["kci/**"], sources["ci.yml"]["on"]["push"]["branches"])
-        self.assertEqual({"pull_request": ""}, sources["contributions.yml"]["on"])
-        verify = sources["proofs.yml"]["jobs"]["verify"]
+        self.assertEqual({"workflow_dispatch": ""}, sources["publish.yml"]["on"])
+        verify = sources["ci.yml"]["jobs"]["verify"]
         self.assertEqual("verify (${{ matrix.lane }})", verify["name"])
         self.assertEqual(["5432/tcp"], verify["services"]["postgres"]["ports"])
         self.assertEqual("--health-cmd \"pg_isready -U postgres\" --health-interval 5s --health-timeout 5s --health-retries 20",
                          verify["services"]["postgres"]["options"])
-        self.assertEqual(["v*"], sources["release.yml"]["on"]["push"]["tags"])
-        self.assertIn('gh release create "$GITHUB_REF_NAME"', sources["release.yml"]["jobs"]["publish"]["steps"][-1]["run"])
 
 
 class ActionPolicyTest(unittest.TestCase):
@@ -126,21 +124,21 @@ class ActionPolicyTest(unittest.TestCase):
     def test_every_step_use_is_checked_independently_of_required_actions(self):
         pinned = "owner/repo/path@" + "a" * 40
         self.assertEqual([], gate.ci_action_errors(self.workflow("      - uses: " + pinned + "\n"), set()))
-        for action in ("other/action@v1", "./.github/workflows/proofs.yml", "repo@" + "a" * 40,
+        for action in ("other/action@v1", "./.github/workflows/sample.yml", "repo@" + "a" * 40,
                        "docker://image@" + "a" * 40, "owner/repo@" + "a" * 39, "owner/repo@" + "A" * 40):
             with self.subTest(action=action):
                 self.assertTrue(gate.ci_action_errors(self.workflow(
                     "      - uses: " + pinned + "\n      - uses: " + action + "\n"), set()))
 
     def test_reusable_calls_are_local_and_never_escape_the_workflow_directory(self):
-        for call in ("./.github/workflows/proofs.yml", "./.github/workflows/a-b_1.yml"):
+        for call in ("./.github/workflows/sample.yml", "./.github/workflows/a-b_1.yml"):
             self.assertEqual([], gate.ci_action_errors("jobs:\n  call:\n    uses: " + call + "\n", set()))
-        for call in ("./.github/workflows/../proofs.yml", "./.github/workflows/a..b.yml",
-                     "./.github/workflows/proofs.yaml", "owner/repo@" + "a" * 40):
+        for call in ("./.github/workflows/../sample.yml", "./.github/workflows/a..b.yml",
+                     "./.github/workflows/sample.yaml", "owner/repo@" + "a" * 40):
             with self.subTest(call=call):
                 self.assertTrue(gate.ci_action_errors("jobs:\n  call:\n    uses: " + call + "\n", set()))
-        self.assertEqual([], gate.ci_action_errors("jobs:\n  call:\n    uses: ./.github/workflows/proofs.yml\n",
-                                                  {"./.github/workflows/proofs.yml"}))
+        self.assertEqual([], gate.ci_action_errors("jobs:\n  call:\n    uses: ./.github/workflows/sample.yml\n",
+                                                  {"./.github/workflows/sample.yml"}))
 
     def test_syntax_bypasses_produce_line_numbered_errors(self):
         for steps in ("      - 'uses': other/action@v1\n", "      - {uses: other/action@v1}\n",

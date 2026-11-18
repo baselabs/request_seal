@@ -4,8 +4,8 @@
 The `qualified` job runs this last. It reads every job of the workflow run from the Actions
 API (the latest execution of each job) and requires exactly the proof inventory below, one
 execution each, completed with conclusion `success`. The aggregate `needs` result is not
-enough on its own: it names only direct dependencies, so a skipped inner job or a matrix leg
-cancelled before it ran can leave a reusable workflow's result green."""
+enough on its own: it names only direct dependencies, and the matrix job has several
+executions. Both direct results and every actual lane conclusion must succeed."""
 import argparse
 import json
 import os
@@ -16,9 +16,8 @@ from urllib.request import Request, urlopen
 import toolchain
 
 ROOT = Path(__file__).resolve().parents[1]
-CALLER = "proofs"
 VERDICT = "qualified"
-# Every job in .github/workflows/proofs.yml; verify runs once per toolchain lane.
+# Every proof job in .github/workflows/ci.yml; verify runs once per toolchain lane.
 JOBS = ("process-ownership-macos", "toolchain", "mutations", "teardown")
 LANE_JOB = "verify"
 
@@ -27,12 +26,20 @@ def expected_jobs(tool_versions):
     """Check names of the proofs as the candidate run reports them."""
     lanes = [lane["lane"] for lane in toolchain.toolchain(tool_versions)["matrix"]["include"]]
     names = [*JOBS, *(f"{LANE_JOB} ({lane})" for lane in lanes)]
-    return {f"{CALLER} / {name}" for name in names}
+    return set(names)
 
 
 def refusals(proofs_result, jobs, expected):
     """Every reason the run does not qualify; empty only when each proof ran and succeeded."""
-    refused = [] if proofs_result == "success" else [f"{CALLER}: aggregate result {proofs_result or 'absent'}"]
+    direct = {*JOBS, LANE_JOB}
+    refused = []
+    if not isinstance(proofs_result, dict) or set(proofs_result) != direct:
+        refused.append("needs: missing or unexpected direct dependency")
+    else:
+        for name, body in sorted(proofs_result.items()):
+            result = body.get("result") if isinstance(body, dict) else None
+            if result != "success":
+                refused.append(f"{name}: aggregate result {result or 'absent'}")
     seen = {}
     for job in jobs:
         if job.get("name") != VERDICT:
@@ -75,7 +82,7 @@ def main():
     expected = expected_jobs((ROOT / ".tool-versions").read_text())
     jobs = run_jobs(environment["GITHUB_API_URL"], environment["GITHUB_REPOSITORY"],
                     environment["GITHUB_RUN_ID"], environment["GH_TOKEN"])
-    refused = refusals(environment.get("PROOFS_RESULT", ""), jobs, expected)
+    refused = refusals(json.loads(environment.get("PROOFS_RESULTS", "null")), jobs, expected)
     if refused:
         print("Qualification refused:\n  " + "\n  ".join(refused))
         return 1

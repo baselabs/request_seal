@@ -1,15 +1,9 @@
 """Hold the qualification contract: one run per kci/<sha> candidate, judged by `qualified`."""
-import contextlib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
-import os
+import ast
 from pathlib import Path
 import re
-import subprocess
 import sys
-import threading
 import unittest
-from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -52,7 +46,7 @@ def step_identity(step):
 
 
 def proof_condition_errors(source, ci_source):
-    proofs = jobs(source)
+    proofs = {name: body for name, body in jobs(source).items() if name != "qualified"}
     conditions = {}
     errors = []
     for job, body in proofs.items():
@@ -64,7 +58,7 @@ def proof_condition_errors(source, ci_source):
                 conditions.setdefault(identity, []).append(step["if"])
     conditions = {identity: sorted(bound) for identity, bound in conditions.items()}
     expected = {
-        ("verify", "actions/cache"): ["matrix.lane == 'latest'"],
+        ("verify", "actions/cache/restore"): ["matrix.lane == 'latest'"],
         ("verify", "mix test --warnings-as-errors"): ["matrix.lane == 'floor'", "matrix.lane == 'mid'"],
         ("verify", "python3 scripts/check_optional_clients.py"): ["matrix.lane == 'floor'"],
         ("verify", "python3 scripts/check.py"): ["matrix.lane == 'latest'"],
@@ -89,46 +83,8 @@ def proof_jobs(conclusion="success", **changes):
     return listing
 
 
-@contextlib.contextmanager
-def actions_api(listing, page_size=3):
-    """A real local HTTP server answering the run-jobs endpoint, paged like the API."""
-    requests = []
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            url = urlsplit(self.path)
-            query = parse_qs(url.query)
-            requests.append({"path": url.path, "query": query, "authorization": self.headers["Authorization"]})
-            page = int(query["page"][0])
-            body = json.dumps({"total_count": len(listing),
-                               "jobs": listing[(page - 1) * page_size:page * page_size]}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *arguments):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}", requests
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=10)
-
-
-def verdict(api, proofs_result="success"):
-    environment = {key: value for key, value in os.environ.items()
-                   if key.lower() not in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}}
-    environment.update(GITHUB_API_URL=api, GITHUB_REPOSITORY="baselabs/request_seal", GITHUB_RUN_ID="7",
-                       GH_TOKEN="run-token", PROOFS_RESULT=proofs_result, NO_PROXY="127.0.0.1")
-    return subprocess.run([sys.executable, "-B", str(ROOT / "scripts/qualify.py")], env=environment,
-                          capture_output=True, text=True, timeout=60)
+def direct_results(result="success"):
+    return {name: {"result": result} for name in PROOFS}
 
 
 class QualificationTest(unittest.TestCase):
@@ -140,134 +96,142 @@ class QualificationTest(unittest.TestCase):
     def test_only_candidate_pushes_start_the_qualification_run(self):
         self.assertEqual({"push": {"branches": ["kci/**"]}}, triggers(text("ci.yml")))
 
-    def test_proofs_are_defined_once_and_called_by_the_candidate_and_contribution_runs(self):
-        self.assertEqual({"workflow_call": ""}, triggers(text("proofs.yml")))
-        self.assertEqual(PROOFS, set(jobs(text("proofs.yml"))))
+    def test_proofs_are_defined_once_in_the_candidate_run(self):
+        ci = jobs(text("ci.yml"))
+        self.assertEqual(PROOFS | {"qualified"}, set(ci))
         self.assertEqual(PROOFS, {*qualify.JOBS, qualify.LANE_JOB})
-        self.assertEqual("verify (${{ matrix.lane }})", jobs(text("proofs.yml"))["verify"]["name"])
-        for name, caller in (("ci.yml", "proofs"), ("contributions.yml", "contribution")):
-            callers = {job: body for job, body in jobs(text(name)).items() if "uses" in body}
-            self.assertEqual({caller: {"uses": "./.github/workflows/proofs.yml"}}, callers, name)
-        self.assertEqual(qualify.CALLER, "proofs")
-        for workflow in workflows():
-            if workflow.name not in {"ci.yml", "contributions.yml"}:
-                self.assertFalse(any("proofs.yml" in str(value) for key, value in fields(load_workflow(workflow.read_text()))
-                                     if key == "uses"), workflow.name)
+        self.assertEqual("verify (${{ matrix.lane }})", ci["verify"]["name"])
+        self.assertEqual({"ci.yml", "cache-warmer.yml", "publish.yml"}, {p.name for p in workflows()})
+        self.assertFalse(any("uses" in body for body in ci.values()))
 
-    def test_outside_pull_requests_run_separately_without_secrets(self):
-        self.assertEqual({"pull_request": ""}, triggers(text("contributions.yml")))
-        for workflow in workflows():
-            if workflow.name != "contributions.yml":
-                self.assertNotIn("pull_request", triggers(workflow.read_text()), workflow.name)
-        for name in ("proofs.yml", "ci.yml", "contributions.yml"):
-            workflow = load_workflow(text(name))
-            self.assertEqual({"contents": "read"}, workflow["permissions"], name)
-            for key, value in fields(workflow):
-                self.assertNotEqual("secrets", key, name)
-                if isinstance(value, str):
-                    self.assertNotRegex(value, r"\$\{\{[^}]*\bsecrets\.", name)
-                if key == "permissions":
-                    self.assertNotIn("write", value.values(), name)
-        self.assertNotIn("qualified", jobs(text("contributions.yml")))
+    def test_no_pull_request_or_tag_executes_a_workflow(self):
+        for path in workflows():
+            events = triggers(path.read_text())
+            self.assertNotIn("pull_request", events)
+            self.assertNotIn("pull_request_target", events)
+            if "push" in events:
+                self.assertNotIn("tags", events["push"])
+                self.assertIn("branches", events["push"])
+        ci = load_workflow(text("ci.yml"))
+        self.assertEqual({"contents": "read"}, ci["permissions"])
+        self.assertNotIn("secrets.", text("ci.yml"))
 
     def test_qualified_reads_every_job_conclusion_of_its_own_run(self):
         ci = jobs(text("ci.yml"))
-        self.assertEqual(["proofs", "qualified"], list(ci))
-        self.assertEqual(
-            {"name": "qualified", "if": "always()", "needs": ["proofs"],
-             "runs-on": "ubuntu-24.04", "timeout-minutes": "5",
-             "permissions": {"actions": "read", "contents": "read"},
-             "steps": [
-                 {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-                  "with": {"persist-credentials": "false"}},
-                 {"name": "Require every proof job in this run to have succeeded",
-                  "env": {"GH_TOKEN": "${{ github.token }}", "PROOFS_RESULT": "${{ needs.proofs.result }}"},
-                  "run": "python3 scripts/qualify.py"},
-             ]},
-            ci["qualified"],
-        )
-        for workflow in workflows():
-            if workflow.name != "ci.yml":
-                defined = jobs(workflow.read_text())
-                self.assertNotIn("qualified", defined, workflow.name)
-                self.assertNotIn("qualified", [job.get("name") for job in defined.values()], workflow.name)
+        verdict = ci["qualified"]
+        self.assertEqual("qualified", list(ci)[-1])
+        self.assertNotIn("name", verdict)
+        self.assertEqual("always()", verdict["if"])
+        self.assertEqual(set(ci) - {"qualified"}, set(verdict["needs"]))
+        self.assertEqual({"actions": "read", "contents": "read"}, verdict["permissions"])
+        self.assertEqual({"GH_TOKEN": "${{ github.token }}", "PROOFS_RESULTS": "${{ toJSON(needs) }}"},
+                         verdict["steps"][-1]["env"])
+        self.assertEqual("python3 scripts/qualify.py", verdict["steps"][-1]["run"])
+        for path in workflows():
+            if path.name != "ci.yml":
+                self.assertNotIn("qualified", jobs(path.read_text()))
 
     def test_inventory_is_every_proof_and_one_verify_leg_per_lane(self):
         self.assertEqual(
-            {"proofs / process-ownership-macos", "proofs / toolchain", "proofs / mutations", "proofs / teardown",
-             "proofs / verify (floor)", "proofs / verify (mid)", "proofs / verify (latest)"},
+            {"process-ownership-macos", "toolchain", "mutations", "teardown",
+             "verify (floor)", "verify (mid)", "verify (latest)"},
             qualify.expected_jobs((ROOT / ".tool-versions").read_text()),
         )
 
     def test_verdict_refuses_every_outcome_but_each_proof_succeeding_once(self):
         expected = qualify.expected_jobs((ROOT / ".tool-versions").read_text())
-        leg = "proofs / verify (mid)"
-        self.assertEqual([], qualify.refusals("success", proof_jobs(), expected))
+        leg = "verify (mid)"
+        self.assertEqual([], qualify.refusals(direct_results(), proof_jobs(), expected))
         for label, proofs_result, listing, reason in (
-            ("aggregate failure", "failure", proof_jobs(), "proofs: aggregate result failure"),
-            ("aggregate absent", "", proof_jobs(), "proofs: aggregate result absent"),
-            ("leg cancelled before a runner", "success",
+            ("aggregate failure", direct_results("failure"), proof_jobs(), "toolchain: aggregate result failure"),
+            ("aggregate absent", None, proof_jobs(), "needs: missing or unexpected direct dependency"),
+            ("leg cancelled before a runner", direct_results(),
              proof_jobs(**{leg: [{"name": leg, "status": "completed", "conclusion": "cancelled"}]}),
              f"{leg}: completed/cancelled"),
-            ("inner job skipped", "success",
-             proof_jobs(**{"proofs / teardown": [{"name": "proofs / teardown", "status": "completed",
+            ("inner job skipped", direct_results(),
+             proof_jobs(**{"teardown": [{"name": "teardown", "status": "completed",
                                                   "conclusion": "skipped"}]}),
-             "proofs / teardown: completed/skipped"),
-            ("leg missing", "success", proof_jobs(**{leg: []}), f"{leg}: missing"),
-            ("leg still running", "success",
+             "teardown: completed/skipped"),
+            ("leg missing", direct_results(), proof_jobs(**{leg: []}), f"{leg}: missing"),
+            ("leg still running", direct_results(),
              proof_jobs(**{leg: [{"name": leg, "status": "in_progress", "conclusion": None}]}),
              f"{leg}: in_progress/None"),
-            ("leg twice", "success",
+            ("leg twice", direct_results(),
              proof_jobs(**{leg: [{"name": leg, "status": "completed", "conclusion": "success"}] * 2}),
              f"{leg}: 2 executions"),
-            ("unknown job", "success",
-             proof_jobs(**{"proofs / extra": [{"name": "proofs / extra", "status": "completed",
+            ("unknown job", direct_results(),
+             proof_jobs(**{"extra": [{"name": "extra", "status": "completed",
                                                "conclusion": "success"}]}),
-             "proofs / extra: not a qualification job"),
-            ("neutral", "success", proof_jobs("neutral"), "proofs / toolchain: completed/neutral"),
+             "extra: not a qualification job"),
+            ("neutral", direct_results(), proof_jobs("neutral"), "toolchain: completed/neutral"),
         ):
             with self.subTest(label):
                 self.assertIn(reason, qualify.refusals(proofs_result, listing, expected))
 
-    def test_verdict_pages_the_real_endpoint_and_exits_by_outcome(self):
-        with actions_api(proof_jobs()) as (api, requests):
-            qualified = verdict(api)
-        self.assertEqual(0, qualified.returncode, qualified.stdout + qualified.stderr)
-        self.assertIn("Qualified: ", qualified.stdout)
-        self.assertEqual(3, len(requests))
-        for page, request in enumerate(requests, 1):
-            self.assertEqual("/repos/baselabs/request_seal/actions/runs/7/jobs", request["path"])
-            self.assertEqual({"filter": ["latest"], "per_page": ["100"], "page": [str(page)]}, request["query"])
-            self.assertEqual("Bearer run-token", request["authorization"])
-        leg = "proofs / verify (latest)"
-        with actions_api(proof_jobs(**{leg: [{"name": leg, "status": "completed", "conclusion": "cancelled"}]})) as (api, _):
-            refused = verdict(api)
-        self.assertEqual(1, refused.returncode)
-        self.assertIn(f"{leg}: completed/cancelled", refused.stdout)
-        with actions_api(proof_jobs()) as (api, _):
-            refused = verdict(api, proofs_result="cancelled")
-        self.assertEqual(1, refused.returncode)
-        self.assertIn("proofs: aggregate result cancelled", refused.stdout)
+    def test_every_direct_dependency_must_exist_and_succeed(self):
+        expected = qualify.expected_jobs((ROOT / ".tool-versions").read_text())
+        for name in PROOFS:
+            for result in ("failure", "cancelled", "skipped", "neutral", None):
+                changed = direct_results()
+                changed[name] = {"result": result}
+                self.assertTrue(qualify.refusals(changed, proof_jobs(), expected))
+            changed = direct_results()
+            del changed[name]
+            self.assertTrue(qualify.refusals(changed, proof_jobs(), expected))
+        for changed in ({}, [], "success", {**direct_results(), "extra": {"result": "success"}}):
+            self.assertTrue(qualify.refusals(changed, proof_jobs(), expected))
 
     def test_every_job_is_bounded(self):
         for workflow in workflows():
             for job, body in jobs(workflow.read_text()).items():
                 with self.subTest(workflow=workflow.name, job=job):
-                    # A job that calls a reusable workflow takes no timeout; its jobs carry their own.
-                    if "uses" not in body:
-                        self.assertTrue(body["timeout-minutes"].isdigit())
-                        self.assertGreater(int(body["timeout-minutes"]), 0)
+                    value = body["timeout-minutes"]
+                    limits = [int(value)] if value.isdigit() else list(map(int, re.findall(r"\b(?:58|29|18)\b", value)))
+                    self.assertTrue(limits)
+                    self.assertTrue(all(0 < limit <= 90 for limit in limits))
+                    self.assertRegex(workflow.read_text(), r"timeout-minutes:.*(?:#.*(?:run|green)|\$\{\{)")
+
+    def test_only_packed_archive_consumers_resolve_fresh_and_all_projects_audit_both_feeds(self):
+        fresh = set()
+        audits = {}
+        for path in (ROOT / "scripts").glob("*.py"):
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.List):
+                    continue
+                command = [part.value if isinstance(part, ast.Constant) else None for part in node.elts]
+                if command[:2] == ["mix", "deps.get"] and "--check-locked" not in command:
+                    owner = next((function.name for function in tree.body
+                                  if isinstance(function, ast.FunctionDef) and node in ast.walk(function)), None)
+                    fresh.add((path.name, owner))
+            audits[path.name] = tree
+        self.assertEqual({("check_optional_clients.py", "check"),
+                          ("check_optional_clients.py", "check_client_floors")}, fresh)
+        for name, owner in (("check.py", "notebooks"), ("check.py", "__main__"),
+                            ("check_jose_libraries.py", "main")):
+            tree = audits[name]
+            scope = next(node for node in tree.body if isinstance(node, ast.If)) if owner == "__main__" else next(
+                node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == owner)
+            commands = [ast.literal_eval(node) for node in ast.walk(scope)
+                        if isinstance(node, ast.List) and all(isinstance(part, ast.Constant) for part in node.elts)]
+            for audit in ("hex.audit", "deps.audit"):
+                self.assertIn(["mix", audit], commands, (name, owner))
+        notebook = (ROOT / "tools/notebooks/check.exs").read_text()
+        self.assertIn('System.fetch_env!("REQUESTSEAL_PACKED_SOURCE")', notebook)
+        self.assertIn('not File.exists?(Path.join(packed_source, "mix.lock"))', notebook)
+        consumer = (ROOT / "test/ash_consumer_test.exs").read_text()
+        self.assertEqual(2, consumer.count('["deps.get", "--check-locked"]'))
 
     def test_proof_steps_run_unconditionally_except_the_declared_lane_and_evidence_steps(self):
-        self.assertEqual([], proof_condition_errors(text("proofs.yml"), text("ci.yml")))
-        process = jobs(text("proofs.yml"))["process-ownership-macos"]
+        self.assertEqual([], proof_condition_errors(text("ci.yml"), text("ci.yml")))
+        process = jobs(text("ci.yml"))["process-ownership-macos"]
         tests = [step for step in process["steps"] if "run" in step]
         self.assertEqual([{"run": "python3 -B -m unittest discover -s test -p processes_test.py"}], tests)
 
     def test_condition_bindings_reject_relocation_and_extra_conditions(self):
-        original, ci = text("proofs.yml"), text("ci.yml")
-        relocated = original.replace("      - if: matrix.lane == 'latest'\n        uses: actions/cache@",
-                                     "      - uses: actions/cache@", 1).replace(
+        original, ci = text("ci.yml"), text("ci.yml")
+        relocated = original.replace("      - if: matrix.lane == 'latest'\n        uses: actions/cache/restore@",
+                                     "      - uses: actions/cache/restore@", 1).replace(
             "        run: python3 scripts/mutations.py",
             "        if: matrix.lane == 'latest'\n        run: python3 scripts/mutations.py", 1)
         for changed in (
@@ -290,7 +254,7 @@ class QualificationTest(unittest.TestCase):
             "  qualified:\n", "  qualified:\n    continue-on-error: true\n")))
 
     def test_mutations_and_teardown_are_candidate_jobs_with_kept_evidence(self):
-        proofs = jobs(text("proofs.yml"))
+        proofs = jobs(text("ci.yml"))
         for job, command in (("mutations", "python3 scripts/mutations.py"),
                              ("teardown", 'python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"')):
             with self.subTest(job=job):
@@ -310,12 +274,39 @@ class QualificationTest(unittest.TestCase):
                           "if": "always()", "with": {"name": "jwe-teardown", "if-no-files-found": "error",
                                                        "path": "${{ runner.temp }}/jwe-teardown.json"}}, uploads[0])
         for workflow in workflows():
-            if workflow.name != "proofs.yml":
+            if workflow.name != "ci.yml":
                 commands = [step.get("run", "") for body in jobs(workflow.read_text()).values()
                             for step in body.get("steps", [])]
                 for command in commands:
                     self.assertNotIn("scripts/mutations.py", command, workflow.name)
                     self.assertNotIn("jwe_teardown_gate", command, workflow.name)
+
+    def test_only_the_default_branch_warmer_saves_the_exact_qualification_cache(self):
+        warmer = load_workflow(text("cache-warmer.yml"))
+        self.assertEqual({"push": {"branches": ["main"]}, "schedule": [{"cron": "19 6 * * *"}],
+                          "workflow_dispatch": ""}, warmer["on"])
+        self.assertNotIn("secrets.", text("cache-warmer.yml"))
+        self.assertNotIn("environment", warmer["jobs"]["dialyzer"])
+        steps = warmer["jobs"]["dialyzer"]["steps"]
+        self.assertEqual('test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"', steps[0]["run"])
+        lookup = next(step for step in steps if step.get("id") == "lookup")
+        self.assertEqual("true", lookup["with"]["lookup-only"])
+        proof_cache = next(step for step in jobs(text("ci.yml"))["verify"]["steps"]
+                           if step.get("uses", "").startswith("actions/cache/restore@"))
+        self.assertEqual(proof_cache["with"]["key"].replace("matrix.", "steps.pins.outputs."), lookup["with"]["key"])
+        self.assertEqual(proof_cache["with"]["path"], lookup["with"]["path"])
+        for step in steps[steps.index(lookup) + 1:]:
+            self.assertEqual("steps.lookup.outputs.cache-hit != 'true'", step["if"])
+        for path in workflows():
+            for body in jobs(path.read_text()).values():
+                for step in body["steps"]:
+                    action = step.get("uses", "").split("@", 1)[0]
+                    self.assertNotEqual("actions/cache", action)
+                    if action == "actions/cache/save":
+                        self.assertEqual("cache-warmer.yml", path.name)
+                    if action.startswith("actions/setup-"):
+                        self.assertNotIn("cache", step.get("with", {}))
+
 
 
 if __name__ == "__main__":

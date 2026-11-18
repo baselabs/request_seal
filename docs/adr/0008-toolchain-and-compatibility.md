@@ -13,7 +13,8 @@ and bounded standalone Elixir execution, with no Livebook web server.
 
 ## Consequences
 
-Two lockfiles and two audit surfaces are maintained. Development identity is unambiguous. Package metadata can eventually support more runtime pairs than development uses, but only with receipts. macOS/Linux setup commands remain the same; exercised-platform claims name the actual run.
+Root, notebook tooling and independent JOSE peer tooling maintain separate lockfiles
+and audit surfaces. Development identity is unambiguous. Package metadata can eventually support more runtime pairs than development uses, but only with receipts. Repository builds run only in hosted qualification; exercised-platform claims name the actual run.
 
 ## Acceptance
 
@@ -38,7 +39,8 @@ and tests exact published floors in fresh consumers, using real cryptography,
 TCP listeners, an OpenSSH agent, and PostgreSQL.
 Core consumer checks run without clients or frameworks installed.
 CI derives the floor, mid, and latest runtime lanes and Node pin from `.tool-versions`.
-Root and notebook lockfiles retain separate license and advisory checks.
+All three lockfiles fetch with `--check-locked` and retain separate advisory checks
+through both `mix hex.audit` and `mix deps.audit`.
 Publishing safety is defined by the runtime guard and actual Hex artifact metadata.
 
 ## Optional integrations
@@ -53,7 +55,8 @@ Owned integrations exercise real PostgreSQL migrations and Bandit delivery.
 Published dependencies declare tested floors independently of the development lock.
 Stable ranges use `>= FLOOR and < NEXT_MAJOR.0.0`; existing 0.x ranges and
 ash_onetime's `~> 1.9 and >= 1.9.2` retain their shapes.
-Fresh consumers resolve every published dependency available on the toolchain at
+Fresh consumers install the inspected packed archive without a seed lock and
+resolve every published dependency available on the toolchain at
 its exact floor, assert the lock, compile with warnings as errors, and run its
 covering tests. The latest lane also tests the ash_onetime and ash_hooks floors.
 Development and test dependencies admit the lock and cap below the next major;

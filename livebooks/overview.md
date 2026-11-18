@@ -1,6 +1,8 @@
 # Executable Livebooks
 
-Open the `.livemd` files in [Livebook](https://livebook.dev), or run all of them through the repository gate:
+Open the `.livemd` files in [Livebook](https://livebook.dev). Hosted qualification
+runs all of them through the repository gate; do not run repository builds on a
+workstation or the build box:
 
 ```sh
 python3 scripts/check.py --notebooks-only
@@ -18,5 +20,5 @@ Each notebook installs RequestSeal from Hex, generates its own keys, and asserts
 | [JWS inside JWE in Livebook](jose.livemd) | Compact JWS signing and verification, a JWS nested in a JWE, an RSA-OAEP recipient key handle, and the bounded JOSE errors. |
 
 The gate checks notebook imports, exported code coverage, assertions, and completion
-against the checkout within time and output limits.
+against a fresh install of the inspected packed archive within time and output limits.
 Local assertions establish neither interactive UI behavior nor deployed-peer acceptance; see [testing and evidence](../docs/guides/testing.md).
