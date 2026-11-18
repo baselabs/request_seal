@@ -552,7 +552,10 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
         assert {:ok, results} = result.return
         assert length(results) == n
 
-        assert Enum.all?(results, &match?({:error, %{reason: :key_resolver_failed, layer: :key}}, &1)),
+        assert Enum.all?(
+                 results,
+                 &match?({:error, %{reason: :key_resolver_failed, layer: :key}}, &1)
+               ),
                "R must retain the resolver failure cell when the coordinator resumes after U"
 
         refute Enum.any?(result.pids, fn {_, role} -> role == :custody end)
