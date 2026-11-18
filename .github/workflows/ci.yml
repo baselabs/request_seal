@@ -40,9 +40,9 @@ jobs:
     name: verify (${{ matrix.lane }})
     needs: toolchain
     runs-on: ubuntu-24.04
-    # run 44281082286: floor cold 14m02s; mid cold 9m00s.
-    # Latest restored a PLT: 18m55s + 10m cold PLT allowance; remeasure first cold green.
-    timeout-minutes: ${{ matrix.lane == 'latest' && 58 || matrix.lane == 'floor' && 29 || 18 }}
+    # floor: run 44281082286 cold 14m02s (slower than 44295770186's 11m52s).
+    # mid/latest: run 44295770186 cold 11m02s/25m27s; latest's PLT restore missed.
+    timeout-minutes: ${{ matrix.lane == 'latest' && 51 || matrix.lane == 'floor' && 29 || 23 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.toolchain.outputs.matrix) }}
@@ -76,6 +76,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ needs.toolchain.outputs.node }}
+          package-manager-cache: false
       - name: Refuse a differing installed runtime
         env:
           EXPECTED_ELIXIR: ${{ matrix.elixir }}
@@ -142,7 +143,7 @@ jobs:
   teardown:
     needs: toolchain
     runs-on: ubuntu-24.04
-    timeout-minutes: 46 # run 44281082286: cold 22m47s
+    timeout-minutes: 46 # run 44295770186: cold 22m51s
     env:
       MIX_ENV: test
     steps:

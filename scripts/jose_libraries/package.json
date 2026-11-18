@@ -1,6 +1,7 @@
 {
   "name": "requestseal-jose-peers",
   "private": true,
+  "packageManager": "npm@11.19.0",
   "dependencies": {
     "jose": "6.2.17"
   }

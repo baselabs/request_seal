@@ -86,13 +86,101 @@ class PublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "symlink"):
             publication.build_docs_archive(docs, output)
 
-    def test_registry_inventory_refuses_absent_malformed_or_existing_versions(self):
-        self.assertEqual([], publication.registry_errors("request_seal", "2.3.4",
-                         {"name": "request_seal", "releases": [{"version": "1.0.0"}]}))
+    def metadata(self, version="1.0.0"):
+        return {"name": "request_seal", "releases": [{"version": version}]}
+
+    def release(self, **changes):
+        return {"version": "2.3.4", "checksum": "a" * 64,
+                "retirement": None, "has_docs": False, **changes}
+
+    def plan(self, release, metadata=None, checksum="a" * 64):
+        return publication.upload_plan("request_seal", "2.3.4",
+                                       self.metadata() if metadata is None else metadata, release, checksum)
+
+    def test_registry_inventory_requires_an_existing_name_but_allows_a_recovery_version(self):
+        for version in ("1.0.0", "2.3.4"):
+            self.assertEqual([], publication.registry_errors("request_seal", self.metadata(version)))
         for metadata in (None, {}, {"name": "other"}, {"name": "request_seal", "releases": []},
-                         {"name": "request_seal", "releases": [{}]},
-                         {"name": "request_seal", "releases": [{"version": "2.3.4"}]}):
-            self.assertTrue(publication.registry_errors("request_seal", "2.3.4", metadata))
+                         {"name": "request_seal", "releases": [{}]}, self.metadata(123),
+                         {"name": "request_seal", "releases": [None]},
+                         {"name": "request_seal", "releases": "1.0.0"}):
+            self.assertTrue(publication.registry_errors("request_seal", metadata))
+            with self.assertRaises(ValueError):
+                publication.upload_plan("request_seal", "2.3.4", metadata, None, "a" * 64)
+        self.assertIn("request_seal", publication.registry_errors("request_seal", None)[0])
+        self.assertIn("first publication", publication.registry_errors("request_seal", None)[0])
+
+    def test_only_explicit_api_not_found_means_absence(self):
+        for path, metadata in (("", self.metadata()), ("/releases/2.3.4", self.release())):
+            self.assertEqual(metadata, publication.registry_response(path, 200, metadata))
+            self.assertIsNone(publication.registry_response(path, 404, {"message": "not found"}))
+            for status in (201, 202, 301, 401, 403, 429, 500, 503):
+                with self.subTest(status=status), self.assertRaisesRegex(ValueError, f"HTTP {status}"):
+                    publication.registry_response(path, status, metadata)
+            for malformed in (None, [], "metadata", 0, False):
+                with self.subTest(malformed=malformed), self.assertRaisesRegex(ValueError, "invalid metadata"):
+                    publication.registry_response(path, 200, malformed)
+
+    def test_upload_plan_uploads_only_missing_archives_and_uses_the_outer_checksum(self):
+        self.assertEqual("package-and-docs", self.plan(None))
+        for checksum in ("a" * 64, "A" * 64):
+            for listed in ("1.0.0", "2.3.4"):
+                self.assertEqual("docs", self.plan(self.release(checksum=checksum), self.metadata(listed)))
+                self.assertEqual("none", self.plan(self.release(checksum=checksum, has_docs=True), self.metadata(listed)))
+        tarball = self.package()
+        outer = hashlib.sha256(tarball.read_bytes()).hexdigest()
+        with tarfile.open(tarball) as archive:
+            inner = archive.extractfile("CHECKSUM").read().decode().lower()
+        self.assertNotEqual(inner, outer)
+        self.assertEqual("docs", self.plan(self.release(checksum=outer), checksum=outer))
+        with self.assertRaisesRegex(ValueError, "bytes differ.*never replace"):
+            self.plan(self.release(checksum=inner), checksum=outer)
+
+    def test_upload_plan_refuses_retirement_differing_bytes_and_uncertain_api_states(self):
+        for has_docs in (False, True):
+            with self.assertRaisesRegex(ValueError, "bytes differ.*never replace"):
+                self.plan(self.release(checksum="b" * 64, has_docs=has_docs))
+            for retirement in ({"reason": "security", "message": "withdrawn"}, {}, False, "retired"):
+                with self.subTest(retirement=retirement), self.assertRaisesRegex(ValueError, "retired"):
+                    self.plan(self.release(retirement=retirement, has_docs=has_docs))
+        for release in ([], "release", {}, self.release(version="2.3.5")):
+            with self.subTest(release=release), self.assertRaisesRegex(ValueError, "identity"):
+                self.plan(release)
+        release = self.release()
+        del release["retirement"]
+        with self.assertRaisesRegex(ValueError, "retirement state is missing"):
+            self.plan(release)
+        for checksum in (None, 123, "a" * 63, "g" * 64, "a" * 64 + "\n"):
+            with self.subTest(checksum=checksum), self.assertRaisesRegex(ValueError, "checksum"):
+                self.plan(self.release(checksum=checksum))
+            with self.subTest(local_checksum=checksum), self.assertRaisesRegex(ValueError, "checksum"):
+                self.plan(self.release(), checksum=checksum)
+        for has_docs in (None, 0, 1, "false", [], {}):
+            with self.subTest(has_docs=has_docs), self.assertRaisesRegex(ValueError, "documentation state"):
+                self.plan(self.release(has_docs=has_docs))
+        for key in ("checksum", "has_docs"):
+            release = self.release()
+            del release[key]
+            with self.assertRaises(ValueError):
+                self.plan(release)
+        with self.assertRaisesRegex(ValueError, "release metadata is absent"):
+            self.plan(None, self.metadata("2.3.4"))
+
+    def test_readback_compares_both_package_and_docs_as_bytes_without_replacement(self):
+        self.assertEqual([], publication.readback_errors("request_seal", "2.3.4", self.metadata(),
+                                                        self.release(has_docs=True), "a" * 64))
+        for release, missing in ((None, "package-and-docs"), (self.release(), "docs")):
+            errors = publication.readback_errors("request_seal", "2.3.4", self.metadata(), release, "a" * 64)
+            self.assertEqual(["Hex publication is incomplete (missing " + missing +
+                              "); approve any held uploads and dispatch again"], errors)
+        for release in (self.release(retirement={"reason": "security"}), self.release(checksum="b" * 64)):
+            with self.assertRaises(ValueError):
+                publication.readback_errors("request_seal", "2.3.4", self.metadata(), release, "a" * 64)
+        for label in ("package", "documentation"):
+            self.assertEqual([], publication.archive_errors(b"inspected", b"inspected", label))
+            for served in (b"changed", b"", b"inspected\n"):
+                errors = publication.archive_errors(b"inspected", served, label)
+                self.assertEqual([f"Published {label} bytes differ from the inspected archive; never replace"], errors)
 
     def test_requested_version_mismatch_refuses_before_loading_the_project(self):
         with self.assertRaisesRegex(ValueError, "differs from mix.exs"):
@@ -116,15 +204,34 @@ class PublicationTest(unittest.TestCase):
             self.assertEqual("${{ runner.temp }}/requestseal-upload", step["working-directory"])
             self.assertTrue(step["run"].startswith("mix run --no-mix-exs --no-start publish_hex.exs "))
             self.assertNotIn("HEX_API_KEY", step["run"])
+            self.assertEqual("steps.registry.outputs.upload != 'none'", step["if"])
+            self.assertEqual("${{ steps.registry.outputs.upload }}", step["env"]["UPLOAD"])
             self.assertNotIn("cache", source.lower())
-            for command in ("--check-registry", "--verify --notes-file", "--directory", "mix docs"):
+            for command in ("--check-registry", "--verify --notes-file", "--directory", "mix docs", "--plan-upload"):
                 self.assertIn(command, str(steps[:steps.index(step)]))
+            planner = next(s for s in steps if s.get("id") == "registry")
+            self.assertIn('--github-output "$GITHUB_OUTPUT"', planner["run"])
+            self.assertNotIn("if", planner)
+            self.assertLess(next(i for i, s in enumerate(steps) if "--docs" in s.get("run", "")), steps.index(planner))
+            readback = next(s for s in steps if "--verify-registry" in s.get("run", ""))
+            self.assertGreater(steps.index(readback), steps.index(step))
+            self.assertNotIn("if", readback)
+            self.assertNotIn("HEX_API_KEY", str(readback))
+            assets = [s for s in steps if s.get("uses", "").startswith("actions/upload-artifact@")]
+            self.assertEqual(["release-assets"], [s["with"]["name"] for s in assets])
+            self.assertEqual({"request_seal-${{ steps.identity.outputs.version }}.tar",
+                              "request_seal-${{ steps.identity.outputs.version }}-docs.tar.gz",
+                              "corpus.tar.gz", "corpus.sha256", "sbom.cdx.json", "release-notes.md"},
+                             set(assets[0]["with"]["path"].splitlines()))
         uploader = (ROOT / "scripts/publish_hex.exs").read_text()
         self.assertIn('File.exists?("mix.exs") or Mix.Project.get() != nil', uploader)
         self.assertIn('System.fetch_env!("HEX_API_KEY")', uploader)
         self.assertIn("auth = [key: key]", uploader)
-        self.assertIn("Hex.API.Release.publish(nil, package, auth)", uploader)
-        self.assertIn('Hex.API.ReleaseDocs.publish(nil, "request_seal", version, docs, auth)', uploader)
+        self.assertIn('unless upload in ["package-and-docs", "docs"]', uploader)
+        self.assertIn('if upload == "package-and-docs" do\n  Hex.API.Release.publish', uploader)
+        self.assertIn("replace: false", uploader)
+        self.assertIn('Hex.API.ReleaseDocs.publish(nil, "request_seal", version, File.read!(docs_path), auth)', uploader)
+        self.assertIn("Hex upload is held for approval; approve it and dispatch again", uploader)
         for forbidden in ("Code.eval", "Code.require", "Mix.Task.run", "inspect(", "System.cmd"):
             self.assertNotIn(forbidden, uploader)
 

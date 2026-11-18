@@ -7,10 +7,15 @@
   code. Enforce installed runtime identity, measured timeouts, locked tooling and
   both dependency advisory feeds. Add development-only mix_audit and isolate
   fresh packed-archive consumers from committed locks. Warm the analysis cache
-  only on the default branch.
+  only on the default branch. Measure cold analysis and cache-warmer runs for
+  their timeouts, declare npm for the locked peer tool and disable automatic
+  package-manager caching in qualification.
 - Replace tag-triggered publication with default-branch dispatch. Build and inspect
   package and documentation archives without a key; upload only those archives
-  outside the project. Refuse existing versions, tags and absent registry names.
+  outside the project. Resume held publication on the same untagged commit by
+  comparing Hex's outer package checksum with the inspected archive and uploading
+  only missing files. Refuse retired or differing versions, tags and absent
+  registry names; read both package and docs back byte for byte.
   Build and attest the corpus, SBOM and release notes in the same run; after
   reading publication back, the maintainers tag the published commit and attach
   those files to the GitHub release for `v<version>`. Tag pushes execute no

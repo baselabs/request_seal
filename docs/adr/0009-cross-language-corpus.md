@@ -35,6 +35,11 @@ The [format reference](../reference/corpus-format.md) defines schemas and refusa
 Dispatch-only publication builds digest-verified deterministic `corpus.tar.gz` and
 `corpus.sha256` assets. After reading publication back, the maintainers tag the
 published commit and attach them to its GitHub release; tag pushes execute no workflow.
+Publication can resume on the same untagged commit after held uploads are approved.
+The anonymous Hex release checksum must match the inspected package's outer SHA-256;
+only missing archives upload, and retired or differing versions refuse. Both archives
+are read back byte for byte before tagging and creating the GitHub release. All
+consumer assets leave the job as one `release-assets` artifact for that release.
 Neither runtime package ships the corpus; the TypeScript repository vendors its selected release.
 The Elixir runner's pin changes atomically with the local index and protects inventory integrity.
 The independent TypeScript pin protects cross-language identity by tag, commit, and index digest.

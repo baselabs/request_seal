@@ -17,6 +17,8 @@ Documentation failures block release like API failures. The tool graph remains s
 ## Acceptance
 
 - Shipped notebooks are inventoried, parsed, exported, and executed against the real package.
+- Qualification rewrites notebook install cells to the inspected unpacked archive,
+  without a seed lock; it never installs RequestSeal from Hex before publication.
 - Runtime failure, early successful exit, and omitted-cell/branch mutations reject.
 - Runnable fences use evaluated examples or doctests; proposals stay visibly proposed.
 - Credentials use named secrets; notebooks never start infrastructure or mutate external accounts on opening.

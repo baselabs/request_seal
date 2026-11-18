@@ -683,8 +683,9 @@ class ReleaseWorkflowTest(unittest.TestCase):
     def test_destination_readback_follows_upload_and_hex_byte_comparison(self):
         workflow = (ROOT / ".github/workflows/publish.yml").read_text()
         command = 'python3 scripts/release.py --check-destinations --for-version "$VERSION"'
-        self.assertLess(workflow.index("run: mix run --no-mix-exs"), workflow.index('cmp "request_seal-$VERSION.tar"'))
-        self.assertLess(workflow.index('cmp "request_seal-$VERSION.tar"'), workflow.index(command))
+        readback = 'python3 scripts/publication.py --verify-registry --version "$VERSION"'
+        self.assertLess(workflow.index("run: mix run --no-mix-exs"), workflow.index(readback))
+        self.assertLess(workflow.index(readback), workflow.index(command))
         self.assertIn(command + " --destination-event workflow_dispatch", workflow)
         self.assertNotIn("--destination-event push", workflow)
         self.assertIn("python3 scripts/release.py --verify --notes-file release-notes.md", workflow)

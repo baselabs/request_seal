@@ -4,6 +4,9 @@ Open issues and pull requests at [baselabs/request_seal](https://github.com/base
 Pull requests execute no project code. A maintainer reviews outside contributions,
 then submits the candidate commit through the landing process on a `kci/` ref.
 Its hosted qualification must pass before the default branch advances.
+Qualification restores analysis caches; a separate default-branch workflow warms
+them. Notebooks execute against the inspected packed source, so a version can
+qualify before it exists on Hex.
 Contributions are licensed under Apache-2.0, as section 5 of the [license](LICENSE) describes.
 Report vulnerabilities as [SECURITY.md](SECURITY.md) describes, never in a public issue.
 
@@ -26,6 +29,13 @@ guide, executable example, notebook, and corpus case as capabilities are impleme
 
 Run `python3 scripts/check.py` before opening a pull request; qualification runs the same gate, and [testing and evidence](docs/guides/testing.md) covers focused checks.
 Conformance claims require independent evidence beyond a local self-round-trip.
+
+Maintainers publish through a separate approved dispatch. Repeating it can finish
+an untagged release with identical package bytes by uploading only missing files;
+retired versions and differing bytes refuse. Both package and docs are read back.
+Consumer assets are available from the GitHub release for `v<version>`; see the
+[release runbook](docs/operations/releases.md) and
+[verification guide](docs/guides/verifying-releases.md).
 
 The public document list in mix.exs is shared by ExDoc and the Hex package. New public
 guides and notebooks require deliberate inclusion. A notebook that needs credentials

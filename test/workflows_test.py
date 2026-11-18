@@ -1,5 +1,6 @@
 """Hold the qualification contract: one run per kci/<sha> candidate, judged by `qualified`."""
 import ast
+import json
 from pathlib import Path
 import re
 import sys
@@ -186,10 +187,19 @@ class QualificationTest(unittest.TestCase):
             for job, body in jobs(workflow.read_text()).items():
                 with self.subTest(workflow=workflow.name, job=job):
                     value = body["timeout-minutes"]
-                    limits = [int(value)] if value.isdigit() else list(map(int, re.findall(r"\b(?:58|29|18)\b", value)))
+                    limits = [int(value)] if value.isdigit() else list(map(int, re.findall(r"\b\d+\b", value)))
                     self.assertTrue(limits)
-                    self.assertTrue(all(0 < limit <= 90 for limit in limits))
+                    self.assertTrue(all(5 <= limit <= 90 for limit in limits))
                     self.assertRegex(workflow.read_text(), r"timeout-minutes:.*(?:#.*(?:run|green)|\$\{\{)")
+
+    def test_cold_measurements_replace_the_restored_estimate(self):
+        ci = text("ci.yml")
+        self.assertIn("run 44295770186 cold 11m02s/25m27s", ci)
+        self.assertIn("latest's PLT restore missed", ci)
+        self.assertEqual("${{ matrix.lane == 'latest' && 51 || matrix.lane == 'floor' && 29 || 23 }}",
+                         jobs(ci)["verify"]["timeout-minutes"])
+        self.assertEqual("10", jobs(text("cache-warmer.yml"))["dialyzer"]["timeout-minutes"])
+        self.assertIn("run 44299761657: cold 4m54s", text("cache-warmer.yml"))
 
     def test_only_packed_archive_consumers_resolve_fresh_and_all_projects_audit_both_feeds(self):
         fresh = set()
@@ -219,6 +229,11 @@ class QualificationTest(unittest.TestCase):
         notebook = (ROOT / "tools/notebooks/check.exs").read_text()
         self.assertIn('System.fetch_env!("REQUESTSEAL_PACKED_SOURCE")', notebook)
         self.assertIn('not File.exists?(Path.join(packed_source, "mix.lock"))', notebook)
+        self.assertIn('local_source!(source, root, nil, packed_source)', notebook)
+        self.assertIn('inspect({:request_seal, [path: packed_source || root]})', notebook)
+        manifest = json.loads((ROOT / "scripts/jose_libraries/package.json").read_text())
+        self.assertRegex(manifest["packageManager"], r"^npm@\d+\.\d+\.\d+$")
+        self.assertIn('["npm", "ci",', (ROOT / "scripts/check_jose_libraries.py").read_text())
         consumer = (ROOT / "test/ash_consumer_test.exs").read_text()
         self.assertEqual(2, consumer.count('["deps.get", "--check-locked"]'))
 
@@ -306,6 +321,8 @@ class QualificationTest(unittest.TestCase):
                         self.assertEqual("cache-warmer.yml", path.name)
                     if action.startswith("actions/setup-"):
                         self.assertNotIn("cache", step.get("with", {}))
+                    if action == "actions/setup-node":
+                        self.assertEqual("false", step["with"]["package-manager-cache"])
 
 
 

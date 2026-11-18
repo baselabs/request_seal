@@ -44,12 +44,12 @@ jobs:
           EXPECTED_ELIXIR: ${{ steps.pins.outputs.elixir }}
           EXPECTED_OTP: ${{ steps.pins.outputs.otp }}
         run: python3 scripts/toolchain.py --verify-installed
-      - name: Verify unpublished release identity
+      - name: Verify untagged release identity
         id: identity
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: python3 scripts/release.py --verify --notes-file release-notes.md
-      - name: Refuse an absent Hex name or published version
+      - name: Refuse a Hex name that has never been published
         env:
           VERSION: ${{ steps.identity.outputs.version }}
         run: python3 scripts/publication.py --check-registry --version "$VERSION"
@@ -90,6 +90,11 @@ jobs:
           cp scripts/publish_hex.exs "$RUNNER_TEMP/requestseal-upload/publish_hex.exs"
           cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" .
           cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz" .
+      - name: Plan only missing uploads from the anonymous Hex release state
+        id: registry
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: python3 scripts/publication.py --plan-upload --version "$VERSION" --directory "$RUNNER_TEMP/requestseal-archives" --github-output "$GITHUB_OUTPUT"
       - name: Generate and verify package dependency SBOM
         env:
           VERSION: ${{ steps.identity.outputs.version }}
@@ -119,21 +124,19 @@ jobs:
             corpus.sha256
             sbom.cdx.json
             release-notes.md
-      - name: Upload only the inspected package and documentation
+      - name: Upload only the missing inspected archives
+        if: steps.registry.outputs.upload != 'none'
         working-directory: ${{ runner.temp }}/requestseal-upload
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          UPLOAD: ${{ steps.registry.outputs.upload }}
           VERSION: ${{ steps.identity.outputs.version }}
-        run: mix run --no-mix-exs --no-start publish_hex.exs "$VERSION" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz"
-      - name: Read back the package and verify pre-tag release destinations
+        run: mix run --no-mix-exs --no-start publish_hex.exs "$UPLOAD" "$VERSION" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz"
+      - name: Read back both archives and verify pre-tag release destinations
         env:
           VERSION: ${{ steps.identity.outputs.version }}
         run: |
-          published=$(mktemp -d)
-          trap 'rm -rf "$published"' EXIT
-          mix hex.package fetch request_seal "$VERSION" --output "$published"
-          cmp "request_seal-$VERSION.tar" "$published/request_seal-$VERSION.tar"
-          sha256sum "request_seal-$VERSION.tar" "$published/request_seal-$VERSION.tar"
+          python3 scripts/publication.py --verify-registry --version "$VERSION" --directory "$RUNNER_TEMP/requestseal-archives"
           python3 scripts/release.py --check-destinations --for-version "$VERSION" --destination-event workflow_dispatch
       - name: Remove publication scratch
         if: always()

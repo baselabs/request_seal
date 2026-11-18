@@ -8,10 +8,9 @@ packages. The native TypeScript counterpart is `@request-seal/core` from
 `baselabs/request-seal-typescript`; both use the
 [conformance corpus](../reference/corpus-format.md).
 
-Follow infra's baselabs/docs/ci.md, “What infra requires of every product”, at
-commit 8d941a4. A product session prepares and lands a version commit; infra owns
-publication, owner approval, registry credentials and the later tag. Sessions
-never publish, release, tag or dispatch. Workflow changes require infra review.
+Prepare and qualify a version commit before advancing the protected default
+branch. Release maintainers obtain owner approval and handle publication,
+registry credentials and the later tag. Workflow changes require review before landing.
 
 1. Set `@version` in `mix.exs`. Development snapshots (first pre-release identifier
    starts with `dev`) use `main` source links and cannot publish. Other releases
@@ -26,15 +25,15 @@ never publish, release, tag or dispatch. Workflow changes require infra review.
    gate and publishing guard reject invalid notes. Confirm explicit public
    document inventory, supported profiles, package/source disclosure and complete
    history, including deleted content and commit messages, before accepting a cut.
-3. Land only through `kimosabe-land --repo . --sha <full sha>`. The candidate
+3. Submit the candidate through the protected landing process. The candidate
    qualifies in one GitHub-hosted run on a `kci/` ref. Every runtime lane,
    mutation and teardown proof must pass.
    The final check is `qualified`; the default-branch ruleset requires it without
-   bypass. Only the landing command watches the run; sessions never poll GitHub.
-4. Send infra the repository, full commit, version, publication contents and green
-   qualification run. Infra declares the `publish` environment and its registry
-   key through its secret declaration and obtains owner approval. Publication is
-   only a no-input dispatch of `.github/workflows/publish.yml` on the default
+   bypass. Only the landing process watches the run.
+4. Give release maintainers the repository, full commit, version, publication
+   contents and green qualification run. They declare the `publish` environment
+   and its registry key through the secret declaration and obtain owner approval.
+   Publication is only a no-input dispatch of `.github/workflows/publish.yml` on the default
    branch. Every job requires both initiating actors to be approved owners and
    refuses any other ref as its first step. It trusts the default-branch ruleset
    without re-checking `qualified`. A package name absent from Hex is refused;
@@ -42,10 +41,11 @@ never publish, release, tag or dispatch. Workflow changes require infra review.
 5. The unkeyed publication steps install the exact latest `.tool-versions` pair,
    refuse differing installed releases, fetch `--check-locked`, audit both feeds,
    verify the corpus pin and build deterministic corpus assets. They validate
-   version, cut notes and absence of the version tag or published version. They
-   build ExDoc and the Hex archive, run disclosure and link checks, compare the
+   version, cut notes and absence of the version tag. They build ExDoc and the
+   Hex archive, run disclosure and link checks, compare the
    archive's checksum, metadata, explicit inventory and every source byte, and
-   build and inspect the docs archive. No cache is read or written.
+   build and inspect the docs archive. An anonymous Hex API read then decides
+   exactly which archives to upload. No cache is read or written.
 6. The same unkeyed steps generate and verify CycloneDX 1.6 against the production
    dependency closure, including optional integrations. `scripts/sbom.py` verifies
    the platform-specific digest of upstream's prebuilt tool before execution.
@@ -53,16 +53,18 @@ never publish, release, tag or dispatch. Workflow changes require infra review.
    serial binds package identity and bytes. Build provenance covers package,
    docs, corpus and SBOM; a second attestation binds the SBOM to the package.
    The job hands those four files, the corpus checksum and `release-notes.md` to
-   infra as one workflow artifact named `release-assets`.
+   release maintainers as one workflow artifact named `release-assets`.
 7. Only the upload step receives the registry key in its environment. It runs
    `scripts/publish_hex.exs` with `mix run --no-mix-exs --no-start` from a scratch
-   directory with no `mix.exs`; it loads no project and uploads only the inspected
-   package and docs archives. The key never appears on a command line or in
-   another step. Unkeyed readback compares the published Hex package byte for
-   byte and checks the first-party destinations in its own release notes.
-8. Infra reads publication back and creates `v<version>` on that exact published
-   commit. Infra compares the package archive in `release-assets` with the
-   registry's bytes and creates the GitHub release for `v<version>` from that
+   directory with no `mix.exs`; it loads no project and uploads only the missing
+   inspected archives selected by the preceding unkeyed step. Package upload
+   explicitly disables replacement. The key never appears on a command line or
+   in another step. If nothing is missing, the keyed step is skipped. Unkeyed
+   readback requires a nonretired release with docs, compares both served archives
+   byte for byte and checks the first-party destinations in its own release notes.
+8. Release maintainers read publication back and create `v<version>` on that exact
+   published commit. They compare the package archive in `release-assets` with the
+   registry's bytes and create the GitHub release for `v<version>` from that
    artifact. No workflow creates a tag or a release, and a tag push starts no
    workflow. Consumers download from the GitHub release, never the workflow
    artifact, which expires; the
@@ -71,11 +73,35 @@ never publish, release, tag or dispatch. Workflow changes require infra review.
    `@version` to the next development version and update documented installs,
    corpus release identity and its digest pin.
 
+### Finish a held publication
+
+Hex may hold either upload for approval. Approve the held upload, then dispatch
+the same default-branch commit again before it is tagged. Each dispatch rebuilds
+and inspects the archives without a key, then anonymously reads the public
+package inventory and release's `checksum`, `retirement` and `has_docs` fields:
+
+- An absent package name refuses; only the owner makes a first publication.
+- An absent version uploads the inspected package and docs without replacement.
+- An existing nonretired version must have the same outer SHA-256 as the inspected
+  `.tar`. This is Hex's release API `checksum`, distinct from the archive's inner
+  `CHECKSUM` member. Differing or malformed state refuses.
+- Identical package bytes skip package upload. Missing docs upload alone;
+  existing docs skip all uploads. A retired version always refuses.
+- Readback must return both inspected archives byte for byte. Held or unavailable
+  files keep the run unsuccessful; approve the held files and dispatch again.
+  Existing files are never replaced to make readback pass. A tagged version refuses.
+
+The checksum definition follows Hex's
+[release API rendering](https://github.com/hexpm/hexpm/blob/main/lib/hexpm_web/views/api/release_view.ex)
+and [tarball implementation](https://github.com/hexpm/hex_core/blob/main/src/hex_tarball.erl).
+The [repository endpoints](https://github.com/hexpm/specifications/blob/main/endpoints.md)
+serve the package and documentation archives used for readback.
+
 Before the tag exists, `scripts/release.py --check-destinations --for-version
 <version> --destination-event workflow_dispatch` checks HexDocs and the Hex package
 page by real HTTP GET, while future tagged source and raw paths are regular files
-in the published commit's HEAD tree. No future tag URL is requested. After infra
-creates the tag, its separately authorized readback can use `--destination-event
+in the published commit's HEAD tree. No future tag URL is requested. After maintainers
+create the tag, their separately authorized readback can use `--destination-event
 push` to request all first-party destinations. That option describes destination
 resolution; it does not enable a tag-triggered workflow.
 
@@ -316,7 +342,7 @@ automatic rollback semantics. Changing an installed application's dependency is 
 ## Conformance release assets
 
 Download the GitHub release for `v<version>` and follow the
-[consumer verification guide](../guides/verifying-releases.md). Infra creates that
+[consumer verification guide](../guides/verifying-releases.md). Maintainers create that
 release from the publication's `release-assets` artifact after tagging; no
 workflow attaches assets. The TypeScript repository pins tag, commit
 and index SHA-256 together; its corpus is tooling, excluded from the npm package.

@@ -42,6 +42,10 @@ CI derives the floor, mid, and latest runtime lanes and Node pin from `.tool-ver
 All three lockfiles fetch with `--check-locked` and retain separate advisory checks
 through both `mix hex.audit` and `mix deps.audit`.
 Publishing safety is defined by the runtime guard and actual Hex artifact metadata.
+Qualification only restores the analysis cache; its default-branch warmer is the
+sole writer. Limits name measured cold green runs, with a five-minute floor and
+a ninety-minute cap. The peer tool declares npm and installs its committed lock
+with `npm ci`; qualification disables setup-node's automatic package-manager cache.
 
 ## Optional integrations
 

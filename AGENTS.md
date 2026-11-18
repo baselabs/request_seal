@@ -38,16 +38,19 @@ confidential design detail, machine path, or link into a private path belongs he
 ## CI/CD and releases
 
 Follow infra's baselabs/docs/ci.md, “What infra requires of every product”
-(commit 8d941a4). Send workflow changes to infra with repository, branch and full
-commit for review before landing. Land only through `kimosabe-land --repo . --sha <full sha>`;
+(commit df62d12d320adc85ec5519620e78c1ca9f32f949). Send workflow changes to infra
+with repository, branch and full commit for review before landing.
+Land only through `kimosabe-land --repo . --sha <full sha>`;
 the default-branch ruleset requires the exact `qualified` check with no bypass.
 Never use classic branch protection alongside that ruleset.
 
 This public repository builds and tests only in GitHub-hosted qualification on a
 `kci/` ref, never on a developer's machine or the build box. Pure Python source
-checks that compile nothing may run locally with `python3 -I -B`. Only
-`kimosabe-land` watches a run; sessions do not poll GitHub. Outside pull requests
-execute no project code. Use the exact `.tool-versions` runtimes, locked dependency
+checks that compile nothing may run locally with `python3 -I -B`. Pure Python unit
+tests whose files have been read and do not invoke Mix may run locally with `mix`
+absent from `PATH`; compilation-dependent Python tests stay hosted. Only
+`kimosabe-land` watches a run; sessions do not poll GitHub. Pull requests execute
+no project code. Use the exact `.tool-versions` runtimes, locked dependency
 fetches, both advisory feeds, immutable action pins and measured job timeouts.
 Qualification only restores caches; the default-branch cache warmer is their sole writer.
 The separate default-branch publication and cache-warmer workflows perform only their
@@ -62,5 +65,12 @@ No tag push starts a workflow. A first registry publication belongs to the owner
 A registry key appears only in the upload step's environment; never put any
 secret on a command line or list process arguments. Project code, archive builds
 and inspections run without the key. The upload loads no project and only uploads
-the two inspected archives. Sessions do not publish or deploy. Mirror pushes
+the missing inspected archives selected by an earlier anonymous Hex API check.
+A repeated dispatch may finish an untagged release only when the served package's
+outer SHA-256 equals the inspected archive; retired or differing versions refuse.
+Existing docs are never uploaded again, and unkeyed readback compares both archives.
+Consumer verification files leave publication as one `release-assets` artifact;
+infra creates the GitHub release for `v<version>` from it after readback and tagging.
+This library has no deploy chart or `argocd/deploy/` path.
+Sessions do not publish or deploy. Mirror pushes
 require the owner's explicit authorization.

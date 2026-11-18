@@ -533,6 +533,11 @@ A valid signature proves which key signed which covered bytes; a trusted associa
 
 RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. Each GitHub release attaches it as `corpus.tar.gz` with `corpus.sha256`; the [verification guide](docs/guides/verifying-releases.md) describes download and attestation checks. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
 
+Maintainers publish from the protected default branch through an approved dispatch.
+A repeated dispatch can finish an untagged release with identical package bytes by
+uploading only missing archives. Package and documentation readback must succeed
+before the tag and GitHub release for `v<version>` are created.
+
 ## Documentation
 
 ### Guides

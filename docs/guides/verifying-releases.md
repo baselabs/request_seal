@@ -17,6 +17,10 @@ it to the dependency inventory. The dispatch-only `Publish` workflow builds and
 attests these files on the default branch and publishes the package to Hex. After
 reading the publication back, the maintainers tag the published commit and create
 the GitHub release from the files that run built. No workflow runs on a tag.
+A held publication can resume on the same untagged commit: identical package bytes
+skip package upload, and only missing docs upload. Retired versions and differing
+package bytes refuse. Both served archives must match the inspected files before
+maintainers create the tag and GitHub release.
 
 The 1.0.0 release predates this pipeline: it carries the corpus archive and
 checksum, but no package tarball, SBOM, or attestations. A missing attestation
@@ -87,6 +91,17 @@ same comparison is enforced by publication readback after upload. Attestations
 bind inspected build bytes; byte comparison separately proves registry identity.
 For 1.0.0, the Hex fetch can be exercised, but its release has no package tarball
 to compare.
+
+Publication also compares the served documentation archive byte for byte with the
+inspected docs archive. To repeat that check, fetch Hex's
+[documentation tarball endpoint](https://github.com/hexpm/specifications/blob/main/endpoints.md)
+and compare it with the GitHub release asset:
+
+```sh
+curl --fail --location --output "$assets_dir/hex/request_seal-$VERSION-docs.tar.gz" \
+  "https://repo.hex.pm/docs/request_seal-$VERSION.tar.gz"
+cmp "$assets_dir/request_seal-$VERSION-docs.tar.gz" "$assets_dir/hex/request_seal-$VERSION-docs.tar.gz"
+```
 
 ## Interpret SBOM scope
 
