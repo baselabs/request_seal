@@ -703,7 +703,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "HTTP 404"):
             release.verify_published_destinations(
                 "[Missing](https://request-seal.hexdocs.pm/1.0.0/no-such-release-page.html)",
-                "1.0.0", deadline_seconds=2)
+                "1.0.0")
 
     def test_only_canonical_first_party_forms_pass_the_offline_gate(self):
         for target in ("https://request-seal.hexdocs.pm/2.3.4/RequestSeal.html",

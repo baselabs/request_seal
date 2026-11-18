@@ -11,9 +11,10 @@
 - Replace tag-triggered publication with default-branch dispatch. Build and inspect
   package and documentation archives without a key; upload only those archives
   outside the project. Refuse existing versions, tags and absent registry names.
-  Retain corpus, SBOM, release notes and attestations in the publication artifact;
-  the maintainers tag the published commit after reading publication back. Tag
-  pushes execute no workflow.
+  Build and attest the corpus, SBOM and release notes in the same run; after
+  reading publication back, the maintainers tag the published commit and attach
+  those files to the GitHub release for `v<version>`. Tag pushes execute no
+  workflow.
 
 - Keep JWE custody placement handshakes out of the caller's mailbox. Stamp every
   monitored end in a dedicated high-priority receiver, retaining receiver backlog,

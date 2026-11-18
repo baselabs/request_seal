@@ -52,8 +52,8 @@ never publish, release, tag or dispatch. Workflow changes require infra review.
    SBOM paths are refused, timestamps removed, ordering normalized and a UUIDv5
    serial binds package identity and bytes. Build provenance covers package,
    docs, corpus and SBOM; a second attestation binds the SBOM to the package.
-   The `release-assets` workflow artifact retains those four files, the corpus
-   checksum and `release-notes.md`.
+   The job hands those four files, the corpus checksum and `release-notes.md` to
+   infra as one workflow artifact named `release-assets`.
 7. Only the upload step receives the registry key in its environment. It runs
    `scripts/publish_hex.exs` with `mix run --no-mix-exs --no-start` from a scratch
    directory with no `mix.exs`; it loads no project and uploads only the inspected
@@ -61,12 +61,13 @@ never publish, release, tag or dispatch. Workflow changes require infra review.
    another step. Unkeyed readback compares the published Hex package byte for
    byte and checks the first-party destinations in its own release notes.
 8. Infra reads publication back and creates `v<version>` on that exact published
-   commit. No workflow creates a tag, and a tag push starts no workflow. Future
-   GitHub release creation and asset attachment require infra's defined process;
-   this workflow preserves assets and attestations without creating a GitHub
-   release or assuming a tag exists. Follow the
-   [consumer verification guide](../guides/verifying-releases.md) for workflow
-   artifact retrieval, attestation and Hex-byte checks. After release, advance
+   commit. Infra compares the package archive in `release-assets` with the
+   registry's bytes and creates the GitHub release for `v<version>` from that
+   artifact. No workflow creates a tag or a release, and a tag push starts no
+   workflow. Consumers download from the GitHub release, never the workflow
+   artifact, which expires; the
+   [consumer verification guide](../guides/verifying-releases.md) covers
+   download, attestation and Hex-byte checks. After release, advance
    `@version` to the next development version and update documented installs,
    corpus release identity and its digest pin.
 
@@ -314,8 +315,8 @@ automatic rollback semantics. Changing an installed application's dependency is 
 
 ## Conformance release assets
 
-Retrieve the successful publication's `release-assets` workflow artifact and
-execute the [consumer verification guide](../guides/verifying-releases.md).
-Existing historical GitHub releases retain their assets. The publication workflow
-does not attach assets to a future tag. The TypeScript repository pins tag, commit
+Download the GitHub release for `v<version>` and follow the
+[consumer verification guide](../guides/verifying-releases.md). Infra creates that
+release from the publication's `release-assets` artifact after tagging; no
+workflow attaches assets. The TypeScript repository pins tag, commit
 and index SHA-256 together; its corpus is tooling, excluded from the npm package.

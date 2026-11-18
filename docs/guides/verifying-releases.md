@@ -1,22 +1,22 @@
 # Verifying releases
 
-The dispatch-only `Publish` workflow retains a `release-assets` artifact with:
+Starting with 2.0, the GitHub release for each `v<version>` tag carries:
 
 - `request_seal-<version>.tar`: the Hex package, compared byte for byte with Hex
-  after Hex publication.
+  before the GitHub release is created.
 - `request_seal-<version>-docs.tar.gz`: the inspected documentation archive.
 - `corpus.tar.gz`: the deterministic public conformance corpus archive.
 - `corpus.sha256`: the SHA-256 checksum of that archive.
 - `sbom.cdx.json`: a CycloneDX 1.6 software bill of materials for the package's
   locked production dependency closure, including optional integrations.
+- `release-notes.md`: the dated CHANGELOG section for that version.
 
 The package tarball, docs archive, corpus archive, and SBOM have GitHub build-provenance
 attestations. The package tarball also has a CycloneDX SBOM attestation binding
-it to the dependency inventory. The release notes come from its dated CHANGELOG
-section, retained as `release-notes.md`. Publication runs on the default branch;
-infra creates the version tag after reading it back. Tag pushes start no workflow.
-GitHub release attachment is not performed by this workflow. Artifacts follow
-the repository retention policy; a missing or expired artifact cannot be verified.
+it to the dependency inventory. The dispatch-only `Publish` workflow builds and
+attests these files on the default branch and publishes the package to Hex. After
+reading the publication back, the maintainers tag the published commit and create
+the GitHub release from the files that run built. No workflow runs on a tag.
 
 The 1.0.0 release predates this pipeline: it carries the corpus archive and
 checksum, but no package tarball, SBOM, or attestations. A missing attestation
@@ -25,21 +25,18 @@ provides no provenance verification; it is not a successful verification.
 ## Download and check the corpus
 
 Set `VERSION` to the published version you intend to verify, without the leading
-`v`. Set `RUN_ID` to its successful `Publish` run and `SOURCE_COMMIT` to the full
-commit that infra published and tagged. Confirm that run’s conclusion, workflow
-and head SHA before downloading; the branch ref alone does not select a version.
-Run the following commands in the same shell. They require the GitHub CLI,
+`v`. Run the following commands in the same shell. They require the GitHub CLI,
 Mix with Hex, and either GNU `sha256sum` or macOS `shasum`. The temporary directory
-and downloads are removed when the shell exits.
+and downloads are removed when the shell exits. `SOURCE_COMMIT` is the commit the
+release tag names; the attestation checks below require it.
 
 ```sh
 : "${VERSION:?Set VERSION to the published version to verify}"
-: "${RUN_ID:?Set RUN_ID to the successful publication run}"
-: "${SOURCE_COMMIT:?Set SOURCE_COMMIT to the full published commit}"
 assets_dir=$(mktemp -d)
 trap 'rm -rf "$assets_dir"' EXIT
-gh run view "$RUN_ID" --repo baselabs/request_seal --json conclusion,headSha,workflowName
-gh run download "$RUN_ID" --repo baselabs/request_seal --name release-assets --dir "$assets_dir"
+SOURCE_COMMIT=$(gh api "repos/baselabs/request_seal/commits/v$VERSION" --jq .sha)
+gh release view "v$VERSION" --repo baselabs/request_seal --json assets --jq '.assets[].name'
+gh release download "v$VERSION" --repo baselabs/request_seal --dir "$assets_dir"
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "$assets_dir" && sha256sum --check corpus.sha256)
 else
@@ -88,7 +85,7 @@ cmp "$assets_dir/request_seal-$VERSION.tar" "$assets_dir/hex/request_seal-$VERSI
 `cmp` exits successfully only when both package files are byte-identical. The
 same comparison is enforced by publication readback after upload. Attestations
 bind inspected build bytes; byte comparison separately proves registry identity.
-For 1.0.0, the Hex fetch can be exercised, but there is no workflow package artifact
+For 1.0.0, the Hex fetch can be exercised, but its release has no package tarball
 to compare.
 
 ## Interpret SBOM scope

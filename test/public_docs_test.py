@@ -78,8 +78,15 @@ class PublicDocsTest(unittest.TestCase):
         for command in ("sha256sum --check corpus.sha256", "gh attestation verify",
                         "--predicate-type https://slsa.dev/provenance/v1",
                         "--predicate-type https://cyclonedx.org/bom",
-                        'mix hex.package fetch request_seal "$VERSION"', 'cmp "$assets_dir/request_seal-$VERSION.tar"'):
+                        'mix hex.package fetch request_seal "$VERSION"', 'cmp "$assets_dir/request_seal-$VERSION.tar"',
+                        'gh release download "v$VERSION" --repo baselabs/request_seal',
+                        'gh api "repos/baselabs/request_seal/commits/v$VERSION" --jq .sha'):
             self.assertIn(command, source)
+        for consumer_doc in (guide, "README.md", "docs/reference/corpus-format.md", "CHANGELOG.md"):
+            text = (ROOT / consumer_doc).read_text()
+            with self.subTest(consumer_doc=consumer_doc):
+                self.assertNotIn("gh run download", text)
+                self.assertNotIn("workflow artifact", text)
         commands = [line.strip() for line in source.replace("\\\n", " ").splitlines()
                     if line.strip().startswith("gh attestation verify ")]
         self.assertEqual(2, len(commands))

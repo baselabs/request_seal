@@ -531,7 +531,7 @@ A valid signature proves which key signed which covered bytes; a trusted associa
 
 ## Conformance corpus
 
-RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. Publication retains `corpus.tar.gz` and `corpus.sha256` in the `release-assets` workflow artifact; the [verification guide](docs/guides/verifying-releases.md) describes download and attestation checks. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
+RequestSeal's tests run an independently sourced [conformance corpus](docs/reference/corpus-format.md) of published vectors and cases, kept in `corpus/`. Each GitHub release attaches it as `corpus.tar.gz` with `corpus.sha256`; the [verification guide](docs/guides/verifying-releases.md) describes download and attestation checks. The TypeScript implementation, [`@request-seal/core`](https://www.npmjs.com/package/@request-seal/core) on npm ([baselabs/request-seal-typescript](https://github.com/baselabs/request-seal-typescript)), runs the same corpus.
 
 ## Documentation
 
