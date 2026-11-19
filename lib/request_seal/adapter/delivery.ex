@@ -17,7 +17,7 @@ defmodule RequestSeal.Adapter.Delivery do
   def classify({:error, %{__struct__: type, reason: reason} = error}, adapter) do
     cond do
       transport?(type, adapter) -> transport(reason)
-      http2?(error, adapter) -> http2(reason)
+      http2?(error, adapter) -> http2(reason, adapter)
       adapter == :finch and type == Finch.Error -> pool(reason)
       true -> :unknown
     end
@@ -49,9 +49,10 @@ defmodule RequestSeal.Adapter.Delivery do
   # Mint 1.11.0 HTTP2.handle_rst_stream/3, line 2426, reports the stream's code.
   # handle_goaway/3, lines 2844-2853, emits :unprocessed only above last_stream_id.
   # A connection-level GOAWAY code alone does not identify an unprocessed stream.
-  defp http2({:server_closed_request, :refused_stream}), do: :refused
-  defp http2(:unprocessed), do: :refused
-  defp http2(reason), do: pool(reason)
+  defp http2({:server_closed_request, :refused_stream}, _), do: :refused
+  defp http2(:unprocessed, _), do: :refused
+  defp http2(reason, :req), do: pool(reason)
+  defp http2(_, _), do: :unknown
 
   # Finch 0.24.0 HTTP2.Pool.disconnected/3:342 and connecting/3:397 return
   # immediately, before send_request/7. Req normalizes these to HTTP/2 errors.

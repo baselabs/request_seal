@@ -136,6 +136,11 @@ defmodule RequestSeal.DeliveryClassificationTest do
 
     for reason <- [:disconnected, :connection_not_ready] do
       assert RequestSeal.Finch.classify({:error, Finch.Error.exception(reason)}) == :refused
+
+      for type <- [Finch.HTTPError, Mint.HTTPError] do
+        result = {:error, struct!(type, module: Mint.HTTP2, reason: reason)}
+        assert RequestSeal.Finch.classify(result) == :unknown
+      end
     end
 
     for client <- [RequestSeal.Req, RequestSeal.Finch],
