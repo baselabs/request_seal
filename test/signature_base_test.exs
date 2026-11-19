@@ -55,15 +55,24 @@ defmodule RequestSeal.SignatureBaseTest do
           String.replace(valid, ~s[("@method")], ~s[("@path")]),
           valid <> "\nextra: line",
           ~s["@method": GET] <> "\n" <> valid,
-          ~s["@path": /] <> "\n" <> ~s["@method": GET] <> "\n" <>
+          ~s["@path": /] <>
+            "\n" <>
+            ~s["@method": GET] <>
+            "\n" <>
             ~s["@signature-params": ("@method" "@path")],
           ~s["@signature-params": (42)],
           ~s["@signature-params": ();a=01],
           ~s["@signature-params": ();a=1;a=1],
           ~s["@signature-params": ()] <> "\n" <> ~s["@signature-params": ("@signature-params")],
-          ~s["@method": GET] <> "\n" <> ~s["@method": GET] <> "\n" <>
+          ~s["@method": GET] <>
+            "\n" <>
+            ~s["@method": GET] <>
+            "\n" <>
             ~s["@signature-params": ("@method" "@method")],
-          ~s["@query-param";name="a";x: 1] <> "\n" <> ~s["@query-param";x;name="a": 1] <> "\n" <>
+          ~s["@query-param";name="a";x: 1] <>
+            "\n" <>
+            ~s["@query-param";x;name="a": 1] <>
+            "\n" <>
             ~s["@signature-params": ("@query-param";name="a";x "@query-param";x;name="a")]
         ] do
       assert {:error, %SignatureBase.Error{reason: :malformed}} = SignatureBase.parse(invalid)
