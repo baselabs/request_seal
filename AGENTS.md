@@ -15,7 +15,6 @@ publishing a nonstandard private signing profile, verification-to-authorization 
 or private retry/recovery, key-purpose, or address-selection mechanism. Public sources
 establish protocol requirements; private consumer implementations do not establish them.
 
-The hosted qualification runs the covering parts of `python3 scripts/check.py`.
 Publishing, deploying, and pushes to mirrors require owner approval.
 Update the CHANGELOG when behavior, a dependency, or a contract changes.
 
@@ -24,6 +23,22 @@ New behavior needs meaningful positive and rejection tests with actual cryptogra
 independent published vectors, and authorized real peers. Do not use mocks, fake
 services, or generated examples presented as external conformance.
 No service is required by the scaffold; no fail-open fallback, implicit authorization, or sensitive telemetry.
+
+## Build and test
+
+This public repository builds and tests only in GitHub-hosted qualification on a
+`kci/` ref, never on a developer's machine or the build box. Qualification runs the
+covering parts of `python3 scripts/check.py`, and a change reaches the default branch
+only through `kimosabe-land --repo . --sha <full sha>`. Pure Python source checks that
+compile nothing may run locally with `python3 -I -B`. Pure Python unit tests whose
+files have been read and do not invoke Mix may run locally with `mix` absent from
+`PATH`; compilation-dependent Python tests stay hosted. Only `kimosabe-land` watches
+a run; sessions do not poll GitHub. Pull requests execute no project code. Use the
+exact `.tool-versions` runtimes, locked dependency fetches, both advisory feeds,
+immutable action pins and measured job timeouts. Qualification only restores caches;
+the default-branch cache warmer is their sole writer. The separate default-branch
+publication and cache-warmer workflows perform only their specified work on hosted
+runners; neither decides a landing.
 
 ## Documents
 
@@ -43,18 +58,6 @@ with repository, branch and full commit for review before landing.
 Land only through `kimosabe-land --repo . --sha <full sha>`;
 the default-branch ruleset requires the exact `qualified` check with no bypass.
 Never use classic branch protection alongside that ruleset.
-
-This public repository builds and tests only in GitHub-hosted qualification on a
-`kci/` ref, never on a developer's machine or the build box. Pure Python source
-checks that compile nothing may run locally with `python3 -I -B`. Pure Python unit
-tests whose files have been read and do not invoke Mix may run locally with `mix`
-absent from `PATH`; compilation-dependent Python tests stay hosted. Only
-`kimosabe-land` watches a run; sessions do not poll GitHub. Pull requests execute
-no project code. Use the exact `.tool-versions` runtimes, locked dependency
-fetches, both advisory feeds, immutable action pins and measured job timeouts.
-Qualification only restores caches; the default-branch cache warmer is their sole writer.
-The separate default-branch publication and cache-warmer workflows perform only their
-specified work on hosted runners; neither decides a landing.
 
 Sessions never release, publish, tag, dispatch workflows or hold registry keys.
 After a qualified version commit lands, send infra the repository, full commit,
