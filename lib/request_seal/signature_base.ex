@@ -233,8 +233,9 @@ defmodule RequestSeal.SignatureBase do
       Enum.zip_with(lines, inner.value, fn line, item ->
         {:ok, identifier} = SF.serialize(item, %{@schema | type: :item})
         true = item.value != {:string, "@signature-params"}
-        size = byte_size(identifier)
-        <<^identifier::binary-size(size), ": ", value::binary>> = line
+        prefix = identifier <> ": "
+        true = String.starts_with?(line, prefix)
+        value = binary_part(line, byte_size(prefix), byte_size(line) - byte_size(prefix))
         true = printable?(value)
         {identifier, value}
       end)

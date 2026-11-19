@@ -636,25 +636,25 @@
     "expression": "reason",
     "file": "lib/request_seal/signature_base.ex",
     "kind": "signature_base",
-    "line": 281,
+    "line": 282,
     "allows": [],
-    "comment": "lib/request_seal/signature_base.ex:281: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/signature_base.ex:282: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/signature_base.ex",
     "kind": "signature_base",
-    "line": 285,
+    "line": 286,
     "allows": [],
-    "comment": "lib/request_seal/signature_base.ex:285: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/signature_base.ex:286: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/signature_base.ex",
     "kind": "signature_base",
-    "line": 515,
+    "line": 516,
     "allows": [],
-    "comment": "lib/request_seal/signature_base.ex:515: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/signature_base.ex:516: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "fault ( stage )",
