@@ -49,16 +49,18 @@ if Code.ensure_loaded?(Finch) do
 
     `:answered` means an integer HTTP status was returned, except 502 and 504:
     those gateway responses leave origin processing unknown (RFC 9110 Sections
-    15.6.3 and 15.6.5). `:refused` means a connection or name-resolution refusal,
+    15.6.3 and 15.6.5). `:refused` means a name-resolution failure (`:nxdomain`),
     failed ALPN negotiation, an HTTP/2 stream explicitly left unprocessed
-    (RFC 9113 Section 8.7), or this adapter's own attach/sign refusal before send.
+    (RFC 9113 Section 8.7), a pool that rejected the request before sending it,
+    or this adapter's own attach/sign refusal before send.
     Only `:refused` is safe to retry automatically. `:unknown` requires the
     application's own idempotency protection; `:answered` does not promise that
     repeating the operation is safe or that its response was authenticated.
 
-    The locked clients erase the phase of socket timeouts and TLS alerts. Even
-    a connect timeout or handshake alert returns `:unknown` when its shape also
-    permits a failure after sending. Receive timeouts, closed connections,
+    The locked clients report socket errors from connect and from an open
+    connection with the same reason, so a refused connection, an unreachable
+    host or network, a socket timeout and a TLS alert all return `:unknown`:
+    each can also follow a sent request. Receive timeouts, closed connections,
     response-verification failures, and unrecognized terms are `:unknown`.
     No retry is performed, and the error struct's retry policy is not changed.
 
@@ -68,8 +70,10 @@ if Code.ensure_loaded?(Finch) do
         :answered
         iex> RequestSeal.Finch.classify({:ok, %Finch.Response{status: 502}})
         :unknown
-        iex> RequestSeal.Finch.classify({:error, %Finch.TransportError{reason: :econnrefused}})
+        iex> RequestSeal.Finch.classify({:error, %Finch.TransportError{reason: :nxdomain}})
         :refused
+        iex> RequestSeal.Finch.classify({:error, %Finch.TransportError{reason: :econnrefused}})
+        :unknown
         iex> RequestSeal.Finch.classify({:error, %Finch.TransportError{reason: :timeout}})
         :unknown
         iex> RequestSeal.Finch.classify(:anything)

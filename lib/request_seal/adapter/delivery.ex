@@ -35,11 +35,12 @@ defmodule RequestSeal.Adapter.Delivery do
 
   defp http2?(_, _), do: false
 
-  # Mint 1.11.0 Core.Transport.TCP.connect/3, lines 33-45: connect failures.
-  # No generic :timeout, :closed or TLS alert proves the phase of an exchange.
-  defp transport(reason)
-       when reason in [:econnrefused, :nxdomain, :ehostunreach, :enetunreach],
-       do: :refused
+  # Name resolution happens only inside Mint 1.11.0 Core.Transport.TCP.connect/3,
+  # so :nxdomain precedes any request byte. Socket errors on an open connection
+  # reuse the same struct and POSIX reason (HTTP1.stream/2, lines 553-556;
+  # HTTP2.stream/2, line 1042; TCP.send/2 and recv/3), so :econnrefused,
+  # :ehostunreach, :enetunreach, :timeout, :closed and TLS alerts prove no phase.
+  defp transport(:nxdomain), do: :refused
 
   # Mint 1.11.0 HTTP2.negotiate/4, lines 1369-1377, precedes any HTTP request.
   defp transport(:protocol_not_negotiated), do: :refused

@@ -23,7 +23,8 @@ defmodule RequestSeal.DeliveryClassificationTest do
     end
   end
 
-  test "a closed local port refuses before sending", %{handle: handle} do
+  test "a closed local port is unknown because open connections report the same reason",
+       %{handle: handle} do
     {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
     {:ok, {_, port}} = :inet.sockname(listener)
     :ok = :gen_tcp.close(listener)
@@ -31,6 +32,15 @@ defmodule RequestSeal.DeliveryClassificationTest do
     for client <- [:req, :finch] do
       result = send_request(client, "http://127.0.0.1:#{port}", handle)
       assert {:error, %{reason: :econnrefused}} = result
+      assert classify(client, result) == :unknown
+    end
+  end
+
+  # RFC 6761 Section 6.4: names under .invalid never resolve.
+  test "a name that cannot resolve refuses before any connection", %{handle: handle} do
+    for client <- [:req, :finch] do
+      result = send_request(client, "http://request-seal.invalid", handle)
+      assert {:error, %{reason: :nxdomain}} = result
       assert classify(client, result) == :refused
     end
   end
@@ -94,18 +104,14 @@ defmodule RequestSeal.DeliveryClassificationTest do
           {RequestSeal.Finch, Finch.TransportError},
           {RequestSeal.Finch, Mint.TransportError}
         ] do
-      for reason <- [
-            :econnrefused,
-            :nxdomain,
-            :ehostunreach,
-            :enetunreach,
-            :protocol_not_negotiated,
-            {:bad_alpn_protocol, "other"}
-          ] do
+      for reason <- [:nxdomain, :protocol_not_negotiated, {:bad_alpn_protocol, "other"}] do
         assert client.classify({:error, struct!(transport, reason: reason)}) == :refused
       end
 
       for reason <- [
+            :econnrefused,
+            :ehostunreach,
+            :enetunreach,
             :timeout,
             :connect_timeout,
             :closed,

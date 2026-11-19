@@ -303,6 +303,7 @@ paths = [
 description = "RFC 9421 signature-base inspection case manifests"
 paths = [
   '''^corpus/cases/signature_base/parse-reject-crlf\.json$''',
+  '''^corpus/cases/signature_base/parse-reject-duplicate-component\.json$''',
   '''^corpus/cases/signature_base/parse-reject-extra-line\.json$''',
   '''^corpus/cases/signature_base/parse-reject-identifier-mismatch\.json$''',
   '''^corpus/cases/signature_base/parse-reject-missing-final\.json$''',

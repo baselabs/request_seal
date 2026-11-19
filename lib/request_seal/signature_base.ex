@@ -182,7 +182,8 @@ defmodule RequestSeal.SignatureBase do
   Accepts at most 1,048,576 binary bytes. Component values must be printable
   ASCII. The final `"@signature-params"` line must contain a canonical RFC 8941
   Inner List of strings with parameters, within Structured Fields ceilings.
-  Its ordered items must exactly match the preceding serialized identifiers.
+  Its ordered items must exactly match the preceding serialized identifiers,
+  and no component may appear twice, with the duplicate rule `build/3` uses.
   LF separates lines; CRLF and a trailing LF reject.
 
   Returns the ordered `components`, canonical `signature_params` bytes, and
@@ -225,6 +226,8 @@ defmodule RequestSeal.SignatureBase do
     {:ok, ^serialized} = SF.serialize(%Value{type: :list, value: [inner]}, @schema)
     lines = Enum.reverse(reversed)
     true = length(lines) == length(inner.value)
+    identities = Enum.map(inner.value, &{&1.value, Enum.sort(&1.parameters)})
+    true = length(Enum.uniq(identities)) == length(identities)
 
     pairs =
       Enum.zip_with(lines, inner.value, fn line, item ->

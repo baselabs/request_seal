@@ -145,9 +145,12 @@ gateway cannot establish whether the origin processed the request
 
 Receive timeouts, mid-exchange closes, failed response verification, and unknown
 errors require the application's own idempotency protection. The locked clients
-do not preserve a phase for socket timeouts or TLS alerts, so these also remain
-`:unknown`, even when they may have happened during connect. HTTP/2 REFUSED_STREAM
-and GOAWAY's per-stream unprocessed indication supply explicit refusal evidence
+report a socket error with the same reason whether it happened during connect or
+on an open connection after sending, so a refused connection, an unreachable host
+or network, a socket timeout and a TLS alert also remain `:unknown`. A
+name-resolution failure (`:nxdomain`) happens before any connection exists and is
+`:refused`. HTTP/2 REFUSED_STREAM and GOAWAY's per-stream unprocessed indication
+supply explicit refusal evidence
 ([RFC 9113 Section 8.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7)).
 
 ```elixir
