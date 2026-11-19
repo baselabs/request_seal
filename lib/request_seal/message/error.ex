@@ -16,7 +16,12 @@ defmodule RequestSeal.Message.Error do
   @enforce_keys [:reason]
   defstruct [:reason]
 
+  @type reason ::
+          :invalid_body
+          | :invalid_field
+          | :invalid_message
+          | :invalid_transport
   @type t :: %__MODULE__{
-          reason: :invalid_message | :invalid_field | :invalid_body | :invalid_transport
+          reason: reason()
         }
 end

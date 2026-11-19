@@ -109,6 +109,40 @@ if Code.ensure_loaded?(Req) do
     ]
 
     @doc """
+    Classify delivery evidence in a request result, for any term without raising.
+
+    `:answered` means an integer HTTP status was returned, except 502 and 504:
+    those gateway responses leave origin processing unknown (RFC 9110 Sections
+    15.6.3 and 15.6.5). `:refused` means a connection or name-resolution refusal,
+    failed ALPN negotiation, an HTTP/2 stream explicitly left unprocessed
+    (RFC 9113 Section 8.7), or this adapter's own attach/sign refusal before send.
+    Only `:refused` is safe to retry automatically. `:unknown` requires the
+    application's own idempotency protection; `:answered` does not promise that
+    repeating the operation is safe or that its response was authenticated.
+
+    The locked clients erase the phase of socket timeouts and TLS alerts. Even
+    a connect timeout or handshake alert returns `:unknown` when its shape also
+    permits a failure after sending. Receive timeouts, closed connections,
+    response-verification failures, and unrecognized terms are `:unknown`.
+    No retry is performed, and the error struct's retry policy is not changed.
+
+    ## Examples
+
+        iex> RequestSeal.Req.classify({:ok, %Req.Response{status: 200}})
+        :answered
+        iex> RequestSeal.Req.classify({:ok, %Req.Response{status: 502}})
+        :unknown
+        iex> RequestSeal.Req.classify({:error, %Req.TransportError{reason: :econnrefused}})
+        :refused
+        iex> RequestSeal.Req.classify({:error, %Req.TransportError{reason: :timeout}})
+        :unknown
+        iex> RequestSeal.Req.classify(:anything)
+        :unknown
+    """
+    @spec classify(term()) :: :answered | :refused | :unknown
+    def classify(result), do: RequestSeal.Adapter.Delivery.classify(result, :req)
+
+    @doc """
     Attaches final-attempt signing and optional response verification to a Req request.
 
     The returned request carries three added steps: an option check prepended

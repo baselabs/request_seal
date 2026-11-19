@@ -146,6 +146,111 @@ defmodule RequestSeal.SignatureBase do
   # Internal fast path: the calling entry point has validated the message once.
   @doc false
   def build_validated(message, parameters, opts) do
+    with {:ok, parts} <- derive(message, parameters, opts) do
+      {:ok, rebuild(parts)}
+    end
+  end
+
+  @doc """
+  Inspect the ordered component values used by `build/3`.
+
+  Takes the same message, parameters, and options as `build/3`, with the same
+  validation, resource ceilings, and errors. Returns `{:ok, %{components:
+  [{identifier, value}], signature_params: bytes}}`; identifiers include their
+  serialized parameters. Both entry points use the same derivation. This
+  establishes bytes only, without authenticating their source.
+
+  ## Examples
+
+      iex> {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+      iex> RequestSeal.SignatureBase.components(message, ~s[("@method")])
+      {:ok, %{components: [{~s["@method"], "GET"}], signature_params: ~s[("@method")]}}
+  """
+  @spec components(Message.t(), binary() | Value.t(), keyword()) ::
+          {:ok, %{components: [{binary(), binary()}], signature_params: binary()}}
+          | {:error, Error.t()}
+  def components(message, parameters, opts \\ []) do
+    ensure(Message.validate(message) == :ok, :invalid_message)
+    derive(message, parameters, opts)
+  catch
+    {:signature_base, reason} -> {:error, %Error{reason: reason}}
+  end
+
+  @doc """
+  Parse a serialized RFC 9421 Section 2.5 signature base for inspection.
+
+  Accepts at most 1,048,576 binary bytes. Component values must be printable
+  ASCII. The final `"@signature-params"` line must contain a canonical RFC 8941
+  Inner List of strings with parameters, within Structured Fields ceilings.
+  Its ordered items must exactly match the preceding serialized identifiers.
+  LF separates lines; CRLF and a trailing LF reject.
+
+  Returns the ordered `components`, canonical `signature_params` bytes, and
+  parsed `inner_list`. This performs no signature check and does not establish
+  where any value came from. A binary above the byte ceiling returns `:limit`;
+  every other invalid input or internal exception returns `:malformed`.
+
+  ## Examples
+
+      iex> base = ~s["@method": GET] <> "\\n" <> ~s["@signature-params": ("@method")]
+      iex> {:ok, parsed} = RequestSeal.SignatureBase.parse(base)
+      iex> parsed.components
+      [{~s["@method"], "GET"}]
+      iex> RequestSeal.SignatureBase.parse(base <> "\\n")
+      {:error, %RequestSeal.SignatureBase.Error{reason: :malformed}}
+  """
+  @spec parse(term()) ::
+          {:ok,
+           %{
+             components: [{binary(), binary()}],
+             signature_params: binary(),
+             inner_list: Value.t()
+           }}
+          | {:error, Error.t()}
+  def parse(bytes) when is_binary(bytes) and byte_size(bytes) > 1_048_576,
+    do: {:error, %Error{reason: :limit}}
+
+  def parse(bytes) do
+    {:ok, parse_base(bytes)}
+  rescue
+    _ -> {:error, %Error{reason: :malformed}}
+  catch
+    _, _ -> {:error, %Error{reason: :malformed}}
+  end
+
+  defp parse_base(bytes) when is_binary(bytes) do
+    [final | reversed] = bytes |> :binary.split("\n", [:global]) |> Enum.reverse()
+    <<"\"@signature-params\": ", serialized::binary>> = final
+    {:ok, %Value{value: [%Value{type: :inner_list} = inner]}} = SF.parse(serialized, @schema)
+    {:ok, ^serialized} = SF.serialize(%Value{type: :list, value: [inner]}, @schema)
+    lines = Enum.reverse(reversed)
+    true = length(lines) == length(inner.value)
+
+    pairs =
+      Enum.zip_with(lines, inner.value, fn line, item ->
+        {:ok, identifier} = SF.serialize(item, %{@schema | type: :item})
+        true = item.value != {:string, "@signature-params"}
+        size = byte_size(identifier)
+        <<^identifier::binary-size(size), ": ", value::binary>> = line
+        true = printable?(value)
+        {identifier, value}
+      end)
+
+    parts = %{components: pairs, signature_params: serialized}
+    ^bytes = rebuild(parts)
+    Map.put(parts, :inner_list, inner)
+  end
+
+  defp printable?(""), do: true
+  defp printable?(<<byte, rest::binary>>) when byte in 32..126, do: printable?(rest)
+  defp printable?(_), do: false
+
+  defp rebuild(parts) do
+    lines = Enum.map(parts.components, fn {id, value} -> [id, ": ", value, "\n"] end)
+    IO.iodata_to_binary([lines, "\"@signature-params\": ", parts.signature_params])
+  end
+
+  defp derive(message, parameters, opts) do
     options = options(opts)
     {parameters, serialized} = parameters(parameters)
     metadata(parameters.parameters)
@@ -161,15 +266,14 @@ defmodule RequestSeal.SignatureBase do
         {value, cache} = value(source, name, params, options, cache)
         ensure(ascii?(value), :non_ascii)
         identifier = serialize(component, %{@schema | type: :item}, :invalid_signature_parameters)
-        line = [identifier, ": ", value, "\n"]
-        size = size + IO.iodata_length(line)
+        size = size + byte_size(identifier) + byte_size(value) + 3
         ensure(size <= options.max_bytes, :limit)
-        {[line | output], size, MapSet.put(seen, identity), cache}
+        {[{identifier, value} | output], size, MapSet.put(seen, identity), cache}
       end)
 
     final = ["\"@signature-params\": ", serialized]
     ensure(size + IO.iodata_length(final) <= options.max_bytes, :limit)
-    {:ok, IO.iodata_to_binary([Enum.reverse(output), final])}
+    {:ok, %{components: Enum.reverse(output), signature_params: serialized}}
   catch
     {:signature_base, reason} -> {:error, %Error{reason: reason}}
   end

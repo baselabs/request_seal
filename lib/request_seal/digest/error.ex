@@ -26,11 +26,28 @@ defmodule RequestSeal.Digest.Error do
 
   Structured Fields errors retain their own bounded reason vocabulary
   (`RequestSeal.StructuredFields.Error`); for example, an invalid Message given to
-  `RequestSeal.Digest.check_stream/3` or `RequestSeal.Digest.preferences/3`
-  returns that module's `:invalid_message`. No failure returns partial integrity
-  facts.
+  `RequestSeal.Digest.preferences/3` returns that module's `:invalid_message`.
+  `RequestSeal.Digest.check_stream/3` validates the message first and returns
+  this module's `:invalid_message`. No failure returns partial integrity facts.
   """
   @enforce_keys [:reason]
   defstruct [:reason]
-  @type t :: %__MODULE__{reason: atom()}
+  @type reason ::
+          :body_unavailable
+          | :conflicting_digest
+          | :invalid_body
+          | :invalid_chunk
+          | :invalid_digest_length
+          | :invalid_field
+          | :invalid_kind
+          | :invalid_message
+          | :invalid_options
+          | :invalid_preference
+          | :invalid_state
+          | :limit
+          | :mismatch
+          | :representation_required
+          | :uncomputed_algorithm
+          | :unsupported_algorithm
+  @type t :: %__MODULE__{reason: reason()}
 end

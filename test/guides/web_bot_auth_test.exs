@@ -239,7 +239,25 @@ defmodule RequestSeal.GuideWebBotAuthTest do
                Keyword.fetch!(binding, :agent_policy)
              )
 
-    E.assert_fences("docs/guides/web-bot-auth.md", 8)
+    binding =
+      E.eval(
+        ~S'''
+        agent_records = %{key_set.source.location => %{id: "configured-agent"}}
+        key_records = %{thumbprint => %{id: "held-key"}}
+        selected = Map.fetch!(discovered_envelope.signatures, "agent")
+
+        {:ok, agent_record} = Map.fetch(agent_records, selected.principal.identifier)
+        {:ok, key_record} = Map.fetch(key_records, verification.principal.thumbprint)
+        {agent_record.id, key_record.id}
+        # => {"configured-agent", "held-key"}
+        ''',
+        binding,
+        "docs/guides/web-bot-auth.md",
+        9
+      )
+
+    assert Keyword.fetch!(binding, :example_result) == {"configured-agent", "held-key"}
+    E.assert_fences("docs/guides/web-bot-auth.md", 9)
     assert is_list(binding)
   end
 end

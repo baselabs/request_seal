@@ -131,3 +131,26 @@ Pass the exact signed request when verifying its response; request association i
 `RequestSeal.Adapter.Error` hides framework exception text. `:not_final_step` means a request step follows signing; move attachment last. `:response_rejected` wraps the bounded verification error and returns no response body. `:cross_origin_redirect` requires an explicit trusted origin if you intend to permit it. `:limit` means a retained or received body exceeded your budget. `:unsupported_delivery` or `:invalid_options` means your delivery/client customization cannot preserve the signing or verification contract; consult the supported options before changing it. `:unsupported_component` means coverage the transport cannot supply, such as `host` or request `req`/`tr` components. `:body_unavailable` means covered content was not retained; choose `{:retain, max}`. `:digest_conflict` means a caller-supplied digest disagrees with the bytes. `:signing_failed` carries a bounded custody error in `source`.
 
 Module docs: `RequestSeal.Req`, `RequestSeal.Finch`, `RequestSeal.Adapter.Error`, `RequestSeal.Digest`.
+
+## Classify delivery before retrying
+
+`RequestSeal.Req.classify/1` and `RequestSeal.Finch.classify/1` accept a request
+result and return `:answered`, `:refused`, or `:unknown`. Only `:refused` is safe
+to retry automatically: its evidence proves no request processing occurred.
+Disable Req's automatic retries when applying this decision yourself, as in the
+examples above. `:answered` includes error statuses such as 503 and does not
+make repeating the operation safe. Status 502 or 504 is `:unknown`, since a
+gateway cannot establish whether the origin processed the request
+([RFC 9110 Sections 15.6.3 and 15.6.5](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.6.3)).
+
+Receive timeouts, mid-exchange closes, failed response verification, and unknown
+errors require the application's own idempotency protection. The locked clients
+do not preserve a phase for socket timeouts or TLS alerts, so these also remain
+`:unknown`, even when they may have happened during connect. HTTP/2 REFUSED_STREAM
+and GOAWAY's per-stream unprocessed indication supply explicit refusal evidence
+([RFC 9113 Section 8.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7)).
+
+```elixir
+:answered = RequestSeal.Finch.classify({:ok, response})
+:unknown = RequestSeal.Req.classify({:error, %Req.TransportError{reason: :timeout}})
+```

@@ -182,3 +182,52 @@ Retry only an error whose struct says `retryable: true`: custody `:deadline_exce
 Never retry a `RequestSeal.Error` by resending the same signed bytes: the verifier rejects them for the same reason, or as a replay. A replay store `:store_timeout` is indeterminate because the claim may have committed; treat that request as rejected and ask the sender to sign a new one.
 
 Next: [signing and verifying](signing-and-verifying.md) for the full policy, [replay protection](replay-protection.md) for store failures, and [key custody](key-custody.md) for handle lifecycles.
+
+## Complete reason inventory
+
+These closed vocabularies are checked against source emissions and each error
+module's `reason` type. Each module documents their meanings.
+
+### RequestSeal.Error
+
+`:actor_unbound`, `:agent_unresolved`, `:algorithm_mismatch`, `:algorithm_not_permitted`, `:body_unavailable`, `:commitment_failed`, `:created_in_future`, `:digest_mismatch`, `:digest_not_covered`, `:digest_unsupported`, `:duplicate_label`, `:duplicate_parameter`, `:expired`, `:inapplicable_component`, `:internal`, `:invalid_accept_signature`, `:invalid_binding`, `:invalid_clock`, `:invalid_keyid`, `:invalid_message`, `:invalid_options`, `:invalid_policy`, `:invalid_profile`, `:invalid_request`, `:invalid_signature`, `:invalid_signature_agent`, `:invalid_signature_field`, `:invalid_signature_input`, `:invalid_verification`, `:key_resolver_failed`, `:label_in_use`, `:label_mismatch`, `:lifetime_exceeded`, `:limit`, `:missing_created`, `:missing_expires`, `:missing_replay_identifier`, `:missing_required_component`, `:missing_signature`, `:missing_signature_input`, `:negotiation_unfulfillable`, `:nested_coverage_incomplete`, `:no_web_bot_auth_signature`, `:replayed`, `:retention_exceeded`, `:signature_base_failed`, `:signer_algorithm_mismatch`, `:signer_failed`, `:signing_failed`, `:store_failed`, `:store_timeout`, `:store_unavailable`, `:tenant_unbound`, `:test_key_rejected`, `:too_old`, `:unattributed`, `:unexpected_component`, `:unexpected_signature`, `:unknown_key`, `:unknown_label`, `:unsupported_component`, `:verifier_failed`.
+
+### RequestSeal.SignatureBase.Error
+
+`:invalid_message`, `:invalid_options`, `:invalid_signature_parameters`, `:limit`, `:malformed`, `:invalid_component`, `:unknown_component`, `:duplicate_component`, `:invalid_component_parameters`, `:incompatible_parameters`, `:wrong_message_kind`, `:missing_request_context`, `:unavailable_origin`, `:unavailable_trailers`, `:missing_field`, `:non_ascii`, `:unknown_field_schema`, `:invalid_field_schema`, `:invalid_structured_field`, `:missing_dictionary_key`, `:noncanonical_query_name`, `:invalid_query_encoding`, `:missing_query_parameter`, `:ambiguous_query_parameter`.
+
+### RequestSeal.JOSE.Error
+
+`:invalid_options`, `:invalid_policy`, `:limit`, `:invalid_serialization`, `:invalid_base64`, `:invalid_header`, `:duplicate_member`, `:unsupported_header`, `:unsupported_serialization`, `:compression_unsupported`, `:detached_payload`, `:algorithm_not_permitted`, `:algorithm_mismatch`, `:unsupported_critical_header`, `:unknown_key`, `:key_resolver_failed`, `:invalid_signature`, `:signer_failed`, `:invalid_iv`, `:invalid_tag`, `:decryption_failed`, `:entropy_failure`, `:deadline_exceeded`, `:nesting_depth`, `:content_type_mismatch`, `:unexpected_member`, `:protected_mismatch`, `:internal_failure`.
+
+### RequestSeal.Custody.Error
+
+`:invalid_handle`, `:invalid_options`, `:unsupported_algorithm`, `:unsupported_operation`, `:invalid_key`, `:key_mismatch`, `:invalid_data`, `:invalid_signature`, `:unsupported_format`, `:invalid_signing_output`, `:no_public_key`, `:key_not_found`, `:deadline_exceeded`, `:custodian_unavailable`, `:custodian_rejected`, `:custodian_protocol`, `:custodian_failure`, `:decryption_failed`, `:limit`.
+
+### RequestSeal.Replay.Error
+
+`:invalid_store`, `:invalid_claim`, `:invalid_options`, `:store_unavailable`, `:store_timeout`, `:store_full`, `:store_failed`.
+
+### RequestSeal.Discovery.Error
+
+`:invalid_source`, `:invalid_options`, `:domain_not_found`, `:transport_unavailable`, `:resolution_failed`, `:address_denied`, `:connect_failed`, `:tls_failed`, `:deadline_exceeded`, `:redirect_denied`, `:redirect_limit`, `:unexpected_status`, `:unexpected_media_type`, `:limit`, `:invalid_response`, `:invalid_key_set`, `:client_id_mismatch`, `:ambiguous_key_source`, `:directory_unsigned`, `:directory_signature_invalid`, `:unknown_key`, `:revoked_key`, `:source_unavailable`, `:cache_overloaded`.
+
+### RequestSeal.Digest.Error
+
+`:body_unavailable`, `:conflicting_digest`, `:invalid_body`, `:invalid_chunk`, `:invalid_digest_length`, `:invalid_field`, `:invalid_kind`, `:invalid_message`, `:invalid_options`, `:invalid_preference`, `:invalid_state`, `:limit`, `:mismatch`, `:representation_required`, `:uncomputed_algorithm`, `:unsupported_algorithm`.
+
+### RequestSeal.Message.Error
+
+`:invalid_body`, `:invalid_field`, `:invalid_message`, `:invalid_transport`.
+
+### RequestSeal.Adapter.Error
+
+`:invalid_options`, `:invalid_request`, `:not_final_step`, `:cross_origin_redirect`, `:unsupported_delivery`, `:unsupported_component`, `:body_unavailable`, `:digest_conflict`, `:limit`, `:signing_failed`, `:response_rejected`, `:not_captured`, `:already_verified`, `:parser_order`, `:untrusted_proxy`, `:request_rejected`.
+
+### RequestSeal.Crypto.Error
+
+`:invalid_data`, `:invalid_key`, `:invalid_options`, `:invalid_signature`, `:key_mismatch`, `:unsupported_algorithm`, `:unsupported_format`.
+
+### RequestSeal.StructuredFields.Error
+
+`:duplicate_key`, `:duplicate_parameter`, `:invalid_field`, `:invalid_limits`, `:invalid_message`, `:invalid_schema`, `:invalid_value`, `:limit`, `:missing_field`, `:revision_type`, `:schema_type`, `:syntax`, `:unavailable_section`.

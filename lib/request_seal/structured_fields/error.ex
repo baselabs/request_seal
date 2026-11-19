@@ -18,5 +18,19 @@ defmodule RequestSeal.StructuredFields.Error do
   """
   @enforce_keys [:reason]
   defstruct [:reason]
-  @type t :: %__MODULE__{reason: atom()}
+  @type reason ::
+          :duplicate_key
+          | :duplicate_parameter
+          | :invalid_field
+          | :invalid_limits
+          | :invalid_message
+          | :invalid_schema
+          | :invalid_value
+          | :limit
+          | :missing_field
+          | :revision_type
+          | :schema_type
+          | :syntax
+          | :unavailable_section
+  @type t :: %__MODULE__{reason: reason()}
 end

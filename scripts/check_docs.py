@@ -12,6 +12,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from http.client import HTTPException
 import json
+
+# Isolated Python intentionally omits the script directory from its import path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release import (MARKDOWN_SUFFIXES, classify_destination, compare_errors, extract_destinations, first_party,
                      git_source_errors, install_requirement, page_ids,
                      parse_version, ref_exists, source_fragment_errors, verify_http_destinations)
@@ -593,6 +596,49 @@ def tracked_link_errors(root, paths, version, published, references, checked=(),
     return errors
 
 
+def source_configuration(root):
+    """Read only the explicit literal inventory; hosted checks evaluate Mix too."""
+    source = (root / "mix.exs").read_text()
+    inventory = re.search(r'@public_documents\s*\[([^\]]*)\]', source, re.S)
+    if not inventory:
+        raise ValueError("mix.exs: source check requires an explicit public document list")
+    documents = re.findall(r'"([^"\n]+)"', inventory[1])
+    if re.sub(r'"[^"\n]+"|[\s,]', '', inventory[1]):
+        raise ValueError("mix.exs: public document list must contain only literal paths")
+    if not documents or len(documents) != len(set(documents)):
+        raise ValueError("mix.exs: invalid or duplicate public documents")
+    if not re.search(r'files:\s*\["lib/\*\*/\*\.ex",\s*"mix\.exs"\s*\|\s*@public_documents\]', source):
+        raise ValueError("mix.exs: source check requires the explicit package file contract")
+    versions = re.findall(r'^\s*@version "([^"]+)"', source, re.M)
+    if len(versions) != 1:
+        raise ValueError("mix.exs: source check requires one literal version")
+    return {
+        "documents": set(documents),
+        "version": versions[0],
+        "patterns": ["lib/**/*.ex", "mix.exs"] + documents,
+        "files": set(documents) | {"mix.exs"} | {
+            path.relative_to(root).as_posix() for path in (root / "lib").rglob("*.ex")
+        },
+    }
+
+
+def check_source(root=ROOT):
+    """Disclosure, literal inventory and executable-fence pairing without Mix."""
+    configuration = source_configuration(root)
+    approved = configuration["documents"] | SOURCE_DOCUMENTS
+    paths = public_paths(root)
+    errors = inventory_errors(root, approved, paths) + package_errors(root, configuration)
+    for relative in sorted(approved | configuration["files"]):
+        path = root / relative
+        if path.is_file() and not path.is_symlink():
+            source = path.read_text()
+            errors.extend(content_errors(root, relative, source, paths,
+                                         configuration["version"], check_links=False))
+            if relative in approved:
+                errors.extend(fence_errors(root, relative, source))
+    return approved, errors
+
+
 def check(root=ROOT, docs_output=None):
     configuration = public_configuration(root)
     approved = configuration["documents"] | SOURCE_DOCUMENTS
@@ -627,14 +673,20 @@ if __name__ == "__main__":
     install_signal_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docs-output", type=Path, help="Reuse real ExDoc output built by the caller")
+    parser.add_argument("--source-only", action="store_true",
+                        help="Check source inventory, disclosure and fence pairing without Mix or ExDoc")
     args = parser.parse_args()
     try:
-        approved, errors = check(docs_output=args.docs_output)
+        approved, errors = check_source() if args.source_only else check(docs_output=args.docs_output)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Public-document check failed: {error}")
         sys.exit(1)
     if errors:
         print("\n".join(errors))
         sys.exit(1)
-    print(f"PASS: {len(approved)} approved public documents, disclosure tripwires, and links")
-    print("Scope: every approved Markdown Elixir fence is paired and executed; Livebooks use their dedicated execution gate")
+    if args.source_only:
+        print(f"PASS: {len(approved)} source document inventories, disclosure checks, and fence pairs")
+        print("Scope: no compilation or execution; rendered documentation and destination checks remain hosted")
+    else:
+        print(f"PASS: {len(approved)} approved public documents, disclosure tripwires, and links")
+        print("Scope: every approved Markdown Elixir fence is paired and executed; Livebooks use their dedicated execution gate")

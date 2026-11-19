@@ -140,7 +140,18 @@ defmodule RequestSeal.GuideReqAndFinchTest do
     E.assert_received_request()
     assert Keyword.fetch!(binding, :verified_response).signature.crypto == :valid
     E.assert_rejected_request(binding)
-    E.assert_fences("docs/guides/req-and-finch.md", 5)
+    binding =
+      E.eval(
+        ~S'''
+        :answered = RequestSeal.Finch.classify({:ok, response})
+        :unknown = RequestSeal.Req.classify({:error, %Req.TransportError{reason: :timeout}})
+        ''',
+        binding,
+        "docs/guides/req-and-finch.md",
+        6
+      )
+
+    E.assert_fences("docs/guides/req-and-finch.md", 6)
     assert is_list(binding)
   end
 end

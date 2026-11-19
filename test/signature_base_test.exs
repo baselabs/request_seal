@@ -7,6 +7,99 @@ defmodule RequestSeal.SignatureBaseTest do
   @root Path.join(__DIR__, "fixtures/signature_base")
   @vectors :json.decode(File.read!(Path.join(@root, "rfc9421.json")))
 
+  test "inspection round trips every independently published base" do
+    for vector <- @vectors do
+      message = published_message(vector["message"])
+      assert {:ok, parts} = SignatureBase.components(message, vector["parameters"])
+      assert {:ok, parsed} = SignatureBase.parse(vector["base"])
+      assert Map.delete(parsed, :inner_list) == parts
+      assert parsed.inner_list.type == :inner_list
+
+      rebuilt =
+        Enum.map_join(parts.components, "", fn {id, value} -> id <> ": " <> value <> "\n" end) <>
+          ~s["@signature-params": ] <> parts.signature_params
+
+      assert {:ok, ^rebuilt} = SignatureBase.build(message, vector["parameters"])
+      assert rebuilt == vector["base"]
+    end
+  end
+
+  test "parse accepts empty bases and parameterized identifiers without deriving their values" do
+    for params <- [~s[()], ~s[("@query-param";name="a" "example-dict";sf)]] do
+      prefix =
+        if params == "()",
+          do: "",
+          else: ~s["@query-param";name="a": untrusted] <> "\n" <> ~s["example-dict";sf: ] <> "\n"
+
+      assert {:ok, parsed} = SignatureBase.parse(prefix <> ~s["@signature-params": ] <> params)
+      assert parsed.signature_params == params
+    end
+  end
+
+  test "parse rejects every departure from the canonical ordered base grammar" do
+    valid = ~s["@method": GET] <> "\n" <> ~s["@signature-params": ("@method")]
+
+    for invalid <- [
+          nil,
+          42,
+          [],
+          %{},
+          <<255>>,
+          "",
+          ~s["@method": GET],
+          valid <> "\n",
+          String.replace(valid, "\n", "\r\n"),
+          String.replace(valid, "GET", <<255>>),
+          String.replace(valid, "GET", "G\tET"),
+          String.replace(valid, ~s[("@method")], ~s[( "@method" )]),
+          String.replace(valid, ~s[("@method")], ~s[("@path")]),
+          valid <> "\nextra: line",
+          ~s["@method": GET] <> "\n" <> valid,
+          ~s["@path": /] <> "\n" <> ~s["@method": GET] <> "\n" <>
+            ~s["@signature-params": ("@method" "@path")],
+          ~s["@signature-params": (42)],
+          ~s["@signature-params": ();a=01],
+          ~s["@signature-params": ();a=1;a=1],
+          ~s["@signature-params": ()] <> "\n" <> ~s["@signature-params": ("@signature-params")]
+        ] do
+      assert {:error, %SignatureBase.Error{reason: :malformed}} = SignatureBase.parse(invalid)
+    end
+
+    assert {:error, %SignatureBase.Error{reason: :limit}} =
+             SignatureBase.parse(:binary.copy("x", 1_048_577))
+
+    suffix = "\n" <> ~s["@signature-params": ("x")]
+    prefix = ~s["x": ]
+    base = prefix <> :binary.copy("x", 1_048_576 - byte_size(prefix <> suffix)) <> suffix
+    assert byte_size(base) == 1_048_576
+    assert {:ok, _} = SignatureBase.parse(base)
+  end
+
+  test "components shares build errors, schemas and resource accounting" do
+    message = request(%{fields: fields([{"Example-Dict", "a=1, b=2"}])})
+    opts = [field_schemas: %{"example-dict" => dictionary_schema()}]
+    params = ~s[("example-dict";sf "example-dict";key="b")]
+    assert {:ok, parts} = SignatureBase.components(message, params, opts)
+    assert {:ok, base} = SignatureBase.build(message, params, opts)
+    assert {:ok, parsed} = SignatureBase.parse(base)
+    assert Map.delete(parsed, :inner_list) == parts
+
+    for {message, params, options} <- [
+          {nil, params, []},
+          {message, "(", []},
+          {message, params, []},
+          {message, params, [unknown: true]},
+          {message, params, opts ++ [max_components: 1]},
+          {message, params, opts ++ [max_bytes: byte_size(base) - 1]}
+        ] do
+      assert {:error, error} = SignatureBase.build(message, params, options)
+      assert SignatureBase.components(message, params, options) == {:error, error}
+    end
+
+    assert {:ok, ^parts} =
+             SignatureBase.components(message, params, opts ++ [max_bytes: byte_size(base)])
+  end
+
   test "all complete Sections 2, 4.3 and Appendix B bases match independently published bytes" do
     assert length(@vectors) == 12
     assert Enum.any?(@vectors, &(&1["section"] == "B.2.1"))

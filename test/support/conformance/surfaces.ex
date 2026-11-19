@@ -25,6 +25,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     "structured_fields.serialize" => :serialize,
     "message.validate" => :validate_message,
     "signature_base.build" => :signature_base,
+    "signature_base.parse" => :parse_signature_base,
     "sign" => :sign,
     "verify" => :verify,
     "accept_signature.parse" => :accept_signature,
@@ -47,6 +48,18 @@ defmodule RequestSeal.Conformance.Surfaces do
   }
   def run(root, case_),
     do: apply(__MODULE__, Map.fetch!(@registry, case_["surface"]), [root, case_])
+
+  def parse_signature_base(root, case_) do
+    bytes = root |> C.load(case_["inputs"]["base"]) |> C.bytes()
+
+    with {:ok, parsed} <- RequestSeal.SignatureBase.parse(bytes) do
+      {:ok,
+       %{
+         "components" => Enum.map(parsed.components, fn {id, value} -> [id, C.b64(value)] end),
+         "signature_params" => C.b64(parsed.signature_params)
+       }}
+    end
+  end
 
   def message(root, value) do
     value = C.load(root, value)

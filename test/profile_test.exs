@@ -134,6 +134,33 @@ defmodule RequestSeal.ProfileTest do
     assert {:ok, _} = verify(c, %{name: {:test_pkg, :rfc9421}})
   end
 
+  test "the reserved package predicate rejects exactly the five core names", c do
+    reserved = MapSet.new([:request_seal, :"request-seal", :rfc9421, :web_bot_auth, :"web-bot-auth"])
+
+    near_misses = [
+      :requestseal,
+      :request_seals,
+      :request_seal_extension,
+      :rfc94210,
+      :rfc_9421,
+      :webbotauth,
+      :web_bot_auth_extension,
+      :"web-bot-auth-extension",
+      :test_pkg
+    ]
+
+    rejected =
+      Enum.filter(MapSet.to_list(reserved) ++ near_misses, fn package ->
+        case verify(c, %{name: {package, :synthetic}}) do
+          {:error, %Error{reason: :invalid_profile, layer: :input}} -> true
+          {:ok, _} -> false
+          other -> flunk("unexpected profile result for #{inspect(package)}: #{inspect(other)}")
+        end
+      end)
+
+    assert MapSet.new(rejected) == reserved
+  end
+
   test "integer profile metadata has symmetric magnitude bounds", c do
     for value <- [-999_999_999_999_999, 999_999_999_999_999] do
       profile = Map.put(@profile, :metadata, value)

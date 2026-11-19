@@ -3,6 +3,8 @@ import hashlib
 from pathlib import Path
 import stat
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from corpus_json import canonical, decode
 
 

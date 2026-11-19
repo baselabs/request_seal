@@ -5,7 +5,7 @@ defmodule RequestSeal.SignatureBase.Error do
   Reasons:
 
   * Input: `:invalid_message`, `:invalid_options`, `:invalid_signature_parameters`,
-    `:limit` (documented resource ceilings).
+    `:limit` (documented resource ceilings), `:malformed` (invalid serialized base).
   * Components: `:invalid_component`, `:unknown_component`, `:duplicate_component`,
     `:invalid_component_parameters`, `:incompatible_parameters`.
   * Context: `:wrong_message_kind`, `:missing_request_context`, `:unavailable_origin`,
@@ -27,6 +27,7 @@ defmodule RequestSeal.SignatureBase.Error do
           | :invalid_options
           | :invalid_signature_parameters
           | :limit
+          | :malformed
           | :invalid_component
           | :unknown_component
           | :duplicate_component

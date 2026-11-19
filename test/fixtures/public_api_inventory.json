@@ -1,0 +1,356 @@
+{
+  "RequestSeal": [
+    "function sign/4",
+    "function verify/3",
+    "type parameterized_signing_spec/0",
+    "type signature_spec/0",
+    "type signing_spec/0"
+  ],
+  "RequestSeal.AcceptSignature": [
+    "function fulfill/5",
+    "function parse/2",
+    "function serialize/1",
+    "type request/0"
+  ],
+  "RequestSeal.Adapter.Error": [
+    "function message/1",
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.Ash": [
+    "function scope/2",
+    "type binding/0"
+  ],
+  "RequestSeal.Ash.Scope": [
+    "function get_actor/1",
+    "function get_authorize?/1",
+    "function get_context/1",
+    "function get_tenant/1",
+    "function get_tracer/1",
+    "function to_opts/1",
+    "type t/0"
+  ],
+  "RequestSeal.AshHooks": [
+    "function verify_signature/4"
+  ],
+  "RequestSeal.AshHooks.Http": [
+    "function request/5"
+  ],
+  "RequestSeal.Body": [
+    "function new/1",
+    "function validate/1",
+    "type t/0"
+  ],
+  "RequestSeal.Crypto": [
+    "function algorithms/0",
+    "function max_bytes_ceiling/0",
+    "function sign/4",
+    "function verify/5",
+    "type algorithm/0"
+  ],
+  "RequestSeal.Crypto.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.Custody": [
+    "callback identity/1",
+    "callback public_key/1",
+    "callback release/2",
+    "callback sign/4",
+    "callback unwrap/5",
+    "callback verify/5",
+    "callback wrap/4",
+    "function identity/1",
+    "function public_key/1",
+    "function release/1",
+    "function run/2",
+    "function sign/3",
+    "function unwrap/3",
+    "function verify/4",
+    "function wrap/3",
+    "type algorithm/0",
+    "type item/0",
+    "type key_algorithm/0",
+    "type params/0"
+  ],
+  "RequestSeal.Custody.Context": [
+    "function remaining/1",
+    "type t/0"
+  ],
+  "RequestSeal.Custody.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.Custody.Local": [
+    "function import/4",
+    "function new/3",
+    "function release/1"
+  ],
+  "RequestSeal.Custody.Local.Owner": [
+    "function child_spec/1",
+    "function fetch/2",
+    "function ready?/2",
+    "function start_link/1",
+    "function status/1",
+    "type encoding/0",
+    "type key_status/0",
+    "type options/0",
+    "type source/0"
+  ],
+  "RequestSeal.Custody.SSHAgent": [
+    "function new/4"
+  ],
+  "RequestSeal.Custody.Sink": [
+    "function deliver/3",
+    "type t/0"
+  ],
+  "RequestSeal.Digest": [
+    "function check/3",
+    "function check_stream/3",
+    "function compute/3",
+    "function finish/1",
+    "function init/3",
+    "function parse/1",
+    "function parse_preferences/1",
+    "function preferences/3",
+    "function serialize/1",
+    "function serialize_preferences/1",
+    "function update/2",
+    "type failure/0",
+    "type t/0"
+  ],
+  "RequestSeal.Digest.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.Discovery": [
+    "function fetch/2",
+    "function resolver/2"
+  ],
+  "RequestSeal.Discovery.Cache": [
+    "function invalidate/2",
+    "function refresh/2",
+    "function remove/3",
+    "function resolve/4",
+    "function start_link/1"
+  ],
+  "RequestSeal.Discovery.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.Discovery.KeySet": [
+    "function lookup/3",
+    "type t/0"
+  ],
+  "RequestSeal.Discovery.Resolution": [
+    "type t/0"
+  ],
+  "RequestSeal.Discovery.Source": [
+    "function directory_id?/1",
+    "function new/1",
+    "type t/0"
+  ],
+  "RequestSeal.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.FieldOccurrence": [
+    "function new/1",
+    "function validate/1",
+    "type t/0"
+  ],
+  "RequestSeal.Finch": [
+    "function classify/1",
+    "function request_message/2",
+    "function response_message/3",
+    "function sign/4",
+    "function verify/4",
+    "type spec/0"
+  ],
+  "RequestSeal.JOSE": [
+    "type enc/0",
+    "type header/0",
+    "type jwe_alg/0",
+    "type jws_alg/0"
+  ],
+  "RequestSeal.JOSE.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.JOSE.JWE": [
+    "function decrypt/2",
+    "function decrypt_many/2",
+    "function encrypt/4"
+  ],
+  "RequestSeal.JOSE.JWE.Result": [
+    "type t/0"
+  ],
+  "RequestSeal.JOSE.JWS": [
+    "function sign/4",
+    "function sign_protected/4",
+    "function verify/2"
+  ],
+  "RequestSeal.JOSE.JWS.Result": [
+    "type t/0"
+  ],
+  "RequestSeal.JOSE.KeyManagement": [
+    "function agree/4",
+    "function unwrap/4",
+    "function wrap/4"
+  ],
+  "RequestSeal.JOSE.Nested": [
+    "function verify/4"
+  ],
+  "RequestSeal.KeyHandle": [
+    "type t/0"
+  ],
+  "RequestSeal.KeyIdentity": [
+    "function same?/2",
+    "type t/0"
+  ],
+  "RequestSeal.Message": [
+    "function new/1",
+    "function request/5",
+    "function response/4",
+    "function validate/1",
+    "type t/0"
+  ],
+  "RequestSeal.Message.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.Plug": [
+    "function capture/1",
+    "function verification/1"
+  ],
+  "RequestSeal.Plug.Capture": [
+    "function call/2",
+    "function init/1",
+    "function read_body/2",
+    "type t/0"
+  ],
+  "RequestSeal.Plug.SignResponse": [
+    "function call/2",
+    "function init/1"
+  ],
+  "RequestSeal.Plug.Verify": [
+    "function call/2",
+    "function init/1"
+  ],
+  "RequestSeal.Policy": [
+    "function new/1",
+    "type signer/0",
+    "type t/0",
+    "type verify_fun/0"
+  ],
+  "RequestSeal.Profile": [
+    "function dictionaries/2",
+    "function preflight/4",
+    "function valid_signature_input?/1",
+    "function verify_label/6",
+    "type stamp/0"
+  ],
+  "RequestSeal.PublicKey": [
+    "function export/2",
+    "function import/2",
+    "function thumbprint/1",
+    "type t/0"
+  ],
+  "RequestSeal.Replay": [
+    "callback claim/3",
+    "callback sweep/3",
+    "function claim/3"
+  ],
+  "RequestSeal.Replay.AshOnetime": [
+    "function claim/3",
+    "function store/2",
+    "function sweep/3",
+    "type ref/0"
+  ],
+  "RequestSeal.Replay.Claim": [
+    "function valid?/1",
+    "type t/0"
+  ],
+  "RequestSeal.Replay.ETS": [
+    "function claim/3",
+    "function start_link/1",
+    "function store/1",
+    "function sweep/2",
+    "function sweep/3"
+  ],
+  "RequestSeal.Replay.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.Replay.Postgres": [
+    "function claim/3",
+    "function ddl/1",
+    "function ddl_index/1",
+    "function store/2",
+    "function sweep/3"
+  ],
+  "RequestSeal.Replay.Receipt": [
+    "type t/0"
+  ],
+  "RequestSeal.Replay.Store": [
+    "type t/0"
+  ],
+  "RequestSeal.Req": [
+    "function attach/2",
+    "function classify/1",
+    "function verification/1"
+  ],
+  "RequestSeal.SignatureBase": [
+    "function build/3",
+    "function components/3",
+    "function parse/1"
+  ],
+  "RequestSeal.SignatureBase.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.StructuredFields": [
+    "function parse/3",
+    "function parse_field/5",
+    "function serialize/3"
+  ],
+  "RequestSeal.StructuredFields.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.StructuredFields.Schema": [
+    "function new/1",
+    "function types/1",
+    "function validate/1",
+    "type bare_type/0",
+    "type t/0"
+  ],
+  "RequestSeal.StructuredFields.Value": [
+    "type bare/0",
+    "type t/0"
+  ],
+  "RequestSeal.Telemetry": [
+    "function events/0"
+  ],
+  "RequestSeal.TransportFacts": [
+    "function new/1",
+    "function validate/1",
+    "type t/0"
+  ],
+  "RequestSeal.Verification": [
+    "type t/0"
+  ],
+  "RequestSeal.WebBotAuth": [
+    "function sign/4",
+    "function verify/3"
+  ],
+  "RequestSeal.WebBotAuth.Policy": [
+    "function new/1",
+    "type agents/0",
+    "type signer/0",
+    "type t/0"
+  ],
+  "RequestSeal.WebBotAuth.Verification": [
+    "type t/0"
+  ]
+}

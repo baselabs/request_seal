@@ -186,6 +186,31 @@ discovered_envelope.signatures["agent"].principal.kind
 
 Instead of a fetched KeySet, your `agents` trust function may return a configured `Discovery.Source` and use a caller-started `cache`. The received URL never selects an arbitrary network destination. Directory proofs establish key possession; your chosen source policy establishes the trusted association. Discovery supports directories, JWKS, and CIMD; [key discovery](key-discovery.md) covers source configuration and caching.
 
+## Match verified identities to application records
+
+An agent identity belongs to the selected, verified signature label and the key
+that verified that signature. Read its principal from `envelope.signatures[label]`;
+an unrelated label or a raw `Signature-Agent` field establishes no identity.
+A raw [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html) key thumbprint identifies
+a key; successful verification proves possession of that key only, not which
+agent label it signed under. In held-key mode the principal therefore contains
+only the thumbprint, even if the request advertises an agent URL.
+
+Match a verified agent principal's `identifier` to your configured agent records,
+or a held-key principal's `thumbprint` to your registered key records. Handle a
+missing record as an application rejection; neither lookup grants authorization:
+
+```elixir
+agent_records = %{key_set.source.location => %{id: "configured-agent"}}
+key_records = %{thumbprint => %{id: "held-key"}}
+selected = Map.fetch!(discovered_envelope.signatures, "agent")
+
+{:ok, agent_record} = Map.fetch(agent_records, selected.principal.identifier)
+{:ok, key_record} = Map.fetch(key_records, verification.principal.thumbprint)
+{agent_record.id, key_record.id}
+# => {"configured-agent", "held-key"}
+```
+
 ## Draft rules and options
 
 Every selected `web-bot-auth` signature independently needs created/expires, a SHA-256 JWK thumbprint key ID, authority or target URI coverage, and its matching dictionary `Signature-Agent` member when present. Legacy string fields reject. Signing adds the matching member and always covers authority and agent identity; extra `components:` adds coverage. HMAC is forbidden. Signing lifetimes are positive and at most 86,400 seconds; verification bounds `expires - created` by the policy's optional `max_lifetime` (default 86,400 seconds, at most 604,800). `RequestSeal.WebBotAuth.verify/3` accepts `timeout:` (default 5,000 ms) as one deadline for trust and discovery. Published test keys reject by default.

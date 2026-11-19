@@ -297,3 +297,29 @@ paths = [
   '''^corpus/cases/jws/native-embedded-unsupported-okp-curve\.json$''',
   '''^corpus/cases/jws/native-embedded-x25519\.json$''',
 ]
+
+# RFC 9421 signature-base inspection vectors and clause-derived rejections.
+[[allowlists]]
+description = "RFC 9421 signature-base inspection case manifests"
+paths = [
+  '''^corpus/cases/signature_base/parse-reject-crlf\.json$''',
+  '''^corpus/cases/signature_base/parse-reject-extra-line\.json$''',
+  '''^corpus/cases/signature_base/parse-reject-identifier-mismatch\.json$''',
+  '''^corpus/cases/signature_base/parse-reject-missing-final\.json$''',
+  '''^corpus/cases/signature_base/parse-reject-non-ascii\.json$''',
+  '''^corpus/cases/signature_base/parse-reject-noncanonical-params\.json$''',
+  '''^corpus/cases/signature_base/parse-reject-order-mismatch\.json$''',
+  '''^corpus/cases/signature_base/parse-reject-trailing-lf\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-2-4-0\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-2-4-1\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-2-5\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-4-3\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-b-2-1\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-b-2-2\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-b-2-3\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-b-2-4\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-b-2-5\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-b-2-6\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-b-3\.json$''',
+  '''^corpus/cases/signature_base/parse-rfc9421-b-4\.json$''',
+]

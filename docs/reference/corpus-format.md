@@ -79,6 +79,7 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `structured_fields.parse`, `.serialize` | Field type, revision, mode, raw bytes or typed tree | Canonical `bytes` |
 | `message.validate` | Lossless message, ordered field occurrences, retained or unavailable body | `valid` |
 | `signature_base.build` | Message, Signature-Input Inner List, explicit field schemas | `base` bytes |
+| `signature_base.parse` | Serialized signature `base` bytes or source reference | Ordered `components` pairs of serialized identifier and byte-tagged value, and canonical `signature_params` byte tag; no authentication claim |
 | `sign` | Message, explicit or generated-metadata spec, clock/nonce options, source key | Exact appended field pairs for HMAC, Ed25519, RSA v1.5; `valid` after verification for ECDSA and RSA-PSS |
 | `verify` | Message, selected label and explicit policy | Canonical verification facts |
 | `accept_signature.parse` | Raw field bytes, explicit target kind | Canonical `bytes` |

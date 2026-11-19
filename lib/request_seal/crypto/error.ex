@@ -9,14 +9,13 @@ defmodule RequestSeal.Crypto.Error do
   @enforce_keys [:reason]
   defstruct [:reason]
 
-  @type t :: %__MODULE__{
-          reason:
-            :unsupported_algorithm
-            | :unsupported_format
-            | :invalid_key
-            | :key_mismatch
-            | :invalid_options
-            | :invalid_data
-            | :invalid_signature
-        }
+  @type reason ::
+          :invalid_data
+          | :invalid_key
+          | :invalid_options
+          | :invalid_signature
+          | :key_mismatch
+          | :unsupported_algorithm
+          | :unsupported_format
+  @type t :: %__MODULE__{reason: reason()}
 end
