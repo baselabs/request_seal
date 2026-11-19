@@ -135,7 +135,8 @@ defmodule RequestSeal.ProfileTest do
   end
 
   test "the reserved package predicate rejects exactly the five core names", c do
-    reserved = MapSet.new([:request_seal, :"request-seal", :rfc9421, :web_bot_auth, :"web-bot-auth"])
+    reserved =
+      MapSet.new([:request_seal, :"request-seal", :rfc9421, :web_bot_auth, :"web-bot-auth"])
 
     near_misses = [
       :requestseal,

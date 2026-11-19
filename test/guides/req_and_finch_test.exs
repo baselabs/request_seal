@@ -140,6 +140,7 @@ defmodule RequestSeal.GuideReqAndFinchTest do
     E.assert_received_request()
     assert Keyword.fetch!(binding, :verified_response).signature.crypto == :valid
     E.assert_rejected_request(binding)
+
     binding =
       E.eval(
         ~S'''

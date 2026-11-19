@@ -32,6 +32,7 @@ defmodule RequestSeal.Digest.Error do
   """
   @enforce_keys [:reason]
   defstruct [:reason]
+
   @type reason ::
           :body_unavailable
           | :conflicting_digest

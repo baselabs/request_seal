@@ -18,6 +18,7 @@ defmodule RequestSeal.StructuredFields.Error do
   """
   @enforce_keys [:reason]
   defstruct [:reason]
+
   @type reason ::
           :duplicate_key
           | :duplicate_parameter
