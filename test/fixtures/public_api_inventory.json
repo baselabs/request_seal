@@ -22,11 +22,6 @@
     "type binding/0"
   ],
   "RequestSeal.Ash.Scope": [
-    "function get_actor/1",
-    "function get_authorize?/1",
-    "function get_context/1",
-    "function get_tenant/1",
-    "function get_tracer/1",
     "function to_opts/1",
     "type t/0"
   ],
@@ -128,6 +123,7 @@
     "function resolver/2"
   ],
   "RequestSeal.Discovery.Cache": [
+    "function child_spec/1",
     "function invalidate/2",
     "function refresh/2",
     "function remove/3",
@@ -272,6 +268,7 @@
     "type t/0"
   ],
   "RequestSeal.Replay.ETS": [
+    "function child_spec/1",
     "function claim/3",
     "function start_link/1",
     "function store/1",
