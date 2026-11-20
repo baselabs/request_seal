@@ -597,6 +597,7 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
 
           :erlang.trace_pattern({Coordinator, :worker_down, 3}, true, [:local, :call_count])
           :erlang.trace_pattern({Coordinator, :dead_groups, 3}, true, [:local, :call_count])
+          :erlang.trace_pattern({Coordinator, :dead_positions, 4}, true, [:local, :call_count])
           Enum.each(owned, &send(&1, :continue))
 
           Runtime.await(fn ->
@@ -613,6 +614,10 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
                    {:call_count, 0},
                  "a normal range end must not scan every custody group"
 
+          assert :erlang.trace_info({Coordinator, :dead_positions, 4}, :call_count) ==
+                   {:call_count, 0},
+                 "a normal range end must not scan settled positions"
+
           result = Runtime.collect_return(s) |> Runtime.delivered()
           assert {:ok, results} = result.return
           assert Enum.count(results, &match?({:ok, %{plaintext: "payload"}}, &1)) == 16
@@ -621,6 +626,7 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
         after
           :erlang.trace_pattern({Coordinator, :worker_down, 3}, false, [:local, :call_count])
           :erlang.trace_pattern({Coordinator, :dead_groups, 3}, false, [:local, :call_count])
+          :erlang.trace_pattern({Coordinator, :dead_positions, 4}, false, [:local, :call_count])
           Runtime.cleanup(s)
         end
       end,

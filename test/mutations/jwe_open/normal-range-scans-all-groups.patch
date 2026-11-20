@@ -1,11 +1,11 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -666,7 +666,7 @@
-         # Normal completion follows the range's last result send. Its earlier
+@@ -667,7 +667,7 @@
          # contributions are already sent, or U/D has revoked them. Only an
          # unexpected exit can leave a custodian waiting for this contributor.
--        if reason == :normal, do: s, else: dead_groups(:maps.to_list(map_get(:groups, s)), w, s)
-+        dead_groups(:maps.to_list(map_get(:groups, s)), w, s)
-
-       :error ->
-         s
+         if reason == :normal do
+-          s
++          dead_groups(:maps.to_list(map_get(:groups, s)), w, s)
+         else
+           s = dead_positions(lo, hi, s, reason)
+           dead_groups(:maps.to_list(map_get(:groups, s)), w, s)

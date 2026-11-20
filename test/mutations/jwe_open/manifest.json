@@ -676,6 +676,15 @@
       "covers": [
         "generation and derivation custody confinement; no raw-key export"
       ]
+    },
+    {
+      "patch": "normal-range-scans-settled-positions.patch",
+      "file": "test/jwe_open_lifecycle_test.exs",
+      "test": "a normally completed range does not scan other custody groups",
+      "failure": "a normal range end must not scan settled positions",
+      "covers": [
+        "normal completion preserves sender order without a second range pass"
+      ]
     }
   ],
   "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."

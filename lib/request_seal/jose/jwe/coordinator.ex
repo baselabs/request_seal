@@ -460,6 +460,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
     end
   end
 
+  defp ended(%{expired_u: true} = s, {:custody, _}), do: s
   defp ended(s, {:custody, g}), do: summary(s, g, :error)
   defp ended(s, _), do: s
 
@@ -661,12 +662,16 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
       {:ok, w} ->
         {^pid, lo, hi, _} = :maps.get(w, map_get(:workers, s))
         s = %{s | workers: :maps.put(w, {pid, lo, hi, false}, map_get(:workers, s))}
-        s = dead_positions(lo, hi, s, reason)
 
         # Normal completion follows the range's last result send. Its earlier
         # contributions are already sent, or U/D has revoked them. Only an
         # unexpected exit can leave a custodian waiting for this contributor.
-        if reason == :normal, do: s, else: dead_groups(:maps.to_list(map_get(:groups, s)), w, s)
+        if reason == :normal do
+          s
+        else
+          s = dead_positions(lo, hi, s, reason)
+          dead_groups(:maps.to_list(map_get(:groups, s)), w, s)
+        end
 
       :error ->
         s
