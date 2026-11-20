@@ -285,7 +285,7 @@ class QualificationTest(unittest.TestCase):
                 self.assertFalse(any(step_identity(step).split("/")[:2] == ["actions", "cache"] for step in steps))
         uploads = [step for step in proofs["teardown"]["steps"] if step_identity(step) == "actions/upload-artifact"]
         self.assertEqual(1, len(uploads))
-        self.assertEqual({"uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+        self.assertEqual({"uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
                           "if": "always()", "with": {"name": "jwe-teardown", "if-no-files-found": "error",
                                                        "path": "${{ runner.temp }}/jwe-teardown.json"}}, uploads[0])
         for workflow in workflows():
