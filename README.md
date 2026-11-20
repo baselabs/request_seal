@@ -557,6 +557,7 @@ before the tag and GitHub release for `v<version>` are created.
 - [Test your integration](docs/guides/testing-your-integration.md)
 - [Livebooks](livebooks/overview.md): executable notebooks for the core flow, a published RFC vector, Plug, Web Bot Auth, and JOSE
 - [ECDH-ES Livebook](livebooks/ecdh-es.livemd): P-256 and X25519 agreement, JWE round trips, and rejections
+- [JWE batch Livebook](livebooks/jwe-batch.livemd): positional results, outer failures, handle groups, and cancellation
 
 API reference: [HexDocs](https://request-seal.hexdocs.pm). Release notes: [CHANGELOG](CHANGELOG.md).
 

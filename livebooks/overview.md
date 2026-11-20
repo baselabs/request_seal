@@ -17,6 +17,7 @@ Each notebook installs RequestSeal from Hex, generates its own keys, and asserts
 | [Sign and verify a Web Bot Auth agent](web-bot-auth.livemd) | Web Bot Auth protocol-00 signing with path coverage, held-key verification, and changed-page, unknown-key, and unsigned rejections. |
 | [JWS inside JWE in Livebook](jose.livemd) | Compact JWS signing and verification, a JWS nested in a JWE, an RSA-OAEP recipient key handle, and the bounded JOSE errors. |
 | [ECDH-ES agreement and JWE in Livebook](ecdh-es.livemd) | A published X25519 public-key check; direct ECDH-ES and both key-wrap variants over P-256 and X25519; encryption to public keys, custody decryption, tampering, malformed ephemeral keys, wrong curves, and policy rejections. |
+| [Bounded JWE batches in Livebook](jwe-batch.livemd) | Published AES key-wrap bytes, ordered `decrypt_many/2` results, positional rejections, outer failures, grouping by handle, resolver expiry, caller cancellation, and released handles. |
 
 The gate checks notebook imports, exported code coverage, assertions, and completion
 against a fresh install of the inspected packed archive within time and output limits.

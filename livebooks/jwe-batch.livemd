@@ -1,0 +1,362 @@
+# Bounded JWE batches in Livebook
+
+This notebook opens real compact JWEs using `RequestSeal.JOSE.JWE.decrypt_many/2`: ordered results, item rejections, outer failures, grouping by custody handle, resolver expiry, and caller cancellation. The envelopes use [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html), AES key wrapping from [RFC 7518 §4.4](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.4), and AES-GCM content encryption. Batching is a RequestSeal API, not a new JWE serialization. No server or network peer is required beyond the Hex install.
+
+```elixir
+Mix.install([{:request_seal, "~> 2.0"}])
+```
+
+## Check published AES key-wrap bytes
+
+[RFC 3394 §4.3](https://www.rfc-editor.org/rfc/rfc3394.html#section-4.3) publishes these exact wrapping-key, key-data, and wrapped bytes. They are public test material, never production credentials. Custody must unwrap them exactly before we use freshly generated keys for the batch.
+
+```elixir
+alias RequestSeal.Custody
+alias RequestSeal.JOSE.JWE
+
+published_kek =
+  Base.decode16!("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F")
+
+published_key = Base.decode16!("00112233445566778899AABBCCDDEEFF")
+published_wrapped = Base.decode16!("64E8C3F9CE0F5BA263E9777905818A2A93C8191E7D6E8AE7")
+{:ok, vector_handle} = Custody.Local.new({:jwe, "A256KW"}, {:aes, published_kek})
+
+try do
+  {:ok, [{:ok, ^published_key}]} =
+    Custody.unwrap(vector_handle, [{published_wrapped, %{}, 128}])
+after
+  :ok = Custody.release(vector_handle)
+end
+
+IO.puts("Published AES key-wrap bytes recovered exactly")
+```
+
+## Encrypt three items using two caller-owned handles
+
+Items carry exactly `:token` and `:expected`. Expectations are public protected-header values, checked independently for each position. The first and third items use the same handle. The resolver uses the untrusted `kid` only to look up an already trusted handle; it performs no authorization or other trusted side effect.
+
+```elixir
+{:ok, handle_a} = Custody.Local.new({:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)})
+{:ok, handle_b} = Custody.Local.new({:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)})
+[:wrap, :unwrap] = handle_a.capabilities
+[:wrap, :unwrap] = handle_b.capabilities
+handles = %{"key-a" => handle_a, "key-b" => handle_b}
+
+items =
+  for {kid, page} <- [{"key-a", 0}, {"key-b", 1}, {"key-a", 2}] do
+    {:ok, token} =
+      JWE.encrypt(
+        [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"kid", kid}, {"page", page}],
+        "payload#{page}",
+        Map.fetch!(handles, kid)
+      )
+
+    %{token: token, expected: %{"kid" => kid, "page" => page}}
+  end
+
+policy = %{
+  algorithms: ["A256KW"],
+  encryption: ["A256GCM"],
+  max_plaintext: 1024,
+  max_tokens: 10,
+  max_total_input: 65_536,
+  max_total_plaintext: 10_240,
+  timeout: 5_000,
+  resolve_timeout: 1000,
+  unwrap_timeout: 1000,
+  protected: %{permitted: []},
+  key_resolver: fn %{algorithm: algorithm, header: header} ->
+    case Map.fetch(handles, header["kid"]) do
+      {:ok, handle} -> {:ok, %{algorithm: algorithm, key: handle}}
+      :error -> :error
+    end
+  end
+}
+
+3 = length(items)
+{:ok, [{:ok, %{plaintext: "payload0"}}, {:ok, %{plaintext: "payload1"}},
+       {:ok, %{plaintext: "payload2"}}]} = JWE.decrypt_many(items, policy)
+IO.puts("Three authenticated plaintexts returned in input order")
+```
+
+## Compare with single open and the empty batch
+
+The outer `{:ok, results}` means the batch has a final positional list; individual entries still decide success or failure. The single-item policy puts expectations in `:protected`, while batch expectations belong to each item. The phase budgets are explicit and `resolve_timeout + unwrap_timeout` must be strictly below `timeout`.
+
+```elixir
+singles =
+  Enum.map(items, fn item ->
+    single_policy =
+      policy
+      |> Map.drop([:max_tokens, :max_total_input, :max_total_plaintext])
+      |> Map.put(:protected, %{expected: item.expected, permitted: []})
+
+    {:ok, _} = opened = JWE.decrypt(item.token, single_policy)
+    opened
+  end)
+
+{:ok, ^singles} = JWE.decrypt_many(items, policy)
+{:ok, []} = JWE.decrypt_many([], policy)
+IO.puts("Batch equals single opens; an empty batch succeeds with an empty list")
+```
+
+## Keep item failures at their original positions
+
+Flip a bit in the second token's real authentication tag, change an expected public value, omit a required item field, and use a reserved expectation name. Good neighbors must still decrypt, with every rejection at its own position. No failed entry carries plaintext.
+
+```elixir
+[first, middle, last] = items
+[protected, encrypted_key, iv, ciphertext, tag] = String.split(middle.token, ".")
+<<head, tail::binary>> = Base.url_decode64!(tag, padding: false)
+changed_tag = Base.url_encode64(<<Bitwise.bxor(head, 1), tail::binary>>, padding: false)
+forged = %{middle | token: Enum.join([protected, encrypted_key, iv, ciphertext, changed_tag], ".")}
+wrong_context = %{middle | expected: Map.put(middle.expected, "page", 99)}
+malformed_item = %{token: first.token}
+invalid_expectation = %{first | expected: %{"alg" => "A256KW"}}
+
+{:ok, [
+  {:ok, %{plaintext: "payload0"}},
+  {:error, %{reason: :decryption_failed, layer: :crypto}},
+  {:error, %{reason: :protected_mismatch, layer: :input}},
+  {:error, %{reason: :invalid_serialization, layer: :input}},
+  {:error, %{reason: :invalid_policy, layer: :input}},
+  {:ok, %{plaintext: "payload2"}}
+]} = JWE.decrypt_many([first, forged, wrong_context, malformed_item, invalid_expectation, last], policy)
+
+IO.puts("Item rejections preserved position and both good neighbors")
+```
+
+## Refuse outer failures before key resolution
+
+A non-list input, invalid policy, or aggregate limit returns one outer error without a result list. Total input includes serialized expectations, and total plaintext counts ciphertext widths before key work. The resolver below delegates to the real resolver and adds a control notice so the cell can assert that outer failures never call it.
+
+```elixir
+observer = self()
+outer_tag = make_ref()
+resolve = policy.key_resolver
+
+observed_policy = %{
+  policy
+  | key_resolver: fn request ->
+      send(observer, {:outer_resolved, outer_tag})
+      resolve.(request)
+    end
+}
+
+{:error, %{reason: :invalid_serialization, layer: :input}} =
+  JWE.decrypt_many(%{}, observed_policy)
+
+{:error, %{reason: :invalid_policy, layer: :input}} =
+  JWE.decrypt_many(items, %{observed_policy | unwrap_timeout: 4_000})
+
+token_bytes = Enum.sum(Enum.map(items, &byte_size(&1.token)))
+
+for limited <- [
+      %{observed_policy | max_tokens: 2},
+      %{observed_policy | max_total_input: token_bytes},
+      %{observed_policy | max_total_plaintext: 1}
+    ] do
+  {:error, %{reason: :limit, layer: :input}} = JWE.decrypt_many(items, limited)
+end
+
+receive do
+  {:outer_resolved, ^outer_tag} -> raise "Outer refusal reached key resolution"
+after
+  0 -> :ok
+end
+
+IO.puts("Outer serialization, policy, and all three aggregate limits refused before resolution")
+```
+
+## Observe one unwrap call per handle group
+
+Attach only for this operation, then detach in `after`. The three tokens should produce two groups and custody calls of one and two items, despite the first and third tokens having different headers. These events contain counts and duration, never handles, key IDs, token bytes, or plaintext.
+
+```elixir
+defmodule NotebookBatchTelemetry do
+  def handle_event(event, measurements, metadata, {destination, tag}) do
+    send(destination, {:batch_event, tag, event, measurements, metadata})
+  end
+end
+
+handler = make_ref()
+event_tag = make_ref()
+
+:ok =
+  :telemetry.attach_many(
+    handler,
+    [[:request_seal, :jose, :decrypt_many], [:request_seal, :custody, :unwrap]],
+    &NotebookBatchTelemetry.handle_event/4,
+    {self(), event_tag}
+  )
+
+try do
+  {:ok, ^singles} = JWE.decrypt_many(items, policy)
+
+  receive do
+    {:batch_event, ^event_tag, [:request_seal, :jose, :decrypt_many],
+     %{count: 3, groups: 2, failed: 0, deadline_exceeded: 0}, metadata} ->
+      %{} = metadata
+      0 = map_size(metadata)
+  after
+    5_000 -> raise "Missing batch group event"
+  end
+
+  counts =
+    for _ <- 1..2 do
+      receive do
+        {:batch_event, ^event_tag, [:request_seal, :custody, :unwrap], measurements, metadata} ->
+          [:duration, :items] = Enum.sort(Map.keys(measurements))
+          true = is_integer(measurements.duration) and measurements.duration >= 0
+          0 = map_size(metadata)
+          measurements.items
+      after
+        5_000 -> raise "Missing custody group event"
+      end
+    end
+
+  [1, 2] = Enum.sort(counts)
+
+  receive do
+    {:batch_event, ^event_tag, _, _, _} -> raise "Unexpected extra group event"
+  after
+    0 -> :ok
+  end
+after
+  :ok = :telemetry.detach(handler)
+end
+
+IO.puts("Three tokens used two handle groups and two unwrap calls")
+```
+
+## Expire one resolver while preserving its neighbors
+
+This is an actual application resolver paused on a message, not a replacement cryptographic service. Only the middle position waits; the other two return their real custody handle. Resolution ends at the policy's R budget, producing `:key_resolver_failed` at that position and terminating the waiting resolver.
+
+```elixir
+expiry_tag = make_ref()
+
+expiry_policy = %{
+  policy
+  | key_resolver: fn request ->
+      if request.header["page"] == 1 do
+        send(observer, {:expiry_waiting, expiry_tag, self()})
+
+        receive do
+          {:resume, ^expiry_tag} -> resolve.(request)
+        end
+      else
+        resolve.(request)
+      end
+    end
+}
+
+{:ok, [
+  {:ok, %{plaintext: "payload0"}},
+  {:error, %{reason: :key_resolver_failed, layer: :key}},
+  {:ok, %{plaintext: "payload2"}}
+]} = JWE.decrypt_many(items, expiry_policy)
+
+receive do
+  {:expiry_waiting, ^expiry_tag, resolver} -> false = Process.alive?(resolver)
+after
+  5_000 -> raise "Resolver expiry was not exercised"
+end
+
+IO.puts("Expired resolver ended; neighboring authenticated results survived")
+```
+
+## Cancel an in-flight batch by ending its caller
+
+Start a real batch in a monitored caller, wait for its resolver to begin, then kill the caller. Long phase budgets keep the cancellation check distinct from deadline expiry. Monitor both processes and require `:killed` exits; no batch result may escape. The notebook owns the custody handles, so cancelling this operation must leave them usable for another call.
+
+```elixir
+cancel_tag = make_ref()
+
+cancel_policy = %{
+  policy
+  | timeout: 30_000,
+    resolve_timeout: 20_000,
+    key_resolver: fn request ->
+      send(observer, {:cancel_waiting, cancel_tag, self()})
+
+      receive do
+        {:resume, ^cancel_tag} -> resolve.(request)
+      end
+    end
+}
+
+{caller, caller_monitor} =
+  spawn_monitor(fn ->
+    result = JWE.decrypt_many([first], cancel_policy)
+    send(observer, {:batch_returned, cancel_tag, result})
+  end)
+
+try do
+  resolver =
+    receive do
+      {:cancel_waiting, ^cancel_tag, pid} -> pid
+    after
+      5_000 -> raise "Cancellation resolver did not start"
+    end
+
+  resolver_monitor = Process.monitor(resolver)
+
+  try do
+    receive do
+      {:batch_returned, ^cancel_tag, _} -> raise "Batch returned while resolution was waiting"
+    after
+      0 -> :ok
+    end
+
+    true = Process.exit(caller, :kill)
+
+    receive do
+      {:DOWN, ^caller_monitor, :process, ^caller, :killed} -> :ok
+    after
+      5_000 -> raise "Batch caller did not stop"
+    end
+
+    receive do
+      {:DOWN, ^resolver_monitor, :process, ^resolver, :killed} -> :ok
+    after
+      5_000 -> raise "Caller cancellation did not stop its resolver"
+    end
+
+    false = Process.alive?(caller)
+    false = Process.alive?(resolver)
+
+    receive do
+      {:batch_returned, ^cancel_tag, _} -> raise "Cancelled batch released a result"
+    after
+      0 -> :ok
+    end
+  after
+    Process.demonitor(resolver_monitor, [:flush])
+  end
+after
+  Process.exit(caller, :kill)
+  Process.demonitor(caller_monitor, [:flush])
+end
+
+{:ok, ^singles} = JWE.decrypt_many(items, policy)
+IO.puts("Caller cancellation stopped the resolver; a fresh batch still decrypts")
+```
+
+## Release every caller-owned handle
+
+```elixir
+for handle <- [handle_a, handle_b] do
+  :ok = Custody.release(handle)
+end
+
+{:ok, [
+  {:error, %{reason: :decryption_failed, layer: :crypto}},
+  {:error, %{reason: :decryption_failed, layer: :crypto}},
+  {:error, %{reason: :decryption_failed, layer: :crypto}}
+]} = JWE.decrypt_many(items, policy)
+
+IO.puts("Released handles produce uniform positional crypto failures")
+```
+
+The API returns one final ordered list, with no partial batch plaintext. Successful decryption establishes recipient integrity, not sender identity or authorization. This local lifecycle exercise does not claim deployed-peer acceptance. See the [JOSE guide](../docs/guides/jose.md), [key custody](../docs/guides/key-custody.md), and [testing and evidence](../docs/guides/testing.md).

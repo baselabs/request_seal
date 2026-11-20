@@ -4,6 +4,8 @@
 
 - Add an executable ECDH-ES notebook covering P-256 and X25519, all three
   agreement modes, a published public-key check, and rejection cases.
+- Add an executable JWE batch notebook covering ordered results, outer limits,
+  handle grouping, resolver expiry, caller cancellation, and key release.
 - Pin every documented public module, function, macro, type and callback in an
   exact inventory, checked with all optional integrations on the latest runtime.
 - Check all eleven emitted error vocabularies against their closed reason types
