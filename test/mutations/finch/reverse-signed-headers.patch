@@ -1,0 +1,7 @@
+--- a/lib/request_seal/finch.ex
++++ b/lib/request_seal/finch.ex
+@@ -326,3 +326,3 @@
+         signed = Signing.sign(message, spec, signer, opts)
+-        {:ok, %{request | headers: Enum.map(signed.fields, &{&1.name, &1.value})}}
++        {:ok, %{request | headers: Enum.map(Enum.reverse(signed.fields), &{&1.name, &1.value})}}
+       end)

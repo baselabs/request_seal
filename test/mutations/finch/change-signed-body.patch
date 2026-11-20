@@ -1,0 +1,10 @@
+--- a/lib/request_seal/finch.ex
++++ b/lib/request_seal/finch.ex
+@@ -323,6 +323,7 @@
+         Signing.options(opts, [:signing_timeout, :clock, :body])
+         Signing.sign_options!(opts)
+         {request, message} = prepare(request, Keyword.get(opts, :body, :as_is))
++        request = %{request | body: :binary.copy("x", byte_size(request.body))}
+         signed = Signing.sign(message, spec, signer, opts)
+         {:ok, %{request | headers: Enum.map(signed.fields, &{&1.name, &1.value})}}
+       end)

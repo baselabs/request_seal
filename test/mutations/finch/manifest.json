@@ -1,0 +1,46 @@
+{
+  "mutations": [
+    {
+      "patch": "change-signed-body.patch",
+      "file": "test/finch_final_bytes_test.exs",
+      "test": "returned Finch bytes equal the request Bandit actually receives",
+      "failure": "Bandit rejected finalized Finch bytes"
+    },
+    {
+      "patch": "reverse-signed-headers.patch",
+      "file": "test/finch_final_bytes_test.exs",
+      "test": "returned Finch bytes equal the request Bandit actually receives",
+      "failure": "Bandit rejected finalized Finch bytes"
+    },
+    {
+      "patch": "accept-sent-timeout-as-refused.patch",
+      "file": "test/finch_final_bytes_test.exs",
+      "test": "timeout after Bandit receives the complete signed request is unknown",
+      "failure": "a sent timeout has unknown outcome"
+    },
+    {
+      "patch": "accept-sent-drop-as-refused.patch",
+      "file": "test/finch_final_bytes_test.exs",
+      "test": "drop after Bandit receives the complete signed request is unknown",
+      "failure": "a sent drop has unknown outcome"
+    },
+    {
+      "patch": "lose-pre-send-refusal.patch",
+      "file": "test/finch_final_bytes_test.exs",
+      "test": "a signing refusal is not sent to Bandit",
+      "failure": "a pre-send refusal is not sent"
+    },
+    {
+      "patch": "skip-invalid-signature.patch",
+      "file": "test/finch_final_bytes_test.exs",
+      "test": "mutating finalized body path or repeated header order is rejected by Bandit",
+      "failure": "Bandit must reject a changed signed request"
+    },
+    {
+      "patch": "skip-body-integrity.patch",
+      "file": "test/finch_final_bytes_test.exs",
+      "test": "mutating finalized body path or repeated header order is rejected by Bandit",
+      "failure": "Bandit must reject a changed signed request"
+    }
+  ]
+}

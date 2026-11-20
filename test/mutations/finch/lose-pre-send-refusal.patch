@@ -1,0 +1,11 @@
+--- a/lib/request_seal/adapter/delivery.ex
++++ b/lib/request_seal/adapter/delivery.ex
+@@ -24,7 +24,7 @@
+         adapter,
+         _bodyless?
+       ),
+-      do: :refused
++      do: :unknown
+
+   def classify({:error, %{__struct__: type, reason: reason} = error}, adapter, bodyless?) do
+     cond do

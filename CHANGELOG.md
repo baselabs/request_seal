@@ -27,6 +27,9 @@
 - Add canonical signature-base inspection with `RequestSeal.SignatureBase.parse/1`
   and `components/3`, sharing build derivation and resource limits. Include
   published RFC bases and canonical-form rejections in the conformance corpus.
+- Exercise finalized Finch uploads over Bandit, comparing returned and received
+  bytes, rejecting mutations, and proving post-send timeout/drop and pre-send
+  refusal classifications with reversing mutations in qualification.
 
 - Qualify each candidate in one hosted run, with every runtime lane, mutation and
   teardown proof feeding the exact final verdict. Pull requests execute no project

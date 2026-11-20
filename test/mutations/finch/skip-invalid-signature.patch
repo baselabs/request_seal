@@ -1,0 +1,11 @@
+--- a/lib/request_seal/authentication.ex
++++ b/lib/request_seal/authentication.ex
+@@ -435,7 +435,7 @@
+   defp verify_bytes(algorithm, bytes, signature, key) do
+     case Crypto.verify(algorithm, bytes, signature, key) do
+       :ok -> :ok
+-      {:error, %{reason: :invalid_signature}} -> fail(:invalid_signature, :crypto)
++      {:error, %{reason: :invalid_signature}} -> :ok
+       _ -> fail(:verifier_failed, :crypto)
+     end
+   end

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove JWE guards non-vacuous by applying each committed reversing patch."""
+"""Prove guards non-vacuous by applying each committed reversing patch."""
 import argparse
 import json
 from pathlib import Path
@@ -59,19 +59,25 @@ def prove(entry, *, green=None, root=ROOT, directory=DIRECTORY,
 def main():
     processes.install_signal_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--suite", choices=("jwe_open", "finch"),
+                        help="One suite; otherwise every suite")
     parser.add_argument("--only", help="One patch basename; otherwise every mutation")
     args = parser.parse_args()
-    entries = json.loads((DIRECTORY / "manifest.json").read_text())["mutations"]
+    entries = []
+    for suite in ([args.suite] if args.suite else ["jwe_open", "finch"]):
+        directory = ROOT / "test/mutations" / suite
+        entries.extend((directory, entry) for entry in
+                       json.loads((directory / "manifest.json").read_text())["mutations"])
     if args.only:
-        entries = [entry for entry in entries if entry["patch"] == args.only]
+        entries = [(directory, entry) for directory, entry in entries if entry["patch"] == args.only]
         if not entries:
             parser.error("unknown mutation")
     rows = []
     green = set()
     failed = False
-    for entry in entries:
+    for directory, entry in entries:
         try:
-            evidence = prove(entry, green=green)
+            evidence = prove(entry, green=green, directory=directory)
         except Exception as error:
             failed = True
             evidence = "FAIL: " + str(error)

@@ -1,0 +1,11 @@
+--- a/lib/request_seal/authentication.ex
++++ b/lib/request_seal/authentication.ex
+@@ -561,7 +561,7 @@
+         facts
+
+       {:error, %{reason: :mismatch}} ->
+-        fail(:digest_mismatch, :content)
++        :not_required
+
+       {:error, %{reason: reason}}
+       when reason in [:invalid_body, :body_unavailable, :representation_required] ->

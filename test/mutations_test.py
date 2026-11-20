@@ -1,4 +1,4 @@
-"""Reject stale, missing, or ambiguous JWE mutation proofs."""
+"""Reject stale, missing, or ambiguous mutation proofs."""
 import difflib
 import json
 import re
@@ -97,7 +97,12 @@ def changed_lines(patch, root=None):
 
 class MutationsTest(unittest.TestCase):
     def test_manifest_and_patches_agree_and_apply(self):
-        directory = ROOT / "test/mutations/jwe_open"
+        for suite in ("jwe_open", "finch"):
+            with self.subTest(suite=suite):
+                self.check_suite(suite)
+
+    def check_suite(self, suite):
+        directory = ROOT / "test/mutations" / suite
         entries = json.loads((directory / "manifest.json").read_text())["mutations"]
         names = [entry["patch"] for entry in entries]
         self.assertTrue(names)

@@ -101,9 +101,20 @@ Other [notebooks](../../livebooks/overview.md) use locally generated keys.
 The runner validates Hex install cells before substituting the checkout; registry installation is separate.
 Headless assertions establish neither interactive UI behavior nor deployed-peer acceptance.
 
+## Finch final bytes
+
+`test/finch_final_bytes_test.exs` sends real Finch requests to a loopback Bandit
+listener. It compares the returned body, target, ordered fields and signature
+base with received values, rejects changed uploads, and classifies timeout and
+connection loss after complete receipt as unknown. Signing refusals are not sent.
+These are local transport regressions, not external conformance vectors.
+Hosted qualification runs `python3 -B scripts/mutations.py --suite finch`:
+every selected test must pass before its reversing patch must fail at the named
+assertion. The runner restores the source after each mutation.
+
 ## JWE lifecycle gates
 
-`python3 -B scripts/mutations.py` verifies 72 distinct reversing patches. It
+`python3 -B scripts/mutations.py --suite jwe_open` verifies the JWE reversing patches. It
 first requires the selected test to pass on a clean tree, once per distinct
 command and baseline commit. Each applied patch must then fail with its named
 assertion; reversal must leave a clean tree. Equivalent changed lines are
