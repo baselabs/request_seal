@@ -64,10 +64,12 @@ defmodule RequestSeal.FinchFinalBytesTest do
           {:stream, [<<0, 255>>, "exact\r\nbody", <<0>>]}
         ] do
       request = build(origin, body)
+
       assert {:ok, signed} =
                RequestSeal.Finch.sign(request, T.spec(@components), c.handle,
                  body: {:retain, 4096}
                )
+
       assert {:ok, returned} = RequestSeal.Finch.request_message(signed)
       result = Finch.request(signed, __MODULE__.Pool)
       assert_receive {:finch_wire, _, observed, verification}, 5_000
@@ -107,6 +109,7 @@ defmodule RequestSeal.FinchFinalBytesTest do
 
   test "mutating finalized body path or repeated header order is rejected by Bandit", c do
     origin = receiver()
+
     assert {:ok, signed} =
              RequestSeal.Finch.sign(build(origin, @bytes), T.spec(@components), c.handle)
 
@@ -126,6 +129,7 @@ defmodule RequestSeal.FinchFinalBytesTest do
 
   test "timeout after Bandit receives the complete signed request is unknown", c do
     origin = receiver(:hold)
+
     assert {:ok, signed} =
              RequestSeal.Finch.sign(build(origin, @bytes), T.spec(@components), c.handle)
 
@@ -144,6 +148,7 @@ defmodule RequestSeal.FinchFinalBytesTest do
 
   test "drop after Bandit receives the complete signed request is unknown", c do
     origin = receiver(:drop)
+
     assert {:ok, signed} =
              RequestSeal.Finch.sign(build(origin, @bytes), T.spec(@components), c.handle)
 
@@ -151,6 +156,7 @@ defmodule RequestSeal.FinchFinalBytesTest do
     assert_receive {:finch_wire, _, %{body: %{bytes: @bytes}}, {:ok, _}}, 5_000
     assert {:error, %{reason: reason}} = result
     assert reason in [:closed, :econnreset]
+
     assert RequestSeal.Finch.classify(result, signed) == :unknown,
            "a sent drop has unknown outcome"
   end
@@ -161,6 +167,7 @@ defmodule RequestSeal.FinchFinalBytesTest do
     request = %{request | headers: [{"Host", "other.example"} | request.headers]}
     result = RequestSeal.Finch.sign(request, T.spec(@components), c.handle)
     assert {:error, %RequestSeal.Adapter.Error{reason: :invalid_options, stage: :sign}} = result
+
     assert RequestSeal.Finch.classify(result, request) == :refused,
            "a pre-send refusal is not sent"
 

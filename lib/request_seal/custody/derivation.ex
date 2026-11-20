@@ -43,7 +43,10 @@ defmodule RequestSeal.Custody.Derivation do
   end
 
   def family(%{algorithm: "ed25519", curve: nil}), do: {"ed25519-seed", 32, [:sign, :verify]}
-  def family(%{algorithm: "hmac-sha256", curve: nil}), do: {"hmac-sha256-key", 32, [:sign, :verify]}
+
+  def family(%{algorithm: "hmac-sha256", curve: nil}),
+    do: {"hmac-sha256-key", 32, [:sign, :verify]}
+
   def family(%{algorithm: {:jwe, "A128KW"}, curve: nil}), do: {"aes128-key", 16, [:wrap, :unwrap]}
   def family(%{algorithm: {:jwe, "A256KW"}, curve: nil}), do: {"aes256-key", 32, [:wrap, :unwrap]}
   def family(_), do: fail(:unsupported_algorithm)

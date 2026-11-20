@@ -164,10 +164,12 @@ defmodule RequestSeal.Custody do
         ensure(Keyword.has_key?(opts, :timeout), :invalid_options)
         timeout = Support.timeout(opts)
         ensure(match?(%Cleanup{}, cleanup) and map_size(cleanup) == 3, :invalid_handle)
+
         ensure(
           is_atom(cleanup.custodian) and Code.ensure_loaded?(cleanup.custodian),
           :invalid_handle
         )
+
         ensure(function_exported?(cleanup.custodian, :release, 2), :invalid_handle)
         release_child(cleanup, timeout)
       end,

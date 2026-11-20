@@ -117,7 +117,7 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     assert_receive {:release_attempt, release, cleanup_context, observed}, 2000
     assert cleanup_context.owner == owner
     assert cleanup_context.deadline > original.deadline
-    assert cleanup_context.deadline - observed in 1..1000
+    assert (cleanup_context.deadline - observed) in 1..1000
     send(release, :release)
     assert_receive {:result, {:error, %Custody.Error{reason: :deadline_exceeded}}}, 2000
     assert_receive {:DOWN, ^down, :process, _, _}, 1000
@@ -154,12 +154,17 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.public_key(cleanup)
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.identity(cleanup)
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.release(cleanup)
+
       assert {:error, %Custody.Error{reason: :invalid_handle}} =
                Custody.derive(cleanup, "ed25519", "d", timeout: 5000)
+
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.wrap(cleanup, <<0::128>>)
+
       assert {:error, %Custody.Error{reason: :invalid_handle}} =
                Custody.unwrap(cleanup, [{<<>>, %{}, 128}])
-      assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.verify(cleanup, "d", <<0>>)
+
+      assert {:error, %Custody.Error{reason: :invalid_handle}} =
+               Custody.verify(cleanup, "d", <<0>>)
 
       for opts <- [
             [],
@@ -197,7 +202,7 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     try do
       assert_receive {:release_attempt, release, cleanup_context, observed}, 2000
       assert cleanup_context.deadline > original.deadline
-      assert cleanup_context.deadline - observed in 1..1000
+      assert (cleanup_context.deadline - observed) in 1..1000
       send(release, :release)
       assert_receive {:result, result}, 2500
       assert {:cleanup_required, cleanup, %Custody.Error{reason: :deadline_exceeded}} = result
@@ -235,6 +240,7 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     controller = self()
     original = parent.ref
     wrapped = %{parent | custodian: Controlled, ref: fn -> {original, controller, mode} end}
+
     {owner, down} =
       spawn_monitor(fn ->
         result = Custody.derive(wrapped, "ed25519", "domain", timeout: timeout)

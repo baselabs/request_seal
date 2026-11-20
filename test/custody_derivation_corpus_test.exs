@@ -44,6 +44,7 @@ defmodule RequestSeal.CustodyDerivationCorpusTest do
     prefix = "request-seal/derive/v1"
     family = "ed25519-seed"
     prk = :crypto.mac(:hmac, :sha256, prefix, ikm)
+
     info =
       prefix <>
         <<byte_size(family)::16, family::binary, byte_size(ed_domain)::16, ed_domain::binary>>

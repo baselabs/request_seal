@@ -206,6 +206,7 @@ defmodule RequestSeal.Custody.Local do
     )
 
     {_, family, defaults} = selection(algorithm)
+
     required =
       case family do
         :rsa -> [:bits]
@@ -216,10 +217,14 @@ defmodule RequestSeal.Custody.Local do
     Support.options(opts, [:capabilities | required])
 
     case family do
-      :rsa -> ensure(Keyword.get(opts, :bits) in [2048, 3072, 4096], :invalid_options)
+      :rsa ->
+        ensure(Keyword.get(opts, :bits) in [2048, 3072, 4096], :invalid_options)
+
       :ecdh ->
         ensure(Keyword.get(opts, :curve) in ["P-256", "P-384", "X25519"], :invalid_options)
-      _ -> :ok
+
+      _ ->
+        :ok
     end
 
     {family, Derivation.capabilities(opts, defaults)}
@@ -828,8 +833,10 @@ defmodule RequestSeal.Custody.Local do
     selected = Derivation.capabilities([capabilities: request.capabilities], defaults)
     material = Derivation.material(ikm, request.target, request.domain)
     state = prepare_state(request.target.algorithm, material, [], nil, nil, selected)
+
     {pid, token} =
       start_holder(state, request.owner, context.deadline, {context.deadline, request.token})
+
     {:ok, fn -> {pid, token} end}
   end
 

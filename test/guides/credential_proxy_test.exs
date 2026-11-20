@@ -198,7 +198,10 @@ defmodule RequestSeal.GuideCredentialProxyTest do
              Keyword.fetch!(binding, :responses)
 
     upstream = Keyword.fetch!(binding, :upstream_url)
-    unsigned = Finch.build(:post, upstream, [{"content-type", "application/octet-stream"}], payload)
+
+    unsigned =
+      Finch.build(:post, upstream, [{"content-type", "application/octet-stream"}], payload)
+
     assert {:ok, %{status: 401}} = Finch.request(unsigned, CredentialProxyExample.Finch)
 
     assert {:ok, signed} =

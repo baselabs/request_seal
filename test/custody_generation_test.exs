@@ -18,12 +18,14 @@ defmodule RequestSeal.CustodyGenerationTest do
       rsa? =
         algorithm in ["rsa-pss-sha512", "rsa-v1_5-sha256"] or
           algorithm in Enum.map(~w(RS256 PS256 PS384 PS512), &{:jws, &1})
+
       opts = if rsa?, do: [bits: 2048], else: []
       assert {:ok, handle} = Local.generate(algorithm, opts ++ [capabilities: [:sign]])
       assert handle.algorithm == algorithm
       assert handle.capabilities == [:sign]
       assert {:ok, signature} = Custody.sign(handle, "generated inside custody")
       forged = %{handle | capabilities: [:sign, :verify]}
+
       assert_error(
         Custody.verify(forged, "generated inside custody", signature),
         :unsupported_operation
@@ -47,15 +49,22 @@ defmodule RequestSeal.CustodyGenerationTest do
     for bits <- [2048, 3072, 4096],
         algorithm <- ["rsa-v1_5-sha256", {:jwe, "RSA-OAEP"}, {:jwe, "RSA-OAEP-256"}] do
       assert {:ok, handle} = Local.generate(algorithm, bits: bits)
-      assert {:ok, %PublicKey{material: {_, modulus, 65_537}} = public} = Custody.public_key(handle)
+
+      assert {:ok, %PublicKey{material: {_, modulus, 65_537}} = public} =
+               Custody.public_key(handle)
+
       assert bit_size(:binary.encode_unsigned(modulus)) == bits
 
       case algorithm do
         {:jwe, name} ->
           {:rsa, n, e} = public.material
           cek = <<0::256>>
-          assert {:ok, wrapped} = KeyManagement.wrap(name, cek, %{}, {:rsa, {:RSAPublicKey, n, e}})
-          assert {:ok, [{:ok, ^cek}]} = Custody.unwrap(handle, [{wrapped.encrypted_key, %{}, 256}])
+
+          assert {:ok, wrapped} =
+                   KeyManagement.wrap(name, cek, %{}, {:rsa, {:RSAPublicKey, n, e}})
+
+          assert {:ok, [{:ok, ^cek}]} =
+                   Custody.unwrap(handle, [{wrapped.encrypted_key, %{}, 256}])
 
         _ ->
           assert {:ok, sig} = Custody.sign(handle, "RSA generation")
@@ -71,8 +80,10 @@ defmodule RequestSeal.CustodyGenerationTest do
       assert {:ok, handle} = Local.generate({:jwe, alg}, curve: curve)
       assert {:ok, public} = Custody.public_key(handle)
       assert {:ok, agreed} = KeyManagement.agree(alg, "A256GCM", public, %{})
+
       params =
         KeyManagement.Agreement.header_params!(alg, Map.put(agreed.header, "enc", "A256GCM"))
+
       assert {:ok, [{:ok, cek}]} = Custody.unwrap(handle, [{agreed.encrypted_key, params, 256}])
       assert cek == agreed.cek
       assert :ok = Custody.release(handle)
@@ -81,8 +92,10 @@ defmodule RequestSeal.CustodyGenerationTest do
     for alg <- ~w(A128KW A256KW) do
       assert {:ok, handle} = Local.generate({:jwe, alg}, capabilities: [:wrap, :unwrap])
       assert {:ok, wrapped} = Custody.wrap(handle, <<1::128>>)
+
       assert {:ok, [{:ok, <<1::128>>}]} =
                Custody.unwrap(handle, [{wrapped.encrypted_key, %{}, 128}])
+
       assert_error(Custody.public_key(handle), :no_public_key)
       assert :ok = Custody.release(handle)
     end
@@ -99,6 +112,7 @@ defmodule RequestSeal.CustodyGenerationTest do
           [curve: "P-256", curve: "X25519"]
         ] do
       assert_error(Local.generate({:jwe, "ECDH-ES"}, opts), :invalid_options)
+
       assert_error(
         Custody.derive(parent, {:jwe, "ECDH-ES"}, "domain", [timeout: 5000] ++ opts),
         :invalid_options
@@ -149,6 +163,7 @@ defmodule RequestSeal.CustodyGenerationTest do
           "none"
         ] do
       assert_error(Local.generate(algorithm, []), :unsupported_algorithm)
+
       assert_error(
         Custody.derive(parent, algorithm, "domain", timeout: 5000),
         :unsupported_algorithm
@@ -192,8 +207,10 @@ defmodule RequestSeal.CustodyGenerationTest do
     {:ok, parent} = Local.new({:derive, "hkdf-sha256"}, {:ikm, <<1::256>>})
     assert_error(Custody.sign(parent, "no signing"), :unsupported_operation)
     assert_error(Custody.public_key(parent), :no_public_key)
+
     assert {:ok, first} =
              Custody.derive(parent, "ed25519", "domain", timeout: 5000, capabilities: [:sign])
+
     assert {:ok, second} = Custody.derive(parent, "ed25519", "domain", timeout: 5000)
     assert {:ok, different} = Custody.derive(parent, "ed25519", "other", timeout: 5000)
     assert {:ok, a} = Custody.public_key(first)
@@ -201,10 +218,12 @@ defmodule RequestSeal.CustodyGenerationTest do
     assert {:ok, b} = Custody.public_key(different)
     refute a.material == b.material
     assert {:ok, sig} = Custody.sign(first, "child remains")
+
     assert_error(
       Custody.verify(%{first | capabilities: [:sign, :verify]}, "child remains", sig),
       :unsupported_operation
     )
+
     assert :ok = Custody.release(parent)
     assert {:ok, ^sig} = Custody.sign(first, "child remains")
 
@@ -213,6 +232,7 @@ defmodule RequestSeal.CustodyGenerationTest do
 
   test "all three curves separate children for the same parent and domain" do
     {:ok, parent} = Local.new({:derive, "hkdf-sha256"}, {:ikm, <<2::256>>})
+
     keys =
       for curve <- ["P-256", "P-384", "X25519"] do
         assert {:ok, child} =
@@ -234,8 +254,10 @@ defmodule RequestSeal.CustodyGenerationTest do
     assert_error(Custody.public_key(child), :unavailable)
     assert_error(Custody.identity(child), :unavailable)
     assert {:error, :unavailable} = Local.commit(child.ref, <<0::256>>, context)
+
     assert {:ok, :ok} =
              Custody.run(context, fn -> Local.commit(child.ref, request.token, context) end)
+
     {pid, access} = child.ref.()
     send(pid, {:commit_expired, access})
     assert {:ok, sig} = Custody.sign(child, "committed")
@@ -247,6 +269,7 @@ defmodule RequestSeal.CustodyGenerationTest do
 
   test "a successful atomic commit survives its actual expiry deadline" do
     {parent, child, request, context} = candidate(250)
+
     assert {:ok, :ok} =
              Custody.run(context, fn -> Local.commit(child.ref, request.token, context) end)
 
@@ -304,6 +327,7 @@ defmodule RequestSeal.CustodyGenerationTest do
     for commit? <- [false, true] do
       {:ok, parent} = Local.new({:derive, "hkdf-sha256"}, {:ikm, <<3::256>>})
       controller = self()
+
       {owner, owner_down} =
         spawn_monitor(fn ->
           context = context(5000)
@@ -366,6 +390,7 @@ defmodule RequestSeal.CustodyGenerationTest do
     context = context(timeout)
     request = request(self())
     {:ok, ref} = Custody.run(context, fn -> Local.derive(parent.ref, request, context) end)
+
     child = %KeyHandle{
       custodian: Local,
       algorithm: "ed25519",
