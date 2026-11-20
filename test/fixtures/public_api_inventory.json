@@ -156,7 +156,7 @@
     "type t/0"
   ],
   "RequestSeal.Finch": [
-    "function classify/1",
+    "function classify/2",
     "function request_message/2",
     "function response_message/3",
     "function sign/4",

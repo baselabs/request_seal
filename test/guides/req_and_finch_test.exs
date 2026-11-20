@@ -144,7 +144,7 @@ defmodule RequestSeal.GuideReqAndFinchTest do
     binding =
       E.eval(
         ~S'''
-        :answered = RequestSeal.Finch.classify({:ok, response})
+        :answered = RequestSeal.Finch.classify({:ok, response}, request)
         :unknown = RequestSeal.Req.classify({:error, %Req.TransportError{reason: :timeout}})
         ''',
         binding,

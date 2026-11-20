@@ -11,7 +11,8 @@ defmodule RequestSeal.Adapter.Error do
   `:body_unavailable` (required bytes not retained), `:digest_conflict` (caller
   digest disagrees), `:limit` (retention/resource bound), `:signing_failed`
   (custody or signing rejection), `:transport_failed` (Req transport failed on
-  a later attempt, leaving earlier delivery unknown), and `:response_rejected`
+  a later attempt, or an HTTP/2 refusal with a non-nil sent body left earlier
+  delivery unknown), and `:response_rejected`
   (verification failed).
   Plug also reports `:not_captured`, `:already_verified`, `:parser_order`,
   `:untrusted_proxy`, and `:request_rejected` (with a bounded core source error).
@@ -30,11 +31,14 @@ defmodule RequestSeal.Adapter.Error do
   Plug uses zero for capture, request verification, and option errors, and one
   for response signing. Req attach errors use zero.
 
-  Req's error step reports transport failures on attempt two or later as
-  `:transport_failed` at stage `:transport`, with the final attempt number and
-  `source: nil`. It retains no framework exception or transport details. First
-  attempt transport errors keep Req's own error shape. A later signing or
-  transport failure classifies as unknown delivery for the whole Req call.
+  Req's error step reports transport failures on attempt two or later, or
+  HTTP/2 stream or pool refusals with a non-nil sent Finch body on any attempt,
+  as `:transport_failed` at stage `:transport`, with the final signing attempt
+  number and `source: nil`. Even an empty binary body is non-nil. These errors
+  retain no framework exception or transport details and classify as unknown
+  delivery: Finch may have discarded and rerun a partially sent HTTP/2 request
+  within one signing attempt. Other first-attempt transport errors keep Req's
+  own error shape. A later signing failure also classifies as unknown delivery.
   """
   @derive {Inspect, only: [:reason, :adapter, :stage, :attempt, :retryable, :correlation]}
   defexception [:reason, :adapter, :stage, :attempt, :source, :correlation, retryable: false]

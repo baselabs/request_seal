@@ -18,20 +18,23 @@ Every failure is a bounded struct with a closed `reason` atom. No error carries 
 
 Each struct's module documentation lists every reason with its meaning. For `RequestSeal.Error`, match `layer` first: it names the check that rejected the message (`:input`, `:fields`, `:policy`, `:key`, `:crypto`, `:content`, `:freshness`, `:replay`, `:negotiation`, `:binding`, `:profile`, or `:internal`), and `reason` names the rule. A `:signing_failed` error keeps the custody failure in `source`; an adapter's `:request_rejected` or `:response_rejected` keeps the core error in `source`.
 
-Req transport errors on the first attempt retain `Req.TransportError` or
-`Req.HTTPError`. On attempt two or later, RequestSeal's final error step returns
+On Req attempt two or later, RequestSeal's final error step returns
 `{:error, %RequestSeal.Adapter.Error{reason: :transport_failed, adapter: :req,
 stage: :transport, attempt: n, source: nil}}`. It discards the framework
-exception and its details after Req has decided whether to retry. A later
+exception and its details after Req has decided whether to retry. An HTTP/2
+stream or pool refusal with a non-nil sent Finch body produces this error on
+any attempt, including attempt one: Finch can discard and rerun a partially
+sent body internally. Even `""` is non-nil; a nil body rules out that earlier
+send. Other first-attempt transport errors retain Req's own shape. A later
 signing refusal still has its original reason at stage `:sign` and its final
 attempt number. Both mean unknown delivery for the whole call: an earlier
 redirect or retry attempt may already have sent the operation. Use
 `RequestSeal.Req.classify/1` for delivery evidence before repeating an operation;
-the adapter error's `retryable: false` remains unchanged. These attempt counts
-do not include Finch's internal HTTP/2 `:read_only` reruns, which can follow a
-partially sent body. Their final transport errors carry no earlier-attempt
-evidence; treat transport refusal classifications as unknown for calls that
-can take that path, including through Req.
+the adapter error's `retryable: false` remains unchanged. For Finch, pass the
+result and the exact sent `Finch.Request` to `RequestSeal.Finch.classify/2`.
+It applies the same HTTP/2 body rule, and a non-request second argument returns
+unknown delivery. Raw DNS and ALPN failures remain pre-send refusals; HTTP/2
+background connection failures surface as pool errors subject to the body rule.
 
 ## Log safely
 

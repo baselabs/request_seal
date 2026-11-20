@@ -3,7 +3,9 @@ defmodule RequestSeal.Adapter.Delivery do
 
   # Req 0.7.5 Req.Finch.normalize_error/1 preserves reasons and HTTP versions.
   # Finch 0.24.0 Error.wrap/1 preserves Mint reasons in its own wrappers.
-  def classify({:ok, %{__struct__: response, status: status}}, adapter)
+  def classify(result, adapter, bodyless? \\ true)
+
+  def classify({:ok, %{__struct__: response, status: status}}, adapter, _bodyless?)
       when is_integer(status) do
     expected = if adapter == :req, do: Req.Response, else: Finch.Response
 
@@ -12,26 +14,28 @@ defmodule RequestSeal.Adapter.Delivery do
 
   def classify(
         {:error, %RequestSeal.Adapter.Error{adapter: adapter, stage: :attach, attempt: 0}},
-        adapter
+        adapter,
+        _bodyless?
       ),
       do: :refused
 
   def classify(
         {:error, %RequestSeal.Adapter.Error{adapter: adapter, stage: :sign, attempt: 1}},
-        adapter
+        adapter,
+        _bodyless?
       ),
       do: :refused
 
-  def classify({:error, %{__struct__: type, reason: reason} = error}, adapter) do
+  def classify({:error, %{__struct__: type, reason: reason} = error}, adapter, bodyless?) do
     cond do
       transport?(type, adapter) -> transport(reason)
-      http2?(error, adapter) -> http2(reason, adapter)
-      adapter == :finch and type == Finch.Error -> pool(reason)
+      bodyless? and http2?(error, adapter) -> http2(reason, adapter)
+      bodyless? and adapter == :finch and type == Finch.Error -> pool(reason)
       true -> :unknown
     end
   end
 
-  def classify(_, _), do: :unknown
+  def classify(_, _, _), do: :unknown
 
   defp transport?(type, :req), do: type == Req.TransportError
   defp transport?(type, :finch), do: type in [Finch.TransportError, Mint.TransportError]
@@ -65,6 +69,9 @@ defmodule RequestSeal.Adapter.Delivery do
 
   # Finch 0.24.0 HTTP2.Pool.disconnected/3:342 and connecting/3:397 return
   # immediately, before send_request/7. Req normalizes these to HTTP/2 errors.
+  # For a non-nil body, any HTTP/2 refusal may follow a :read_only rerun of a
+  # partially sent request (HTTP2.Pool.connected_read_only/3:599-605;
+  # Finch.__stream__/6:848-855). Only nil starts RequestStream in :done.
   defp pool(reason) when reason in [:disconnected, :connection_not_ready], do: :refused
   defp pool(_), do: :unknown
 end

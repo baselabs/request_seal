@@ -46,7 +46,7 @@ if Code.ensure_loaded?(Finch) do
               }
 
     @doc """
-    Classify delivery evidence in a request result, for any term without raising.
+    Classify delivery evidence using the result and the Finch request that was sent.
 
     `:answered` means an integer HTTP status was returned, except 502 and 504:
     those gateway responses leave origin processing unknown (RFC 9110 Sections
@@ -65,29 +65,49 @@ if Code.ensure_loaded?(Finch) do
     response-verification failures, and unrecognized terms are `:unknown`.
     No retry is performed, and the error struct's retry policy is not changed.
 
-    Finch 0.24.0 can internally rerun an HTTP/2 request after `:read_only`,
-    including a request whose body was partially sent. Its final transport
-    error carries no attempt history. For calls that can take this path, treat
-    a transport `:refused` classification as `:unknown`; this function cannot
-    prove the absence of that internal rerun from the result alone.
+    An HTTP/2 stream or pool refusal is `:refused` only when `request.body` is
+    nil. Any other body, including `""`, makes it `:unknown`: Finch can rerun a
+    partially sent HTTP/2 request after `:read_only`, losing the earlier send
+    evidence. Name-resolution and ALPN failures remain pre-send refusals;
+    HTTP/2 background connection failures instead surface as pool errors.
+
+    ## Parameters
+
+      * `result` - the return value of `Finch.request/3`, or any other term.
+      * `request` - the exact `Finch.Request` passed to transport, including its
+        finalized body. Any other value returns `:unknown`.
 
     ## Examples
 
-        iex> RequestSeal.Finch.classify({:ok, %Finch.Response{status: 200}})
+        iex> request = Finch.build(:get, "https://example.com/")
+        iex> RequestSeal.Finch.classify({:ok, %Finch.Response{status: 200}}, request)
         :answered
-        iex> RequestSeal.Finch.classify({:ok, %Finch.Response{status: 502}})
+        iex> RequestSeal.Finch.classify({:ok, %Finch.Response{status: 502}}, request)
         :unknown
-        iex> RequestSeal.Finch.classify({:error, %Finch.TransportError{reason: :nxdomain}})
+        iex> error = %Finch.TransportError{reason: :nxdomain}
+        iex> RequestSeal.Finch.classify({:error, error}, request)
         :refused
-        iex> RequestSeal.Finch.classify({:error, %Finch.TransportError{reason: :econnrefused}})
+        iex> error = %Finch.TransportError{reason: :econnrefused}
+        iex> RequestSeal.Finch.classify({:error, error}, request)
         :unknown
-        iex> RequestSeal.Finch.classify({:error, %Finch.TransportError{reason: :timeout}})
+        iex> error = %Finch.TransportError{reason: :timeout}
+        iex> RequestSeal.Finch.classify({:error, error}, request)
         :unknown
-        iex> RequestSeal.Finch.classify(:anything)
+        iex> error = Finch.Error.exception(:disconnected)
+        iex> RequestSeal.Finch.classify({:error, error}, request)
+        :refused
+        iex> RequestSeal.Finch.classify({:error, error}, %{request | body: ""})
+        :unknown
+        iex> RequestSeal.Finch.classify(:anything, request)
+        :unknown
+        iex> RequestSeal.Finch.classify({:ok, %Finch.Response{status: 200}}, :not_a_request)
         :unknown
     """
-    @spec classify(term()) :: :answered | :refused | :unknown
-    def classify(result), do: RequestSeal.Adapter.Delivery.classify(result, :finch)
+    @spec classify(term(), term()) :: :answered | :refused | :unknown
+    def classify(result, %Finch.Request{body: body}),
+      do: RequestSeal.Adapter.Delivery.classify(result, :finch, body == nil)
+
+    def classify(_, _), do: :unknown
 
     @doc """
     Translates a built Finch request into a lossless `RequestSeal.Message` without signing it.

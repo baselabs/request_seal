@@ -132,9 +132,11 @@ Pass the exact signed request when verifying its response; request association i
 
 On Req attempt two or later, a final `Req.TransportError` or `Req.HTTPError`
 becomes `{:error, %RequestSeal.Adapter.Error{reason: :transport_failed,
-stage: :transport, attempt: n, source: nil}}`. The bounded error retains the
-attempt number and discards the framework exception and its transport details.
-First-attempt transport errors retain Req's own shape. RequestSeal appends an
+stage: :transport, attempt: n, source: nil}}`. An HTTP/2 stream or pool refusal
+with a non-nil sent Finch body produces the same error on any attempt, including
+attempt one. The bounded error retains the signing attempt number and discards
+the framework exception and its transport details. Other first-attempt
+transport errors retain Req's own shape. RequestSeal appends an
 error step after Req's retry handling, so Req still sees its original transport
 errors when deciding whether to retry. Keep this step last; removing or moving
 it causes a signing refusal before transport. Sign and verification refusals
@@ -144,8 +146,10 @@ Module docs: `RequestSeal.Req`, `RequestSeal.Finch`, `RequestSeal.Adapter.Error`
 
 ## Classify delivery before retrying
 
-`RequestSeal.Req.classify/1` and `RequestSeal.Finch.classify/1` accept a request
-result and return `:answered`, `:refused`, or `:unknown`. Only `:refused` is safe
+`RequestSeal.Req.classify/1` accepts the result of an attached Req call.
+`RequestSeal.Finch.classify/2` accepts the result and the exact signed
+`Finch.Request` passed to transport; any other second argument returns
+`:unknown`. Both return `:answered`, `:refused`, or `:unknown`. Only `:refused` is safe
 to retry automatically: its evidence proves no request processing occurred.
 Disable Req's automatic retries when applying this decision yourself, as in the
 examples above. Classification covers the whole Req call, including every
@@ -170,16 +174,18 @@ or network, a socket timeout and a TLS alert also remain `:unknown`. A
 name-resolution failure (`:nxdomain`) on the first attempt happens before any
 connection exists and is `:refused`. First-attempt HTTP/2 REFUSED_STREAM and
 GOAWAY's per-stream unprocessed indication supply explicit refusal evidence
+only when the sent Finch request body is nil
 ([RFC 9113 Section 8.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7)).
 
-Finch 0.24.0 has an additional HTTP/2 transport rerun: a `:read_only` pool error
-can restart a request whose body was partially sent. The final transport error
-does not report that earlier attempt. This also applies beneath a single Req
-signing attempt. For calls that can take this path, treat a transport `:refused`
-classification as `:unknown` and use application idempotency protection; the
-result alone cannot prove the absence of an internal Finch rerun.
+Finch can restart a partially sent HTTP/2 request after a `:read_only` pool error.
+Both classifiers therefore return `:unknown` for HTTP/2 stream or pool refusals
+when the sent Finch body was non-nil, including `""`. A nil body cannot take
+that partial-upload rerun path. Req records this fact from the finalized Finch
+body; Finch's classifier reads it from the supplied request. Raw DNS and ALPN
+failures stay pre-send refusals: HTTP/2 connection failures happen in the
+background pool and surface as pool errors, which follow the body rule.
 
 ```elixir
-:answered = RequestSeal.Finch.classify({:ok, response})
+:answered = RequestSeal.Finch.classify({:ok, response}, request)
 :unknown = RequestSeal.Req.classify({:error, %Req.TransportError{reason: :timeout}})
 ```

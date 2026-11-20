@@ -10,6 +10,7 @@ if Code.ensure_loaded?(Req) do
       :digest,
       :delivery_error,
       attempt: 0,
+      bodyless?: false,
       appended: [],
       chunks: [],
       bytes: 0,
@@ -30,11 +31,11 @@ if Code.ensure_loaded?(Req) do
     hooks that can mutate transport bytes after signing reject. No pool, server,
     or background fetch starts.
 
-    A final error step records transport failures on later attempts as a bounded
+    A final error step records transport failures on later attempts, or HTTP/2
+    refusals with a non-nil sent body on any attempt, as a bounded
     `RequestSeal.Adapter.Error` with reason `:transport_failed`, stage
-    `:transport`, and the final attempt number. First-attempt transport errors
-    keep Req's error shape. Delivery classification covers the whole Req call:
-    a later refusal cannot establish that earlier attempts sent nothing.
+    `:transport`, and the final signing attempt number. These failures cannot
+    establish that earlier Req or internal Finch attempts sent nothing.
 
     Each signed attempt preserves host case and omits the scheme's default port
     through `RequestSeal.Finch`, matching Mint's Host or `:authority` bytes for
@@ -124,7 +125,8 @@ if Code.ensure_loaded?(Req) do
     (RFC 9113 Section 8.7), a pool that rejected the request before sending it,
     or this adapter's own attach/sign refusal before the first send.
     A signing refusal on attempt two or later is `:unknown`. Later transport
-    failures return this adapter's `:transport_failed` error and are also
+    failures, and HTTP/2 stream or pool refusals with a non-nil sent body on any
+    attempt, return this adapter's `:transport_failed` error and are also
     `:unknown`: an earlier attempt may already have delivered the operation.
     Only `:refused` is safe to retry automatically. `:unknown` requires the
     application's own idempotency protection; `:answered` does not promise that
@@ -137,10 +139,12 @@ if Code.ensure_loaded?(Req) do
     response-verification failures, and unrecognized terms are `:unknown`.
     No retry is performed, and the error struct's retry policy is not changed.
 
-    Attempt counts cover Req's request-step runs. Finch 0.24.0 can also rerun
-    an HTTP/2 request internally after `:read_only`, including a partially sent
-    body, without exposing that history to Req. For calls that can take this
-    path, treat a transport `:refused` classification as `:unknown`.
+    Attempt counts cover Req's request-step runs. Finch can rerun a partially
+    sent HTTP/2 request internally after `:read_only`. Only a nil Finch body
+    rules out that earlier send; `""` does not. The final error step applies
+    this body rule before returning the error. Raw name-resolution and ALPN
+    failures remain pre-send refusals: HTTP/2 background connection failures
+    instead surface as pool errors, which follow the body rule.
 
     ## Examples
 
@@ -273,12 +277,14 @@ if Code.ensure_loaded?(Req) do
     verifier rejected, with its bounded `source`, or an unexpected exception).
 
     At stage `:transport`, `:transport_failed` means a `Req.TransportError` or
-    `Req.HTTPError` reached the final error step on attempt two or later. The
-    original framework error is discarded (`source: nil`); earlier delivery is
-    unknown. First-attempt transport errors retain Req's own shape. Keep the
-    added error step last so it observes the final transport outcome after
-    Req's retry handling. Signing and verification refusals halt directly and
-    keep their original bounded errors.
+    `Req.HTTPError` reached the final error step on attempt two or later, or an
+    HTTP/2 stream or pool refusal occurred with a non-nil sent Finch body on any
+    attempt. A nil body rules out a partially sent internal Finch rerun; even
+    `""` is non-nil. The original framework error is discarded (`source: nil`);
+    earlier delivery is unknown. Other first-attempt transport errors retain
+    Req's own shape. Keep the added error step last so it observes the final
+    transport outcome after Req's retry handling. Signing and verification
+    refusals halt directly and keep their original bounded errors.
 
     ## Examples
 
@@ -626,6 +632,7 @@ if Code.ensure_loaded?(Req) do
           state = %{
             state
             | attempt: attempt,
+              bodyless?: finch.body == nil,
               origin: state.origin || origin,
               sent: signed,
               appended: appended,
@@ -655,11 +662,15 @@ if Code.ensure_loaded?(Req) do
 
     @doc false
     def delivery_error({request, error}) do
-      attempt = request.private.request_seal.attempt
+      state = request.private.request_seal
       transport? = is_struct(error, Req.TransportError) or is_struct(error, Req.HTTPError)
 
-      if attempt > 1 and transport? do
-        {request, Error.new(:transport_failed, :req, :transport, attempt)}
+      http2_refusal? =
+        match?(%Req.HTTPError{protocol: :http2}, error) and
+          RequestSeal.Adapter.Delivery.classify({:error, error}, :req) == :refused
+
+      if transport? and (state.attempt > 1 or (not state.bodyless? and http2_refusal?)) do
+        {request, Error.new(:transport_failed, :req, :transport, state.attempt)}
       else
         {request, error}
       end
