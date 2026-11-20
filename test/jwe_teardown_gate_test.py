@@ -322,6 +322,28 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertIn("reason: end_reason(reason)", source)
         self.assertIn("coordinator_phases: Enum.reverse(phases)", source)
 
+    def test_worker_metrics_are_reported_without_becoming_pass_conditions(self):
+        report = self.report()
+        worker = {"worker": "<worker>", "at_u": {"heap_words": 90000, "reductions": 15000},
+                  "at_end": {"heap_words": 120000, "reductions": 25000},
+                  "end_snapshot": "last_live_observation", "end_snapshot_age_us": 6000,
+                  "gc_scope": "vm_shared_interval", "gc_count_delta": 999999,
+                  "gc_words_reclaimed_delta": 999999999999}
+        report["scenarios"][0]["diagnostics"][0]["workers"] = [worker]
+        self.assertTrue(GATE.passes(report))
+        summary = GATE.markdown(report)
+        for field in worker:
+            self.assertIn(field, summary)
+        worker["at_u"] = None
+        worker["at_end"] = None
+        self.assertTrue(GATE.passes(report))
+        self.assertIn('"at_u": null', GATE.markdown(report))
+        source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
+        for text in ("Process.info(pid, :garbage_collection_info)",
+                     ":erlang.statistics(:garbage_collection)", "end_snapshot_age_us",
+                     "gc_scope: :vm_shared_interval", "end_snapshot: :last_live_observation"):
+            self.assertIn(text, source)
+
     def test_runner_owns_commands_and_retains_failure_output(self):
         source = (ROOT / "scripts/jwe_teardown_gate.py").read_text()
         tree = ast.parse(source)
