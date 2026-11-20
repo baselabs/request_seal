@@ -16,6 +16,7 @@ Each notebook installs RequestSeal from Hex, generates its own keys, and asserts
 | [Verify signed webhooks in a Plug pipeline](plug-webhook.livemd) | A `Plug.Router` receiver with Capture, Parsers, and Verify, driven by `Plug.Test`: a signed request accepted, unsigned and altered requests rejected with 401. Also installs `:plug`. |
 | [Sign and verify a Web Bot Auth agent](web-bot-auth.livemd) | Web Bot Auth protocol-00 signing with path coverage, held-key verification, and changed-page, unknown-key, and unsigned rejections. |
 | [JWS inside JWE in Livebook](jose.livemd) | Compact JWS signing and verification, a JWS nested in a JWE, an RSA-OAEP recipient key handle, and the bounded JOSE errors. |
+| [ECDH-ES agreement and JWE in Livebook](ecdh-es.livemd) | A published X25519 public-key check; direct ECDH-ES and both key-wrap variants over P-256 and X25519; encryption to public keys, custody decryption, tampering, malformed ephemeral keys, wrong curves, and policy rejections. |
 
 The gate checks notebook imports, exported code coverage, assertions, and completion
 against a fresh install of the inspected packed archive within time and output limits.

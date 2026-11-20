@@ -1,0 +1,216 @@
+# ECDH-ES agreement and JWE in Livebook
+
+This notebook runs P-256 and X25519 key agreement, encrypts compact JWEs to public recipient keys, and decrypts through caller-owned custody handles. It covers direct ECDH-ES and both AES key-wrap variants from [RFC 7518 §4.6](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.6), with X25519 as specified by [RFC 8037 §3.2](https://www.rfc-editor.org/rfc/rfc8037.html#section-3.2). It uses real local cryptography and needs no network peer beyond the Hex install.
+
+```elixir
+Mix.install([{:request_seal, "~> 2.0"}])
+```
+
+## Check the published X25519 example
+
+The following scalar and public key are public test material from [RFC 8037 Appendix A.6](https://www.rfc-editor.org/rfc/rfc8037.html#appendix-A.6), also used in [RFC 7748 §6.1](https://www.rfc-editor.org/rfc/rfc7748.html#section-6.1). They are never production credentials. The custody handle must derive the published public bytes; unsupported X25519 fails the cell instead of skipping it.
+
+```elixir
+alias RequestSeal.Custody
+alias RequestSeal.JOSE.{JWE, KeyManagement}
+
+scalar = Base.decode16!("77076D0A7318A57D3C16C17251B26645DF4C2F87EBC0992AB177FBA51DB92C2A")
+published_public = Base.url_decode64!("hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo", padding: false)
+
+{:ok, vector_handle} = Custody.Local.new({:jwe, "ECDH-ES"}, {:x25519, scalar})
+
+try do
+  {:ok, %{material: {:x25519, ^published_public}}} = Custody.public_key(vector_handle)
+after
+  :ok = Custody.release(vector_handle)
+end
+
+IO.puts("Published X25519 public bytes reproduced")
+```
+
+## Create recipients for both curves and every agreement mode
+
+Each handle binds one JOSE algorithm and grants only `:unwrap`. The sender receives its public key; the scalar is passed to custody when constructing the handle. Here each mode gets its own fresh key pair.
+
+```elixir
+recipients =
+  for {curve, native} <- [{"P-256", :secp256r1}, {"X25519", :x25519}],
+      algorithm <- ["ECDH-ES", "ECDH-ES+A128KW", "ECDH-ES+A256KW"] do
+    {_public, private} = :crypto.generate_key(:ecdh, native)
+
+    material =
+      case curve do
+        "P-256" -> {:ec, curve, private}
+        "X25519" -> {:x25519, private}
+      end
+
+    {:ok, handle} = Custody.Local.new({:jwe, algorithm}, material)
+    [:unwrap] = handle.capabilities
+    {:ok, public} = Custody.public_key(handle)
+    %{curve: curve, algorithm: algorithm, handle: handle, public: public}
+  end
+
+6 = length(recipients)
+IO.puts("Six algorithm-bound recipients ready")
+```
+
+## Inspect the agreement primitive
+
+`KeyManagement.agree/4` accepts decoded party information. Direct mode derives the content-encryption key (CEK); the key-wrap modes derive a wrapping key and wrap a fresh CEK. Both calls below must produce fresh ephemeral public keys and CEKs. The primitive returns CEK bytes to its caller, so this cell checks their width without displaying them. Envelope consumers can use `JWE.encrypt/3`, as the next cell does, to keep CEKs inside library workers.
+
+```elixir
+for recipient <- recipients do
+  {:ok, first} =
+    KeyManagement.agree(recipient.algorithm, "A256GCM", recipient.public, %{
+      apu: "sender",
+      apv: "recipient"
+    })
+
+  {:ok, second} =
+    KeyManagement.agree(recipient.algorithm, "A256GCM", recipient.public, %{
+      apu: "sender",
+      apv: "recipient"
+    })
+
+  for agreement <- [first, second] do
+    32 = byte_size(agreement.cek)
+    ["epk"] = Map.keys(agreement.header)
+    false = Map.has_key?(agreement.header["epk"], "d")
+    curve = recipient.curve
+    ^curve = agreement.header["epk"]["crv"]
+
+    case recipient.algorithm do
+      "ECDH-ES" -> "" = agreement.encrypted_key
+      _ -> 40 = byte_size(agreement.encrypted_key)
+    end
+  end
+
+  false = first.cek == second.cek
+  false = first.header == second.header
+end
+
+IO.puts("Fresh agreement and public-only epk checked for all six recipients")
+```
+
+## Encrypt to public keys and decrypt through custody
+
+The compact format is [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html). Its protected header contains Base64url-encoded party information and only the public `epk`. Direct ECDH-ES has an empty encrypted-key segment; the key-wrap modes carry a wrapped CEK. The resolver returns a trusted handle under an explicit algorithm, cipher, context, size, and deadline policy. Header context is public and is not authorization.
+
+```elixir
+policy_for = fn handle ->
+  {:jwe, algorithm} = handle.algorithm
+
+  %{
+    algorithms: [algorithm],
+    encryption: ["A256GCM"],
+    max_plaintext: 1024,
+    timeout: 5_000,
+    resolve_timeout: 1000,
+    unwrap_timeout: 1000,
+    protected: %{expected: %{"kid" => "notebook-recipient"}, permitted: []},
+    key_resolver: fn _ -> {:ok, %{algorithm: algorithm, key: handle}} end
+  }
+end
+
+envelopes =
+  for recipient <- recipients do
+    {:ok, token} =
+      JWE.encrypt(
+        [
+          {"alg", recipient.algorithm},
+          {"enc", "A256GCM"},
+          {"kid", "notebook-recipient"},
+          {"apu", Base.url_encode64("sender", padding: false)},
+          {"apv", Base.url_encode64("recipient", padding: false)}
+        ],
+        "an encrypted reading",
+        recipient.public
+      )
+
+    [_protected, encrypted_key, _iv, _ciphertext, _tag] = String.split(token, ".")
+
+    case recipient.algorithm do
+      "ECDH-ES" -> "" = encrypted_key
+      _ -> 40 = byte_size(Base.url_decode64!(encrypted_key, padding: false))
+    end
+
+    {:ok, opened} = JWE.decrypt(token, policy_for.(recipient.handle))
+    "an encrypted reading" = opened.plaintext
+    algorithm = recipient.algorithm
+    ^algorithm = opened.algorithm
+    "A256GCM" = opened.encryption
+    curve = recipient.curve
+    ^curve = opened.header["epk"]["crv"]
+    false = Map.has_key?(opened.header["epk"], "d")
+    true = opened.header["apu"] == Base.url_encode64("sender", padding: false)
+    true = opened.header["apv"] == Base.url_encode64("recipient", padding: false)
+    Map.put(recipient, :token, token)
+  end
+
+6 = length(envelopes)
+IO.puts("All six envelopes authenticated and decrypted")
+```
+
+## Reject altered content, malformed public keys, and wrong custody
+
+The mutation changes an actual ciphertext byte while keeping valid Base64url. A separate mutation makes `epk` malformed. A trusted handle on the wrong curve fails with the same crypto error as tampering, and an algorithm outside the policy is refused at input.
+
+```elixir
+for envelope <- envelopes do
+  policy = policy_for.(envelope.handle)
+  [protected, encrypted_key, iv, ciphertext, tag] = String.split(envelope.token, ".")
+  <<first, rest::binary>> = Base.url_decode64!(ciphertext, padding: false)
+  changed = Base.url_encode64(<<Bitwise.bxor(first, 1), rest::binary>>, padding: false)
+
+  {:error, %{reason: :decryption_failed, layer: :crypto}} =
+    JWE.decrypt(Enum.join([protected, encrypted_key, iv, changed, tag], "."), policy)
+
+  header = :json.decode(Base.url_decode64!(protected, padding: false))
+  malformed = put_in(header, ["epk", "x"], "")
+
+  malformed_protected =
+    malformed |> :json.encode() |> IO.iodata_to_binary() |> Base.url_encode64(padding: false)
+
+  {:error, %{reason: :invalid_header, layer: :input}} =
+    JWE.decrypt(Enum.join([malformed_protected, encrypted_key, iv, ciphertext, tag], "."), policy)
+
+  other =
+    Enum.find(recipients, fn recipient ->
+      recipient.algorithm == envelope.algorithm and recipient.curve != envelope.curve
+    end)
+
+  {:error, %{reason: :decryption_failed, layer: :crypto}} =
+    JWE.decrypt(envelope.token, policy_for.(other.handle))
+
+  {:error, %{reason: :algorithm_not_permitted, layer: :input}} =
+    JWE.decrypt(envelope.token, %{policy | algorithms: ["RSA-OAEP-256"]})
+
+  {:error, %{reason: :duplicate_member, layer: :input}} =
+    JWE.encrypt(
+      [{"alg", envelope.algorithm}, {"enc", "A256GCM"}, {"epk", %{}}],
+      "payload",
+      envelope.public
+    )
+
+  {:error, %{reason: :invalid_header, layer: :input}} =
+    KeyManagement.agree(envelope.algorithm, "A256GCM", envelope.public, %{
+      apu: "same",
+      apv: "same"
+    })
+end
+
+IO.puts("Every curve and mode rejected tampering, malformed epk, wrong custody, and policy errors")
+```
+
+## Release the caller-owned keys
+
+```elixir
+for recipient <- recipients do
+  :ok = Custody.release(recipient.handle)
+  {:error, %{reason: :key_not_found}} = Custody.public_key(recipient.handle)
+end
+
+IO.puts("All recipient handles released")
+```
+
+Successful JWE decryption establishes recipient integrity, not sender identity. These local round trips and the published public-key check do not establish deployed-peer acceptance. Continue with the [JOSE guide](../docs/guides/jose.md), [key custody](../docs/guides/key-custody.md), and [testing and evidence](../docs/guides/testing.md).

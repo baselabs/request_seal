@@ -39,7 +39,8 @@ defmodule RequestSeal.MixProject do
     "livebooks/sign-and-verify.livemd",
     "livebooks/plug-webhook.livemd",
     "livebooks/web-bot-auth.livemd",
-    "livebooks/jose.livemd"
+    "livebooks/jose.livemd",
+    "livebooks/ecdh-es.livemd"
   ]
 
   def project do

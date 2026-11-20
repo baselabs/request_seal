@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Add an executable ECDH-ES notebook covering P-256 and X25519, all three
+  agreement modes, a published public-key check, and rejection cases.
 - Pin every documented public module, function, macro, type and callback in an
   exact inventory, checked with all optional integrations on the latest runtime.
 - Check all eleven emitted error vocabularies against their closed reason types
