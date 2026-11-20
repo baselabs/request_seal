@@ -9,7 +9,7 @@ is durably recorded, or a crash between derivation and use leaves an unrecorded 
 
 ## Decision
 
-1. Local.generate(algorithm, opts) returns {:ok, handle} or {:error, Custody.Error}. RSA signing and RSA-OAEP require :bits in [2048, 3072, 4096], plus optional :capabilities. ECDH-ES forms require :curve in ["P-256", "P-384", "X25519"], plus optional :capabilities. AES-KW and ECDSA, Ed25519 and HMAC signing algorithms accept only :capabilities; their key size or curve follows the algorithm. Misplaced or unknown options return :invalid_options. GCMKW, dir and {:derive, _} algorithm selections return :unsupported_algorithm.
+1. Local.generate(algorithm, opts) returns {:ok, handle} or {:error, Custody.Error}. RSA signing and RSA-OAEP require :bits in [2048, 3072, 4096], plus optional :capabilities. ECDH-ES forms require :curve in ["P-256", "P-384", "X25519"], plus optional :capabilities. AES-KW and ECDSA, Ed25519 and HMAC signing algorithms accept only :capabilities; their key size or curve follows the algorithm. Every family also accepts an optional :timeout (1 to 300,000 ms, default 5,000, as other custody operations), bounding holder startup and generation; hosted runs showed RSA-4096 generation can exceed a fixed 5,000 ms on loaded machines. Misplaced or unknown options return :invalid_options. GCMKW, dir and {:derive, _} algorithm selections return :unsupported_algorithm.
 2. Derivation uses HKDF-SHA256 with info
    `"request-seal/derive/v1" || lp(family) || lp(domain)`, where `lp(x) = u16be(byte_size(x)) || x` and
    the domain is 1 to 255 bytes. Families are `x25519-dhkem`, `p256-dhkem`, `p384-dhkem`,

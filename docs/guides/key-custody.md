@@ -7,7 +7,9 @@
 holder; the caller receives a handle. RSA requires `bits: 2048 | 3072 | 4096`;
 ECDH-ES requires `curve: "P-256" | "P-384" | "X25519"`. Other supported signing
 and AES-KW algorithms fix their own widths. Optional `:capabilities` narrows
-that family's defaults. GCMKW, `dir`, and derivation parents cannot be generated.
+that family's defaults, and optional `:timeout` (default 5,000 ms) bounds startup
+and generation; give RSA-4096 a longer one. GCMKW, `dir`, and derivation parents
+cannot be generated.
 
 For deterministic children, `Local.new/3` accepts
 `{:derive, "hkdf-sha256"}` with `{:ikm, bytes}` of 32–64 bytes and `[:derive]`.

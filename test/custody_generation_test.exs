@@ -44,11 +44,11 @@ defmodule RequestSeal.CustodyGenerationTest do
     end
   end
 
-  @tag timeout: 120_000
+  @tag timeout: 600_000
   test "generate covers every RSA size and both OAEP algorithms with exponent 65537" do
     for bits <- [2048, 3072, 4096],
         algorithm <- ["rsa-v1_5-sha256", {:jwe, "RSA-OAEP"}, {:jwe, "RSA-OAEP-256"}] do
-      assert {:ok, handle} = Local.generate(algorithm, bits: bits)
+      assert {:ok, handle} = Local.generate(algorithm, bits: bits, timeout: 60_000)
 
       assert {:ok, %PublicKey{material: {_, modulus, 65_537}} = public} =
                Custody.public_key(handle)
@@ -122,7 +122,9 @@ defmodule RequestSeal.CustodyGenerationTest do
     for opts <- [
           [curve: "P-256"],
           [bits: 2048],
-          [timeout: 1],
+          [timeout: 0],
+          [timeout: 300_001],
+          [timeout: :infinity],
           [unknown: true],
           [capabilities: []],
           [capabilities: [:sign, :sign]],
@@ -365,7 +367,15 @@ defmodule RequestSeal.CustodyGenerationTest do
     for handle <- [parent, generated, derived] do
       {pid, token} = handle.ref.()
       {:env, captured} = :erlang.fun_info(handle.ref, :env)
-      assert Enum.sort(captured) == Enum.sort([pid, token])
+      # The compiler may capture the pair or its two elements; either way the
+      # reference holds only the holder pid and its nonsecret routing token.
+      terms =
+        Enum.flat_map(captured, fn
+          {a, b} -> [a, b]
+          term -> [term]
+        end)
+
+      assert Enum.sort(terms) == Enum.sort([pid, token])
       assert Process.info(pid, :dictionary) == {:dictionary, []}
       error = assert_raise ErlangError, fn -> :sys.get_state(pid) end
       assert error.original == :unsupported_operation

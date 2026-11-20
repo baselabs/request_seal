@@ -48,10 +48,19 @@ defmodule RequestSeal.GuideDecisionHookTest do
           digest: ["sha-256"]
         }
         response_signing = %{
-          request_signing
-          | label: "decision",
-            components: response_components,
-            keyid: "service-key"
+          label: "decision",
+          algorithm: "ed25519",
+          components: response_components,
+          parameters: %{
+            created: true,
+            expires_in: 60,
+            nonce: :random,
+            alg: true,
+            keyid: "service-key",
+            tag: nil
+          },
+          digest: ["sha-256"],
+          field_schemas: %{}
         }
         ''',
         binding,

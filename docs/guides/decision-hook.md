@@ -61,14 +61,24 @@ request_signing = %{
   digest: ["sha-256"]
 }
 response_signing = %{
-  request_signing
-  | label: "decision",
-    components: response_components,
-    keyid: "service-key"
+  label: "decision",
+  algorithm: "ed25519",
+  components: response_components,
+  parameters: %{
+    created: true,
+    expires_in: 60,
+    nonce: :random,
+    alg: true,
+    keyid: "service-key",
+    tag: nil
+  },
+  digest: ["sha-256"],
+  field_schemas: %{}
 }
 ```
 
-The response covers its status, content type and digest, plus the originating
+`RequestSeal.Plug.SignResponse` takes the full signing map, with explicit
+parameters and field schemas, rather than the short request form. The response covers its status, content type and digest, plus the originating
 request's method, origin, path, digest and signature via `;req`. Covering the
 request signature distinguishes fresh requests with identical payloads, because
 each request signs a fresh random nonce. Freshness does not spend nonces: choose

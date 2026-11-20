@@ -173,14 +173,16 @@ defmodule RequestSeal.Custody.Local do
 
   Options are exactly the required `:bits` or `:curve` for that family, plus
   optional `:capabilities` narrowing its defaults (sign/verify, wrap/unwrap, or
-  unwrap). Unknown, duplicate, misplaced, missing, or invalid options return
+  unwrap) and optional `:timeout` (1..300,000 ms, default 5,000) bounding holder
+  startup and generation. RSA-4096 generation can take several seconds on a
+  loaded machine; pass a longer `:timeout` for it. Unknown, duplicate, misplaced, missing, or invalid options return
   `:invalid_options`. GCMKW, `dir`, derivation parents, and unknown algorithms
   return `:unsupported_algorithm`; HKDF IKM is imported with `new/3`.
 
   Returns `{:ok, KeyHandle.t()}` after actual cryptographic validation, or
   `{:error, Custody.Error.t()}` with the reasons above, `:invalid_key`,
-  `:key_mismatch`, `:custodian_failure`, or `:deadline_exceeded` on holder startup
-  (5,000 ms). Release with `RequestSeal.Custody.release/1`. Symmetric keys have
+  `:key_mismatch`, `:custodian_failure`, or `:deadline_exceeded` when startup and
+  generation exceed `:timeout`. Release with `RequestSeal.Custody.release/1`. Symmetric keys have
   unknown equivalence and no public key. Generation emits no telemetry.
 
       iex> {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", capabilities: [:sign])
@@ -192,8 +194,12 @@ defmodule RequestSeal.Custody.Local do
           {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
   def generate(algorithm, opts) do
     Support.safe(fn ->
-      {family, capabilities} = generation_options(algorithm, opts)
-      {holder, token} = start_holder({:generate, algorithm, family, opts, capabilities})
+      {family, capabilities, timeout} = generation_options(algorithm, opts)
+      deadline = System.monotonic_time(:millisecond) + timeout
+
+      {holder, token} =
+        start_holder({:generate, algorithm, family, opts, capabilities}, self(), deadline)
+
       KeyHandle.new(__MODULE__, algorithm, capabilities, fn -> {holder, token} end)
     end)
   end
@@ -214,7 +220,7 @@ defmodule RequestSeal.Custody.Local do
         _ -> []
       end
 
-    Support.options(opts, [:capabilities | required])
+    timeout = Support.timeout(opts, [:capabilities, :timeout | required])
 
     case family do
       :rsa ->
@@ -227,7 +233,7 @@ defmodule RequestSeal.Custody.Local do
         :ok
     end
 
-    {family, Derivation.capabilities(opts, defaults)}
+    {family, Derivation.capabilities(opts, defaults), timeout}
   end
 
   defp generated_material(_, :rsa, opts),
