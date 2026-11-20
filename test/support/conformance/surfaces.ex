@@ -891,8 +891,13 @@ defmodule RequestSeal.Conformance.Surfaces do
 
   def hpke_derive_key_pair(root, c) do
     inputs = c["inputs"]
-    {sk, pk} = RequestSeal.Custody.Derivation.key_pair(C.int(inputs["kem_id"]),
-                                                    root |> C.load(inputs["ikm"]) |> C.bytes())
+
+    {sk, pk} =
+      RequestSeal.Custody.Derivation.key_pair(
+        C.int(inputs["kem_id"]),
+        root |> C.load(inputs["ikm"]) |> C.bytes()
+      )
+
     {:ok, %{"sk" => C.b64(sk), "pk" => C.b64(pk)}}
   end
 
@@ -903,25 +908,41 @@ defmodule RequestSeal.Conformance.Surfaces do
     algorithm = Map.fetch!(@key_algorithms, {kind, name})
     curve = inputs["target"]["curve"]
     opts = if curve == nil, do: [timeout: 5000], else: [timeout: 5000, curve: curve]
-    {:ok, parent} = Custody.Local.new({:derive, "hkdf-sha256"}, {:ikm, root |> C.load(inputs["parent_ikm"]) |> C.bytes()})
+
+    {:ok, parent} =
+      Custody.Local.new(
+        {:derive, "hkdf-sha256"},
+        {:ikm, root |> C.load(inputs["parent_ikm"]) |> C.bytes()}
+      )
+
     try do
       case Custody.derive(parent, algorithm, C.bytes(inputs["domain"]), opts) do
         {:ok, child} ->
           try do
             case inputs["probe"] do
               %{"message" => message} ->
-                with {:ok, tag} <- Custody.sign(child, C.bytes(message)), do: {:ok, %{"tag" => C.b64(tag)}}
+                with {:ok, tag} <- Custody.sign(child, C.bytes(message)) do
+                  {:ok, %{"tag" => C.b64(tag)}}
+                end
+
               %{"cek" => cek} ->
-                with {:ok, result} <- Custody.wrap(child, C.bytes(cek)), do: {:ok, %{"wrapped" => C.b64(result.encrypted_key)}}
+                with {:ok, result} <- Custody.wrap(child, C.bytes(cek)) do
+                  {:ok, %{"wrapped" => C.b64(result.encrypted_key)}}
+                end
+
               nil ->
                 with {:ok, public} <- Custody.public_key(child),
-                     {:ok, jwk} <- PublicKey.export(public, :jwk),
-                     do: {:ok, %{"public_key" => %{"pairs" => Enum.sort(jwk) |> Enum.map(fn {k, v} -> [k, v] end)}}}
+                     {:ok, jwk} <- PublicKey.export(public, :jwk) do
+                  pairs = jwk |> Enum.sort() |> Enum.map(fn {k, v} -> [k, v] end)
+                  {:ok, %{"public_key" => %{"pairs" => pairs}}}
+                end
             end
           after
             :ok = Custody.release(child)
           end
-        error -> error
+
+        error ->
+          error
       end
     after
       :ok = Custody.release(parent)

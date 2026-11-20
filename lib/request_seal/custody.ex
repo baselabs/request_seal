@@ -60,7 +60,8 @@ defmodule RequestSeal.Custody do
               :ok | {:error, Error.reason()}
   @callback wrap(term(), key_algorithm(), binary(), Context.t()) ::
               {:ok, %{encrypted_key: binary(), params: params()}} | {:error, Error.reason()}
-  @callback derive(term(), DeriveRequest.t(), Context.t()) :: {:ok, term()} | {:error, Error.reason()}
+  @callback derive(term(), DeriveRequest.t(), Context.t()) ::
+              {:ok, term()} | {:error, Error.reason()}
   @callback commit(term(), <<_::256>>, Context.t()) :: :ok | {:error, Error.reason()}
   @callback release(term(), Context.t()) :: :ok | {:error, Error.reason()}
   @optional_callbacks verify: 5, unwrap: 5, wrap: 4, derive: 3, commit: 3, release: 2
@@ -130,7 +131,12 @@ defmodule RequestSeal.Custody do
           token: :crypto.strong_rand_bytes(32)
         }
 
-        case run(context, fn -> normalize_child(parent.custodian.derive(parent.ref, request, context)) end) do
+        result =
+          run(context, fn ->
+            normalize_child(parent.custodian.derive(parent.ref, request, context))
+          end)
+
+        case result do
           {:ok, ref} -> commit_child(parent.custodian, ref, request, context)
           {:error, _} = error -> error
         end
@@ -158,7 +164,10 @@ defmodule RequestSeal.Custody do
         ensure(Keyword.has_key?(opts, :timeout), :invalid_options)
         timeout = Support.timeout(opts)
         ensure(match?(%Cleanup{}, cleanup) and map_size(cleanup) == 3, :invalid_handle)
-        ensure(is_atom(cleanup.custodian) and Code.ensure_loaded?(cleanup.custodian), :invalid_handle)
+        ensure(
+          is_atom(cleanup.custodian) and Code.ensure_loaded?(cleanup.custodian),
+          :invalid_handle
+        )
         ensure(function_exported?(cleanup.custodian, :release, 2), :invalid_handle)
         release_child(cleanup, timeout)
       end,
@@ -177,12 +186,16 @@ defmodule RequestSeal.Custody do
     try do
       result =
         run(context, fn ->
-          send(dispatched, {dispatched, :commit_started})
+          if Context.remaining(context) > 0 do
+            send(dispatched, {dispatched, :commit_started})
 
-          case custodian.commit(ref, request.token, context) do
-            :ok -> {:ok, {:commit_reply, :ok}}
-            {:error, _} = error -> {:ok, {:commit_reply, normalize(:commit, error)}}
-            _ -> {:error, Error.new(:custodian_failure)}
+            case custodian.commit(ref, request.token, context) do
+              :ok -> {:ok, {:commit_reply, :ok}}
+              {:error, _} = error -> {:ok, {:commit_reply, normalize(:commit, error)}}
+              _ -> {:error, Error.new(:custodian_failure)}
+            end
+          else
+            {:error, Error.new(:deadline_exceeded)}
           end
         end)
 
@@ -195,8 +208,7 @@ defmodule RequestSeal.Custody do
 
       case result do
         {:ok, {:commit_reply, :ok}} ->
-          {:ok, %KeyHandle{custodian: custodian, ref: ref, algorithm: request.target.algorithm,
-                          capabilities: request.capabilities}}
+          KeyHandle.new(custodian, request.target.algorithm, request.capabilities, ref)
 
         {:ok, {:commit_reply, {:error, _} = error}} ->
           error
@@ -217,7 +229,10 @@ defmodule RequestSeal.Custody do
   defp release_child(cleanup, timeout) do
     context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
 
-    case run(context, fn -> normalize(:release, cleanup.custodian.release(cleanup.ref, context)) end) do
+    result =
+      run(context, fn -> normalize(:release, cleanup.custodian.release(cleanup.ref, context)) end)
+
+    case result do
       {:ok, :ok} -> :ok
       {:error, _} = error -> error
     end
@@ -712,7 +727,11 @@ defmodule RequestSeal.Custody do
         end
 
       _ ->
-        ensure(not Enum.any?(handle.capabilities, &(&1 in [:wrap, :unwrap, :derive])), :invalid_handle)
+        ensure(
+          not Enum.any?(handle.capabilities, &(&1 in [:wrap, :unwrap, :derive])),
+          :invalid_handle
+        )
+
         RequestSeal.Crypto.Algorithm.resolve(handle.algorithm)
     end
   end

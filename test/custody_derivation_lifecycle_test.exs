@@ -10,6 +10,7 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     @behaviour Custody
     def derive(ref, request, context) do
       {local, controller, mode} = ref.()
+
       if mode == :derive_refusal do
         {:error, :custodian_rejected}
       else
@@ -24,6 +25,7 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
 
     def commit(ref, token, context) do
       {local, controller, mode} = ref.()
+
       if mode == :commit_refusal do
         send(controller, :explicit_refusal)
         {:error, :unavailable}
@@ -39,6 +41,7 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     def release(ref, context) do
       {local, controller, _} = ref.()
       send(controller, {:release_attempt, self(), context, System.monotonic_time(:millisecond)})
+
       receive do
         :refuse -> {:error, :custodian_unavailable}
         :raise -> raise "release refused"
@@ -72,12 +75,14 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     for {mode, reason} <- [derive_refusal: :custodian_rejected, commit_refusal: :unavailable] do
       {owner, owner_down, parent} = begin_derive(mode, 500)
       assert_receive {:result, {:error, %Custody.Error{reason: ^reason}}}, 2000
+
       if mode == :commit_refusal do
         assert_receive {:candidate, ref, _, _}
         assert_receive :explicit_refusal
         down = Process.monitor(holder(ref))
         assert_receive {:DOWN, ^down, :process, _, _}, 1500
       end
+
       refute_receive {:release_attempt, _, _, _}, 20
       finish(owner, owner_down, parent)
     end
@@ -90,6 +95,17 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     Process.exit(runner, :kill)
     assert_receive {:result, {:error, %Custody.Error{reason: :custodian_failure}}}, 1500
     assert_receive {:DOWN, ^down, :process, _, _}, 1500
+    refute_receive {:release_attempt, _, _, _}, 20
+    finish(owner, owner_down, parent)
+  end
+
+  test "deadline before commit dispatch returns a bare error and the candidate expires" do
+    {owner, owner_down, parent} = begin_derive(:derive_loss, 500)
+    assert_receive {:candidate, ref, _, _}, 2000
+    down = Process.monitor(holder(ref))
+    assert_receive {:result, {:error, %Custody.Error{reason: :deadline_exceeded}}}, 2000
+    assert_receive {:DOWN, ^down, :process, _, _}, 1000
+    refute_receive {:committed, _, _, _}, 0
     refute_receive {:release_attempt, _, _, _}, 20
     finish(owner, owner_down, parent)
   end
@@ -128,22 +144,36 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
       down = Process.monitor(holder(ref))
       assert_receive {:release_attempt, release, _, _}, 2000
       send(release, failure)
-      assert_receive {:result, {:cleanup_required, %Cleanup{} = cleanup, %Custody.Error{reason: :deadline_exceeded}}}, 2000
+      assert_receive {:result, result}, 2000
+      assert {:cleanup_required, cleanup, error} = result
+      assert %Cleanup{} = cleanup
+      assert %Custody.Error{reason: :deadline_exceeded} = error
       assert inspect(cleanup) == "#RequestSeal.Custody.Cleanup<>"
       assert Process.alive?(holder(ref))
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.sign(cleanup, "denied")
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.public_key(cleanup)
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.identity(cleanup)
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.release(cleanup)
-      assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.derive(cleanup, "ed25519", "d", timeout: 5000)
+      assert {:error, %Custody.Error{reason: :invalid_handle}} =
+               Custody.derive(cleanup, "ed25519", "d", timeout: 5000)
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.wrap(cleanup, <<0::128>>)
-      assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.unwrap(cleanup, [{<<>>, %{}, 128}])
+      assert {:error, %Custody.Error{reason: :invalid_handle}} =
+               Custody.unwrap(cleanup, [{<<>>, %{}, 128}])
       assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.verify(cleanup, "d", <<0>>)
 
-      for opts <- [[], [timeout: 0], [timeout: :infinity], [timeout: 300_001], [timeout: 1, timeout: 2], [timeout: 1, curve: "P-256"]] do
+      for opts <- [
+            [],
+            [timeout: 0],
+            [timeout: :infinity],
+            [timeout: 300_001],
+            [timeout: 1, timeout: 2],
+            [timeout: 1, curve: "P-256"]
+          ] do
         assert {:error, %Custody.Error{reason: :invalid_options}} = Custody.cleanup(cleanup, opts)
       end
-      assert {:error, %Custody.Error{reason: :invalid_handle}} = Custody.cleanup(parent, timeout: 1000)
+
+      assert {:error, %Custody.Error{reason: :invalid_handle}} =
+               Custody.cleanup(parent, timeout: 1000)
 
       for _ <- 1..2 do
         task = Task.async(fn -> Custody.cleanup(cleanup, timeout: 1000) end)
@@ -151,6 +181,7 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
         send(release, :release)
         assert Task.await(task, 2000) == :ok
       end
+
       assert_receive {:DOWN, ^down, :process, _, _}, 1000
       finish(owner, owner_down, parent)
     end
@@ -162,12 +193,14 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     child = holder(ref)
     down = Process.monitor(child)
     :erlang.suspend_process(child)
+
     try do
       assert_receive {:release_attempt, release, cleanup_context, observed}, 2000
       assert cleanup_context.deadline > original.deadline
       assert cleanup_context.deadline - observed in 1..1000
       send(release, :release)
-      assert_receive {:result, {:cleanup_required, cleanup, %Custody.Error{reason: :deadline_exceeded}}}, 2500
+      assert_receive {:result, result}, 2500
+      assert {:cleanup_required, cleanup, %Custody.Error{reason: :deadline_exceeded}} = result
       assert Process.alive?(child)
       refute_receive {:DOWN, ^down, :process, ^child, _}, 0
       assert inspect(cleanup) == "#RequestSeal.Custody.Cleanup<>"
@@ -175,6 +208,7 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     after
       :erlang.resume_process(child)
     end
+
     assert_receive {:cleanup_to_retry, cleanup}
     task = Task.async(fn -> Custody.cleanup(cleanup, timeout: 1000) end)
     assert_receive {:release_attempt, release, _, _}, 1000
@@ -201,20 +235,25 @@ defmodule RequestSeal.CustodyDerivationLifecycleTest do
     controller = self()
     original = parent.ref
     wrapped = %{parent | custodian: Controlled, ref: fn -> {original, controller, mode} end}
-    {owner, down} = spawn_monitor(fn ->
-      result = Custody.derive(wrapped, "ed25519", "domain", timeout: timeout)
-      send(controller, {:result, result})
-      receive do
-        :stop -> :ok
-      end
-    end)
+    {owner, down} =
+      spawn_monitor(fn ->
+        result = Custody.derive(wrapped, "ed25519", "domain", timeout: timeout)
+        send(controller, {:result, result})
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
     on_exit(fn ->
       monitor = Process.monitor(owner)
       Process.exit(owner, :kill)
+
       receive do
         {:DOWN, ^monitor, :process, ^owner, _} -> :ok
       end
     end)
+
     {owner, down, parent}
   end
 

@@ -1,6 +1,6 @@
 --- a/lib/request_seal/custody/local.ex
 +++ b/lib/request_seal/custody/local.ex
-@@ -889,6 +889,7 @@
+@@ -905,6 +905,7 @@
    defp holder_operation(:public_key, {_, _, nil, _, _}), do: {:error, :no_public_key}
    defp holder_operation(:public_key, {_, _, public, _, _}), do: {:ok, public}
    defp holder_operation(:identity, {_, _, _, identity, _}), do: identity

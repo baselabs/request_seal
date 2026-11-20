@@ -206,16 +206,19 @@ defmodule RequestSeal.Custody.Local do
     )
 
     {_, family, defaults} = selection(algorithm)
-    required = case family do
-      :rsa -> [:bits]
-      :ecdh -> [:curve]
-      _ -> []
-    end
+    required =
+      case family do
+        :rsa -> [:bits]
+        :ecdh -> [:curve]
+        _ -> []
+      end
+
     Support.options(opts, [:capabilities | required])
 
     case family do
       :rsa -> ensure(Keyword.get(opts, :bits) in [2048, 3072, 4096], :invalid_options)
-      :ecdh -> ensure(Keyword.get(opts, :curve) in ["P-256", "P-384", "X25519"], :invalid_options)
+      :ecdh ->
+        ensure(Keyword.get(opts, :curve) in ["P-256", "P-384", "X25519"], :invalid_options)
       _ -> :ok
     end
 
@@ -357,7 +360,8 @@ defmodule RequestSeal.Custody.Local do
 
     allowed =
       if match?({:jwe, _}, algorithm) or match?({:derive, _}, algorithm),
-        do: [:equivalence, :capabilities], else: [:equivalence]
+        do: [:equivalence, :capabilities],
+        else: [:equivalence]
 
     Support.options(opts, allowed)
 
@@ -633,8 +637,12 @@ defmodule RequestSeal.Custody.Local do
     end
   end
 
-  defp start_holder(state, owner \\ self(), deadline \\ System.monotonic_time(:millisecond) + 5_000,
-                    pending \\ :committed) do
+  defp start_holder(
+         state,
+         owner \\ self(),
+         deadline \\ System.monotonic_time(:millisecond) + 5_000,
+         pending \\ :committed
+       ) do
     initializer = self()
     token = :crypto.strong_rand_bytes(32)
     # Spawn captures only nonsecret addressing state. Sensitivity precedes the
@@ -650,9 +658,11 @@ defmodule RequestSeal.Custody.Local do
       kind, reason ->
         cleanup_monitor = Process.monitor(pid)
         Process.exit(pid, :kill)
+
         receive do
           {:DOWN, ^cleanup_monitor, :process, ^pid, _} -> :ok
         end
+
         :erlang.raise(kind, reason, __STACKTRACE__)
     after
       Process.demonitor(monitor, [:flush])
@@ -695,9 +705,14 @@ defmodule RequestSeal.Custody.Local do
           case result do
             {:ok, state} ->
               if Process.alive?(owner) and System.monotonic_time(:millisecond) < deadline do
-                if pending != :committed,
-                  do: Process.send_after(self(), {:commit_expired, token},
-                                         max(0, deadline - System.monotonic_time(:millisecond)))
+                if pending != :committed do
+                  Process.send_after(
+                    self(),
+                    {:commit_expired, token},
+                    max(0, deadline - System.monotonic_time(:millisecond))
+                  )
+                end
+
                 send(initializer, {token, :initialized})
                 holder_loop(owner, monitor, token, state, pending)
               end
@@ -712,7 +727,8 @@ defmodule RequestSeal.Custody.Local do
       {:DOWN, ^monitor, :process, ^owner, _} ->
         :ok
     after
-      max(0, deadline - System.monotonic_time(:millisecond)) -> :ok
+      max(0, deadline - System.monotonic_time(:millisecond)) ->
+        :ok
     end
   end
 
@@ -720,8 +736,7 @@ defmodule RequestSeal.Custody.Local do
     material = generated_material(algorithm, family, opts)
     # Generation has its own capability option for every family; imported signing
     # keys retain new/3's existing option contract.
-    state = prepare_state(algorithm, material, [], nil, nil, capabilities)
-    put_elem(state, 4, capabilities)
+    prepare_state(algorithm, material, [], nil, nil, capabilities)
   end
 
   defp initial_state(state), do: state
@@ -813,7 +828,8 @@ defmodule RequestSeal.Custody.Local do
     selected = Derivation.capabilities([capabilities: request.capabilities], defaults)
     material = Derivation.material(ikm, request.target, request.domain)
     state = prepare_state(request.target.algorithm, material, [], nil, nil, selected)
-    {pid, token} = start_holder(state, request.owner, context.deadline, {context.deadline, request.token})
+    {pid, token} =
+      start_holder(state, request.owner, context.deadline, {context.deadline, request.token})
     {:ok, fn -> {pid, token} end}
   end
 

@@ -6,8 +6,10 @@ defmodule RequestSeal.CustodyDerivationCorpusTest do
 
   test "independent custody vectors cover every derivation family and bind domain bytes" do
     ledger = C.json(File.read!("corpus/sources/native-derive/ledger.json"))
+
     assert Enum.sort(Enum.map(ledger, & &1["item"])) ==
              ~w(aes128-key aes256-key ed25519-seed hmac-sha256-key p256-dhkem p384-dhkem x25519-dhkem)
+
     for row <- ledger do
       c = C.json(File.read!("corpus/cases/" <> row["case"] <> ".json"))
       assert C.Surfaces.run("corpus", c) == {:ok, c["expected"]}
@@ -20,6 +22,7 @@ defmodule RequestSeal.CustodyDerivationCorpusTest do
   test "published DHKEM vectors and independent P384 stage pin scalar and public bytes" do
     paths = Path.wildcard("corpus/cases/hpke/*.json")
     assert length(paths) == 7
+
     for path <- paths do
       c = C.json(File.read!(path))
       assert C.Surfaces.run("corpus", c) == {:ok, c["expected"]}
@@ -41,7 +44,10 @@ defmodule RequestSeal.CustodyDerivationCorpusTest do
     prefix = "request-seal/derive/v1"
     family = "ed25519-seed"
     prk = :crypto.mac(:hmac, :sha256, prefix, ikm)
-    info = prefix <> <<byte_size(family)::16, family::binary, byte_size(ed_domain)::16, ed_domain::binary>>
+    info =
+      prefix <>
+        <<byte_size(family)::16, family::binary, byte_size(ed_domain)::16, ed_domain::binary>>
+
     ed_seed = :crypto.mac(:hmac, :sha256, prk, info <> <<1>>)
     {expected, _} = :crypto.generate_key(:eddsa, :ed25519, ed_seed)
     assert {:ok, %PublicKey{material: {:ed25519, ^expected}}} = Custody.public_key(ed)

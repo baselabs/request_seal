@@ -41,6 +41,7 @@ defmodule RequestSeal.KeyHandle do
           capabilities: [RequestSeal.Custody.capability()],
           ref: (-> term())
         }
+
   # Shared construction gate for custodians; opaque references keep the existing
   # zero-arity reference contract, including derivation child references.
   @doc false
@@ -56,8 +57,13 @@ defmodule RequestSeal.KeyHandle do
         )
       end
 
-      {:ok, %__MODULE__{custodian: custodian, algorithm: algorithm,
-                        capabilities: capabilities, ref: ref}}
+      {:ok,
+       %__MODULE__{
+         custodian: custodian,
+         algorithm: algorithm,
+         capabilities: capabilities,
+         ref: ref
+       }}
     end)
   end
 end
