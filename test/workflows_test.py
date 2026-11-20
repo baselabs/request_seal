@@ -287,6 +287,7 @@ class QualificationTest(unittest.TestCase):
         self.assertEqual(1, len(uploads))
         self.assertEqual({"uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
                           "if": "always()", "with": {"name": "jwe-teardown", "if-no-files-found": "error",
+                                                       "retention-days": "7",
                                                        "path": "${{ runner.temp }}/jwe-teardown.json"}}, uploads[0])
         for workflow in workflows():
             if workflow.name != "ci.yml":
@@ -295,6 +296,22 @@ class QualificationTest(unittest.TestCase):
                 for command in commands:
                     self.assertNotIn("scripts/mutations.py", command, workflow.name)
                     self.assertNotIn("jwe_teardown_gate", command, workflow.name)
+
+    def test_every_upload_sets_retention_for_its_reader(self):
+        # Estate rule (infra ci.md): 1 day for an artifact a later job of the same run
+        # downloads, 7 days for anything read after the run.
+        found = 0
+        for workflow in workflows():
+            steps = [step for body in jobs(workflow.read_text()).values() for step in body.get("steps", [])]
+            downloaded = {step.get("with", {}).get("name") for step in steps
+                          if step_identity(step) == "actions/download-artifact"}
+            for step in steps:
+                if step_identity(step) == "actions/upload-artifact":
+                    found += 1
+                    with self.subTest(workflow=workflow.name, name=step["with"].get("name")):
+                        expected = "1" if step["with"].get("name") in downloaded else "7"
+                        self.assertEqual(expected, step["with"].get("retention-days"))
+        self.assertGreater(found, 0)
 
     def test_only_the_default_branch_warmer_saves_the_exact_qualification_cache(self):
         warmer = load_workflow(text("cache-warmer.yml"))

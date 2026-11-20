@@ -173,6 +173,7 @@ jobs:
         with:
           name: jwe-teardown
           if-no-files-found: error
+          retention-days: 7
           path: ${{ runner.temp }}/jwe-teardown.json
   qualified:
     if: always()
