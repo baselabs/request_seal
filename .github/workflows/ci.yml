@@ -168,11 +168,12 @@ jobs:
       - run: mix deps.get --check-locked
       - name: Measure near-cap teardown against the library bounds
         run: python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: jwe-teardown
           if-no-files-found: error
+          retention-days: 7
           path: ${{ runner.temp }}/jwe-teardown.json
   qualified:
     if: always()
