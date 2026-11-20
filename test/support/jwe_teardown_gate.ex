@@ -298,6 +298,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
       :erlang.trace(s.guard, true, [:arity])
       s = Runtime.quiet(s)
       setup = library_snapshot(s)
+      if topology == :custody, do: JWEWorkerDiagnostics.at_u(worker_diagnostics, member_u(s))
 
       {anchor, s, placement} =
         case trigger do
@@ -326,6 +327,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
                 true = :erlang.suspend_process(s.coordinator)
                 assert Enum.all?(s.resolvers, &Process.alive?/1)
                 at = r + unwrap
+                JWEWorkerDiagnostics.at_u(worker_diagnostics, at)
                 s = Runtime.until(s, at)
 
                 # Debug suspension pauses receive timers since OTP 28 and
@@ -345,6 +347,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
                   end)
 
                 at = resolution_stamp(s) + unwrap
+                JWEWorkerDiagnostics.at_u(worker_diagnostics, at)
                 s = Runtime.until(s, at)
                 {at, s, "P2 end: resolver notices queued at guard through U"}
 
@@ -1123,19 +1126,32 @@ defmodule RequestSeal.Test.JWEWorkerDiagnostics do
         _ -> nil
       end)
 
-    spawn_monitor(fn ->
-      owner_ref = Process.monitor(owner)
-      vm = vm_gc()
+    {pid, ref} =
+      spawn_monitor(fn ->
+        owner_ref = Process.monitor(owner)
+        vm = vm_gc()
 
-      rows =
-        Map.new(workers, fn pid ->
-          snapshot = snapshot(pid)
-          {pid, %{initial: snapshot, last: snapshot, at_u: nil, ended_at: nil, vm_end: vm}}
-        end)
+        rows =
+          Map.new(workers, fn pid ->
+            snapshot = snapshot(pid)
+            {pid, %{initial: snapshot, last: snapshot, at_u: nil, ended_at: nil, vm_end: vm}}
+          end)
 
-      sample(owner, owner_ref, rows, u, vm)
-    end)
+        send(owner, {:worker_diagnostics_ready, self()})
+        sample(owner, owner_ref, rows, u, vm)
+      end)
+
+    receive do
+      {:worker_diagnostics_ready, ^pid} -> {pid, ref}
+      {:DOWN, ^ref, :process, ^pid, _} -> raise "worker diagnostics setup failed"
+    after
+      5_000 ->
+        stop({pid, ref})
+        raise "worker diagnostics setup timed out"
+    end
   end
+
+  def at_u({pid, _}, at), do: send(pid, {:u, at})
 
   def collect({pid, _}) do
     ref = make_ref()
@@ -1160,6 +1176,9 @@ defmodule RequestSeal.Test.JWEWorkerDiagnostics do
     receive do
       {:DOWN, ^owner_ref, :process, ^owner, _} ->
         :ok
+
+      {:u, at} ->
+        sample(owner, owner_ref, update(rows, at), at, vm_start)
 
       {:collect, ^owner, ref} ->
         send(owner, {ref, report(update(rows, u), u, vm_start)})
