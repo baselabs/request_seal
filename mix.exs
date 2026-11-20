@@ -21,6 +21,7 @@ defmodule RequestSeal.MixProject do
     "docs/guides/ash.md",
     "docs/guides/ash-hooks.md",
     "docs/guides/decision-hook.md",
+    "docs/guides/credential-proxy.md",
     "docs/guides/web-bot-auth.md",
     "docs/guides/replay-protection.md",
     "docs/guides/key-discovery.md",
