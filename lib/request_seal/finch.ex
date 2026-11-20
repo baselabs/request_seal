@@ -228,10 +228,9 @@ if Code.ensure_loaded?(Finch) do
           retained bytes (at most 16 MiB) and appended; an existing one must
           match exactly those algorithms and the bytes.
         * `:field_schemas` - explicit field schema map, default `%{}`.
-      * `signer` - a `RequestSeal.KeyHandle` whose algorithm equals the spec's,
-        or an arity-two function `(algorithm, base)` returning
-        `{:ok, signature}` or `{:error, term}`. Both run in custody's monitored
-        workers; the deadline or the caller's exit terminates their work.
+      * `signer` - a `RequestSeal.KeyHandle` whose algorithm equals the spec's
+        and grants `:sign`. Custody uses monitored workers; the deadline or
+        the caller's exit terminates their work.
       * `opts` - keyword list of the options below.
 
     Parameters are emitted in the order created, expires, nonce, alg, keyid,
@@ -241,7 +240,7 @@ if Code.ensure_loaded?(Finch) do
 
     ## Options
 
-      * `:signing_timeout` - 1..300,000 ms for either signer form. Default 5,000.
+      * `:signing_timeout` - 1..300,000 ms for custody signing. Default 5,000.
       * `:clock` - arity-zero function returning integer Unix seconds from 0
         through 253,402,300,799. Default system seconds. Used only when
         `created` is selected.

@@ -15,7 +15,7 @@ Web Bot Auth identifies a key by its SHA-256 JWK thumbprint, which becomes the s
 {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
-signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+signer = handle
 
 IO.puts("Agent key thumbprint: #{byte_size(thumbprint)} characters")
 ```
@@ -123,7 +123,7 @@ A held key identifies the key, not the owner of `crawler.example`: the principal
       nonce: nil,
       components: ~s[("@method" "@path")]
     },
-    fn "ed25519", bytes -> RequestSeal.Custody.sign(stranger, bytes) end
+    stranger
   )
 
 {:error, %{reason: :agent_unresolved, layer: :key, detail: :unknown_key}} =

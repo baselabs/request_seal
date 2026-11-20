@@ -6,7 +6,7 @@ defmodule RequestSeal.JOSEJWETest do
   test "JWE encryption emits compact protected JSON with caller member order" do
     v = fixture("5_7.key_wrap_using_aes-gcm_keywrap_with_aes-cbc-hmac-sha2.json")
     key = {:aes, b64(v["input"]["key"]["k"])}
-    wrap = fn alg, cek -> KeyManagement.wrap(alg, cek, %{}, key) end
+    wrap = local({:jwe, "A256KW"}, key)
     header = [{"alg", "A256KW"}, {"kid", "k1"}, {"enc", "A128GCM"}]
 
     assert {:ok, compact} = JWE.encrypt(header, "plaintext", wrap)
@@ -383,20 +383,28 @@ defmodule RequestSeal.JOSESafetyTest do
     key = material(v["key"])
     owner = self()
 
-    signer = fn alg, base ->
-      send(owner, {:sign_worker, self(), {:sensitive, Process.flag(:sensitive, true)}})
-      RequestSeal.Crypto.sign(alg, base, key)
-    end
+    handle = local({:jws, "RS256"}, key)
+
+    signer = %{
+      handle
+      | ref: fn ->
+          send(owner, {:sign_worker, self(), {:sensitive, Process.flag(:sensitive, true)}})
+          handle.ref.()
+        end
+    }
 
     assert {:ok, c} = JWS.sign([{"alg", "RS256"}], "payload", signer, timeout: 5000)
     assert_receive {:sign_worker, pid, {:sensitive, true}}
     assert pid != self()
     assert {:ok, _} = JWS.verify(c, jws_policy(v["key"], "RS256"))
 
-    signer = fn alg, base ->
-      Process.sleep(100)
-      RequestSeal.Crypto.sign(alg, base, key)
-    end
+    signer = %{
+      handle
+      | ref: fn ->
+          Process.sleep(100)
+          handle.ref.()
+        end
+    }
 
     assert {:error, %{reason: :deadline_exceeded}} =
              JWS.sign([{"alg", "RS256"}], "payload", signer, timeout: 1)
@@ -429,9 +437,7 @@ defmodule RequestSeal.JOSESafetyTest do
                Nested.verify(c, jp, sp, content_types: ["JWT"])
     end
 
-    signer = fn alg, base ->
-      RequestSeal.Crypto.sign(alg, base, rsa(v["sign"]["input"]["key"]))
-    end
+    signer = local({:jws, "PS256"}, rsa(v["sign"]["input"]["key"]))
 
     assert {:ok, inner} =
              JWS.sign([{"alg", "PS256"}, {"cty", "JWT"}], v["sign"]["input"]["payload"], signer)
@@ -462,9 +468,7 @@ defmodule RequestSeal.JOSESafetyTest do
     sp = jws_policy(v["sign"]["input"]["key"], "PS256")
     recipient = public(v["encrypt"]["input"]["key"])
 
-    signer = fn alg, base ->
-      RequestSeal.Crypto.sign(alg, base, rsa(v["sign"]["input"]["key"]))
-    end
+    signer = local({:jws, "PS256"}, rsa(v["sign"]["input"]["key"]))
 
     # RFC 7515 Section 4.1.10: cty names the payload's media type and is the
     # application's business; only JOSE-typed values imply another nesting level
@@ -557,7 +561,7 @@ defmodule RequestSeal.JOSEGuardTest do
   test "public constructors and direct structs obey policy and option bounds" do
     v = fixture("rfc7515.json")["A.2"]
     p = jws_policy(v["key"], "RS256")
-    signer = fn a, b -> RequestSeal.Crypto.sign(a, b, rsa(v["key"])) end
+    signer = local({:jws, "RS256"}, rsa(v["key"]))
 
     for opts <- [
           [timeout: 0],
@@ -659,7 +663,7 @@ defmodule RequestSeal.JOSEGuardTest do
   test "default Inspect hides explicit-access canaries, protected bytes and header selectors" do
     canary = "JOSE_sensitive_success_canary"
     v = fixture("rfc7515.json")["A.2"]
-    signer = fn alg, base -> RequestSeal.Crypto.sign(alg, base, rsa(v["key"])) end
+    signer = local({:jws, "RS256"}, rsa(v["key"]))
     assert {:ok, c} = JWS.sign([{"alg", "RS256"}, {"kid", canary}], canary, signer)
     assert {:ok, r} = JWS.verify(c, jws_policy(v["key"], "RS256"))
     assert r.payload == canary and r.header["kid"] == canary
@@ -736,7 +740,7 @@ defmodule RequestSeal.JOSECompositionTest do
   import RequestSeal.JOSEVectors
   alias RequestSeal.JOSE.{JWE, JWS, KeyManagement}
 
-  test "recipient public key restrictions and real wrapper additions cannot broaden selection" do
+  test "recipient restrictions and removed wrapper closures cannot broaden selection" do
     v = fixture("rfc7516.json")
     p = public(v["key"])
 
@@ -759,7 +763,7 @@ defmodule RequestSeal.JOSECompositionTest do
         {:ok, %{wrapped | header: additions}}
       end
 
-      assert {:error, %{reason: :unsupported_header}} =
+      assert {:error, %{reason: :invalid_options}} =
                JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], v["plaintext"], wrapper)
     end
 
@@ -770,7 +774,7 @@ defmodule RequestSeal.JOSECompositionTest do
         {:ok, %{wrapped | header: header}}
       end
 
-      assert {:error, %{reason: :unsupported_header}} =
+      assert {:error, %{reason: :invalid_options}} =
                JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}], v["plaintext"], wrapper)
     end
 

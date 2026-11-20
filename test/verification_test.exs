@@ -1,16 +1,7 @@
 defmodule RequestSeal.VerificationTest do
   use ExUnit.Case, async: false
 
-  alias RequestSeal.{
-    Body,
-    Crypto,
-    Digest,
-    FieldOccurrence,
-    Message,
-    Policy,
-    PublicKey,
-    TransportFacts
-  }
+  alias RequestSeal.{Body, Digest, FieldOccurrence, Message, Policy, PublicKey, TransportFacts}
 
   alias RequestSeal.StructuredFields, as: SF
   alias RequestSeal.StructuredFields.{Schema, Value}
@@ -601,7 +592,7 @@ defmodule RequestSeal.VerificationTest do
              RequestSeal.sign(
                m,
                %{label: v["label"], signature_input: parameters(v), algorithm: {:jws, "EdDSA"}},
-               signer(v)
+               signer(%{v | "algorithm" => {:jws, "EdDSA"}})
              )
 
     assert RequestSeal.verify(signed, p, label: v["label"]) ==
@@ -626,7 +617,7 @@ defmodule RequestSeal.VerificationTest do
       RequestSeal.sign(
         m,
         %{label: v["label"], signature_input: params, algorithm: {:jws, "EdDSA"}},
-        signer(v)
+        signer(%{v | "algorithm" => {:jws, "EdDSA"}})
       ),
       :algorithm_mismatch,
       :input
@@ -691,12 +682,12 @@ defmodule RequestSeal.VerificationTest do
           policy(v, key_resolver: fn _ -> {:ok, %{algorithm: "ed25519", key: verifier}} end),
           label: v["label"]
         ),
-        :verifier_failed,
-        :crypto
+        :key_resolver_failed,
+        :key
       )
     end
 
-    # Actual cryptography returns an error for a tampered signature through the closure too.
+    # Actual cryptography returns an error for a tampered signature through the handle too.
     h = vector("B.2.5")
     hm = rewrite(message(h), "signature", h["label"] <> "=:" <> Base.encode64(<<0::256>>) <> ":")
     error(RequestSeal.verify(hm, policy(h), label: h["label"]), :invalid_signature, :crypto)
@@ -710,7 +701,7 @@ defmodule RequestSeal.VerificationTest do
           fn _, _ -> {:ok, nil} end,
           fn _, _ -> {:ok, :binary.copy(<<0>>, 1025)} end
         ] do
-      error(RequestSeal.sign(m, spec, signer), :signer_failed, :crypto)
+      error(RequestSeal.sign(m, spec, signer), :invalid_options, :input)
     end
 
     error(
@@ -1073,7 +1064,12 @@ defmodule RequestSeal.VerificationTest do
 
     error(RequestSeal.sign(m, spec, signer(v), field_schemas: :bad), :invalid_options, :input)
     error(RequestSeal.sign(%{m | method: nil}, spec, signer(v)), :invalid_message, :input)
-    error(RequestSeal.sign(m, spec, fn _, _ -> exit(:signer_canary) end), :signer_failed, :crypto)
+
+    error(
+      RequestSeal.sign(m, spec, fn _, _ -> exit(:signer_canary) end),
+      :invalid_options,
+      :input
+    )
 
     error(
       RequestSeal.verify(message(v), policy(v, key_resolver: fn _ -> exit(:key_canary) end),
@@ -1399,7 +1395,7 @@ defmodule RequestSeal.VerificationTest do
 
   defp public("hmac") do
     secret = File.read!(Path.join(@root, "crypto/hmac.txt")) |> String.trim() |> Base.decode64!()
-    fn algorithm, bytes, sig -> Crypto.verify(algorithm, bytes, sig, {:hmac, secret}) end
+    RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
   end
 
   defp public(key) do
@@ -1411,7 +1407,7 @@ defmodule RequestSeal.VerificationTest do
 
   defp signer(v) do
     material = material(v["key"])
-    fn alg, bytes -> Crypto.sign(alg, bytes, material) end
+    RequestSeal.JOSEVectors.local(v["algorithm"], material)
   end
 
   defp material("hmac"),

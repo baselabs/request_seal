@@ -17,7 +17,7 @@ below cover `@scheme`.
 {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
-signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+signer = handle
 ```
 
 Reuse the handle in a long-lived owner in your application; see [key custody](key-custody.md). Trust the public key through configuration, not a message-supplied key ID.
@@ -105,9 +105,9 @@ and supplies covered Content-Length only over retained bytes. Existing conflicti
 digests reject. It refuses `host` and trailer components; cover `@authority`
 instead. Responses can cover related-request components.
 
-Spec signing accepts a custody handle or an arity-two signer `(algorithm, base)`.
+Spec signing takes an algorithm-bound custody handle.
 A handle whose algorithm differs from the spec's `algorithm` returns
-`:signer_algorithm_mismatch` at `:input`. Both forms use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
+`:signer_algorithm_mismatch` at `:input`. Both signing APIs use monitored custody workers; `signing_timeout:` defaults to 5,000 ms and
 accepts 1–300,000 ms. Optional `nonce:` supplies caller-owned 32-byte entropy
 instead of generating it; callers must provide fresh entropy for each signing
 attempt. It is ignored when the spec sets `nonce: nil`; omitting `nonce` keeps the
@@ -190,8 +190,7 @@ freshness; the earlier freshness policy would reject it:
   )
 ```
 
-The explicit-input path retains its synchronous function callback contract. It
-also accepts a `RequestSeal.KeyHandle` directly, with `signing_timeout` from
+The explicit-input path takes a `RequestSeal.KeyHandle`, with `signing_timeout` from
 1–300,000 ms (default 5,000). See [key custody](key-custody.md) for algorithm
 binding, bounded errors, and supervised ownership. Use the spec path to generate
 parameters.
@@ -219,7 +218,7 @@ parameters.
 | `:unexpected_component` | Coverage exceeds the policy under `extra_components: :reject`. |
 | `:label_in_use` | Signing would reuse an existing label; choose another. |
 | `:invalid_options` | Fix the signing specification or options. |
-| `:signer_failed`, `:signing_failed` | The signer function or the key handle failed; `:signing_failed` carries a bounded custody error in `source`, for example `:key_not_found`. |
+| `:signer_failed`, `:signing_failed` | The custody handle failed; `:signing_failed` carries a bounded custody error in `source`, for example `:key_not_found`. |
 
 See [the public contract](../design/architecture.md) for the separate representation, construction, cryptography, profile, trust, integrity, and replay layers. Named application profiles use `RequestSeal.Profile` in extension packages; that extension surface follows the [compatibility policy](../reference/compatibility.md) like the rest of the public API. Extensions must enforce their source-specific rules and trusted attribution; a profile stamp alone is no proof.
 

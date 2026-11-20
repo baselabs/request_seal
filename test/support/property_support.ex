@@ -8,7 +8,7 @@ defmodule RequestSeal.PropertySupport do
   # https://www.rfc-editor.org/rfc/rfc7517.html
   # https://www.rfc-editor.org/rfc/rfc8259.html
   import StreamData
-  alias RequestSeal.{Body, Crypto, FieldOccurrence, Message, PublicKey, TransportFacts}
+  alias RequestSeal.{Body, FieldOccurrence, Message, PublicKey, TransportFacts}
   alias RequestSeal.StructuredFields.{Schema, Value}
 
   def schema(type) do
@@ -187,7 +187,7 @@ defmodule RequestSeal.PropertySupport do
 
   def jose(seed \\ 7516) do
     [{_, material, public} | _] = keys(seed)
-    signer = fn alg, base -> Crypto.sign(alg, base, material) end
+    signer = RequestSeal.JOSEVectors.local({:jws, "EdDSA"}, material)
 
     jws = %{
       algorithms: ["EdDSA"],

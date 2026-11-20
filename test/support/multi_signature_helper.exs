@@ -4,7 +4,6 @@ defmodule RequestSeal.MultiSignatureSupport do
   alias RequestSeal.{
     Body,
     Crypto,
-    Custody,
     FieldOccurrence,
     Message,
     Policy,
@@ -112,7 +111,18 @@ defmodule RequestSeal.MultiSignatureSupport do
     end
   end
 
-  def signer(name), do: fn alg, base -> Crypto.sign(alg, base, material(name)) end
+  def signer(name) do
+    algorithm =
+      %{
+        "rsa" => "rsa-v1_5-sha256",
+        "rsa_pss" => "rsa-pss-sha512",
+        "p256" => "ecdsa-p256-sha256",
+        "ed25519" => "ed25519",
+        "hmac" => "hmac-sha256"
+      }[name]
+
+    RequestSeal.JOSEVectors.local(algorithm, material(name))
+  end
 
   def hmac(equivalence \\ "published-secret") do
     {:ok, h} =
@@ -126,7 +136,7 @@ defmodule RequestSeal.MultiSignatureSupport do
   end
 
   def handle_resolver(h, algorithm \\ "hmac-sha256") do
-    fn _ -> {:ok, %{algorithm: algorithm, key: fn _a, b, s -> Custody.verify(h, b, s) end}} end
+    fn _ -> {:ok, %{algorithm: algorithm, key: h}} end
   end
 
   def resolver(%{keyid: keyid}) do
@@ -188,7 +198,10 @@ defmodule RequestSeal.MultiSignatureSupport do
         else: input <> ";keyid=\"" <> keyid <> "\""
 
     {:ok, m} =
-      RequestSeal.sign(m, %{label: label, signature_input: input, algorithm: alg}, signer(name),
+      RequestSeal.sign(
+        m,
+        %{label: label, signature_input: input, algorithm: alg},
+        RequestSeal.JOSEVectors.local(alg, material(name)),
         field_schemas: schemas()
       )
 

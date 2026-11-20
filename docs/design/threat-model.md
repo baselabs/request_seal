@@ -104,10 +104,9 @@ telemetry only aggregate counts, and custody unwrap only duration and item count
 Malformed or unsupported input returns a stable error before cryptographic work when safe. Generic verification requires an explicitly selected signature label. Required digest, discovery, clock, custody, replay, or related-request data that is unavailable fails closed for that profile.
 
 Custody, discovery, JOSE callbacks, Web Bot Auth trust callbacks, and required replay
-receive bounded deadlines and caller cancellation. Generic policy resolver, clock, and
-verification-function callbacks, and function signers in the explicit three-key
-`sign/4` form, run synchronously in the calling process (`t:RequestSeal.signing_spec/0`
-signers run in custody's monitored workers under `:signing_timeout`);
+receive bounded deadlines and caller cancellation. Generic policy resolver and clock callbacks run synchronously in the calling
+process. Every private-key operation runs through algorithm-bound custody
+handles and monitored workers under its deadline;
 callers own their external-work deadlines or delegate to bounded custody/discovery
 operations. A work-deadline timeout is distinct from invalid cryptography and policy
 rejection; the JWE unwrap-budget timeout deliberately shares the authenticated

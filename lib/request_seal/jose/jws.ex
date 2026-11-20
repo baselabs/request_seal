@@ -32,9 +32,8 @@ defmodule RequestSeal.JOSE.JWS do
     * `payload` - nonempty binary. The signing input and the compact result are
       each bounded to 1,048,576 bytes.
     * `signer` - a `RequestSeal.KeyHandle` whose algorithm is `{:jws, alg}` and
-      that has the `:sign` capability, or an arity-two function receiving
-      `({:jws, alg}, signing_input)` and returning `{:ok, signature}` (1 to 16,384
-      bytes) or `{:error, term}`. Both run in a custody worker under the timeout.
+      that has the `:sign` capability. Signing runs in a custody worker under
+      the timeout.
     * `opts` - keyword list.
 
   ## Options
@@ -112,7 +111,7 @@ defmodule RequestSeal.JOSE.JWS do
       reject regardless of their values.
     * `payload` - nonempty binary. The signing input and the compact result are
       each bounded to 1,048,576 bytes.
-    * `signer` - a `RequestSeal.KeyHandle` or arity-two function, as in `sign/4`.
+    * `signer` - a `RequestSeal.KeyHandle`, as in `sign/4`.
     * `opts` - keyword list.
 
   ## Options

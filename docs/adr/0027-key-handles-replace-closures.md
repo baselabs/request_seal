@@ -22,6 +22,6 @@ but the closure forms remained beside them.
 
 ## Consequences
 
-Every 1.x closure call site changes in 2.0, and the upgrade guide shows the handle form for
+Every 1.x closure call site changes in 2.0, and the upgrade guide must show the handle form for
 each. Applications with keys in an external service implement the custody behaviour
 instead of a closure. This decision is accepted for the 2.0 key-handle API.

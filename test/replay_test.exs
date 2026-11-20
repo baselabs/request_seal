@@ -353,7 +353,8 @@ defmodule RequestSeal.ReplayTest do
           {:ok,
            %{
              algorithm: "hmac-sha256",
-             key: fn a, b, s -> RequestSeal.Crypto.verify(a, b, s, {:hmac, "wrong secret"}) end
+             key:
+               RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, String.duplicate("wrong", 8)})
            }}
         end
     }
@@ -714,7 +715,7 @@ defmodule RequestSeal.ReplayTest do
       RequestSeal.sign(
         m,
         %{label: "sig-b21", signature_input: params <> suffix, algorithm: "rsa-pss-sha512"},
-        fn a, b -> RequestSeal.Crypto.sign(a, b, {:rsa, key}) end
+        RequestSeal.JOSEVectors.local("rsa-pss-sha512", {:rsa, key})
       )
 
     signed

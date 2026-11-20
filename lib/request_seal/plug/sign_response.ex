@@ -42,7 +42,7 @@ if Code.ensure_loaded?(Plug.Conn) do
         algorithms and the retained response body. `req` components bind to the
         captured request; `host` and `tr` components are unsupported. The short
         `t:RequestSeal.signing_spec/0` form is not accepted here.
-      * `:signer` - a `RequestSeal.KeyHandle` or an arity-two function signer
+      * `:signer` - a `RequestSeal.KeyHandle` signer
         `(algorithm, base)`.
       * `:signing_timeout` - 1..300,000 milliseconds.
       * `:clock` - arity-zero function returning Unix seconds.
@@ -62,7 +62,7 @@ if Code.ensure_loaded?(Plug.Conn) do
         iex> try do
         ...>   RequestSeal.Plug.SignResponse.init(
         ...>     sign: %{label: "res", algorithm: "ed25519", components: ~s[("@status")], expires_in: 60},
-        ...>     signer: fn _algorithm, _base -> {:error, :unused} end,
+        ...>     signer: :invalid,
         ...>     signing_timeout: 5_000,
         ...>     clock: fn -> 0 end,
         ...>     on_failure: {:respond, 500}

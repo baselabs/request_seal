@@ -1,7 +1,7 @@
 defmodule RequestSeal.TargetURIFidelityTest do
   use ExUnit.Case, async: true
 
-  alias RequestSeal.{Crypto, FieldOccurrence, Message, Policy, PublicKey, SignatureBase}
+  alias RequestSeal.{FieldOccurrence, Message, Policy, PublicKey, SignatureBase}
 
   @components ~s[("@target-uri" "@authority")]
 
@@ -49,7 +49,7 @@ defmodule RequestSeal.TargetURIFidelityTest do
   setup do
     {public, private} = :crypto.generate_key(:eddsa, :ed25519)
     {:ok, key} = PublicKey.import({:ed25519, public}, :raw)
-    signer = fn algorithm, base -> Crypto.sign(algorithm, base, {:ed25519, private}) end
+    signer = RequestSeal.JOSEVectors.local("ed25519", {:ed25519, private})
     %{public: public, private: private, key: key, signer: signer}
   end
 

@@ -1349,10 +1349,15 @@ defmodule RequestSeal.WebBotAuthTest do
       components: "(\"signature-input\";key=\"agent\" \"signature\";key=\"agent\")"
     }
 
-    signer = fn algorithm, base ->
-      send(owner, :signed)
-      S.signer("ed25519").(algorithm, base)
-    end
+    handle = S.signer("ed25519")
+
+    signer = %{
+      handle
+      | ref: fn ->
+          send(owner, :signed)
+          handle.ref.()
+        end
+    }
 
     assert_error(WebBotAuth.sign(m, spec, signer), :nested_coverage_incomplete, :policy)
     refute_received :signed

@@ -96,7 +96,7 @@ signing and verification use these declaration reference fragments:
   algorithm: RequestSeal.Crypto.algorithm()
 }
 
-@spec RequestSeal.sign(RequestSeal.Message.t(), signature_spec(), RequestSeal.Policy.signer(), keyword()) ::
+@spec RequestSeal.sign(RequestSeal.Message.t(), signature_spec(), RequestSeal.KeyHandle.t(), keyword()) ::
         {:ok, RequestSeal.Message.t()} | {:error, RequestSeal.Error.t()}
 
 @spec RequestSeal.verify(RequestSeal.Message.t(), RequestSeal.Policy.t(), keyword()) ::
@@ -108,14 +108,12 @@ option selecting exactly one signature. `RequestSeal.Policy.new/1` requires
 algorithms, components, key resolver, freshness, content, and replay choices;
 replay is explicitly `:not_required` or a bounded nonce/namespace/commitment/store policy. The explicit-input form of `RequestSeal.sign/4` accepts one
 specification map with exactly `:label`, `:signature_input`, and `:algorithm`.
-Its arity-two signer receives `(algorithm, base)` and returns
-`{:ok, signature_bytes}` or `{:error, term}`. The signature input is a serialized
+Its signer is an algorithm-bound `KeyHandle` granting `:sign`. The signature input is a serialized
 Inner List or a `RequestSeal.StructuredFields.Value`. Signing returns the message
 with appended `Signature-Input` and `Signature` header occurrences. Options
-default to `[]`, also exposing `sign/3`. The explicit form additionally accepts
+default to `[]`, also exposing `sign/3`. The explicit form requires
 an algorithm-matching `KeyHandle`; `:field_schemas` and `:signing_timeout` are
-its options. Custody signing uses the timeout (1–300,000 ms, default 5,000), while
-function signers remain synchronous. Handle/spec algorithm mismatch returns
+its options. Custody signing uses the timeout (1–300,000 ms, default 5,000). Handle/spec algorithm mismatch returns
 `:signer_algorithm_mismatch`; custody failures retain `:signing_failed` with a
 bounded custody source. See the key-custody guide for the exact error contract.
 Both APIs return bounded `RequestSeal.Error` values on rejection.

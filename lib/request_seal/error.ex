@@ -60,12 +60,11 @@ defmodule RequestSeal.Error do
   * `:key`: `:unknown_key` (resolver returned `:error`), `:key_resolver_failed`
     (callback fault or malformed algorithm/key result).
   * `:crypto`: `:invalid_signature` (cryptography rejects), `:signature_base_failed`
-    (base construction rejects), `:verifier_failed` (verification callback fault,
-    malformed result or invalid key), `:signer_failed` (signer fault, error,
-    malformed result, empty signature or more than 1,024 bytes).
+    (base construction rejects), `:verifier_failed` (custody verification failure
+    or invalid key), `:signer_failed` (signature serialization failure).
     `:signing_failed` retains a bounded custody `source` when a KeyHandle
-    signer fails in either `RequestSeal.sign/4` form; a failing function
-    signer returns `:signer_failed` in both forms.
+    signer fails in either `RequestSeal.sign/4` form. Key closures reject with
+    `:invalid_options` before invocation.
   * Spec signing `:input`: `:unsupported_component` (unavailable covered component),
     `:invalid_request` (covered Content-Length conflicts with retained bytes).
   * `:content`: `:digest_not_covered` (exact complete selected digest not signed),

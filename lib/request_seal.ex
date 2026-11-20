@@ -207,7 +207,7 @@ defmodule RequestSeal do
   end
 
   @doc """
-  Append one signature through caller-owned custody or an arity-two signer.
+  Append one signature through a caller-owned custody handle.
 
   `spec` selects one of two forms. A map containing `:components` is a
   `t:signing_spec/0`: metadata is generated from a clock, `Content-Digest` can
@@ -233,8 +233,7 @@ defmodule RequestSeal do
     * `message` - a valid `RequestSeal.Message`.
     * `spec` - a `t:signing_spec/0` or `t:signature_spec/0`, described below.
     * `signer` - a `RequestSeal.KeyHandle` whose algorithm equals the spec's
-      `:algorithm`, or an arity-two function `(algorithm, base)` returning
-      `{:ok, signature_bytes}` or `{:error, term}`.
+      `:algorithm` and granting the `:sign` capability.
     * `opts` - keyword list; the permitted options depend on the form. Unknown
       and duplicate options reject with `:invalid_options`.
 
@@ -268,8 +267,7 @@ defmodule RequestSeal do
   A `t:signature_spec/0` has exactly `:label`, `:signature_input` (a
   serialized Inner List or `RequestSeal.StructuredFields.Value`), and
   `:algorithm`. An HTTP `alg` parameter must equal `:algorithm`; JWS selection
-  requires no `alg` parameter. A function signer runs synchronously in the
-  caller.
+  requires no `alg` parameter. Signing runs through custody.
 
   ## Options
 
@@ -277,7 +275,7 @@ defmodule RequestSeal do
 
     * `:clock` - arity-zero function returning integer Unix seconds, read only
       when `created` is true. Default: system time in seconds.
-    * `:signing_timeout` - 1 to 300,000 ms for either signer kind. Default 5,000.
+    * `:signing_timeout` - 1 to 300,000 ms for custody signing. Default 5,000.
     * `:nonce` - 32 bytes of caller-owned entropy, encoded as unpadded
       Base64url when nonce is selected. Without it the nonce uses the CSPRNG.
       Supply fresh entropy on every attempt.
@@ -287,7 +285,7 @@ defmodule RequestSeal do
     * `:field_schemas` - lowercase field names to `RequestSeal.StructuredFields.Schema`
       values, with the same rules as `RequestSeal.Policy`. Default `%{}`.
     * `:signing_timeout` - 1 to 300,000 ms, applied to a `RequestSeal.KeyHandle`.
-      A valid timeout does not wrap or interrupt a function signer. Default 5,000.
+      Default 5,000.
 
   ## Returns
 
@@ -307,9 +305,8 @@ defmodule RequestSeal do
         `:invalid_signature_field`.
       * `:content` (signing spec only) - `:body_unavailable`, `:digest_mismatch`.
       * `:crypto` - `:signing_failed` for a failing KeyHandle, with a bounded
-        `RequestSeal.Custody.Error` `source`; `:signer_failed` for a failing
-        function signer (fault, error, malformed result, empty or oversized
-        signature). Explicit spec only: `:signature_base_failed` (`detail` is
+        `RequestSeal.Custody.Error` `source`; `:signer_failed` for invalid
+        signature serialization. Explicit spec only: `:signature_base_failed` (`detail` is
         the signature-base reason).
 
       Meanings: `RequestSeal.Error`.

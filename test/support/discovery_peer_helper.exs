@@ -233,7 +233,7 @@ defmodule RequestSeal.DiscoveryPeer do
           signature_input: input,
           algorithm: algorithm
         },
-        fn _, base -> RequestSeal.Custody.sign(handle, base) end
+        handle
       )
 
     signed

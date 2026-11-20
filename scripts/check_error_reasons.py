@@ -26,7 +26,7 @@ FAMILIES = {
              'lib/request_seal/policy.ex', 'lib/request_seal/profile.ex',
              'lib/request_seal/web_bot_auth.ex', 'lib/request_seal/web_bot_auth/policy.ex'],
     'signature_base': ['lib/request_seal/signature_base.ex'],
-    'jose': ['lib/request_seal/jose/**/*.ex', 'lib/request_seal/jose/*.ex'],
+    'jose': ['lib/request_seal/jose.ex', 'lib/request_seal/jose/**/*.ex', 'lib/request_seal/jose/*.ex'],
     'custody': ['lib/request_seal/custody.ex', 'lib/request_seal/custody/**/*.ex',
                 'lib/request_seal/custody/*.ex'],
     'replay': ['lib/request_seal/replay.ex', 'lib/request_seal/replay/*.ex'],

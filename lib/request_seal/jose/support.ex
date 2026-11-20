@@ -14,31 +14,8 @@ defmodule RequestSeal.JOSE.Support do
     end
   end
 
-  def tree(v) when is_map(v) do
-    ensure(not is_struct(v) and map_size(v) <= 64, :limit)
+  def tree(value), do: RequestSeal.JOSE.JWE.Codec.tree(value)
 
-    Enum.each(v, fn {k, x} ->
-      ensure(is_binary(k), :invalid_header)
-      ensure(byte_size(k) <= 16_384, :limit)
-      tree(x)
-    end)
-  end
-
-  def tree(v) when is_list(v) do
-    ensure(length(v) <= 64, :limit)
-    Enum.each(v, &tree/1)
-  end
-
-  def tree(v) when is_integer(v),
-    do: ensure(v in -999_999_999_999_999..999_999_999_999_999, :limit)
-
-  def tree(v) when is_binary(v) do
-    ensure(String.valid?(v), :invalid_header)
-    ensure(byte_size(v) <= 16_384, :limit)
-  end
-
-  def tree(v) when v in [nil, true, false], do: :ok
-  def tree(_), do: fail(:invalid_header)
   @spec ensure(term(), term(), atom()) :: :ok | no_return()
   def ensure(true, _, _), do: :ok
   def ensure(_, reason, layer), do: fail(reason, layer)

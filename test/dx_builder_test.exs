@@ -6,7 +6,7 @@ defmodule RequestSeal.DXBuilderTest do
   test "signing clock accepts the last second of year 9999 and rejects the next" do
     {:ok, message} = Message.request("GET", "https://example.com/", [], nil)
     key = {:hmac, :binary.copy(<<0x42>>, 32)}
-    signer = fn alg, base -> Crypto.sign(alg, base, key) end
+    signer = RequestSeal.JOSEVectors.local("hmac-sha256", key)
 
     spec = %{
       label: "s",
@@ -82,7 +82,7 @@ defmodule RequestSeal.DXBuilderTest do
   test "every spec field rejects malformed types with bounded core errors" do
     {:ok, message} = Message.request("POST", "https://example.com/a", [], "body")
     secret = :crypto.strong_rand_bytes(32)
-    signer = fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
+    signer = RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
     full = spec("hmac-sha256")
     short = Map.merge(Map.delete(full, :parameters), full.parameters)
     {:ok, input} = RequestSeal.SignatureFields.inner(full.components)
@@ -140,8 +140,8 @@ defmodule RequestSeal.DXBuilderTest do
 
   test "authority coverage preserves default-port equivalence while scheme coverage binds the origin" do
     secret = :crypto.strong_rand_bytes(32)
-    signer = fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
-    key = fn alg, base, signature -> Crypto.verify(alg, base, signature, {:hmac, secret}) end
+    signer = RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
+    key = RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
 
     for {components, accepted_urls} <- [
           {~s[("@method" "@authority" "@path")],
@@ -193,8 +193,8 @@ defmodule RequestSeal.DXBuilderTest do
 
   test "printable ASCII signing strings round-trip including quotes, backslashes and empty values" do
     secret = :crypto.strong_rand_bytes(32)
-    signer = fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
-    key = fn alg, base, signature -> Crypto.verify(alg, base, signature, {:hmac, secret}) end
+    signer = RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
+    key = RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
     {:ok, message} = Message.request("GET", "https://example.com/", [], nil)
     components = ~s[("@method")]
 
@@ -326,7 +326,7 @@ defmodule RequestSeal.DXBuilderTest do
 
   test "spec signing handles absent metadata, covered length, related requests and explicit input" do
     secret = :crypto.strong_rand_bytes(32)
-    signer = fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
+    signer = RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
     {:ok, message} = Message.request("POST", "https://example.com/a", [], "body")
 
     spec = %{
@@ -388,9 +388,7 @@ defmodule RequestSeal.DXBuilderTest do
           {:ok,
            %{
              algorithm: "hmac-sha256",
-             key: fn alg, base, signature ->
-               Crypto.verify(alg, base, signature, {:hmac, secret})
-             end
+             key: RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
            }}
         end,
         freshness: :not_evaluated,
@@ -439,7 +437,7 @@ defmodule RequestSeal.DXBuilderTest do
       algorithm = unquote(algorithm)
       {private, public} = keys(algorithm)
       {:ok, message} = Message.request("POST", "https://example.com/a", [], "body")
-      signer = fn alg, base -> Crypto.sign(alg, base, private) end
+      signer = RequestSeal.JOSEVectors.local(algorithm, private)
 
       assert {:ok, signed} =
                RequestSeal.sign(message, spec(algorithm), signer, clock: fn -> 1_700_000_000 end)
@@ -462,7 +460,7 @@ defmodule RequestSeal.DXBuilderTest do
   test "spec signing rejects malformed specs, options, messages, digest conflicts and signer faults" do
     {:ok, message} = Message.request("POST", "https://example.com/a", [], "body")
     secret = :crypto.strong_rand_bytes(32)
-    signer = fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
+    signer = RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
     spec = spec("hmac-sha256")
 
     for invalid <- [
@@ -491,7 +489,7 @@ defmodule RequestSeal.DXBuilderTest do
     assert {:error, %RequestSeal.Error{reason: :invalid_message}} =
              RequestSeal.sign(%{message | method: ""}, spec, signer)
 
-    assert {:error, %RequestSeal.Error{reason: :signer_failed}} =
+    assert {:error, %RequestSeal.Error{reason: :invalid_options}} =
              RequestSeal.sign(message, spec, fn _, _ -> raise "secret" end)
 
     {:ok, other} =
@@ -543,7 +541,7 @@ defmodule RequestSeal.DXBuilderTest do
 
   defp keys("hmac-sha256") do
     key = {:hmac, :crypto.strong_rand_bytes(32)}
-    {key, fn alg, base, signature -> Crypto.verify(alg, base, signature, key) end}
+    {key, RequestSeal.JOSEVectors.local("hmac-sha256", key)}
   end
 
   defp keys("ecdsa-p384-sha384") do

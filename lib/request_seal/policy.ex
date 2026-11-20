@@ -71,10 +71,9 @@ defmodule RequestSeal.Policy do
       * `:key_resolver` - arity-one function. At verification it receives a
         map of `keyid` (binary or nil), `label` (binary), and `tag` (binary or
         nil), and returns `{:ok, %{algorithm: algorithm, key: key}}` or
-        `:error`. `key` is a `RequestSeal.PublicKey` or an arity-three
-        verification function `(algorithm, base, signature)` returning `:ok`
-        or `{:error, term}`. HMAC (`"hmac-sha256"`, `{:jws, "HS256"}`) secret
-        custody must stay inside such a function. Any other key in the
+        `:error`. `key` is a `RequestSeal.PublicKey` or a `RequestSeal.KeyHandle`
+        binding the returned algorithm and granting `:verify`. HMAC
+        (`"hmac-sha256"`, `{:jws, "HS256"}`) requires a custody handle. Any other key in the
         result, or any other return, rejects with `:key_resolver_failed`.
       * `:freshness` - `:not_evaluated` or a map containing exactly `:clock`
         (arity zero, integer Unix seconds), `:max_age` (1 to

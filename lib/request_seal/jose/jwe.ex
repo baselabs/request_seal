@@ -72,10 +72,6 @@ defmodule RequestSeal.JOSE.JWE do
       * a `RequestSeal.KeyHandle` binding `{:jwe, "A128KW"}` or
         `{:jwe, "A256KW"}` and granting `:wrap`. Custody wraps a copy of the
         generated CEK and returns no header additions.
-      * an arity-two function receiving `(wire_algorithm, generated_cek_bytes)`
-        and returning `{:ok, %{encrypted_key: bytes, header: %{}}}`. This
-        callback form is refused for ECDH-ES before key work and never
-        receives an agreed CEK.
     * `opts` - keyword list.
 
   ## Options

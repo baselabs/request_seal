@@ -124,7 +124,7 @@ Pass the exact signed request when verifying its response; request association i
 - `RequestSeal.Finch` rejects a caller-supplied `Host` header with `:invalid_options`, as Req does; Mint derives Host from the URL, so the signed `@authority` matches what is sent.
 - Retaining a request body stops with `:limit` at 16,384 chunks (empty chunks count) or after 5,000 ms, whichever comes first; Req's response collection stops with `:limit` at 16,384 chunks or at `:max_stream_bytes`.
 - A signed `@target-uri` keeps the URL's host case and omits only the scheme's default port, matching the Host or `:authority` Mint sends.
-- `signing_timeout` bounds handle and function signers. Direct Req verification refuses `into: :self`, caller response steps before verification, caches, raising HTTP errors, and other delivery paths that could expose unverified content.
+- `signing_timeout` bounds custody signing. Direct Req verification refuses `into: :self`, caller response steps before verification, caches, raising HTTP errors, and other delivery paths that could expose unverified content.
 
 ## Errors
 
