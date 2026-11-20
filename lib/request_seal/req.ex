@@ -30,6 +30,12 @@ if Code.ensure_loaded?(Req) do
     hooks that can mutate transport bytes after signing reject. No pool, server,
     or background fetch starts.
 
+    A final error step records transport failures on later attempts as a bounded
+    `RequestSeal.Adapter.Error` with reason `:transport_failed`, stage
+    `:transport`, and the final attempt number. First-attempt transport errors
+    keep Req's error shape. Delivery classification covers the whole Req call:
+    a later refusal cannot establish that earlier attempts sent nothing.
+
     Each signed attempt preserves host case and omits the scheme's default port
     through `RequestSeal.Finch`, matching Mint's Host or `:authority` bytes for
     `@target-uri`. `@authority` normalizes during signature-base derivation;
@@ -116,7 +122,10 @@ if Code.ensure_loaded?(Req) do
     15.6.3 and 15.6.5). `:refused` means a name-resolution failure (`:nxdomain`),
     failed ALPN negotiation, an HTTP/2 stream explicitly left unprocessed
     (RFC 9113 Section 8.7), a pool that rejected the request before sending it,
-    or this adapter's own attach/sign refusal before send.
+    or this adapter's own attach/sign refusal before the first send.
+    A signing refusal on attempt two or later is `:unknown`. Later transport
+    failures return this adapter's `:transport_failed` error and are also
+    `:unknown`: an earlier attempt may already have delivered the operation.
     Only `:refused` is safe to retry automatically. `:unknown` requires the
     application's own idempotency protection; `:answered` does not promise that
     repeating the operation is safe or that its response was authenticated.
@@ -127,6 +136,11 @@ if Code.ensure_loaded?(Req) do
     each can also follow a sent request. Receive timeouts, closed connections,
     response-verification failures, and unrecognized terms are `:unknown`.
     No retry is performed, and the error struct's retry policy is not changed.
+
+    Attempt counts cover Req's request-step runs. Finch 0.24.0 can also rerun
+    an HTTP/2 request internally after `:read_only`, including a partially sent
+    body, without exposing that history to Req. For calls that can take this
+    path, treat a transport `:refused` classification as `:unknown`.
 
     ## Examples
 
@@ -140,6 +154,9 @@ if Code.ensure_loaded?(Req) do
         :unknown
         iex> RequestSeal.Req.classify({:error, %Req.TransportError{reason: :timeout}})
         :unknown
+        iex> error = RequestSeal.Adapter.Error.new(:cross_origin_redirect, :req, :sign, 2)
+        iex> RequestSeal.Req.classify({:error, error})
+        :unknown
         iex> RequestSeal.Req.classify(:anything)
         :unknown
     """
@@ -149,9 +166,10 @@ if Code.ensure_loaded?(Req) do
     @doc """
     Attaches final-attempt signing and optional response verification to a Req request.
 
-    The returned request carries three added steps: an option check prepended
+    The returned request carries four added steps: an option check prepended
     to the request steps, a signing step appended as the last request step, and
-    a response step. With a verification map the response step runs first;
+    a response step, plus an error step appended after Req's retry handling.
+    With a verification map the response step runs first;
     with `verify: :none` it runs just before Req's `:decompress_body` step and
     makes no verification claim. Nothing is sent and no process starts. Run the
     request with `Req.request/1` against a caller-started Finch pool.
@@ -254,6 +272,14 @@ if Code.ensure_loaded?(Req) do
     `RequestSeal.Message.new/1` rejects), and `:response_rejected` (the core
     verifier rejected, with its bounded `source`, or an unexpected exception).
 
+    At stage `:transport`, `:transport_failed` means a `Req.TransportError` or
+    `Req.HTTPError` reached the final error step on attempt two or later. The
+    original framework error is discarded (`source: nil`); earlier delivery is
+    unknown. First-attempt transport errors retain Req's own shape. Keep the
+    added error step last so it observes the final transport outcome after
+    Req's retry handling. Signing and verification refusals halt directly and
+    keep their original bounded errors.
+
     ## Examples
 
         iex> {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
@@ -335,6 +361,9 @@ if Code.ensure_loaded?(Req) do
           Req.Request.prepend_request_steps(request,
             request_seal_options: &validate_attempt/1
           )
+
+        request =
+          Req.Request.append_error_steps(request, request_seal_delivery: &delivery_error/1)
 
         response_steps =
           if opts[:verify] == :none do
@@ -537,6 +566,12 @@ if Code.ensure_loaded?(Req) do
           )
 
           Signing.ensure(ordered_verify?(request), :unsupported_delivery)
+
+          Signing.ensure(
+            List.last(request.error_steps) == {:request_seal_delivery, &delivery_error/1},
+            :unsupported_delivery
+          )
+
           delivery!(request, state.options)
           request = retain_function(request, Keyword.get(state.options, :request_body, :as_is))
           delivery!(request, state.options)
@@ -615,6 +650,18 @@ if Code.ensure_loaded?(Req) do
       case result do
         {:ok, request} -> request
         {:error, error} -> Req.Request.halt(request, error)
+      end
+    end
+
+    @doc false
+    def delivery_error({request, error}) do
+      attempt = request.private.request_seal.attempt
+      transport? = is_struct(error, Req.TransportError) or is_struct(error, Req.HTTPError)
+
+      if attempt > 1 and transport? do
+        {request, Error.new(:transport_failed, :req, :transport, attempt)}
+      else
+        {request, error}
       end
     end
 

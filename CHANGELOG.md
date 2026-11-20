@@ -9,6 +9,15 @@
 - Add `RequestSeal.Req.classify/1` and `RequestSeal.Finch.classify/1` to distinguish
   answered, refused and unknown delivery outcomes. Gateway 502/504 responses
   remain unknown; automatic retries require evidence that processing was refused.
+- Classify delivery across every attempt of a Req call. A signing refusal on
+  attempt two or later is unknown because an earlier attempt may have sent the
+  operation. Req's final error step now returns later transport failures as
+  `RequestSeal.Adapter.Error` with reason `:transport_failed`, stage `:transport`,
+  the final attempt number and `source: nil`, discarding the framework exception
+  after Req's retry handling. First-attempt transport errors keep Req's shape;
+  removing or moving the final error step rejects signing before transport.
+  Document the remaining evidence gap for Finch's internal HTTP/2 `:read_only`
+  reruns, including those beneath one Req signing attempt.
 - Add canonical signature-base inspection with `RequestSeal.SignatureBase.parse/1`
   and `components/3`, sharing build derivation and resource limits. Include
   published RFC bases and canonical-form rejections in the conformance corpus.

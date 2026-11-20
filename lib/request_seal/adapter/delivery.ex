@@ -10,8 +10,16 @@ defmodule RequestSeal.Adapter.Delivery do
     if response == expected and status not in [502, 504], do: :answered, else: :unknown
   end
 
-  def classify({:error, %RequestSeal.Adapter.Error{adapter: adapter, stage: stage}}, adapter)
-      when stage in [:attach, :sign],
+  def classify(
+        {:error, %RequestSeal.Adapter.Error{adapter: adapter, stage: :attach, attempt: 0}},
+        adapter
+      ),
+      do: :refused
+
+  def classify(
+        {:error, %RequestSeal.Adapter.Error{adapter: adapter, stage: :sign, attempt: 1}},
+        adapter
+      ),
       do: :refused
 
   def classify({:error, %{__struct__: type, reason: reason} = error}, adapter) do

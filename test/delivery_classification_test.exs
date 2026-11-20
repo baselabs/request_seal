@@ -45,6 +45,154 @@ defmodule RequestSeal.DeliveryClassificationTest do
     end
   end
 
+  test "a POST answered with a refused cross-origin redirect has unknown delivery", c do
+    {destination, destination_task} = Peer.start([%{}], c.handle)
+
+    {origin, task} =
+      Peer.start(
+        [%{status: 303, headers: [{"location", destination <> "/foo?param=Value"}]}],
+        c.handle
+      )
+
+    assert {:ok, request} =
+             req_request(origin, c.handle, method: :post, body: Peer.body(), redirect: true)
+
+    assert {:error, %Error{reason: :cross_origin_redirect, stage: :sign, attempt: 2}} =
+             result = Req.request(request)
+
+    assert RequestSeal.Req.classify(result) == :unknown
+    assert_receive {:wire_request, %{method: "POST", body: %{bytes: body}}, {:ok, _}}
+    assert body == Peer.body()
+    assert_receive :no_connection, 1_500
+    Peer.finish(task)
+    Peer.finish(destination_task)
+  end
+
+  test "name resolution failure after an allowed redirect keeps earlier delivery unknown", c do
+    destination = "http://request-seal.invalid"
+
+    {origin, task} =
+      Peer.start(
+        [%{status: 303, headers: [{"location", destination <> "/foo?param=Value"}]}],
+        c.handle
+      )
+
+    assert {:ok, request} =
+             req_request(
+               origin,
+               c.handle,
+               [method: :post, body: Peer.body(), redirect: true],
+               redirect: {:allow, [destination]}
+             )
+
+    assert {:error, %Error{reason: :transport_failed, stage: :transport, attempt: 2}} =
+             result = Req.request(observe_errors(request))
+
+    assert {:error, %Error{source: nil, retryable: false}} = result
+    assert_receive {:attempt_error, 2, %Req.TransportError{reason: :nxdomain}}
+    assert_receive {:wire_request, %{method: "POST"}, {:ok, _}}
+    assert RequestSeal.Req.classify(result) == :unknown
+    Peer.finish(task)
+  end
+
+  test "a signing refusal after a 503 retry keeps earlier delivery unknown", c do
+    {origin, task} = Peer.start([%{status: 503}], c.handle)
+
+    retry = fn
+      _, %Req.Response{status: 503} ->
+        :ok = RequestSeal.Custody.release(c.handle)
+        true
+
+      _, _ ->
+        false
+    end
+
+    assert {:ok, request} =
+             req_request(origin, c.handle,
+               method: :post,
+               body: Peer.body(),
+               retry: retry,
+               retry_delay: 0,
+               max_retries: 1
+             )
+
+    assert {:error, %Error{reason: :signing_failed, stage: :sign, attempt: 2}} =
+             result = Req.request(request)
+
+    assert_receive {:wire_request, %{method: "POST"}, {:ok, _}}
+    assert RequestSeal.Req.classify(result) == :unknown
+    Peer.finish(task)
+  end
+
+  test "transport refusals after response and transport retries have unknown delivery", c do
+    for action <- [%{status: 503}, :hold] do
+      {origin, task} = Peer.start([action], c.handle)
+
+      assert {:ok, request} =
+               req_request(
+                 origin,
+                 c.handle,
+                 [retry: :transient, retry_delay: 0, max_retries: 1, receive_timeout: 50],
+                 redirect: {:allow, ["http://request-seal.invalid"]}
+               )
+
+      request =
+        Req.Request.prepend_request_steps(request,
+          retry_destination: fn request ->
+            if request.private.request_seal.attempt > 0,
+              do: %{request | url: URI.parse("http://request-seal.invalid/foo?param=Value")},
+              else: request
+          end
+        )
+
+      assert {:error, %Error{reason: :transport_failed, stage: :transport, attempt: 2}} =
+               result = Req.request(observe_errors(request))
+
+      assert_receive {:attempt_error, 2, %Req.TransportError{reason: :nxdomain}}
+      assert_receive {:wire_request, _, {:ok, _}}
+      assert RequestSeal.Req.classify(result) == :unknown
+
+      if action == :hold do
+        assert_receive {:attempt_error, 1, %Req.TransportError{reason: :timeout}}
+        assert_receive {:holding, _}
+        assert_receive {:peer_closed, {:error, :closed}}
+      end
+
+      Peer.finish(task)
+    end
+  end
+
+  test "a later transport error reaches Req retry handling before classification", c do
+    {origin, task} = Peer.start([%{status: 503}, :timeout, %{}], c.handle)
+
+    assert {:ok, request} =
+             req_request(origin, c.handle,
+               retry: :transient,
+               retry_delay: 80,
+               max_retries: 2,
+               receive_timeout: 50
+             )
+
+    assert {:ok, %Req.Response{status: 200}} = result = Req.request(observe_errors(request))
+    assert_receive {:attempt_error, 2, %Req.TransportError{reason: :timeout}}
+    assert RequestSeal.Req.classify(result) == :answered
+    for _ <- 1..3, do: assert_receive({:wire_request, _, {:ok, _}})
+    Peer.finish(task)
+  end
+
+  test "removing the delivery error step refuses before transport", c do
+    {origin, task} = Peer.start([%{}], c.handle)
+    assert {:ok, request} = req_request(origin, c.handle)
+    steps = Keyword.delete(request.error_steps, :request_seal_delivery)
+
+    assert {:error, %Error{reason: :unsupported_delivery, stage: :sign, attempt: 1}} =
+             result = Req.request(%{request | error_steps: steps})
+
+    assert RequestSeal.Req.classify(result) == :refused
+    assert_receive :no_connection, 1_500
+    Peer.finish(task)
+  end
+
   test "an accepted signed request without a response has unknown delivery", %{handle: handle} do
     for client <- [:req, :finch] do
       {origin, task} = Peer.start([:hold], handle)
@@ -99,6 +247,16 @@ defmodule RequestSeal.DeliveryClassificationTest do
   end
 
   test "only source-proven transport and stream shapes refuse; every other term is unknown" do
+    for {client, adapter} <- [{RequestSeal.Req, :req}, {RequestSeal.Finch, :finch}] do
+      for attempt <- [nil, -1, 0, 2, 3, "1"] do
+        assert client.classify({:error, Error.new(:signing_failed, adapter, :sign, attempt)}) ==
+                 :unknown
+      end
+
+      assert client.classify({:error, Error.new(:invalid_options, adapter, :attach, 1)}) ==
+               :unknown
+    end
+
     for {client, transport} <- [
           {RequestSeal.Req, Req.TransportError},
           {RequestSeal.Finch, Finch.TransportError},
@@ -184,22 +342,7 @@ defmodule RequestSeal.DeliveryClassificationTest do
 
     case client do
       :req ->
-        request =
-          Req.new(
-            url: url,
-            headers: headers,
-            finch: [name: pool],
-            retry: false,
-            redirect: false,
-            decode_body: false
-          )
-
-        with {:ok, request} <-
-               RequestSeal.Req.attach(request,
-                 sign: Peer.spec(),
-                 signer: handle,
-                 verify: :none
-               ) do
+        with {:ok, request} <- req_request(origin, handle, finch: [name: pool]) do
           Req.request(request, opts)
         end
 
@@ -209,6 +352,41 @@ defmodule RequestSeal.DeliveryClassificationTest do
           Finch.request(request, pool, opts)
         end
     end
+  end
+
+  defp req_request(origin, handle, req_opts \\ [], seal_opts \\ []) do
+    request =
+      Req.new(
+        Keyword.merge(
+          [
+            url: origin <> "/foo?param=Value",
+            headers: [{"accept", "text/plain"}],
+            finch: [name: __MODULE__.Pool],
+            retry: false,
+            redirect: false,
+            decode_body: false,
+            retry_log_level: false,
+            redirect_log_level: false
+          ],
+          req_opts
+        )
+      )
+
+    RequestSeal.Req.attach(
+      request,
+      Keyword.merge([sign: Peer.spec(), signer: handle, verify: :none], seal_opts)
+    )
+  end
+
+  defp observe_errors(request) do
+    owner = self()
+
+    Req.Request.prepend_error_steps(request,
+      observe_attempt: fn {request, error} ->
+        send(owner, {:attempt_error, request.private.request_seal.attempt, error})
+        {request, error}
+      end
+    )
   end
 
   defp h2_peer(frame) do

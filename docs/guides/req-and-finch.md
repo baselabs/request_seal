@@ -130,6 +130,16 @@ Pass the exact signed request when verifying its response; request association i
 
 `RequestSeal.Adapter.Error` hides framework exception text. `:not_final_step` means a request step follows signing; move attachment last. `:response_rejected` wraps the bounded verification error and returns no response body. `:cross_origin_redirect` requires an explicit trusted origin if you intend to permit it. `:limit` means a retained or received body exceeded your budget. `:unsupported_delivery` or `:invalid_options` means your delivery/client customization cannot preserve the signing or verification contract; consult the supported options before changing it. `:unsupported_component` means coverage the transport cannot supply, such as `host` or request `req`/`tr` components. `:body_unavailable` means covered content was not retained; choose `{:retain, max}`. `:digest_conflict` means a caller-supplied digest disagrees with the bytes. `:signing_failed` carries a bounded custody error in `source`.
 
+On Req attempt two or later, a final `Req.TransportError` or `Req.HTTPError`
+becomes `{:error, %RequestSeal.Adapter.Error{reason: :transport_failed,
+stage: :transport, attempt: n, source: nil}}`. The bounded error retains the
+attempt number and discards the framework exception and its transport details.
+First-attempt transport errors retain Req's own shape. RequestSeal appends an
+error step after Req's retry handling, so Req still sees its original transport
+errors when deciding whether to retry. Keep this step last; removing or moving
+it causes a signing refusal before transport. Sign and verification refusals
+halt directly, preserving their original reason, stage, and attempt.
+
 Module docs: `RequestSeal.Req`, `RequestSeal.Finch`, `RequestSeal.Adapter.Error`, `RequestSeal.Digest`.
 
 ## Classify delivery before retrying
@@ -138,7 +148,16 @@ Module docs: `RequestSeal.Req`, `RequestSeal.Finch`, `RequestSeal.Adapter.Error`
 result and return `:answered`, `:refused`, or `:unknown`. Only `:refused` is safe
 to retry automatically: its evidence proves no request processing occurred.
 Disable Req's automatic retries when applying this decision yourself, as in the
-examples above. `:answered` includes error statuses such as 503 and does not
+examples above. Classification covers the whole Req call, including every
+redirect and retry attempt. An attach refusal (attempt zero) or a signing
+refusal on attempt one is `:refused`. A signing refusal on attempt two or later
+is `:unknown`, as is a later `:transport_failed` error: an earlier attempt may
+already have delivered the operation. For example, a POST answered with a 303
+to a different origin has unknown delivery when the second attempt rejects
+with `:cross_origin_redirect`; allowing that redirect and then failing name
+resolution also leaves delivery unknown. The final error cannot establish the
+earlier outcome. Finch does not follow redirects or retry HTTP statuses.
+`:answered` includes error statuses such as 503 and does not
 make repeating the operation safe. Status 502 or 504 is `:unknown`, since a
 gateway cannot establish whether the origin processed the request
 ([RFC 9110 Sections 15.6.3 and 15.6.5](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.6.3)).
@@ -148,10 +167,17 @@ errors require the application's own idempotency protection. The locked clients
 report a socket error with the same reason whether it happened during connect or
 on an open connection after sending, so a refused connection, an unreachable host
 or network, a socket timeout and a TLS alert also remain `:unknown`. A
-name-resolution failure (`:nxdomain`) happens before any connection exists and is
-`:refused`. HTTP/2 REFUSED_STREAM and GOAWAY's per-stream unprocessed indication
-supply explicit refusal evidence
+name-resolution failure (`:nxdomain`) on the first attempt happens before any
+connection exists and is `:refused`. First-attempt HTTP/2 REFUSED_STREAM and
+GOAWAY's per-stream unprocessed indication supply explicit refusal evidence
 ([RFC 9113 Section 8.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7)).
+
+Finch 0.24.0 has an additional HTTP/2 transport rerun: a `:read_only` pool error
+can restart a request whose body was partially sent. The final transport error
+does not report that earlier attempt. This also applies beneath a single Req
+signing attempt. For calls that can take this path, treat a transport `:refused`
+classification as `:unknown` and use application idempotency protection; the
+result alone cannot prove the absence of an internal Finch rerun.
 
 ```elixir
 :answered = RequestSeal.Finch.classify({:ok, response})

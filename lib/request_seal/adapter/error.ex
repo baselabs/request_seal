@@ -10,7 +10,9 @@ defmodule RequestSeal.Adapter.Error do
   `:unsupported_component` (transport cannot faithfully supply a component),
   `:body_unavailable` (required bytes not retained), `:digest_conflict` (caller
   digest disagrees), `:limit` (retention/resource bound), `:signing_failed`
-  (custody or signing rejection), and `:response_rejected` (verification failed).
+  (custody or signing rejection), `:transport_failed` (Req transport failed on
+  a later attempt, leaving earlier delivery unknown), and `:response_rejected`
+  (verification failed).
   Plug also reports `:not_captured`, `:already_verified`, `:parser_order`,
   `:untrusted_proxy`, and `:request_rejected` (with a bounded core source error).
   Plug uses `:unsupported_component` when required or covered exact-target
@@ -27,6 +29,12 @@ defmodule RequestSeal.Adapter.Error do
   response error under the attempt that produced it; Finch always uses one.
   Plug uses zero for capture, request verification, and option errors, and one
   for response signing. Req attach errors use zero.
+
+  Req's error step reports transport failures on attempt two or later as
+  `:transport_failed` at stage `:transport`, with the final attempt number and
+  `source: nil`. It retains no framework exception or transport details. First
+  attempt transport errors keep Req's own error shape. A later signing or
+  transport failure classifies as unknown delivery for the whole Req call.
   """
   @derive {Inspect, only: [:reason, :adapter, :stage, :attempt, :retryable, :correlation]}
   defexception [:reason, :adapter, :stage, :attempt, :source, :correlation, retryable: false]
@@ -42,6 +50,7 @@ defmodule RequestSeal.Adapter.Error do
           | :digest_conflict
           | :limit
           | :signing_failed
+          | :transport_failed
           | :response_rejected
           | :not_captured
           | :already_verified
@@ -51,7 +60,7 @@ defmodule RequestSeal.Adapter.Error do
   @type t :: %__MODULE__{
           reason: reason(),
           adapter: :req | :finch | :plug,
-          stage: :attach | :capture | :sign | :verify,
+          stage: :attach | :capture | :sign | :transport | :verify,
           attempt: non_neg_integer(),
           source:
             RequestSeal.Error.t()

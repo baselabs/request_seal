@@ -21,7 +21,8 @@ if Code.ensure_loaded?(Finch) do
     supplied request. Streaming callers withhold their own effects until the
     returned verification succeeds. Unknown or duplicate options reject. Errors use
     `RequestSeal.Adapter.Error` with adapter `:finch` and attempt 1; no framework
-    exception text is retained.
+    exception text is retained. This is the signing invocation count, not a
+    count of Finch's internal transport attempts.
     """
     alias RequestSeal.{Message, TransportFacts, Verification}
     alias RequestSeal.Adapter.{Error, Signing}
@@ -63,6 +64,12 @@ if Code.ensure_loaded?(Finch) do
     each can also follow a sent request. Receive timeouts, closed connections,
     response-verification failures, and unrecognized terms are `:unknown`.
     No retry is performed, and the error struct's retry policy is not changed.
+
+    Finch 0.24.0 can internally rerun an HTTP/2 request after `:read_only`,
+    including a request whose body was partially sent. Its final transport
+    error carries no attempt history. For calls that can take this path, treat
+    a transport `:refused` classification as `:unknown`; this function cannot
+    prove the absence of that internal rerun from the result alone.
 
     ## Examples
 
