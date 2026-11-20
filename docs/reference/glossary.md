@@ -21,7 +21,7 @@
 | Cleanup capability | Redacted `RequestSeal.Custody.Cleanup` returned when a possibly committed child's destruction is unconfirmed. It grants only idempotent `RequestSeal.Custody.cleanup/2`; `:ok` confirms destruction or absence. |
 | Signing spec | The label, algorithm, covered components, lifetime, and optional parameters of a signature to create (`t:RequestSeal.signing_spec/0`). |
 | Policy | The verifier's explicit acceptance choices: algorithms, required components, key resolver, freshness, body integrity, and replay (`RequestSeal.Policy`). |
-| Key resolver | The policy's caller function selecting an authoritative algorithm and a public key, custody handle, or supported verification function. An explicitly required embedded JWS key is approved with `:embedded`. Selection establishes no identity. |
+| Key resolver | The policy's caller function selecting an authoritative algorithm and a public key or custody handle. An explicitly required embedded JWS key is approved with `:embedded`. Selection establishes no identity. |
 | Agent trust function | The Web Bot Auth policy's `agents` function mapping a `Signature-Agent` location and type to a trusted source or key set before attribution. |
 | Verification result | The facts established by a successful verification (`RequestSeal.Verification`); `authorization` is always `:not_evaluated`. |
 | Principal | The verified attribution in a result. Generic results are `:unattributed`; Web Bot Auth reports an agent or a held key. |
