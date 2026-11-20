@@ -30,6 +30,8 @@
 - Exercise finalized Finch uploads over Bandit, comparing returned and received
   bytes, rejecting mutations, and proving post-send timeout/drop and pre-send
   refusal classifications with reversing mutations in qualification.
+- Add a runnable decision-hook recipe with signed requests, request-bound signed
+  allow/deny responses, and rejection of changed, transplanted or unsigned replies.
 
 - Qualify each candidate in one hosted run, with every runtime lane, mutation and
   teardown proof feeding the exact final verdict. Pull requests execute no project

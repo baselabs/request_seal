@@ -548,6 +548,7 @@ before the tag and GitHub release for `v<version>` are created.
 - [Web Bot Auth](docs/guides/web-bot-auth.md)
 - [Ash actors, tenants, and authorization](docs/guides/ash.md)
 - [Webhooks with ash_hooks](docs/guides/ash-hooks.md)
+- [Sign a decision hook and its response](docs/guides/decision-hook.md)
 - [Replay protection](docs/guides/replay-protection.md)
 - [Key discovery](docs/guides/key-discovery.md)
 - [JOSE: JWS and JWE](docs/guides/jose.md)

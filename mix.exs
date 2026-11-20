@@ -20,6 +20,7 @@ defmodule RequestSeal.MixProject do
     "docs/guides/req-and-finch.md",
     "docs/guides/ash.md",
     "docs/guides/ash-hooks.md",
+    "docs/guides/decision-hook.md",
     "docs/guides/web-bot-auth.md",
     "docs/guides/replay-protection.md",
     "docs/guides/key-discovery.md",
