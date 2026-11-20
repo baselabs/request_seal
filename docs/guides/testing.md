@@ -108,8 +108,9 @@ listener. It compares the returned body, target, ordered fields and signature
 base with received values, rejects changed uploads, and classifies timeout and
 connection loss after complete receipt as unknown. Signing refusals are not sent.
 These are local transport regressions, not external conformance vectors.
-Hosted qualification runs `python3 -B scripts/mutations.py --suite finch`:
-every selected test must pass before its reversing patch must fail at the named
+Hosted qualification runs `python3 scripts/mutations.py` to prove every suite.
+The `--suite finch` option selects only the Finch suite for a focused invocation.
+Every selected test must pass before its reversing patch must fail at the named
 assertion. The runner restores the source after each mutation.
 
 ## JWE lifecycle gates
