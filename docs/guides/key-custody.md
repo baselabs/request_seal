@@ -17,9 +17,8 @@ For deterministic children, `Local.new/3` accepts
 `timeout:`; ECDH-ES targets also require `:curve`. Only acknowledged atomic
 commitment returns a child handle. Uncommitted children refuse use and expire at
 the operation deadline or owner death. A committed child belongs to the original
-caller, independently of its parent. See the module reference and
-[ADR 0026](../adr/0026-custody-key-generation-and-derivation.md) for the exact
-HKDF framing and seven families.
+caller, independently of its parent. See `RequestSeal.Custody.derive/4` for the
+exact HKDF framing and seven families.
 
 A failed derive or explicit commit refusal returns an ordinary error. A lost
 commit result triggers one release under a fresh 1,000 ms deadline. If destruction
