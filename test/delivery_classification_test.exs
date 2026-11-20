@@ -17,6 +17,7 @@ defmodule RequestSeal.DeliveryClassificationTest do
       {origin, task} = Peer.start([%{status: status}], handle)
       {result, request} = send_request(client, origin, handle)
       assert {:ok, %{status: ^status}} = result
+
       assert classify(client, result, request) ==
                if(status in [502, 504], do: :unknown, else: :answered)
 
