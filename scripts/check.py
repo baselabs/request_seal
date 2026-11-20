@@ -9,6 +9,9 @@ import time
 from pathlib import Path
 import subprocess
 import sys
+
+# Support the isolated, source-only invocations allowed by the local contract.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release import development_snapshot, package_version, release_notes
 from processes import cleanup_on_exit, command, install_signal_handlers, run, temporary_directory
 from workflow_yaml import load as load_workflow

@@ -324,3 +324,33 @@ paths = [
   '''^corpus/cases/signature_base/parse-rfc9421-b-3\.json$''',
   '''^corpus/cases/signature_base/parse-rfc9421-b-4\.json$''',
 ]
+
+# Public derivation vectors and the independent standard-library generator.
+[[allowlists]]
+description = "RFC 9180 published pairs and independent public custody derivation vectors"
+paths = [
+  '''^corpus/cases/custody/aes128-key\.json$''',
+  '''^corpus/cases/custody/aes256-key\.json$''',
+  '''^corpus/cases/custody/ed25519-seed\.json$''',
+  '''^corpus/cases/custody/hmac-sha256-key\.json$''',
+  '''^corpus/cases/custody/p256-dhkem\.json$''',
+  '''^corpus/cases/custody/p384-dhkem\.json$''',
+  '''^corpus/cases/custody/x25519-dhkem\.json$''',
+  '''^corpus/cases/hpke/p384-independent\.json$''',
+  '''^corpus/cases/hpke/rfc9180-16-e\.json$''',
+  '''^corpus/cases/hpke/rfc9180-16-r\.json$''',
+  '''^corpus/cases/hpke/rfc9180-16-s\.json$''',
+  '''^corpus/cases/hpke/rfc9180-32-e\.json$''',
+  '''^corpus/cases/hpke/rfc9180-32-r\.json$''',
+  '''^corpus/cases/hpke/rfc9180-32-s\.json$''',
+  '''^corpus/sources/native-derive/LICENSE$''',
+  '''^corpus/sources/native-derive/PROVENANCE\.md$''',
+  '''^corpus/sources/native-derive/SHA256SUMS$''',
+  '''^corpus/sources/native-derive/ledger\.json$''',
+  '''^corpus/sources/rfc9180/LICENSE$''',
+  '''^corpus/sources/rfc9180/PROVENANCE\.md$''',
+  '''^corpus/sources/rfc9180/SHA256SUMS$''',
+  '''^corpus/sources/rfc9180/derive-key-pairs\.json$''',
+  '''^corpus/sources/rfc9180/ledger\.json$''',
+  '''^scripts/import_derivation_vectors\.py$''',
+]

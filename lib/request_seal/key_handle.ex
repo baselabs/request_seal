@@ -1,6 +1,6 @@
 defmodule RequestSeal.KeyHandle do
   @moduledoc """
-  Caller-owned, algorithm-bound signing, verification, key-wrapping, or key-unwrapping capability.
+  Caller-owned, algorithm-bound signing, verification, wrapping, unwrapping, or derivation capability.
 
   Construct handles through a custodian such as `RequestSeal.Custody.Local` or
   `RequestSeal.Custody.SSHAgent`. Only that custodian interprets `ref`, which is
@@ -14,6 +14,13 @@ defmodule RequestSeal.KeyHandle do
   `RequestSeal.Custody.Local.Owner` supplies a caller-supervised owner for
   explicitly encoded Ed25519 sources. Fetch a fresh handle for each operation,
   or fetch again and retry once on `:key_not_found` after owner restart.
+
+  Derivation parents bind `{:derive, "hkdf-sha256"}` and grant only `:derive`.
+  Their custodian must implement `derive/3`, `commit/3`, and `release/2` together;
+  construction refuses an incomplete set. Generated and derived handles contain
+  no raw key material. Committed children belong to the original deriving caller,
+  independent of the parent. Cleanup obligations use `RequestSeal.Custody.Cleanup`,
+  which is not a key handle.
 
   A handle returned by a JWE resolver is bounded to 4,096 words and 16,384
   binary bytes, including a function's environment and each shared occurrence.
@@ -31,7 +38,32 @@ defmodule RequestSeal.KeyHandle do
   @type t :: %__MODULE__{
           custodian: module(),
           algorithm: RequestSeal.Custody.algorithm(),
-          capabilities: [:sign | :verify | :wrap | :unwrap],
+          capabilities: [RequestSeal.Custody.capability()],
           ref: (-> term())
         }
+
+  # Shared construction gate for custodians; opaque references keep the existing
+  # zero-arity reference contract, including derivation child references.
+  @doc false
+  def new(custodian, algorithm, capabilities, ref) do
+    RequestSeal.Custody.Support.safe(fn ->
+      if :derive in capabilities do
+        RequestSeal.Custody.Support.ensure(
+          Code.ensure_loaded?(custodian) and
+            Enum.all?([derive: 3, commit: 3, release: 2], fn {name, arity} ->
+              function_exported?(custodian, name, arity)
+            end),
+          :invalid_options
+        )
+      end
+
+      {:ok,
+       %__MODULE__{
+         custodian: custodian,
+         algorithm: algorithm,
+         capabilities: capabilities,
+         ref: ref
+       }}
+    end)
+  end
 end

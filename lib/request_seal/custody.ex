@@ -28,9 +28,10 @@ defmodule RequestSeal.Custody do
   enforced the caller's bound, which `RequestSeal.Custody.Context` does not carry.
   """
   alias RequestSeal.{KeyHandle, KeyIdentity, PublicKey}
-  alias RequestSeal.Custody.{Context, Error, Sink, Support}
+  alias RequestSeal.Custody.{Cleanup, Context, Derivation, DeriveRequest, Error, Sink, Support}
   import Support, only: [fail: 1, ensure: 2]
 
+  @type capability :: :sign | :verify | :wrap | :unwrap | :derive
   @type key_algorithm :: {:jwe, binary()}
   @type algorithm ::
           RequestSeal.Crypto.algorithm()
@@ -59,8 +60,183 @@ defmodule RequestSeal.Custody do
               :ok | {:error, Error.reason()}
   @callback wrap(term(), key_algorithm(), binary(), Context.t()) ::
               {:ok, %{encrypted_key: binary(), params: params()}} | {:error, Error.reason()}
+  @callback derive(term(), DeriveRequest.t(), Context.t()) ::
+              {:ok, term()} | {:error, Error.reason()}
+  @callback commit(term(), <<_::256>>, Context.t()) :: :ok | {:error, Error.reason()}
   @callback release(term(), Context.t()) :: :ok | {:error, Error.reason()}
-  @optional_callbacks verify: 5, unwrap: 5, wrap: 4, release: 2
+  @optional_callbacks verify: 5, unwrap: 5, wrap: 4, derive: 3, commit: 3, release: 2
+
+  @doc """
+  Derive and atomically commit a caller-owned child without exporting its key.
+
+  The parent must bind `{:derive, "hkdf-sha256"}` and grant `:derive`.
+  HKDF-SHA256 extracts with salt `"request-seal/derive/v1"` and expands with
+  that prefix followed by the family and domain, each prefixed by its unsigned
+  16-bit big-endian byte length. The domain is 1–255 bytes, including binary
+  domains. Families: `x25519-dhkem`, `p256-dhkem`, `p384-dhkem`, `ed25519-seed`,
+  `hmac-sha256-key`, `aes128-key`, `aes256-key`. DHKEM applies RFC 9180
+  Section 7.1.3 after HKDF; P-384 uses its SHA-384 KEM.
+
+  ## Parameters and options
+
+    * `parent` - a derivation `RequestSeal.KeyHandle`.
+    * `algorithm` - `"ed25519"`, `"hmac-sha256"`, `{:jwe, "A128KW"}`,
+      `{:jwe, "A256KW"}`, or one of the three ECDH-ES algorithms.
+    * `domain` - 1–255 bytes; no encoding or normalization is applied.
+    * `opts` - exactly `:timeout` (required, 1–300,000 ms), `:capabilities`
+      (optional nonempty unique subset of the family's defaults), and `:curve`
+      (required for ECDH-ES: `"P-256"`, `"P-384"`, or `"X25519"`; refused otherwise).
+
+  ## Returns
+
+  `{:ok, handle}` is returned only after acknowledged atomic commitment under
+  the same absolute deadline as derivation. Until commitment, the child refuses
+  operations with `:unavailable` and destroys itself at its commit deadline or
+  owner death. Releasing the parent leaves committed children alive.
+
+  `{:error, Custody.Error.t()}` means no committed child can remain, or its
+  destruction is confirmed. Failed derivation and explicit commit refusals use
+  this shape. Reasons include `:invalid_options`, `:invalid_data` (domain),
+  `:invalid_handle`, `:unsupported_algorithm`, `:unsupported_operation`,
+  `:key_not_found`, `:unavailable`, `:deadline_exceeded`, and bounded custodian
+  failures. Meanings: `RequestSeal.Custody.Error`.
+
+  A lost commit result triggers exactly one release under a fresh 1,000 ms
+  context. If destruction is unconfirmed, returns
+  `{:cleanup_required, cleanup, error}` with the original error. The caller
+  must retry `cleanup/2` until `:ok`; a timeout does not prove destruction.
+  No key, domain, reference, identity, or commit token is emitted in telemetry.
+  """
+  @spec derive(KeyHandle.t(), algorithm(), binary(), keyword()) ::
+          {:ok, KeyHandle.t()}
+          | {:error, Error.t()}
+          | {:cleanup_required, Cleanup.t(), Error.t()}
+  def derive(parent, algorithm, domain, opts) do
+    Support.safe(
+      fn ->
+        Support.options(opts, [:timeout, :capabilities, :curve])
+        ensure(Keyword.has_key?(opts, :timeout), :invalid_options)
+        timeout = Support.timeout(opts, [:timeout, :capabilities, :curve])
+        {target, capabilities} = Derivation.target(algorithm, opts)
+        ensure(is_binary(domain) and byte_size(domain) in 1..255, :invalid_data)
+        handle!(parent)
+        ensure(:derive in parent.capabilities, :unsupported_operation)
+        context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
+
+        request = %DeriveRequest{
+          target: target,
+          domain: domain,
+          capabilities: capabilities,
+          owner: self(),
+          token: :crypto.strong_rand_bytes(32)
+        }
+
+        result =
+          run(context, fn ->
+            normalize_child(parent.custodian.derive(parent.ref, request, context))
+          end)
+
+        case result do
+          {:ok, ref} -> commit_child(parent.custodian, ref, request, context)
+          {:error, _} = error -> error
+        end
+      end,
+      :custodian_failure
+    )
+  end
+
+  @doc """
+  Retry destruction using a caller-owned `RequestSeal.Custody.Cleanup` capability.
+
+  Options are exactly `:timeout`, required, 1–300,000 ms. Returns `:ok` only
+  when destruction or absence is confirmed; success is idempotent. An error
+  leaves the obligation with the caller. Invalid capabilities return
+  `:invalid_handle`; invalid options return `:invalid_options`. Other errors
+  are bounded `RequestSeal.Custody.Error` reasons from release or the runner,
+  including `:deadline_exceeded` and `:custodian_failure`. No telemetry carries
+  the capability or the referenced key. This capability is not a key handle.
+  """
+  @spec cleanup(Cleanup.t(), keyword()) :: :ok | {:error, Error.t()}
+  def cleanup(cleanup, opts) do
+    Support.safe(
+      fn ->
+        Support.options(opts, [:timeout])
+        ensure(Keyword.has_key?(opts, :timeout), :invalid_options)
+        timeout = Support.timeout(opts)
+        ensure(match?(%Cleanup{}, cleanup) and map_size(cleanup) == 3, :invalid_handle)
+        ensure(
+          is_atom(cleanup.custodian) and Code.ensure_loaded?(cleanup.custodian),
+          :invalid_handle
+        )
+        ensure(function_exported?(cleanup.custodian, :release, 2), :invalid_handle)
+        release_child(cleanup, timeout)
+      end,
+      :custodian_failure
+    )
+  end
+
+  defp normalize_child({:ok, ref}) when is_function(ref, 0), do: {:ok, ref}
+  defp normalize_child(result), do: normalize(:derive, result)
+
+  defp commit_child(custodian, ref, request, context) do
+    # Mark dispatch separately from the result. A failed runner before dispatch
+    # cannot have committed; once dispatched, an untagged result is uncertain.
+    dispatched = :erlang.alias()
+
+    try do
+      result =
+        run(context, fn ->
+          if Context.remaining(context) > 0 do
+            send(dispatched, {dispatched, :commit_started})
+
+            case custodian.commit(ref, request.token, context) do
+              :ok -> {:ok, {:commit_reply, :ok}}
+              {:error, _} = error -> {:ok, {:commit_reply, normalize(:commit, error)}}
+              _ -> {:error, Error.new(:custodian_failure)}
+            end
+          else
+            {:error, Error.new(:deadline_exceeded)}
+          end
+        end)
+
+      sent? =
+        receive do
+          {^dispatched, :commit_started} -> true
+        after
+          0 -> false
+        end
+
+      case result do
+        {:ok, {:commit_reply, :ok}} ->
+          KeyHandle.new(custodian, request.target.algorithm, request.capabilities, ref)
+
+        {:ok, {:commit_reply, {:error, _} = error}} ->
+          error
+
+        {:error, error} ->
+          cleanup = %Cleanup{custodian: custodian, ref: ref}
+
+          if not sent? or release_child(cleanup, 1_000) == :ok,
+            do: {:error, error},
+            else: {:cleanup_required, cleanup, error}
+      end
+    after
+      :erlang.unalias(dispatched)
+      flush(dispatched)
+    end
+  end
+
+  defp release_child(cleanup, timeout) do
+    context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
+
+    result =
+      run(context, fn -> normalize(:release, cleanup.custodian.release(cleanup.ref, context)) end)
+
+    case result do
+      {:ok, :ok} -> :ok
+      {:error, _} = error -> error
+    end
+  end
 
   @doc """
   Unwrap a bounded list with the handle's exact key-management algorithm.
@@ -516,7 +692,7 @@ defmodule RequestSeal.Custody do
 
     ensure(
       is_list(handle.capabilities) and handle.capabilities != [] and
-        Enum.all?(handle.capabilities, &(&1 in [:sign, :verify, :wrap, :unwrap])) and
+        Enum.all?(handle.capabilities, &(&1 in [:sign, :verify, :wrap, :unwrap, :derive])) and
         Enum.uniq(handle.capabilities) == handle.capabilities,
       :invalid_handle
     )
@@ -528,7 +704,19 @@ defmodule RequestSeal.Custody do
       :invalid_handle
     )
 
+    if :derive in handle.capabilities do
+      ensure(
+        Enum.all?([derive: 3, commit: 3, release: 2], fn {name, arity} ->
+          function_exported?(handle.custodian, name, arity)
+        end),
+        :invalid_handle
+      )
+    end
+
     case handle.algorithm do
+      {:derive, "hkdf-sha256"} ->
+        ensure(handle.capabilities == [:derive], :invalid_handle)
+
       {:jwe, alg}
       when alg in ~w(RSA-OAEP RSA-OAEP-256 A128GCMKW A256GCMKW dir A128KW A256KW ECDH-ES ECDH-ES+A128KW ECDH-ES+A256KW) ->
         allowed = if alg in ~w(A128KW A256KW), do: [:wrap, :unwrap], else: [:unwrap]
@@ -539,7 +727,11 @@ defmodule RequestSeal.Custody do
         end
 
       _ ->
-        ensure(not Enum.any?(handle.capabilities, &(&1 in [:wrap, :unwrap])), :invalid_handle)
+        ensure(
+          not Enum.any?(handle.capabilities, &(&1 in [:wrap, :unwrap, :derive])),
+          :invalid_handle
+        )
+
         RequestSeal.Crypto.Algorithm.resolve(handle.algorithm)
     end
   end

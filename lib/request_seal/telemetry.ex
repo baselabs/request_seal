@@ -24,6 +24,11 @@ defmodule RequestSeal.Telemetry do
   | `[:request_seal, :jose, :content_authentication]` | single and batch JWE AEAD, immediately after the real call returns | only `:outcome` (`:ok` or `:failed`); no measurements |
   | `[:request_seal, :jose, :decrypt_many]` | `RequestSeal.JOSE.JWE.decrypt_many/2` | empty; measurements are `:count`, `:groups`, `:failed`, `:deadline_exceeded` only |
 
+  Generation, derivation, commitment, release, and cleanup add no telemetry
+  events. No derivation domain, family input, commitment token, child reference,
+  cleanup capability, or key identity is emitted. `:cleanup_required` is a caller
+  result shape, never a telemetry reason or outcome.
+
   A rejected verification reports its bounded `reason` and `layer` exactly as
   returned to the caller; `:limit` makes resource exhaustion observable. An
   `:internal` reason marks an unexpected internal

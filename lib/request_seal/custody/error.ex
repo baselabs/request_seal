@@ -16,6 +16,7 @@ defmodule RequestSeal.Custody.Error do
   * `:decryption_failed`: key unwrapping failed; no private diagnostics.
   * `:no_public_key`: symmetric custody has no public export.
   * `:key_not_found`: the selected key was released, removed, or is unavailable.
+  * `:unavailable`: an uncommitted child or invalid atomic commit state.
   * `:deadline_exceeded`: the absolute operation deadline expired.
   * `:custodian_unavailable`: connection absent, refused, or closed.
   * `:custodian_rejected`: provider refusal or returned signature fails verification.
@@ -25,7 +26,7 @@ defmodule RequestSeal.Custody.Error do
   defstruct [:reason, :retryable]
   @reasons ~w(invalid_handle invalid_options unsupported_algorithm unsupported_operation
               invalid_key key_mismatch invalid_data invalid_signature unsupported_format invalid_signing_output
-              no_public_key key_not_found deadline_exceeded custodian_unavailable
+              no_public_key key_not_found unavailable deadline_exceeded custodian_unavailable
               custodian_rejected custodian_protocol custodian_failure decryption_failed limit)a
   @type reason :: unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))
   @type t :: %__MODULE__{reason: reason(), retryable: boolean()}

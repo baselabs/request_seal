@@ -11,8 +11,14 @@
 | Identity attribution | Verified association between the signing key and a claimed agent/domain/issuer. |
 | Authentication | Successful cryptography plus all required profile, trust, integrity, time and replay rules. |
 | Authorization | The caller's decision about what the authenticated party may do. |
-| Custodian | Owner of signing, secret-bearing verification, key-wrapping, or key-unwrapping capability; an opaque handle may invoke a remote HSM/KMS without exposing its key. |
+| Custodian | Owner of signing, secret-bearing verification, key-wrapping, key-unwrapping, or key-derivation capability; an opaque handle may invoke a remote HSM/KMS without exposing its key. |
 | Key handle | An opaque, algorithm-bound reference to a key held by a custodian; private key bytes never leave the custodian. |
+| Generated key | Key material drawn from the CSPRNG inside a sensitive Local holder by `RequestSeal.Custody.Local.generate/2`; only a handle is returned. |
+| Derivation parent | A `{:derive, "hkdf-sha256"}` handle holding 32–64 IKM bytes and granting only `:derive`. |
+| Derivation family | A versioned HKDF label separating DHKEM, Ed25519 seed, HMAC, and AES-KW outputs independently of domain bytes. |
+| Derive request | `RequestSeal.Custody.DeriveRequest`: target algorithm and curve, domain, narrowed capabilities, final owner, and a commitment token; no child key material. |
+| Atomic child commit | A single holder transition before its commit deadline, with a live owner and matching token; only its acknowledgement makes derivation successful. Uncommitted children refuse use and expire. |
+| Cleanup capability | Redacted `RequestSeal.Custody.Cleanup` returned when a possibly committed child's destruction is unconfirmed. It grants only idempotent `RequestSeal.Custody.cleanup/2`; `:ok` confirms destruction or absence. |
 | Signing spec | The label, algorithm, covered components, lifetime, and optional parameters of a signature to create (`t:RequestSeal.signing_spec/0`). |
 | Policy | The verifier's explicit acceptance choices: algorithms, required components, key resolver, freshness, body integrity, and replay (`RequestSeal.Policy`). |
 | Key resolver | The policy's caller function selecting an authoritative algorithm and a public key, custody handle, or supported verification function. An explicitly required embedded JWS key is approved with `:embedded`. Selection establishes no identity. |

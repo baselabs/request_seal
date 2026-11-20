@@ -494,6 +494,13 @@ Here one trusted key uses one namespace. Define your own commitment for your tru
 
 ## What's included
 
+`RequestSeal.Custody.Local.generate/2` creates fresh keys inside sensitive holders.
+`RequestSeal.Custody.derive/4` derives and atomically commits domain-separated
+children from an HKDF parent without exporting their material. A lost commit
+result with unconfirmed destruction returns a redacted cleanup capability;
+call `RequestSeal.Custody.cleanup/2` until destruction is confirmed. See
+[key custody](docs/guides/key-custody.md) for the supported targets and options.
+
 `RequestSeal.Telemetry` defines a versioned `:telemetry` contract: verification outcomes, replay claims and custody signing results as low-cardinality reason and layer events with durations. See the [errors guide](docs/guides/errors.md) for the events and safe logging.
 
 | Capability | Module | Standard |

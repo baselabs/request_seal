@@ -2,6 +2,12 @@ defmodule RequestSeal.Custody.Local do
   @moduledoc """
   Caller-owned OTP private keys and symmetric secrets, held in sensitive processes.
 
+  `generate/2` draws fresh keys inside a sensitive holder. HKDF-SHA256 parents
+  imported as `{:ikm, bytes}` support `RequestSeal.Custody.derive/4`; derived
+  material travels holder to holder and never through a runner or caller.
+  Uncommitted children refuse use, expire at the commit deadline, and monitor
+  the caller from creation. Only acknowledged atomic commitment returns a child.
+
   `new/3` builds a handle from OTP key material and `import/4` from one private
   PEM, PKCS #8 DER, or private JWK. All six HTTP algorithms and the eight
   explicit JWS extensions in `RequestSeal.Crypto` are supported for signing, and
@@ -67,7 +73,7 @@ defmodule RequestSeal.Custody.Local do
   @behaviour RequestSeal.Custody
   alias RequestSeal.{Crypto, KeyHandle, KeyIdentity, PublicKey}
   alias RequestSeal.Crypto.Algorithm
-  alias RequestSeal.Custody.{Context, Sink, Support}
+  alias RequestSeal.Custody.{Context, Derivation, DeriveRequest, Sink, Support}
   import Support, only: [fail: 1, ensure: 2, unwrap: 1]
   @rsa {1, 2, 840, 113_549, 1, 1, 1}
   @pss {1, 2, 840, 113_549, 1, 1, 10}
@@ -89,7 +95,8 @@ defmodule RequestSeal.Custody.Local do
     * `algorithm` - an HTTP identifier from `RequestSeal.Crypto.algorithms/0`,
       `{:jws, name}` for a JWS extension listed in `RequestSeal.Crypto`, or
       `{:jwe, name}` for RSA-OAEP, RSA-OAEP-256, A128KW, A256KW,
-      A128GCMKW, A256GCMKW, dir, ECDH-ES, ECDH-ES+A128KW, or ECDH-ES+A256KW.
+      A128GCMKW, A256GCMKW, dir, ECDH-ES, ECDH-ES+A128KW, or ECDH-ES+A256KW;
+      or `{:derive, "hkdf-sha256"}` for an HKDF parent.
     * `material` - an operation-local OTP descriptor that fits `algorithm`:
       * `{:rsa, otp_private_key}` - a two-prime `:RSAPrivateKey` record with a
         2048–8192-bit modulus and consistent CRT components; RSA signing
@@ -102,11 +109,13 @@ defmodule RequestSeal.Custody.Local do
       * `{:aes, kek}` - exactly 16 bytes for A128KW/A128GCMKW or 32 for
         A256KW/A256GCMKW.
       * `{:cek, key}` - exactly 16 or 32 bytes for `dir`.
+      * `{:ikm, bytes}` - 32–64 bytes for `{:derive, "hkdf-sha256"}`, granting
+        only `:derive`, with unknown identity and no public export.
     * `opts` - keyword list; see Options.
 
   ## Options
 
-    * `:capabilities` - for JWE only, a nonempty unique subset of the family's
+    * `:capabilities` - for JWE and derivation parents, a nonempty unique subset of the family's
       capabilities. AES-KW defaults to `[:wrap, :unwrap]`; other JWE families
       default to `[:unwrap]` and refuse `:wrap`.
     * `:equivalence` - a nonsecret binary of 1–256 bytes, accepted only for HMAC
@@ -117,7 +126,7 @@ defmodule RequestSeal.Custody.Local do
 
     * `{:ok, %RequestSeal.KeyHandle{}}` - capabilities `[:sign, :verify]` for a
       signing algorithm, `[:wrap, :unwrap]` (or the selected subset) for AES-KW,
-      `[:unwrap]` for other JWE algorithms.
+      `[:unwrap]` for other JWE algorithms, or `[:derive]` for an HKDF parent.
     * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
       `:unsupported_algorithm`, `:invalid_options` (an option other than a single
       `:equivalence`/`:capabilities`, invalid capabilities, or `:equivalence`
@@ -150,6 +159,95 @@ defmodule RequestSeal.Custody.Local do
       {_, _, capabilities} = selection(algorithm)
       construct(algorithm, material, opts, nil, nil, capabilities)
     end)
+  end
+
+  @doc """
+  Generate a key inside a new sensitive holder owned by the caller.
+
+  Only the handle leaves custody. RSA signing and RSA-OAEP algorithms require
+  `bits: 2048 | 3072 | 4096` and use public exponent 65,537. ECDH-ES,
+  ECDH-ES+A128KW, and ECDH-ES+A256KW require
+  `curve: "P-256" | "P-384" | "X25519"`. ECDSA and Ed25519 signing algorithms
+  fix their own curve; HMAC-SHA256 uses 32 bytes; A128KW/A256KW use 16/32 bytes.
+  Both HTTP and explicit JWS signing identifiers are accepted.
+
+  Options are exactly the required `:bits` or `:curve` for that family, plus
+  optional `:capabilities` narrowing its defaults (sign/verify, wrap/unwrap, or
+  unwrap). Unknown, duplicate, misplaced, missing, or invalid options return
+  `:invalid_options`. GCMKW, `dir`, derivation parents, and unknown algorithms
+  return `:unsupported_algorithm`; HKDF IKM is imported with `new/3`.
+
+  Returns `{:ok, KeyHandle.t()}` after actual cryptographic validation, or
+  `{:error, Custody.Error.t()}` with the reasons above, `:invalid_key`,
+  `:key_mismatch`, `:custodian_failure`, or `:deadline_exceeded` on holder startup
+  (5,000 ms). Release with `RequestSeal.Custody.release/1`. Symmetric keys have
+  unknown equivalence and no public key. Generation emits no telemetry.
+
+      iex> {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", capabilities: [:sign])
+      iex> {:ok, _signature} = RequestSeal.Custody.sign(handle, "release manifest")
+      iex> RequestSeal.Custody.release(handle)
+      :ok
+  """
+  @spec generate(RequestSeal.Custody.algorithm(), keyword()) ::
+          {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
+  def generate(algorithm, opts) do
+    Support.safe(fn ->
+      {family, capabilities} = generation_options(algorithm, opts)
+      {holder, token} = start_holder({:generate, algorithm, family, opts, capabilities})
+      KeyHandle.new(__MODULE__, algorithm, capabilities, fn -> {holder, token} end)
+    end)
+  end
+
+  defp generation_options(algorithm, opts) do
+    ensure(
+      not match?({:derive, _}, algorithm) and
+        algorithm not in [{:jwe, "dir"}, {:jwe, "A128GCMKW"}, {:jwe, "A256GCMKW"}],
+      :unsupported_algorithm
+    )
+
+    {_, family, defaults} = selection(algorithm)
+    required =
+      case family do
+        :rsa -> [:bits]
+        :ecdh -> [:curve]
+        _ -> []
+      end
+
+    Support.options(opts, [:capabilities | required])
+
+    case family do
+      :rsa -> ensure(Keyword.get(opts, :bits) in [2048, 3072, 4096], :invalid_options)
+      :ecdh ->
+        ensure(Keyword.get(opts, :curve) in ["P-256", "P-384", "X25519"], :invalid_options)
+      _ -> :ok
+    end
+
+    {family, Derivation.capabilities(opts, defaults)}
+  end
+
+  defp generated_material(_, :rsa, opts),
+    do: {:rsa, :public_key.generate_key({:rsa, Keyword.fetch!(opts, :bits), 65_537})}
+
+  defp generated_material(_, :ecdh, opts), do: generated_ec(Keyword.fetch!(opts, :curve))
+  defp generated_material({:jwe, "A128KW"}, :aes, _), do: {:aes, :crypto.strong_rand_bytes(16)}
+  defp generated_material({:jwe, "A256KW"}, :aes, _), do: {:aes, :crypto.strong_rand_bytes(32)}
+  defp generated_material(_, :hmac, _), do: {:hmac, :crypto.strong_rand_bytes(32)}
+  defp generated_material(_, :ed25519, _), do: {:ed25519, :crypto.strong_rand_bytes(32)}
+
+  defp generated_material(algorithm, :ec, _) do
+    {_, {:ec, _, curve, _}} = Algorithm.resolve(algorithm)
+    generated_ec(curve)
+  end
+
+  defp generated_ec("X25519") do
+    {_, scalar} = :crypto.generate_key(:ecdh, :x25519)
+    {:x25519, scalar}
+  end
+
+  defp generated_ec(curve) do
+    {otp, _, _} = Algorithm.curve(curve)
+    {_, scalar} = :crypto.generate_key(:ecdh, otp)
+    {:ec, curve, scalar}
   end
 
   @doc """
@@ -252,10 +350,18 @@ defmodule RequestSeal.Custody.Local do
   end
 
   defp construct(algorithm, material, opts, type, expected, capabilities) do
+    state = prepare_state(algorithm, material, opts, type, expected, capabilities)
+    {holder, token} = start_holder(state)
+    KeyHandle.new(__MODULE__, algorithm, elem(state, 4), fn -> {holder, token} end)
+  end
+
+  defp prepare_state(algorithm, material, opts, type, expected, capabilities) do
     {jose, family, _} = selection(algorithm)
 
     allowed =
-      if match?({:jwe, _}, algorithm), do: [:equivalence, :capabilities], else: [:equivalence]
+      if match?({:jwe, _}, algorithm) or match?({:derive, _}, algorithm),
+        do: [:equivalence, :capabilities],
+        else: [:equivalence]
 
     Support.options(opts, allowed)
 
@@ -303,17 +409,10 @@ defmodule RequestSeal.Custody.Local do
     held_material =
       if match?({:jwe, alg} when alg in @ecdh, algorithm), do: {:ecdh, material}, else: material
 
-    state = {algorithm, held_material, public, identity, capabilities}
-    {holder, token} = start_holder(state)
-
-    {:ok,
-     %KeyHandle{
-       custodian: __MODULE__,
-       algorithm: algorithm,
-       capabilities: capabilities,
-       ref: fn -> {holder, token} end
-     }}
+    {algorithm, held_material, public, identity, capabilities}
   end
+
+  defp selection({:derive, "hkdf-sha256"}), do: {"hkdf-sha256", :ikm, [:derive]}
 
   defp selection({:jwe, jose}) when jose in ["RSA-OAEP", "RSA-OAEP-256"],
     do: {jose, :rsa, [:unwrap]}
@@ -332,6 +431,12 @@ defmodule RequestSeal.Custody.Local do
     {jose, {family, _, _, _}} = Algorithm.resolve(algorithm)
     {jose, family, [:sign, :verify]}
   end
+
+  defp validate_operation({:derive, "hkdf-sha256"}, {:ikm, bytes}, _) do
+    ensure(is_binary(bytes) and byte_size(bytes) in 32..64, :invalid_key)
+  end
+
+  defp validate_operation({:derive, "hkdf-sha256"}, _, _), do: fail(:key_mismatch)
 
   defp validate_operation({:jwe, alg}, material, public)
        when alg in ["RSA-OAEP", "RSA-OAEP-256"] do
@@ -480,6 +585,15 @@ defmodule RequestSeal.Custody.Local do
   def wrap(ref, algorithm, cek, context), do: request(ref, {:wrap, algorithm, cek}, context)
 
   @impl true
+  @doc false
+  def derive(ref, %DeriveRequest{} = request, context),
+    do: request(ref, {:derive, request}, context)
+
+  @impl true
+  @doc false
+  def commit(ref, token, context), do: request(ref, {:commit, token}, context)
+
+  @impl true
   def public_key(ref), do: request(ref, :public_key, default_context())
 
   @impl true
@@ -523,21 +637,32 @@ defmodule RequestSeal.Custody.Local do
     end
   end
 
-  defp start_holder(state) do
-    owner = self()
+  defp start_holder(
+         state,
+         owner \\ self(),
+         deadline \\ System.monotonic_time(:millisecond) + 5_000,
+         pending \\ :committed
+       ) do
+    initializer = self()
     token = :crypto.strong_rand_bytes(32)
-    # This spawn environment contains no key material. The readiness handshake
-    # ensures sensitivity is set before even the initialization message is sent.
-    {pid, monitor} = spawn_monitor(fn -> holder_init(owner, token) end)
+    # Spawn captures only nonsecret addressing state. Sensitivity precedes the
+    # initialization message, including CSPRNG generation and parent-to-child keys.
+    {pid, monitor} = spawn_monitor(fn -> holder_init(owner, initializer, token, deadline) end)
 
     try do
-      await_holder(pid, monitor, token, :ready, System.monotonic_time(:millisecond) + 5_000)
-      send(pid, {:initialize, token, state})
-      await_holder(pid, monitor, token, :initialized, System.monotonic_time(:millisecond) + 5_000)
+      await_holder(pid, monitor, token, :ready, deadline)
+      send(pid, {:initialize, token, state, pending})
+      await_holder(pid, monitor, token, :initialized, deadline)
       {pid, token}
     catch
       kind, reason ->
+        cleanup_monitor = Process.monitor(pid)
         Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^cleanup_monitor, :process, ^pid, _} -> :ok
+        end
+
         :erlang.raise(kind, reason, __STACKTRACE__)
     after
       Process.demonitor(monitor, [:flush])
@@ -551,6 +676,11 @@ defmodule RequestSeal.Custody.Local do
           do: :ok,
           else: await_holder(pid, monitor, token, phase, deadline)
 
+      {candidate, {:initialization_failed, error}} ->
+        if valid_token?(candidate, token),
+          do: Support.unwrap(error),
+          else: await_holder(pid, monitor, token, phase, deadline)
+
       {:DOWN, ^monitor, :process, ^pid, _} ->
         fail(:custodian_failure)
     after
@@ -559,29 +689,59 @@ defmodule RequestSeal.Custody.Local do
     end
   end
 
-  defp holder_init(owner, token) do
+  defp holder_init(owner, initializer, token, deadline) do
     Process.flag(:sensitive, true)
     monitor = Process.monitor(owner)
-    send(owner, {token, :ready})
-    holder_initialize(owner, monitor, token)
+    send(initializer, {token, :ready})
+    holder_initialize(owner, initializer, monitor, token, deadline)
   end
 
-  defp holder_initialize(owner, monitor, token) do
+  defp holder_initialize(owner, initializer, monitor, token, deadline) do
     receive do
-      {:initialize, candidate, state} ->
+      {:initialize, candidate, input, pending} ->
         if valid_token?(candidate, token) do
-          send(owner, {token, :initialized})
-          holder_loop(owner, monitor, token, state)
+          result = Support.safe(fn -> {:ok, initial_state(input)} end, :custodian_failure)
+
+          case result do
+            {:ok, state} ->
+              if Process.alive?(owner) and System.monotonic_time(:millisecond) < deadline do
+                if pending != :committed do
+                  Process.send_after(
+                    self(),
+                    {:commit_expired, token},
+                    max(0, deadline - System.monotonic_time(:millisecond))
+                  )
+                end
+
+                send(initializer, {token, :initialized})
+                holder_loop(owner, monitor, token, state, pending)
+              end
+
+            {:error, _} = error ->
+              send(initializer, {token, {:initialization_failed, error}})
+          end
         else
-          holder_initialize(owner, monitor, token)
+          holder_initialize(owner, initializer, monitor, token, deadline)
         end
 
       {:DOWN, ^monitor, :process, ^owner, _} ->
         :ok
+    after
+      max(0, deadline - System.monotonic_time(:millisecond)) ->
+        :ok
     end
   end
 
-  defp holder_loop(owner, monitor, token, state) do
+  defp initial_state({:generate, algorithm, family, opts, capabilities}) do
+    material = generated_material(algorithm, family, opts)
+    # Generation has its own capability option for every family; imported signing
+    # keys retain new/3's existing option contract.
+    prepare_state(algorithm, material, [], nil, nil, capabilities)
+  end
+
+  defp initial_state(state), do: state
+
+  defp holder_loop(owner, monitor, token, state, pending) do
     receive do
       {:DOWN, ^monitor, :process, ^owner, _} ->
         :ok
@@ -589,35 +749,68 @@ defmodule RequestSeal.Custody.Local do
       {:release, candidate} ->
         if valid_token?(candidate, token),
           do: :ok,
-          else: holder_loop(owner, monitor, token, state)
+          else: holder_loop(owner, monitor, token, state, pending)
+
+      {:commit_expired, candidate} ->
+        if pending != :committed and valid_token?(candidate, token),
+          do: :ok,
+          else: holder_loop(owner, monitor, token, state, pending)
 
       {:request, candidate, runner, reply, context, operation} ->
-        # A queued request cannot start cryptography after its deadline, caller
-        # cancellation, or creator death. Replies target a runner-owned alias,
-        # automatically revoked when the custody worker is killed.
-        if valid_token?(candidate, token) and Process.alive?(owner) and Process.alive?(runner) and
-             Process.alive?(context.owner) and RequestSeal.Custody.Context.remaining(context) > 0 do
-          result =
-            Support.safe(
-              fn -> holder_operation(operation, state, context) end,
-              :custodian_failure
-            )
-
-          if RequestSeal.Custody.Context.remaining(context) > 0,
-            do: send(reply, {reply, result})
+        if valid_token?(candidate, token) and Process.alive?(runner) do
+          next = handle_request(owner, reply, context, operation, state, pending)
+          if next != :destroy, do: holder_loop(owner, monitor, token, state, next)
+        else
+          holder_loop(owner, monitor, token, state, pending)
         end
 
-        holder_loop(owner, monitor, token, state)
-
       {:system, from, _request} ->
-        # A plain process deliberately rejects sys state, status, trace, suspend,
-        # and replace_state requests rather than exposing a secret-bearing state.
+        # Never expose secret-bearing state through sys, even while uncommitted.
         :gen.reply(from, {:error, :unsupported_operation})
-        holder_loop(owner, monitor, token, state)
+        holder_loop(owner, monitor, token, state, pending)
 
       _ ->
-        holder_loop(owner, monitor, token, state)
+        holder_loop(owner, monitor, token, state, pending)
     end
+  end
+
+  defp handle_request(owner, reply, context, {:commit, candidate}, _, {deadline, token}) do
+    cond do
+      System.monotonic_time(:millisecond) >= deadline or Context.remaining(context) <= 0 ->
+        send(reply, {reply, {:error, :deadline_exceeded}})
+        :destroy
+
+      Process.alive?(owner) and Process.alive?(context.owner) and valid_token?(candidate, token) ->
+        # One mailbox turn: the returned state invalidates expiry before another
+        # message can be handled. No caller code runs in this process.
+        pending = :committed
+        send(reply, {reply, :ok})
+        pending
+
+      true ->
+        send(reply, {reply, {:error, :unavailable}})
+        if Process.alive?(owner), do: {deadline, token}, else: :destroy
+    end
+  end
+
+  defp handle_request(_, reply, _, {:commit, _}, _, :committed) do
+    send(reply, {reply, {:error, :unavailable}})
+    :committed
+  end
+
+  defp handle_request(owner, reply, context, operation, state, pending) do
+    if Process.alive?(owner) and Process.alive?(context.owner) and Context.remaining(context) > 0 do
+      result =
+        if pending == :committed do
+          Support.safe(fn -> holder_operation(operation, state, context) end, :custodian_failure)
+        else
+          {:error, :unavailable}
+        end
+
+      if Context.remaining(context) > 0, do: send(reply, {reply, result})
+    end
+
+    pending
   end
 
   defp valid_token?(candidate, token)
@@ -626,6 +819,21 @@ defmodule RequestSeal.Custody.Local do
        do: :crypto.hash_equals(candidate, token)
 
   defp valid_token?(_, _), do: false
+
+  defp holder_operation({:derive, request}, {bound, {:ikm, ikm}, _, _, capabilities}, context) do
+    ensure(bound == {:derive, "hkdf-sha256"} and :derive in capabilities, :unsupported_operation)
+    ensure(request.owner == context.owner and Process.alive?(request.owner), :unavailable)
+    ensure(is_binary(request.token) and byte_size(request.token) == 32, :invalid_options)
+    {_, _, defaults} = Derivation.family(request.target)
+    selected = Derivation.capabilities([capabilities: request.capabilities], defaults)
+    material = Derivation.material(ikm, request.target, request.domain)
+    state = prepare_state(request.target.algorithm, material, [], nil, nil, selected)
+    {pid, token} =
+      start_holder(state, request.owner, context.deadline, {context.deadline, request.token})
+    {:ok, fn -> {pid, token} end}
+  end
+
+  defp holder_operation({:derive, _}, _, _), do: {:error, :unsupported_operation}
 
   defp holder_operation(
          {:unwrap, algorithm, items, sink},
@@ -730,6 +938,7 @@ defmodule RequestSeal.Custody.Local do
     unwrap(PublicKey.import({:ed25519, public}, :raw))
   end
 
+  defp derive({:ikm, _}, _), do: nil
   defp derive({:hmac, _}, _), do: nil
   defp derive({:aes, _}, _), do: nil
   defp derive({:cek, _}, _), do: nil

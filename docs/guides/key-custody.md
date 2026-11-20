@@ -2,6 +2,32 @@
 
 **What you will build:** A local signing handle that keeps private key material in its holder process, verifies exact signed bytes, and can be explicitly released. Prerequisite: RequestSeal installed. Ed25519 follows [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html); public JWK thumbprints follow [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html) and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html).
 
+
+`RequestSeal.Custody.Local.generate/2` creates fresh keys inside a sensitive
+holder; the caller receives a handle. RSA requires `bits: 2048 | 3072 | 4096`;
+ECDH-ES requires `curve: "P-256" | "P-384" | "X25519"`. Other supported signing
+and AES-KW algorithms fix their own widths. Optional `:capabilities` narrows
+that family's defaults. GCMKW, `dir`, and derivation parents cannot be generated.
+
+For deterministic children, `Local.new/3` accepts
+`{:derive, "hkdf-sha256"}` with `{:ikm, bytes}` of 32–64 bytes and `[:derive]`.
+`Custody.derive/4` takes the target algorithm, 1–255 domain bytes and a required
+`timeout:`; ECDH-ES targets also require `:curve`. Only acknowledged atomic
+commitment returns a child handle. Uncommitted children refuse use and expire at
+the operation deadline or owner death. A committed child belongs to the original
+caller, independently of its parent. See the module reference and
+[ADR 0026](../adr/0026-custody-key-generation-and-derivation.md) for the exact
+HKDF framing and seven families.
+
+A failed derive or explicit commit refusal returns an ordinary error. A lost
+commit result triggers one release under a fresh 1,000 ms deadline. If destruction
+is unconfirmed, `{:cleanup_required, cleanup, error}` returns the caller's redacted
+release capability. Retry `Custody.cleanup/2`, with a required `timeout:`, until
+`:ok`. The capability grants no key operations. Generation and derivation never
+export raw keys or identities through telemetry; symmetric equivalence stays
+unknown. Key material supplied to `new/3` or `import/4` remains a caller-owned
+import path.
+
 ## 1. Create an example key handle
 
 ```elixir

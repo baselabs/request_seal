@@ -2,6 +2,20 @@
 
 ## Unreleased 2.0.0
 
+- Generate RSA, ECDSA, Ed25519, HMAC, AES-KW, and ECDH keys inside sensitive
+  custody holders with `RequestSeal.Custody.Local.generate/2`. Add HKDF-SHA256
+  parent handles and domain-separated derivation for seven families, with
+  RFC 9180 DHKEM for P-256, P-384, and X25519. No raw generated or derived key
+  export is provided.
+- Add the custody `derive/3` and `commit/3` callback pair. A derive-capable
+  custodian must also implement confirmed, idempotent `release/2`. Children
+  remain unusable before atomic commitment and expire or end on owner death.
+  `Custody.derive/4` uses one deadline and attempts one fresh 1,000 ms release
+  after a lost commit result. Unconfirmed destruction returns
+  `{:cleanup_required, cleanup, error}`; callers retry `Custody.cleanup/2` until
+  `:ok`. Add the nonretryable custody `:unavailable` reason for uncommitted or
+  refused commit state. Add independent derivation corpus surfaces and pins.
+
 - Pin every documented public module, function, macro, type and callback in an
   exact inventory, checked with all optional integrations on the latest runtime.
 - Check all eleven emitted error vocabularies against their closed reason types
