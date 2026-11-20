@@ -3,7 +3,7 @@ defmodule RequestSeal.JOSE.JWE do
   Compact RFC 7516 encryption with explicitly pinned algorithms and AES GCM.
 
   `encrypt/4` generates a fresh content-encryption key (CEK) and IV and hands the
-  CEK to an RSA public key, AES-KW handle, or caller wrapper. ECDH-ES instead
+  CEK to an RSA public key or AES-KW handle. ECDH-ES instead
   agrees a fresh CEK with a public recipient, adding its public ephemeral key;
   `decrypt/2` authenticates
   and decrypts under an explicit policy. Key management is `RSA-OAEP-256`,
@@ -95,7 +95,7 @@ defmodule RequestSeal.JOSE.JWE do
       `:algorithm_mismatch` (public key unusable for `alg`), `:invalid_base64`,
       `:invalid_iv`, `:invalid_tag` (malformed `iv`/`tag` additions),
       `:decryption_failed` (encrypted key with the wrong width for `alg`),
-      `:entropy_failure`, `:signer_failed` (wrapper error, exception, or invalid
+      `:entropy_failure`, `:signer_failed` (custody error, exception, or invalid
       result; invalid public key), and `:deadline_exceeded` (the only retryable
       reason). This function has no key resolver and does not return
       `:key_resolver_failed`. Meanings: `RequestSeal.JOSE.Error`.

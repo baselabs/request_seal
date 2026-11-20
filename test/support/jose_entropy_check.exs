@@ -26,10 +26,10 @@ plaintext =
 
 true = plaintext == v["plaintext"]
 
+{:ok, recipient} = RequestSeal.PublicKey.import(Map.drop(v["key"], ~w(d p q dp dq qi)), :jwk)
+
 {:error, %RequestSeal.JOSE.Error{reason: :entropy_failure}} =
-  RequestSeal.JOSE.JWE.encrypt([{"alg", "A256KW"}, {"enc", "A128GCM"}], "", fn _, cek ->
-    RequestSeal.JOSE.KeyManagement.wrap("A256KW", cek, %{}, {:aes, <<0::256>>})
-  end)
+  RequestSeal.JOSE.JWE.encrypt([{"alg", "RSA-OAEP"}, {"enc", "A128GCM"}], "", recipient)
 
 direct =
   File.read!("test/fixtures/jose/5_6.direct_encryption_using_aes-gcm.json") |> :json.decode()

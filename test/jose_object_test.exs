@@ -144,7 +144,7 @@ defmodule RequestSeal.JOSEObjectTest do
       assert {:ok, %{object: %{"ok" => true}, plaintext: ^bytes}} = JWE.decrypt(token, p)
       assert_receive {:authentication, :ok}
 
-      assert {:ok, [%{object: %{"ok" => true}, plaintext: ^bytes}]} =
+      assert {:ok, [{:ok, %{object: %{"ok" => true}, plaintext: ^bytes}}]} =
                JWE.decrypt_many([%{token: token, expected: %{}}], batch)
 
       assert_receive {:authentication, :ok}

@@ -859,9 +859,7 @@ defmodule RequestSeal.WebBotAuthTest do
     }
 
     {:ok, m} =
-      WebBotAuth.sign(build("https://example.com/resource", []), spec, fn _, base ->
-        RequestSeal.Custody.sign(handle, base)
-      end)
+      WebBotAuth.sign(build("https://example.com/resource", []), spec, handle)
 
     policy =
       policy(
