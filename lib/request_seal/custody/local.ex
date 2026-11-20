@@ -2,6 +2,12 @@ defmodule RequestSeal.Custody.Local do
   @moduledoc """
   Caller-owned OTP private keys and symmetric secrets, held in sensitive processes.
 
+  `generate/2` draws fresh keys inside a sensitive holder. HKDF-SHA256 parents
+  imported as `{:ikm, bytes}` support `RequestSeal.Custody.derive/4`; derived
+  material travels holder to holder and never through a runner or caller.
+  Uncommitted children refuse use, expire at the commit deadline, and monitor
+  the caller from creation. Only acknowledged atomic commitment returns a child.
+
   `new/3` builds a handle from OTP key material and `import/4` from one private
   PEM, PKCS #8 DER, or private JWK. All six HTTP algorithms and the eight
   explicit JWS extensions in `RequestSeal.Crypto` are supported for signing, and
@@ -89,7 +95,8 @@ defmodule RequestSeal.Custody.Local do
     * `algorithm` - an HTTP identifier from `RequestSeal.Crypto.algorithms/0`,
       `{:jws, name}` for a JWS extension listed in `RequestSeal.Crypto`, or
       `{:jwe, name}` for RSA-OAEP, RSA-OAEP-256, A128KW, A256KW,
-      A128GCMKW, A256GCMKW, dir, ECDH-ES, ECDH-ES+A128KW, or ECDH-ES+A256KW.
+      A128GCMKW, A256GCMKW, dir, ECDH-ES, ECDH-ES+A128KW, or ECDH-ES+A256KW;
+      or `{:derive, "hkdf-sha256"}` for an HKDF parent.
     * `material` - an operation-local OTP descriptor that fits `algorithm`:
       * `{:rsa, otp_private_key}` - a two-prime `:RSAPrivateKey` record with a
         2048–8192-bit modulus and consistent CRT components; RSA signing
@@ -102,11 +109,13 @@ defmodule RequestSeal.Custody.Local do
       * `{:aes, kek}` - exactly 16 bytes for A128KW/A128GCMKW or 32 for
         A256KW/A256GCMKW.
       * `{:cek, key}` - exactly 16 or 32 bytes for `dir`.
+      * `{:ikm, bytes}` - 32–64 bytes for `{:derive, "hkdf-sha256"}`, granting
+        only `:derive`, with unknown identity and no public export.
     * `opts` - keyword list; see Options.
 
   ## Options
 
-    * `:capabilities` - for JWE only, a nonempty unique subset of the family's
+    * `:capabilities` - for JWE and derivation parents, a nonempty unique subset of the family's
       capabilities. AES-KW defaults to `[:wrap, :unwrap]`; other JWE families
       default to `[:unwrap]` and refuse `:wrap`.
     * `:equivalence` - a nonsecret binary of 1–256 bytes, accepted only for HMAC
@@ -117,7 +126,7 @@ defmodule RequestSeal.Custody.Local do
 
     * `{:ok, %RequestSeal.KeyHandle{}}` - capabilities `[:sign, :verify]` for a
       signing algorithm, `[:wrap, :unwrap]` (or the selected subset) for AES-KW,
-      `[:unwrap]` for other JWE algorithms.
+      `[:unwrap]` for other JWE algorithms, or `[:derive]` for an HKDF parent.
     * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
       `:unsupported_algorithm`, `:invalid_options` (an option other than a single
       `:equivalence`/`:capabilities`, invalid capabilities, or `:equivalence`

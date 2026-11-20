@@ -201,6 +201,16 @@ Never retry a `RequestSeal.Error` by resending the same signed bytes: the verifi
 
 Next: [signing and verifying](signing-and-verifying.md) for the full policy, [replay protection](replay-protection.md) for store failures, and [key custody](key-custody.md) for handle lifecycles.
 
+
+`Custody.derive/4` has a third result shape: `{:cleanup_required, cleanup, error}`.
+It means a commit result was lost and destruction of the possibly committed child
+is unconfirmed. The enclosed bounded error describes the original failure;
+`cleanup_required` is not a reason. Call `Custody.cleanup/2` with a required
+`timeout:` until `:ok`. A release timeout does not establish destruction.
+An explicit commit refusal or a failed derive returns an ordinary error.
+Custody `:unavailable` is nonretryable and marks uncommitted or refused commit
+state; it differs from transport `:custodian_unavailable`.
+
 ## Complete reason inventory
 
 These closed vocabularies are checked against source emissions and each error
@@ -220,7 +230,7 @@ module's `reason` type. Each module documents their meanings.
 
 ### RequestSeal.Custody.Error
 
-`:invalid_handle`, `:invalid_options`, `:unsupported_algorithm`, `:unsupported_operation`, `:invalid_key`, `:key_mismatch`, `:invalid_data`, `:invalid_signature`, `:unsupported_format`, `:invalid_signing_output`, `:no_public_key`, `:key_not_found`, `:deadline_exceeded`, `:custodian_unavailable`, `:custodian_rejected`, `:custodian_protocol`, `:custodian_failure`, `:decryption_failed`, `:limit`.
+`:invalid_handle`, `:invalid_options`, `:unsupported_algorithm`, `:unsupported_operation`, `:invalid_key`, `:key_mismatch`, `:invalid_data`, `:invalid_signature`, `:unsupported_format`, `:invalid_signing_output`, `:no_public_key`, `:key_not_found`, `:unavailable`, `:deadline_exceeded`, `:custodian_unavailable`, `:custodian_rejected`, `:custodian_protocol`, `:custodian_failure`, `:decryption_failed`, `:limit`.
 
 ### RequestSeal.Replay.Error
 

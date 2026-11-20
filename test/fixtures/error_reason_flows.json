@@ -148,7 +148,7 @@
     "expression": "reason",
     "file": "lib/request_seal/custody.ex",
     "kind": "custody",
-    "line": 577,
+    "line": 750,
     "allows": [
       "invalid_handle",
       "invalid_options",
@@ -168,15 +168,16 @@
       "custodian_protocol",
       "custodian_failure",
       "decryption_failed",
-      "limit"
+      "limit",
+      "unavailable"
     ],
-    "comment": "lib/request_seal/custody.ex:577: Provider reason is normalized through Custody.Error.new/1 and its closed @reasons allowlist."
+    "comment": "lib/request_seal/custody.ex:750: Provider reason is normalized through Custody.Error.new/1 and its closed @reasons allowlist."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/custody.ex",
     "kind": "custody",
-    "line": 578,
+    "line": 751,
     "allows": [
       "invalid_handle",
       "invalid_options",
@@ -196,9 +197,10 @@
       "custodian_protocol",
       "custodian_failure",
       "decryption_failed",
-      "limit"
+      "limit",
+      "unavailable"
     ],
-    "comment": "lib/request_seal/custody.ex:578: Provider reason is normalized through Custody.Error.new/1 and its closed @reasons allowlist."
+    "comment": "lib/request_seal/custody.ex:751: Provider reason is normalized through Custody.Error.new/1 and its closed @reasons allowlist."
   },
   {
     "expression": "socket_error ( reason )",

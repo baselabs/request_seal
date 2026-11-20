@@ -667,6 +667,15 @@
       "covers": [
         "normal range completion has no remaining contributor obligation; no scan of unrelated groups"
       ]
+    },
+    {
+      "patch": "custody-raw-key-export.patch",
+      "file": "test/custody_generation_test.exs",
+      "test": "generated and derived handles expose no raw key operation or secret-bearing state",
+      "failure": "raw key export must be refused",
+      "covers": [
+        "generation and derivation custody confinement; no raw-key export"
+      ]
     }
   ],
   "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."

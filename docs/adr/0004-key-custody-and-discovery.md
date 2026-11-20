@@ -67,5 +67,6 @@ Optional `wrap/4` supports AES Key Wrap ([ADR 0019](0019-aes-key-wrap-custody.md
 defines ECDH-ES over P-256, P-384, and X25519.
 JWE accepts algorithm-matching unwrap handles and raw-key unwrap callbacks.
 [ADR 0027](0027-key-handles-replace-closures.md) proposes handle-only key resolution;
-[ADR 0026](0026-custody-key-generation-and-derivation.md) proposes generation and derivation.
+[ADR 0026](0026-custody-key-generation-and-derivation.md) defines generation inside
+sensitive holders and atomic derivation with caller-owned cleanup capabilities.
 Public verification selects one label ([ADR 0025](0025-single-label-public-verification.md)).

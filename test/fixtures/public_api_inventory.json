@@ -48,6 +48,8 @@
     "type t/0"
   ],
   "RequestSeal.Custody": [
+    "callback commit/3",
+    "callback derive/3",
     "callback identity/1",
     "callback public_key/1",
     "callback release/2",
@@ -55,6 +57,8 @@
     "callback unwrap/5",
     "callback verify/5",
     "callback wrap/4",
+    "function cleanup/2",
+    "function derive/4",
     "function identity/1",
     "function public_key/1",
     "function release/1",
@@ -64,12 +68,19 @@
     "function verify/4",
     "function wrap/3",
     "type algorithm/0",
+    "type capability/0",
     "type item/0",
     "type key_algorithm/0",
     "type params/0"
   ],
+  "RequestSeal.Custody.Cleanup": [
+    "type t/0"
+  ],
   "RequestSeal.Custody.Context": [
     "function remaining/1",
+    "type t/0"
+  ],
+  "RequestSeal.Custody.DeriveRequest": [
     "type t/0"
   ],
   "RequestSeal.Custody.Error": [
@@ -77,6 +88,7 @@
     "type t/0"
   ],
   "RequestSeal.Custody.Local": [
+    "function generate/2",
     "function import/4",
     "function new/3",
     "function release/1"

@@ -85,6 +85,8 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `accept_signature.parse` | Raw field bytes, explicit target kind | Canonical `bytes` |
 | `digest.content` | Exact body bytes, selected algorithms and field kind | Canonical digest `bytes` |
 | `crypto.verify` | Algorithm, public source key, data and signature bytes | `valid` |
+| `hpke.derive_key_pair/v1` | Tagged `kem_id` (16, 17, 32), `ikm` byte tag | `sk` and `pk` byte tags from the internal RFC 9180 stage; not a public key-export operation |
+| `custody.derive/v1` | `parent_ikm`, `domain` byte tags; `target` with algorithm object and explicit curve or null; symmetric `probe` message or CEK | `public_key` JWK pairs for asymmetric targets, `tag` or `wrapped` byte tags for HMAC or AES-KW |
 | `key_management.aes_kw/v1` | `alg` (A128KW/A256KW), `kek` byte tag, `operation` (wrap/unwrap), and `key_data` or `wrapped` byte tag | `wrapped` or `key_data` byte tag |
 | `key_management.ecdh_kdf/v1` | `z`, `apu`, `apv` byte tags; `algorithm_id` string; `keydatalen` tagged bits (128/256) | `output` byte tag |
 | `key_management.agree/v1` | `alg`, `enc`, `recipient` JWK pairs, `recipient_private` JWK pairs/source ref, `ephemeral_private` byte tag, optional `cek` byte tag for +KW, decoded `apu`/`apv` byte tags | `cek`, `encrypted_key` byte tags and `epk` JWK pairs |
@@ -324,3 +326,24 @@ The TypeScript package `@request-seal/core` vendors `conformance/` from one
 release tag. Its source pin records tag, commit and index SHA-256; updating the
 pin and vendored bytes is a reviewed commit. Corpus data stays outside published
 runtime packages.
+
+
+## Custody derivation surfaces
+
+`target.algorithm` uses the closed algorithm object table above. `target.curve`
+is `"P-256"`, `"P-384"`, or `"X25519"` exactly for ECDH-ES targets, and null
+otherwise. Custody cases create a real Local IKM parent, derive and commit a real
+child, compare public material or a real symmetric operation, then release both.
+They never read a child key to obtain an actual result. Domains remain byte tags;
+no Unicode normalization is applied. All seven families have independent cases.
+
+RFC 9180 DeriveKeyPair cases pin the independent inner stage required for the
+three DHKEM families. The RFC's pinned upstream vectors contain P-256 and X25519
+examples only. The P-384 stage is explicitly labeled `reviewed_derivation` from
+Section 7.1.3, not a published vector. `scripts/import_derivation_vectors.py`
+reproduces all expectations independently of RequestSeal, using the checked-in
+upstream extraction when present. `sources/rfc9180/ledger.json` covers that
+extraction and `sources/native-derive/ledger.json` covers every native family.
+Cases live at `cases/hpke/<name>.json` and `cases/custody/<name>.json`, as required
+by their surface prefixes; the inner-stage private bytes are public test vectors,
+not output from a custody handle.

@@ -239,7 +239,8 @@ defmodule RequestSeal.CustodyGenerationTest do
       {:env, captured} = :erlang.fun_info(handle.ref, :env)
       assert Enum.sort(captured) == Enum.sort([pid, token])
       assert Process.info(pid, :dictionary) == {:dictionary, []}
-      assert :sys.get_state(pid) == {:error, :unsupported_operation}
+      error = assert_raise ErlangError, fn -> :sys.get_state(pid) end
+      assert error.original == :unsupported_operation
       for operation <- [:export, :material, :private_key] do
         reply = :erlang.alias()
         send(pid, {:request, token, self(), reply, context(1000), operation})

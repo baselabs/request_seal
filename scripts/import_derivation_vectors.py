@@ -199,6 +199,12 @@ def main():
     # Published sanity checks of the independent reference primitives, before
     # using them to produce any RequestSeal-specific expectation.
     assert wrap(bytes(range(16)), bytes.fromhex("00112233445566778899aabbccddeeff")).hex() == "1fa68b0a8112b447aef34bd8fb5a7b829d3e862371d2cfe5"
+    for name in ("rfc3394-4-1", "rfc3394-4-3", "rfc3394-4-5", "rfc3394-4-6"):
+        vector = json.loads((CORPUS/"cases/key_management"/(name+".json")).read_text())
+        def decode(tag): return base64.urlsafe_b64decode(tag["b64"] + "="*(-len(tag["b64"]) % 4))
+        assert wrap(decode(vector["inputs"]["kek"]), decode(vector["inputs"]["key_data"])) == decode(vector["expected"]["wrapped"])
+    prk = mac("sha256", bytes(range(13)), b"\x0b"*22)
+    assert expand("sha256", prk, bytes(range(0xf0, 0xfa)), 42).hex() == "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
     assert ed_public(bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")).hex() == "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
     source = {"document":"RFC 9180", "section":"7.1.3 and Appendix A",
               "url":"https://www.rfc-editor.org/rfc/rfc9180.html#section-7.1.3"}
