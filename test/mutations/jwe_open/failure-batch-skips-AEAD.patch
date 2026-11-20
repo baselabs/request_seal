@@ -1,0 +1,20 @@
+--- a/lib/request_seal/jose/jwe/worker.ex
++++ b/lib/request_seal/jose/jwe/worker.ex
+@@ -384,15 +384,9 @@
+
+   # Only undelivered positions enter this path. Authenticate with their own
+   # prepared CEK before retaining the bounded reason/layer/auth control.
+-  defp failure(s, i, position, kind, {controls, count}) do
+-    {{:error, error}, auth} =
+-      authenticate(
+-        map_get(:token, position),
+-        map_get(:fallback, position),
+-        kind,
+-        map_get(:p, s)
+-      )
++  defp failure(s, i, _position, _kind, {controls, count}) do
++    {{:error, error}, auth} = {Codec.error(:decryption_failed, :crypto), :failed}
+
+     controls = [{i, map_get(:reason, error), map_get(:layer, error), auth} | controls]
+
+     if count + 1 == @failure_batch do

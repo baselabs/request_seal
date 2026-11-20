@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/worker.ex
++++ b/lib/request_seal/jose/jwe/worker.ex
+@@ -395,7 +395,7 @@
+
+     controls = [{i, map_get(:reason, error), map_get(:layer, error), auth} | controls]
+
+-    if count + 1 == @failure_batch do
++    if count + 1 == @failure_batch + 10_000 do
+       flush_failures(s, controls)
+       {[], 0}
+     else

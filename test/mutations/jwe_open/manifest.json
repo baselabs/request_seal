@@ -685,6 +685,33 @@
       "covers": [
         "normal completion preserves sender order without a second range pass"
       ]
+    },
+    {
+      "patch": "failure-batch-removes-cap.patch",
+      "file": "test/jwe_open_oracles_test.exs",
+      "test": "custody U failure batches preserve bounded queues authentication and strict D",
+      "failure": "failure batches must keep the four-control cap and 128-word message bound",
+      "covers": [
+        "C1: full and final partial batches stay within four controls"
+      ]
+    },
+    {
+      "patch": "failure-batch-accepts-D.patch",
+      "file": "test/jwe_open_oracles_test.exs",
+      "test": "custody U failure batches preserve bounded queues authentication and strict D",
+      "failure": "failure batches must reject every result at or after D",
+      "covers": [
+        "C2: every control retains the strict D gate"
+      ]
+    },
+    {
+      "patch": "failure-batch-skips-AEAD.patch",
+      "file": "test/jwe_open_oracles_test.exs",
+      "test": "custody U failure batches preserve bounded queues authentication and strict D",
+      "failure": "each undelivered position must run real fallback AEAD before its failure control",
+      "covers": [
+        "C3: real fallback authentication precedes each failure control"
+      ]
     }
   ],
   "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."

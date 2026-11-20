@@ -236,6 +236,9 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
       {^tag, :result, i, reason, layer, auth} ->
         loop(result(s, i, reason, layer, auth))
 
+      {^tag, :results, controls} ->
+        loop(result_batch(s, controls))
+
       {^tag, :ended, slot} ->
         loop(ended(s, slot))
 
@@ -444,6 +447,11 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
         s
     end
   end
+
+  def result_batch(s, []), do: s
+
+  def result_batch(s, [{i, reason, layer, auth} | rest]),
+    do: result_batch(result(s, i, reason, layer, auth), rest)
 
   defp terminal({reason, layer, auth}), do: {:terminal, reason, layer, auth}
 
