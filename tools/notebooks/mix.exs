@@ -21,7 +21,7 @@ defmodule RequestSealNotebooks.MixProject do
         {:ecto, "~> 3.14.3", override: true, runtime: false},
         {:phoenix, "~> 1.8.15", override: true, runtime: false},
         {:phoenix_html, "~> 4.4", override: true, runtime: false},
-        {:phoenix_live_view, "~> 1.2.12", override: true, runtime: false},
+        {:phoenix_live_view, "~> 1.2.14", override: true, runtime: false},
         {:plug, "~> 1.20.3", override: true, runtime: false},
         # Phoenix security updates require the matching newer crypto API.
         {:plug_crypto, "~> 2.2.0", override: true, runtime: false},
