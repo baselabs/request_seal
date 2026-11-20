@@ -1,0 +1,12 @@
+--- a/lib/request_seal/jose/jwe/guard.ex
++++ b/lib/request_seal/jose/jwe/guard.ex
+@@ -168,8 +168,8 @@
+   # rows inside ETS; copy at most 64 remaining rows into each sweep page.
+   defp sweep_registry(s) do
+     match = [
+-      {{{:"$1", :_}, :_, :_}, [{:"=/=", :"$1", :resolver}], [:"$_"]},
++      {{{:"$1", :_}, :_, :_}, [{:"=/=", :"$1", :resolver}, {:"=/=", :"$1", :custody}], [:"$_"]},
+       {{:"$1", :_, :_}, [{:is_atom, :"$1"}], [:"$_"]}
+     ]
+
+     sweep_pages(:ets.select(map_get(:registry, s), match, 64), s, 0)

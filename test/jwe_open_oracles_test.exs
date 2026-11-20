@@ -172,6 +172,45 @@ defmodule RequestSeal.JWEOpenOraclesTest do
     end)
   end
 
+  test "P3 filtered sweep joins every non-resolver across bounded pages" do
+    Runtime.with_peer(fn ->
+      s = Runtime.start(129, :custody)
+      registry = Runtime.registry(s)
+      expected = :ets.tab2list(registry) |> Enum.reject(&match?({{:resolver, _}, _, _}, &1))
+      :erlang.trace_pattern({Guard, :sweep, 3}, true, [:local])
+      :erlang.trace_pattern({Guard, :sweep_pages, 3}, true, [:local])
+      :erlang.trace(s.guard, true, [:call])
+
+      try do
+        result = Runtime.trigger(s, :coordinator)
+
+        assert Enum.all?(s.custody, &(not Process.alive?(&1))) and result.remaining == 0,
+               "filtered sweep must join every live non-resolver row"
+
+        rows =
+          for {:trace_ts, pid, :call, {Guard, :sweep, [row, _, _]}, _} <- result.events,
+              pid == s.guard,
+              do: row
+
+        assert Enum.sort(rows) == Enum.sort(expected),
+               "ETS must exclude only joined resolver rows before the sweep body"
+
+        pages =
+          for {:trace_ts, pid, :call, {Guard, :sweep_pages, [{rows, _}, _, _]}, _} <-
+                result.events,
+              pid == s.guard,
+              do: rows
+
+        assert length(pages) >= 3, "filtered sweep must continue beyond its first page"
+        assert Enum.all?(pages, &(length(&1) <= 64)), "registry pages must stay bounded"
+      after
+        :erlang.trace_pattern({Guard, :sweep, 3}, false, [:local])
+        :erlang.trace_pattern({Guard, :sweep_pages, 3}, false, [:local])
+        Runtime.cleanup(s)
+      end
+    end)
+  end
+
   test "oracle 3 guard coordinator and caller queues have bounded terms" do
     Runtime.with_peer(fn ->
       s =

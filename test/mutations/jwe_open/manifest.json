@@ -712,6 +712,15 @@
       "covers": [
         "C3: real fallback authentication precedes each failure control"
       ]
+    },
+    {
+      "patch": "filtered-sweep-skips-live-custody.patch",
+      "file": "test/jwe_open_oracles_test.exs",
+      "test": "P3 filtered sweep joins every non-resolver across bounded pages",
+      "failure": "filtered sweep must join every live non-resolver row",
+      "covers": [
+        "E: filtering joined resolvers must preserve every live non-resolver role"
+      ]
     }
   ],
   "verification": "Clean GREEN per selected command and baseline commit, then expected RED, reversal and clean status. Runtime evidence is produced by CI."
