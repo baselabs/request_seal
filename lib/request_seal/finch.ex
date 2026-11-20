@@ -315,7 +315,7 @@ if Code.ensure_loaded?(Finch) do
     @spec sign(
             Finch.Request.t(),
             spec(),
-            RequestSeal.Policy.signer() | RequestSeal.KeyHandle.t(),
+            RequestSeal.KeyHandle.t(),
             keyword()
           ) :: {:ok, Finch.Request.t()} | {:error, Error.t()}
     def sign(request, spec, signer, opts \\ []) do

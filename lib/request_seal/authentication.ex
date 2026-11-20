@@ -182,7 +182,7 @@ defmodule RequestSeal.Authentication do
 
       ensure(
         SignatureFields.label?(spec.label) and SignatureFields.algorithm?(spec.algorithm) and
-          (is_function(signer, 2) or is_struct(signer, KeyHandle)),
+          is_struct(signer, KeyHandle),
         :invalid_options,
         :input
       )
@@ -254,13 +254,6 @@ defmodule RequestSeal.Authentication do
     case RequestSeal.Signing.custody_sign(handle, bytes, timeout) do
       {:ok, sig} -> sig
       {:error, %Custody.Error{} = source} -> fail(:signing_failed, :crypto, nil, source)
-    end
-  end
-
-  defp sign_bytes(signer, algorithm, bytes, _) do
-    case callback(fn -> signer.(algorithm, bytes) end, :signer_failed, :crypto) do
-      {:ok, sig} when is_binary(sig) and byte_size(sig) in 1..1024 -> sig
-      _ -> fail(:signer_failed, :crypto)
     end
   end
 
@@ -402,13 +395,16 @@ defmodule RequestSeal.Authentication do
 
       {:ok, %{algorithm: algorithm, key: key} = result} when map_size(result) == 2 ->
         ensure(SignatureFields.algorithm?(algorithm), :key_resolver_failed, :key)
-        ensure(match?(%PublicKey{}, key) or is_function(key, 3), :key_resolver_failed, :key)
-        # Symmetric verification must keep the secret behind the caller function.
+        ensure(match?(%PublicKey{}, key) or match?(%KeyHandle{}, key), :key_resolver_failed, :key)
+        # Symmetric verification keeps the secret behind a custody handle.
         ensure(
-          algorithm not in ["hmac-sha256", {:jws, "HS256"}] or is_function(key, 3),
+          algorithm not in ["hmac-sha256", {:jws, "HS256"}] or match?(%KeyHandle{}, key),
           :key_resolver_failed,
           :key
         )
+
+        if match?(%KeyHandle{}, key),
+          do: ensure(key.algorithm == algorithm, :algorithm_mismatch, :key)
 
         {algorithm, key}
 
@@ -424,10 +420,10 @@ defmodule RequestSeal.Authentication do
     end
   end
 
-  defp verify_bytes(algorithm, bytes, signature, key) when is_function(key, 3) do
-    case callback(fn -> key.(algorithm, bytes, signature) end, :verifier_failed, :crypto) do
+  defp verify_bytes(_, bytes, signature, %KeyHandle{} = handle) do
+    case Custody.verify(handle, bytes, signature) do
       :ok -> :ok
-      {:error, _} -> fail(:invalid_signature, :crypto)
+      {:error, %{reason: :invalid_signature}} -> fail(:invalid_signature, :crypto)
       _ -> fail(:verifier_failed, :crypto)
     end
   end

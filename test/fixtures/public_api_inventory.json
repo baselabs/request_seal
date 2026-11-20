@@ -176,6 +176,7 @@
     "type spec/0"
   ],
   "RequestSeal.JOSE": [
+    "function decode_object/2",
     "type enc/0",
     "type header/0",
     "type jwe_alg/0",
@@ -247,9 +248,7 @@
   ],
   "RequestSeal.Policy": [
     "function new/1",
-    "type signer/0",
-    "type t/0",
-    "type verify_fun/0"
+    "type t/0"
   ],
   "RequestSeal.Profile": [
     "function dictionaries/2",
@@ -356,7 +355,6 @@
   "RequestSeal.WebBotAuth.Policy": [
     "function new/1",
     "type agents/0",
-    "type signer/0",
     "type t/0"
   ],
   "RequestSeal.WebBotAuth.Verification": [

@@ -115,7 +115,7 @@ defmodule RequestSeal.JOSE.JWE do
       iex> RequestSeal.Custody.release(handle)
       :ok
   """
-  @spec encrypt(JOSE.header(), binary(), PublicKey.t() | KeyHandle.t() | function(), keyword()) ::
+  @spec encrypt(JOSE.header(), binary(), PublicKey.t() | KeyHandle.t(), keyword()) ::
           {:ok, binary()} | {:error, JOSE.Error.t()}
   def encrypt(header, plaintext, recipient, opts \\ []) do
     safe(fn ->
@@ -204,9 +204,6 @@ defmodule RequestSeal.JOSE.JWE do
             _ ->
               fail(:signer_failed, :crypto)
           end
-
-        fun when is_function(fun, 2) ->
-          callback(fn -> fun.(alg, cek) end, :signer_failed, :crypto)
 
         _ ->
           fail(:invalid_options)

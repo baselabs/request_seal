@@ -77,7 +77,7 @@ defmodule RequestSeal.JOSE.JWS do
   @spec sign(
           RequestSeal.JOSE.header(),
           binary(),
-          RequestSeal.KeyHandle.t() | RequestSeal.Policy.signer(),
+          RequestSeal.KeyHandle.t(),
           keyword()
         ) :: {:ok, binary()} | {:error, RequestSeal.JOSE.Error.t()}
   def sign(header, payload, signer, opts \\ []) do
@@ -148,7 +148,7 @@ defmodule RequestSeal.JOSE.JWS do
   @spec sign_protected(
           binary(),
           binary(),
-          RequestSeal.KeyHandle.t() | RequestSeal.Policy.signer(),
+          RequestSeal.KeyHandle.t(),
           keyword()
         ) ::
           {:ok, binary()} | {:error, RequestSeal.JOSE.Error.t()}

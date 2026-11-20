@@ -333,11 +333,7 @@ defmodule RequestSeal do
       iex> RequestSeal.Custody.Local.release(handle)
       :ok
   """
-  @spec sign(Message.t(), signature_spec(), Policy.signer(), keyword()) ::
-          {:ok, Message.t()} | {:error, Error.t()}
   @spec sign(Message.t(), signature_spec(), RequestSeal.KeyHandle.t(), keyword()) ::
-          {:ok, Message.t()} | {:error, Error.t()}
-  @spec sign(Message.t(), signing_spec(), Policy.signer(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}
   @spec sign(Message.t(), signing_spec(), RequestSeal.KeyHandle.t(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}

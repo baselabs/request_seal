@@ -763,7 +763,7 @@ defmodule RequestSeal.WebBotAuth do
       iex> RequestSeal.Custody.Local.release(handle)
       :ok
   """
-  @spec sign(Message.t(), map(), Policy.signer(), keyword()) ::
+  @spec sign(Message.t(), map(), RequestSeal.KeyHandle.t(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}
   def sign(message, spec, signer, opts \\ []) do
     protect(fn ->
@@ -791,7 +791,8 @@ defmodule RequestSeal.WebBotAuth do
 
       ensure(
         SignatureFields.label?(spec.label) and SignatureFields.algorithm?(spec.algorithm) and
-          spec.algorithm not in ["hmac-sha256", {:jws, "HS256"}] and is_function(signer, 2),
+          spec.algorithm not in ["hmac-sha256", {:jws, "HS256"}] and
+          is_struct(signer, RequestSeal.KeyHandle),
         :invalid_options,
         :input
       )

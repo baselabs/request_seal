@@ -39,4 +39,39 @@ defmodule RequestSeal.JOSE do
   string keys. Floats, other atoms, and structs reject.
   """
   @type header :: [{binary(), term()}]
+
+  @doc """
+  Decode JSON bytes as one bounded UTF-8 object.
+
+  `opts` must contain exactly `max_bytes: limit`, an integer from 1 through
+  1,048,576. This parses decoded bytes, not a compact or Base64url segment,
+  and does not authenticate them. Objects and arrays have at most 64 entries
+  and four container levels. Strings and member names have at most 16,384
+  UTF-8 bytes. Integers are within ±999,999,999,999,999; floats reject.
+
+  Returns `{:ok, map}` or `{:error, %RequestSeal.JOSE.Error{}}`, always at
+  layer `:input`: `:invalid_options` for invalid options, `:invalid_header`
+  for malformed JSON, invalid UTF-8, floats or a non-object root,
+  `:duplicate_member` for repeated member names at any depth, and `:limit`
+  for any exceeded size, depth, width, string or integer bound.
+
+  ## Examples
+
+      iex> RequestSeal.JOSE.decode_object(~s({"active":true}), max_bytes: 1024)
+      {:ok, %{"active" => true}}
+      iex> {:error, error} = RequestSeal.JOSE.decode_object(~s({"n":1,"n":2}), max_bytes: 1024)
+      iex> {error.reason, error.layer}
+      {:duplicate_member, :input}
+  """
+  @spec decode_object(binary(), keyword()) :: {:ok, map()} | {:error, RequestSeal.JOSE.Error.t()}
+  def decode_object(bytes, opts) do
+    RequestSeal.JOSE.Support.safe(fn ->
+      RequestSeal.JOSE.Support.ensure(
+        match?([max_bytes: limit] when is_integer(limit) and limit in 1..1_048_576, opts),
+        :invalid_options
+      )
+
+      RequestSeal.JOSE.JWE.Codec.object(bytes, opts[:max_bytes])
+    end)
+  end
 end

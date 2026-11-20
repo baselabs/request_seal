@@ -13,7 +13,7 @@ defmodule RequestSeal.AcceptSignature do
 
   Limits: 16 requests, 65,536 wire bytes, and the signature-base component bounds.
   """
-  alias RequestSeal.{Crypto, Error, Message, Policy, SignatureFields}
+  alias RequestSeal.{Crypto, Error, KeyHandle, Message, Policy, SignatureFields}
   alias RequestSeal.StructuredFields, as: SF
   alias RequestSeal.StructuredFields.Value
   @parameters ~w(keyid alg created expires nonce tag)
@@ -224,16 +224,16 @@ defmodule RequestSeal.AcceptSignature do
           Message.t(),
           [request()],
           (request() -> {:ok, map()} | :error),
-          Policy.signer(),
+          [KeyHandle.t()],
           keyword()
         ) :: {:ok, Message.t()} | {:error, Error.t()}
-  def fulfill(message, requests, chooser, signer, opts) do
+  def fulfill(message, requests, chooser, handles, opts) do
     protect(fn ->
       ensure(
         bounded_list?(opts, 0, 1) and Keyword.keyword?(opts) and
           Enum.all?(Keyword.keys(opts), &(&1 == :field_schemas)) and
           Policy.schemas?(Keyword.get(opts, :field_schemas, %{})) and is_function(chooser, 1) and
-          is_function(signer, 2),
+          handles?(handles),
         :invalid_options,
         :input
       )
@@ -252,6 +252,9 @@ defmodule RequestSeal.AcceptSignature do
               request.parameters["alg"] == choice.algorithm,
             :negotiation_unfulfillable
           )
+
+          signer = Enum.find(handles, &(&1.algorithm == choice.algorithm))
+          ensure(signer != nil, :negotiation_unfulfillable)
 
           params =
             Enum.reduce(request.parameters, %{}, fn
@@ -284,6 +287,12 @@ defmodule RequestSeal.AcceptSignature do
 
       {:ok, output}
     end)
+  end
+
+  defp handles?(handles) do
+    bounded_list?(handles, 1, 64) and Enum.all?(handles, &match?(%KeyHandle{}, &1)) and
+      Enum.all?(handles, &(&1.algorithm in Crypto.algorithms())) and
+      length(Enum.uniq_by(handles, & &1.algorithm)) == length(handles)
   end
 
   defp bounded_list?(xs, min, max), do: list_count(xs, 0, min, max)

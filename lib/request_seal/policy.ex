@@ -35,9 +35,6 @@ defmodule RequestSeal.Policy do
     max_signatures: 16
   ]
 
-  @type verify_fun :: (RequestSeal.Crypto.algorithm(), binary(), binary() ->
-                         :ok | {:error, term()})
-  @type signer :: (RequestSeal.Crypto.algorithm(), binary() -> {:ok, binary()} | {:error, term()})
   @type t :: %__MODULE__{
           algorithms: [RequestSeal.Crypto.algorithm()],
           components: binary(),
@@ -45,7 +42,7 @@ defmodule RequestSeal.Policy do
                            {:ok,
                             %{
                               algorithm: RequestSeal.Crypto.algorithm(),
-                              key: RequestSeal.PublicKey.t() | verify_fun()
+                              key: RequestSeal.PublicKey.t() | RequestSeal.KeyHandle.t()
                             }}
                            | :error),
           freshness: :not_evaluated | map(),

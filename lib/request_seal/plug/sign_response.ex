@@ -90,7 +90,7 @@ if Code.ensure_loaded?(Plug.Conn) do
              Signing.sign_options!(Keyword.take(opts, [:signing_timeout, :clock]))
 
              Signing.ensure(
-               is_function(opts[:signer], 2) or match?(%KeyHandle{}, opts[:signer]),
+               match?(%KeyHandle{}, opts[:signer]),
                :invalid_options
              )
 

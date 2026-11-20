@@ -344,7 +344,7 @@ if Code.ensure_loaded?(Req) do
         Signing.sign_options!(sign_options(opts))
 
         Signing.ensure(
-          is_function(opts[:signer], 2) or match?(%RequestSeal.KeyHandle{}, opts[:signer]),
+          match?(%RequestSeal.KeyHandle{}, opts[:signer]),
           :invalid_options
         )
 
