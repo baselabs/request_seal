@@ -551,6 +551,14 @@ defmodule RequestSeal.DeliveryClassificationTest do
           :ok = :gen_tcp.send(socket, <<8::24, 7, 0, 0::32, stream_id::32, 0::32>>)
 
         {:refuse, ^stream_id} ->
+          # Finch 0.24.0 HTTP2.Pool.handle_response/3 reads the receive telemetry
+          # that complete_request_if_done/3 sets only after the whole body is
+          # sent. Refusing a still-uploading stream exits the pool, so open both
+          # windows and read the full body before refusing the rerun.
+          :ok = :gen_tcp.send(socket, <<6::24, 4, 0, 0::32, 4::16, 1_048_576::32>>)
+          :ok = :gen_tcp.send(socket, <<4::24, 8, 0, 0::32, 0::1, 1_048_576::31>>)
+
+          request_body(socket, stream_id)
           :ok = :gen_tcp.send(socket, <<4::24, 3, 0, stream_id::32, 7::32>>)
       after
         5_000 -> flunk("HTTP/2 peer did not receive its response instruction")
@@ -580,6 +588,13 @@ defmodule RequestSeal.DeliveryClassificationTest do
     case h2_frame(socket) do
       {0, flags, ^stream_id, data} -> {byte_size(data), flags}
       _ -> request_data(socket, stream_id)
+    end
+  end
+
+  defp request_body(socket, stream_id) do
+    case h2_frame(socket) do
+      {0, flags, ^stream_id, _data} when Bitwise.band(flags, 1) == 1 -> :ok
+      _ -> request_body(socket, stream_id)
     end
   end
 
