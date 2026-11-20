@@ -71,9 +71,14 @@ and inspections run without the key. The upload loads no project and only upload
 the missing inspected archives selected by an earlier anonymous Hex API check.
 A repeated dispatch may finish an untagged release only when the served package's
 outer SHA-256 equals the inspected archive; retired or differing versions refuse.
-Existing docs are never uploaded again, and unkeyed readback compares both archives.
-Consumer verification files leave publication as one `release-assets` artifact;
-infra creates the GitHub release for `v<version>` from it after readback and tagging.
+Docs builds are not byte-stable, so docs bytes are never compared: every docs
+archive carries `release.json` naming package, version and the dispatched commit.
+Existing docs are never uploaded again; unkeyed readback compares package bytes and
+requires the served docs' `release.json` to name the dispatched commit or its
+default-branch ancestor, the published commit infra tags. Consumer verification
+files, with the served docs archive, leave publication as one `release-assets`
+artifact; infra creates the GitHub release for `v<version>` from it after readback
+and tagging.
 This library has no deploy chart or `argocd/deploy/` path.
 Sessions do not publish or deploy. Mirror pushes
 require the owner's explicit authorization.

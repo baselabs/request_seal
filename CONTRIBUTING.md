@@ -32,7 +32,8 @@ Conformance claims require independent evidence beyond a local self-round-trip.
 
 Maintainers publish through a separate approved dispatch. Repeating it can finish
 an untagged release with identical package bytes by uploading only missing files;
-retired versions and differing bytes refuse. Both package and docs are read back.
+retired versions and differing bytes refuse. The package is read back byte for byte,
+and the served docs by the commit their `release.json` names.
 Consumer assets are available from the GitHub release for `v<version>`; the
 [verification guide](docs/guides/verifying-releases.md) shows how to check them.
 

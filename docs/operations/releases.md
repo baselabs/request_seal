@@ -43,8 +43,9 @@ registry credentials and the later tag. Workflow changes require review before l
    verify the corpus pin and build deterministic corpus assets. They validate
    version, cut notes and absence of the version tag. They build ExDoc and the
    Hex archive, run disclosure and link checks, compare the
-   archive's checksum, metadata, explicit inventory and every source byte, and
-   build and inspect the docs archive. An anonymous Hex API read then decides
+   archive's checksum, metadata, explicit inventory and every source byte, write
+   `release.json` (`package`, `version` and the dispatched `commit`) into the docs,
+   and build and inspect the docs archive. An anonymous Hex API read then decides
    exactly which archives to upload. No cache is read or written.
 6. The same unkeyed steps generate and verify CycloneDX 1.6 against the production
    dependency closure, including optional integrations. `scripts/sbom.py` verifies
@@ -52,18 +53,22 @@ registry credentials and the later tag. Workflow changes require review before l
    SBOM paths are refused, timestamps removed, ordering normalized and a UUIDv5
    serial binds package identity and bytes. Build provenance covers package,
    docs, corpus and SBOM; a second attestation binds the SBOM to the package.
-   The job hands those four files, the corpus checksum and `release-notes.md` to
-   release maintainers as one workflow artifact named `release-assets`.
+   After readback, the job hands the package, the docs archive Hex serves, the
+   corpus, the SBOM, the corpus checksum and `release-notes.md` to release
+   maintainers as one workflow artifact named `release-assets`.
 7. Only the upload step receives the registry key in its environment. It runs
    `scripts/publish_hex.exs` with `mix run --no-mix-exs --no-start` from a scratch
    directory with no `mix.exs`; it loads no project and uploads only the missing
    inspected archives selected by the preceding unkeyed step. Package upload
    explicitly disables replacement. The key never appears on a command line or
    in another step. If nothing is missing, the keyed step is skipped. Unkeyed
-   readback requires a nonretired release with docs, compares both served archives
-   byte for byte and checks the first-party destinations in its own release notes.
-8. Release maintainers read publication back and create `v<version>` on that exact
-   published commit. They compare the package archive in `release-assets` with the
+   readback requires a nonretired release with docs, compares the served package
+   byte for byte, downloads and inspects the served docs and requires their
+   `release.json` to name this package and version and the dispatched commit or
+   its ancestor on the default branch. That commit is the published commit. It
+   also checks the first-party destinations in its own release notes.
+8. Release maintainers read publication back and create `v<version>` on the
+   published commit the served docs name. They compare the package archive in `release-assets` with the
    registry's bytes and create the GitHub release for `v<version>` from that
    artifact. No workflow creates a tag or a release, and a tag push starts no
    workflow. Consumers download from the GitHub release, never the workflow
@@ -76,7 +81,7 @@ registry credentials and the later tag. Workflow changes require review before l
 ### Finish a held publication
 
 Hex may hold either upload for approval. Approve the held upload, then dispatch
-the same default-branch commit again before it is tagged. Each dispatch rebuilds
+the default branch again before the version is tagged. Each dispatch rebuilds
 and inspects the archives without a key, then anonymously reads the public
 package inventory and release's `checksum`, `retirement` and `has_docs` fields:
 
@@ -87,7 +92,9 @@ package inventory and release's `checksum`, `retirement` and `has_docs` fields:
   `CHECKSUM` member. Differing or malformed state refuses.
 - Identical package bytes skip package upload. Missing docs upload alone;
   existing docs skip all uploads. A retired version always refuses.
-- Readback must return both inspected archives byte for byte. Held or unavailable
+- Readback must return the inspected package byte for byte and served docs whose
+  `release.json` names the dispatched commit or its default-branch ancestor. Docs
+  builds are not byte-stable, so docs bytes are never compared. Held or unavailable
   files keep the run unsuccessful; approve the held files and dispatch again.
   Existing files are never replaced to make readback pass. A tagged version refuses.
 

@@ -38,10 +38,14 @@
   package-manager caching in qualification.
 - Replace tag-triggered publication with default-branch dispatch. Build and inspect
   package and documentation archives without a key; upload only those archives
-  outside the project. Resume held publication on the same untagged commit by
+  outside the project. Resume held publication from a later dispatch by
   comparing Hex's outer package checksum with the inspected archive and uploading
   only missing files. Refuse retired or differing versions, tags and absent
-  registry names; read both package and docs back byte for byte.
+  registry names. Every docs archive carries `release.json` naming the package,
+  version and commit that built it; readback compares the package byte for byte
+  and accepts served docs only when that commit is the dispatched commit or its
+  default-branch ancestor. Docs builds are not byte-stable, so docs bytes are
+  never compared, and the GitHub release carries the docs Hex serves.
   Build and attest the corpus, SBOM and release notes in the same run; after
   reading publication back, the maintainers tag the published commit and attach
   those files to the GitHub release for `v<version>`. Tag pushes execute no

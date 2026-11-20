@@ -4,7 +4,9 @@ Starting with 2.0, the GitHub release for each `v<version>` tag carries:
 
 - `request_seal-<version>.tar`: the Hex package, compared byte for byte with Hex
   before the GitHub release is created.
-- `request_seal-<version>-docs.tar.gz`: the inspected documentation archive.
+- `request_seal-<version>-docs.tar.gz`: the documentation archive Hex serves,
+  downloaded and inspected at publication readback. Its `release.json` names the
+  package, version and the commit that built it, which is the tagged commit.
 - `corpus.tar.gz`: the deterministic public conformance corpus archive.
 - `corpus.sha256`: the SHA-256 checksum of that archive.
 - `sbom.cdx.json`: a CycloneDX 1.6 software bill of materials for the package's
@@ -16,11 +18,14 @@ attestations. The package tarball also has a CycloneDX SBOM attestation binding
 it to the dependency inventory. The dispatch-only `Publish` workflow builds and
 attests these files on the default branch and publishes the package to Hex. After
 reading the publication back, the maintainers tag the published commit and create
-the GitHub release from the files that run built. No workflow runs on a tag.
-A held publication can resume on the same untagged commit: identical package bytes
+the GitHub release from the files that run handed over. No workflow runs on a tag.
+A held publication can resume from a later dispatch: identical package bytes
 skip package upload, and only missing docs upload. Retired versions and differing
-package bytes refuse. Both served archives must match the inspected files before
-maintainers create the tag and GitHub release.
+package bytes refuse. The served package must match the inspected archive byte for
+byte, and the served docs' `release.json` must name the dispatched commit or its
+ancestor on the default branch, before maintainers create the tag and GitHub release.
+Documentation builds are not byte-stable, so a docs archive built by an earlier
+dispatch is kept rather than compared or replaced; its attestation is in that run.
 
 The 1.0.0 release predates this pipeline: it carries the corpus archive and
 checksum, but no package tarball, SBOM, or attestations. A missing attestation
@@ -92,16 +97,19 @@ bind inspected build bytes; byte comparison separately proves registry identity.
 For 1.0.0, the Hex fetch can be exercised, but its release has no package tarball
 to compare.
 
-Publication also compares the served documentation archive byte for byte with the
-inspected docs archive. To repeat that check, fetch Hex's
-[documentation tarball endpoint](https://github.com/hexpm/specifications/blob/main/endpoints.md)
-and compare it with the GitHub release asset:
+The release's docs archive is the one Hex serves, downloaded at readback. To repeat
+that check, fetch Hex's
+[documentation tarball endpoint](https://github.com/hexpm/specifications/blob/main/endpoints.md),
+compare it with the GitHub release asset and read the commit its `release.json` names:
 
 ```sh
 curl --fail --location --output "$assets_dir/hex/request_seal-$VERSION-docs.tar.gz" \
   "https://repo.hex.pm/docs/request_seal-$VERSION.tar.gz"
 cmp "$assets_dir/request_seal-$VERSION-docs.tar.gz" "$assets_dir/hex/request_seal-$VERSION-docs.tar.gz"
+tar -xzOf "$assets_dir/hex/request_seal-$VERSION-docs.tar.gz" release.json
 ```
+
+The printed commit is the commit tagged `v<version>`.
 
 ## Interpret SBOM scope
 

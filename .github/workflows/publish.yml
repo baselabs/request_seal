@@ -86,7 +86,7 @@ jobs:
           mix docs --warnings-as-errors --formatter html --output "$RUNNER_TEMP/requestseal-docs"
           python3 scripts/check_docs.py --docs-output "$RUNNER_TEMP/requestseal-docs"
           python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from check import normalize_exdoc_inventory, check_doc_links; output = Path(sys.argv[1]); normalize_exdoc_inventory(output); check_doc_links(output)' "$RUNNER_TEMP/requestseal-docs"
-          python3 scripts/publication.py --version "$VERSION" --directory "$RUNNER_TEMP/requestseal-archives" --docs "$RUNNER_TEMP/requestseal-docs"
+          python3 scripts/publication.py --version "$VERSION" --commit "$GITHUB_SHA" --directory "$RUNNER_TEMP/requestseal-archives" --docs "$RUNNER_TEMP/requestseal-docs"
           cp scripts/publish_hex.exs "$RUNNER_TEMP/requestseal-upload/publish_hex.exs"
           cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" .
           cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz" .
@@ -113,6 +113,20 @@ jobs:
         with:
           subject-path: request_seal-${{ steps.identity.outputs.version }}.tar
           sbom-path: sbom.cdx.json
+      - name: Upload only the missing inspected archives
+        if: steps.registry.outputs.upload != 'none'
+        working-directory: ${{ runner.temp }}/requestseal-upload
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+          UPLOAD: ${{ steps.registry.outputs.upload }}
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: mix run --no-mix-exs --no-start publish_hex.exs "$UPLOAD" "$VERSION" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz"
+      - name: Read back the package bytes and the served docs' commit, and verify pre-tag release destinations
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          python3 scripts/publication.py --verify-registry --version "$VERSION" --commit "$GITHUB_SHA" --directory "$RUNNER_TEMP/requestseal-archives" --release-docs "request_seal-$VERSION-docs.tar.gz"
+          python3 scripts/release.py --check-destinations --for-version "$VERSION" --destination-event workflow_dispatch
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-assets
@@ -124,20 +138,6 @@ jobs:
             corpus.sha256
             sbom.cdx.json
             release-notes.md
-      - name: Upload only the missing inspected archives
-        if: steps.registry.outputs.upload != 'none'
-        working-directory: ${{ runner.temp }}/requestseal-upload
-        env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-          UPLOAD: ${{ steps.registry.outputs.upload }}
-          VERSION: ${{ steps.identity.outputs.version }}
-        run: mix run --no-mix-exs --no-start publish_hex.exs "$UPLOAD" "$VERSION" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz"
-      - name: Read back both archives and verify pre-tag release destinations
-        env:
-          VERSION: ${{ steps.identity.outputs.version }}
-        run: |
-          python3 scripts/publication.py --verify-registry --version "$VERSION" --directory "$RUNNER_TEMP/requestseal-archives"
-          python3 scripts/release.py --check-destinations --for-version "$VERSION" --destination-event workflow_dispatch
       - name: Remove publication scratch
         if: always()
         run: rm -rf "$RUNNER_TEMP/requestseal-archives" "$RUNNER_TEMP/requestseal-upload" "$RUNNER_TEMP/requestseal-docs"

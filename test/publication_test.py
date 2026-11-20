@@ -1,7 +1,9 @@
 """Archive inspection and publication boundaries, using real files and tar archives."""
 import hashlib
 import io
+import json
 from pathlib import Path
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -166,7 +168,7 @@ class PublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "release metadata is absent"):
             self.plan(None, self.metadata("2.3.4"))
 
-    def test_readback_compares_both_package_and_docs_as_bytes_without_replacement(self):
+    def test_readback_compares_package_bytes_and_requires_docs_presence_without_replacement(self):
         self.assertEqual([], publication.readback_errors("request_seal", "2.3.4", self.metadata(),
                                                         self.release(has_docs=True), "a" * 64))
         for release, missing in ((None, "package-and-docs"), (self.release(), "docs")):
@@ -176,15 +178,85 @@ class PublicationTest(unittest.TestCase):
         for release in (self.release(retirement={"reason": "security"}), self.release(checksum="b" * 64)):
             with self.assertRaises(ValueError):
                 publication.readback_errors("request_seal", "2.3.4", self.metadata(), release, "a" * 64)
-        for label in ("package", "documentation"):
-            self.assertEqual([], publication.archive_errors(b"inspected", b"inspected", label))
-            for served in (b"changed", b"", b"inspected\n"):
-                errors = publication.archive_errors(b"inspected", served, label)
-                self.assertEqual([f"Published {label} bytes differ from the inspected archive; never replace"], errors)
+        self.assertEqual([], publication.package_errors(b"inspected", b"inspected"))
+        for served in (b"changed", b"", b"inspected\n"):
+            self.assertEqual(["Published package bytes differ from the inspected archive; never replace"],
+                             publication.package_errors(b"inspected", served))
+
+    def docs_archive(self, record=None, entries=None):
+        record = {"package": "request_seal", "version": "2.3.4", "commit": "c" * 40} if record is None else record
+        data = record if isinstance(record, bytes) else json.dumps(record).encode()
+        return tar_bytes([("index.html", b"<html>"), ("release.json", data)] if entries is None else entries, "w:gz")
+
+    def test_docs_are_identified_by_their_release_record_never_by_bytes(self):
+        self.assertEqual("c" * 40, publication.docs_release_commit(self.docs_archive(), "2.3.4"))
+        good = {"package": "request_seal", "version": "2.3.4", "commit": "c" * 40}
+        records = ({**good, "package": "other"}, {**good, "version": "2.3.5"}, {**good, "commit": "c" * 39},
+                   {**good, "commit": "C" * 40}, {**good, "commit": 1}, {**good, "extra": True},
+                   {"package": "request_seal", "version": "2.3.4"}, ["request_seal", "2.3.4", "c" * 40])
+        for record in records:
+            with self.subTest(record=record), self.assertRaisesRegex(ValueError, "release.json does not name"):
+                publication.docs_release_commit(self.docs_archive(record), "2.3.4")
+        for archive in (self.docs_archive(b"{not json"), self.docs_archive(b"\xff"), b"", b"not gzip",
+                        self.docs_archive()[:40]):
+            with self.subTest(archive=archive[:12]), self.assertRaisesRegex(ValueError, "unreadable"):
+                publication.docs_release_commit(archive, "2.3.4")
+        record = json.dumps(good).encode()
+        for entries in ([("release.json", record)], [("index.html", b"<html>")]):
+            with self.subTest(entries=[name for name, _ in entries]), self.assertRaisesRegex(ValueError, "lacks"):
+                publication.docs_release_commit(self.docs_archive(entries=entries), "2.3.4")
+        for entries in ([("index.html", b"<html>"), ("release.json", None)],
+                        [("index.html", b"<html>"), ("release.json", record), ("../outside", b"x")],
+                        [("index.html", b"<html>"), ("release.json", record), ("release.json", record)]):
+            with self.assertRaisesRegex(ValueError, "unsafe, duplicate"):
+                publication.docs_release_commit(self.docs_archive(entries=entries), "2.3.4")
+
+    def git(self, *argv):
+        return subprocess.run(["git", "-C", str(self.root / "repository"), *argv], check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def commit(self, message):
+        self.git("-c", "user.name=Publication Test", "-c", "user.email=test@example.invalid",
+                 "commit", "--allow-empty", "--quiet", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def test_published_commit_is_the_dispatched_commit_or_its_default_branch_ancestor(self):
+        (self.root / "repository").mkdir()
+        self.git("init", "--quiet", "--initial-branch=main")
+        first = self.commit("first")
+        second = self.commit("second")
+        self.git("switch", "--quiet", "--create", "side", first)
+        side = self.commit("side")
+        repository = self.root / "repository"
+        self.assertEqual(second, publication.published_commit(second, second, repository))
+        self.assertEqual(first, publication.published_commit(first, second, repository))
+        for docs in (side, "0" * 40):
+            with self.subTest(docs=docs), self.assertRaisesRegex(ValueError, "neither the dispatched"):
+                publication.published_commit(docs, second, repository)
+        with self.assertRaisesRegex(ValueError, "neither the dispatched"):
+            publication.published_commit(second, first, repository)
+
+    def test_built_docs_carry_a_release_record_for_the_dispatched_commit(self):
+        docs = self.root / "docs"
+        docs.mkdir()
+        for name in ("index.html", "api-reference.html"):
+            (docs / name).write_text(name)
+        for commit in ("c" * 39, "C" * 40, None):
+            with self.subTest(commit=commit), self.assertRaisesRegex(ValueError, "full lowercase commit"):
+                publication.write_release_record(docs, "2.3.4", commit)
+        self.assertFalse((docs / "release.json").exists())
+        publication.write_release_record(docs, "2.3.4", "d" * 40)
+        self.assertEqual({"package": "request_seal", "version": "2.3.4", "commit": "d" * 40},
+                         json.loads((docs / "release.json").read_text()))
+        with self.assertRaisesRegex(ValueError, "already contains release.json"):
+            publication.write_release_record(docs, "2.3.4", "d" * 40)
+        output = self.root / "docs.tar.gz"
+        publication.build_docs_archive(docs, output)
+        self.assertEqual("d" * 40, publication.docs_release_commit(output.read_bytes(), "2.3.4"))
 
     def test_requested_version_mismatch_refuses_before_loading_the_project(self):
         with self.assertRaisesRegex(ValueError, "differs from mix.exs"):
-            publication.prepare(self.root, self.root, "99.0.0")
+            publication.prepare(self.root, self.root, "99.0.0", "c" * 40)
 
     def test_dispatch_boundary_key_isolation_and_native_uploads(self):
         source = (ROOT / ".github/workflows/publish.yml").read_text()
@@ -217,8 +289,14 @@ class PublicationTest(unittest.TestCase):
             self.assertGreater(steps.index(readback), steps.index(step))
             self.assertNotIn("if", readback)
             self.assertNotIn("HEX_API_KEY", str(readback))
+            inspection = next(s for s in steps if "--docs" in s.get("run", ""))
+            self.assertIn('scripts/publication.py --version "$VERSION" --commit "$GITHUB_SHA" ', inspection["run"])
+            self.assertIn('--verify-registry --version "$VERSION" --commit "$GITHUB_SHA" ', readback["run"])
+            self.assertIn('--release-docs "request_seal-$VERSION-docs.tar.gz"', readback["run"])
             assets = [s for s in steps if s.get("uses", "").startswith("actions/upload-artifact@")]
             self.assertEqual(["release-assets"], [s["with"]["name"] for s in assets])
+            # The release carries the docs the registry serves, written by the readback.
+            self.assertGreater(steps.index(assets[0]), steps.index(readback))
             self.assertEqual({"request_seal-${{ steps.identity.outputs.version }}.tar",
                               "request_seal-${{ steps.identity.outputs.version }}-docs.tar.gz",
                               "corpus.tar.gz", "corpus.sha256", "sbom.cdx.json", "release-notes.md"},
