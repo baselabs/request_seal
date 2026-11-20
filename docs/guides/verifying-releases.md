@@ -26,6 +26,8 @@ byte, and the served docs' `release.json` must name the dispatched commit or its
 ancestor on the default branch, before maintainers create the tag and GitHub release.
 Documentation builds are not byte-stable, so a docs archive built by an earlier
 dispatch is kept rather than compared or replaced; its attestation is in that run.
+In that case publication refuses unless the package, corpus and SBOM it releases pass
+the attestation checks below for the tagged commit, so every asset verifies against it.
 
 The 1.0.0 release predates this pipeline: it carries the corpus archive and
 checksum, but no package tarball, SBOM, or attestations. A missing attestation

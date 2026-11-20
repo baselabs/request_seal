@@ -75,7 +75,9 @@ Docs builds are not byte-stable, so docs bytes are never compared: every docs
 archive carries `release.json` naming package, version and the dispatched commit.
 Existing docs are never uploaded again; unkeyed readback compares package bytes and
 requires the served docs' `release.json` to name the dispatched commit or its
-default-branch ancestor, the published commit infra tags. Consumer verification
+default-branch ancestor, the published commit infra tags. When that is an ancestor,
+planning refuses before any upload unless the package, corpus and SBOM pass the
+guide's attestation checks for it. Consumer verification
 files, with the served docs archive, leave publication as one `release-assets`
 artifact; infra creates the GitHub release for `v<version>` from it after readback
 and tagging.

@@ -45,7 +45,9 @@
   version and commit that built it; readback compares the package byte for byte
   and accepts served docs only when that commit is the dispatched commit or its
   default-branch ancestor. Docs builds are not byte-stable, so docs bytes are
-  never compared, and the GitHub release carries the docs Hex serves.
+  never compared, and the GitHub release carries the docs Hex serves. When kept
+  docs name an earlier commit, publication refuses before any upload unless the
+  package, corpus and SBOM carry that commit's attestations.
   Build and attest the corpus, SBOM and release notes in the same run; after
   reading publication back, the maintainers tag the published commit and attach
   those files to the GitHub release for `v<version>`. Tag pushes execute no

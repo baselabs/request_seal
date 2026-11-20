@@ -2,17 +2,32 @@
 import hashlib
 import io
 import json
+import shlex
 from pathlib import Path
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import publication
 from workflow_yaml import load
+
+# A real public release attested by its own workflow, with the attestation bundles and the Sigstore
+# trusted root saved beside this test, so verification runs offline and without credentials.
+ATTESTED = {"repository": "baselabs/charter_agreement_signer",
+            "workflow": "baselabs/charter_agreement_signer/.github/workflows/supply-chain.yml",
+            "ref": "refs/tags/v1.0.0"}
+ATTESTED_COMMIT = "f9a7bc3c8c644afa74cdf95fd2d3b832fa99ce00"
+ATTESTED_URL = ("https://github.com/baselabs/charter_agreement_signer/releases/download/v1.0.0/"
+                "charter_agreement_signer-1.0.0.tar")
+ATTESTED_SHA256 = "1ef96b66cce510de79ae59ab7f4d8293afb5822fbdd25fca20eb19a8350ce228"
+FIXTURES = ROOT / "test/fixtures/attestation"
+OFFLINE = ("--bundle", str(FIXTURES / "charter_agreement_signer-1.0.0.bundle.jsonl"),
+           "--custom-trusted-root", str(FIXTURES / "trusted_root.jsonl"))
 
 
 def tar_bytes(entries, mode="w"):
@@ -236,6 +251,51 @@ class PublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "neither the dispatched"):
             publication.published_commit(second, first, repository)
 
+    def attested_assets(self):
+        request = Request(ATTESTED_URL, headers={"User-Agent": "RequestSeal-publication-test"})
+        with urlopen(request, timeout=60) as response:
+            data = response.read()
+        self.assertEqual(ATTESTED_SHA256, hashlib.sha256(data).hexdigest())
+        paths = [self.root / name for name in ("request_seal-2.3.4.tar", "corpus.tar.gz", "sbom.cdx.json")]
+        for path in paths:
+            path.write_bytes(data)
+        return paths
+
+    def test_kept_docs_commit_must_own_every_attested_release_asset(self):
+        package, corpus, sbom = self.attested_assets()
+        dispatched = "d" * 40
+        # The published commit's run attested these exact bytes, the package with both predicates.
+        self.assertEqual([], publication.published_asset_errors(
+            ATTESTED_COMMIT, dispatched, package, [corpus, sbom], ATTESTED, OFFLINE))
+        # When the served docs name the dispatched commit, this run attests its own assets.
+        unattested = self.root / "unattested"
+        unattested.write_bytes(b"built here")
+        self.assertEqual([], publication.published_asset_errors(
+            dispatched, dispatched, unattested, [unattested], ATTESTED, OFFLINE))
+        final = "this run's release assets are not the published commit's; release a new version"
+        # A rebuilt corpus whose bytes differ from the published run's has no attestation for it.
+        corpus.write_bytes(corpus.read_bytes() + b"\0")
+        self.assertEqual([f"corpus.tar.gz has no {publication.PROVENANCE} attestation for published commit "
+                          f"{ATTESTED_COMMIT}", final],
+                         publication.published_asset_errors(ATTESTED_COMMIT, dispatched, package, [corpus, sbom],
+                                                            ATTESTED, OFFLINE))
+        # Identical bytes attested by another commit's run do not belong to this published commit.
+        corpus.write_bytes(package.read_bytes())
+        other = "e" * 40
+        self.assertEqual([f"{path.name} has no {predicate} attestation for published commit {other}"
+                          for path, predicate in ((package, publication.PROVENANCE), (corpus, publication.PROVENANCE),
+                                                  (sbom, publication.PROVENANCE), (package, publication.SBOM))] + [final],
+                         publication.published_asset_errors(other, dispatched, package, [corpus, sbom],
+                                                            ATTESTED, OFFLINE))
+
+    def test_asset_proof_runs_the_consumer_guide_verification_commands(self):
+        guide = (ROOT / "docs/guides/verifying-releases.md").read_text().replace("\\\n", " ")
+        commands = [shlex.split(line.strip()) for line in guide.splitlines()
+                    if line.strip().startswith("gh attestation verify ")]
+        expected = [publication.attestation_argv("FILE", predicate, "$SOURCE_COMMIT")
+                    for predicate in (publication.PROVENANCE, publication.SBOM)]
+        self.assertEqual([argv[:3] + argv[4:] for argv in expected], [argv[:3] + argv[4:] for argv in commands])
+
     def test_built_docs_carry_a_release_record_for_the_dispatched_commit(self):
         docs = self.root / "docs"
         docs.mkdir()
@@ -283,6 +343,11 @@ class PublicationTest(unittest.TestCase):
                 self.assertIn(command, str(steps[:steps.index(step)]))
             planner = next(s for s in steps if s.get("id") == "registry")
             self.assertIn('--github-output "$GITHUB_OUTPUT"', planner["run"])
+            self.assertIn('--commit "$GITHUB_SHA" --assets "$GITHUB_WORKSPACE"', planner["run"])
+            self.assertEqual("${{ github.token }}", planner["env"]["GH_TOKEN"])
+            sbom = next(s for s in steps if "scripts/sbom.py" in s.get("run", ""))
+            # The kept-docs proof verifies the SBOM, so it exists before planning and any upload.
+            self.assertLess(steps.index(sbom), steps.index(planner))
             self.assertNotIn("if", planner)
             self.assertLess(next(i for i, s in enumerate(steps) if "--docs" in s.get("run", "")), steps.index(planner))
             readback = next(s for s in steps if "--verify-registry" in s.get("run", ""))

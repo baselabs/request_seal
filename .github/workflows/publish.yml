@@ -90,16 +90,17 @@ jobs:
           cp scripts/publish_hex.exs "$RUNNER_TEMP/requestseal-upload/publish_hex.exs"
           cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" .
           cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz" .
-      - name: Plan only missing uploads from the anonymous Hex release state
-        id: registry
-        env:
-          VERSION: ${{ steps.identity.outputs.version }}
-        run: python3 scripts/publication.py --plan-upload --version "$VERSION" --directory "$RUNNER_TEMP/requestseal-archives" --github-output "$GITHUB_OUTPUT"
       - name: Generate and verify package dependency SBOM
         env:
           VERSION: ${{ steps.identity.outputs.version }}
           MIX_ENV: prod
         run: python3 scripts/sbom.py --tarball "request_seal-$VERSION.tar" --output sbom.cdx.json
+      - name: Plan only missing uploads, and prove kept docs' commit owns every release asset
+        id: registry
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publication.py --plan-upload --version "$VERSION" --commit "$GITHUB_SHA" --assets "$GITHUB_WORKSPACE" --directory "$RUNNER_TEMP/requestseal-archives" --github-output "$GITHUB_OUTPUT"
       - name: Attest build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:

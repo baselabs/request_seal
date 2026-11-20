@@ -92,6 +92,12 @@ package inventory and release's `checksum`, `retirement` and `has_docs` fields:
   `CHECKSUM` member. Differing or malformed state refuses.
 - Identical package bytes skip package upload. Missing docs upload alone;
   existing docs skip all uploads. A retired version always refuses.
+- Every release asset must be the published commit's. When the served docs'
+  `release.json` names an earlier commit than the dispatched one, planning proves,
+  before any upload, that the package, `corpus.tar.gz` and `sbom.cdx.json` pass the
+  consumer guide's attestation checks with that commit as source digest. That holds only when the earlier commit's run attested the same bytes;
+  otherwise the dispatch refuses and the fix is a new version. `corpus.sha256`
+  follows the corpus, and the release notes follow the packaged changelog.
 - Readback must return the inspected package byte for byte and served docs whose
   `release.json` names the dispatched commit or its default-branch ancestor. Docs
   builds are not byte-stable, so docs bytes are never compared. Held or unavailable

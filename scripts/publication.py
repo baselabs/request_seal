@@ -97,11 +97,58 @@ def upload_plan(package, version, metadata, release, checksum):
     return "none" if release["has_docs"] else "docs"
 
 
-def plan_upload(version, directory, github_output):
+# The consumer verification guide's attestation identity (docs/guides/verifying-releases.md).
+ATTESTATION = {"repository": "baselabs/request_seal",
+               "workflow": "baselabs/request_seal/.github/workflows/publish.yml",
+               "ref": "refs/heads/main"}
+PROVENANCE = "https://slsa.dev/provenance/v1"
+SBOM = "https://cyclonedx.org/bom"
+
+
+def attestation_argv(path, predicate, commit, identity=ATTESTATION):
+    """The guide's verification command, with the published commit as source digest."""
+    return ["gh", "attestation", "verify", str(path), "--repo", identity["repository"],
+            "--predicate-type", predicate, "--signer-workflow", identity["workflow"],
+            "--source-ref", identity["ref"], "--source-digest", commit, "--deny-self-hosted-runners"]
+
+
+def published_asset_errors(published, dispatched, package, attested, identity=ATTESTATION, extra=()):
+    """Every release asset must be the published commit's.
+
+    The package and served docs are compared or identified by the published commit; files this run
+    attests must also carry that commit's attestation, which holds only when that commit's run
+    attested the same bytes. Unattested assets follow them: corpus.sha256 is computed over the
+    corpus, and release notes come from the packaged changelog.
+    """
+    if published == dispatched:
+        return []
+    checks = [(path, PROVENANCE) for path in (package, *attested)] + [(package, SBOM)]
+    errors = []
+    for path, predicate in checks:
+        result = run([*attestation_argv(path, predicate, published, identity), *extra],
+                     check=False, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            errors.append(f"{path.name} has no {predicate} attestation for published commit {published}")
+    if errors:
+        errors.append("this run's release assets are not the published commit's; release a new version")
+    return errors
+
+
+def plan_upload(version, directory, github_output, commit, assets):
+    release_record(version, commit)
     metadata = check_registry()
     release = read_registry("/releases/" + version)
     tarball = directory / f"{PACKAGE}-{version}.tar"
     plan = upload_plan(PACKAGE, version, metadata, release, hashlib.sha256(tarball.read_bytes()).hexdigest())
+    if plan == "none":
+        # Served docs name the published commit; prove every release asset is its before any upload.
+        published = published_commit(docs_release_commit(read_repository(f"docs/{PACKAGE}-{version}.tar.gz"),
+                                                          version), commit)
+        errors = published_asset_errors(published, commit, tarball,
+                                        [assets / "corpus.tar.gz", assets / "sbom.cdx.json"])
+        if errors:
+            raise ValueError("; ".join(errors))
+        print("PASS: release assets are the published commit's: " + published)
     # Only constant, validated choices reach the keyed no-project uploader.
     with github_output.open("a") as output:
         output.write(f"upload={plan}\n")
@@ -282,6 +329,7 @@ if __name__ == "__main__":
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--commit", help="the dispatched commit (GITHUB_SHA)")
     parser.add_argument("--release-docs", type=Path, help="release asset path that receives the served docs")
+    parser.add_argument("--assets", type=Path, help="directory holding corpus.tar.gz and sbom.cdx.json")
     args = parser.parse_args()
     try:
         if args.check_registry:
@@ -291,8 +339,10 @@ if __name__ == "__main__":
                 parser.error("registry planning/readback requires --directory and planning requires --github-output")
             if args.verify_registry and not (args.commit and args.release_docs):
                 parser.error("readback requires --commit and --release-docs")
+            if args.plan_upload and not (args.commit and args.assets):
+                parser.error("planning requires --commit and --assets")
             if args.plan_upload:
-                plan_upload(args.version, args.directory, args.github_output)
+                plan_upload(args.version, args.directory, args.github_output, args.commit, args.assets)
             else:
                 verify_registry(args.version, args.directory, args.commit, args.release_docs)
         else:
