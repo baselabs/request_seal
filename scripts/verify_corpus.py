@@ -71,6 +71,8 @@ def verify(root):
         raise ValueError("source_ledger")
     ledger_sources = {
         "rfc3394": ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6"],
+        "rfc9180": [r["item"] for r in decode((root / "sources/rfc9180/derive-key-pairs.json").read_bytes())],
+        "native-derive": ["x25519-dhkem", "p256-dhkem", "p384-dhkem", "ed25519-seed", "hmac-sha256-key", "aes128-key", "aes256-key"],
         "rfc7518": ["C-kdf", "C-agree"], "rfc7748": ["6.1"],
         "rfc8037": ["A.1", "A.6"],
         "rfc7520": [p.name for p in (root / "sources/rfc7520").glob("*.json") if p.name != "ledger.json"],

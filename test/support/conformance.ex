@@ -207,6 +207,8 @@ defmodule RequestSeal.Conformance do
     sources = [
       {"rfc3394", ~w(4.1 4.2 4.3 4.4 4.5 4.6)},
       {"rfc7518", ~w(C-kdf C-agree)},
+      {"rfc9180", Enum.map(json(read_file(root, "sources/rfc9180/derive-key-pairs.json")), & &1["item"])},
+      {"native-derive", ~w(x25519-dhkem p256-dhkem p384-dhkem ed25519-seed hmac-sha256-key aes128-key aes256-key)},
       {"rfc7748", ["6.1"]},
       {"rfc8037", ["A.1", "A.6"]},
       {"rfc7520",

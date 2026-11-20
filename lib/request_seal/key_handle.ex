@@ -31,7 +31,26 @@ defmodule RequestSeal.KeyHandle do
   @type t :: %__MODULE__{
           custodian: module(),
           algorithm: RequestSeal.Custody.algorithm(),
-          capabilities: [:sign | :verify | :wrap | :unwrap],
+          capabilities: [RequestSeal.Custody.capability()],
           ref: (-> term())
         }
+  # Shared construction gate for custodians; opaque references keep the existing
+  # zero-arity reference contract, including derivation child references.
+  @doc false
+  def new(custodian, algorithm, capabilities, ref) do
+    RequestSeal.Custody.Support.safe(fn ->
+      if :derive in capabilities do
+        RequestSeal.Custody.Support.ensure(
+          Code.ensure_loaded?(custodian) and
+            Enum.all?([derive: 3, commit: 3, release: 2], fn {name, arity} ->
+              function_exported?(custodian, name, arity)
+            end),
+          :invalid_options
+        )
+      end
+
+      {:ok, %__MODULE__{custodian: custodian, algorithm: algorithm,
+                        capabilities: capabilities, ref: ref}}
+    end)
+  end
 end
