@@ -4,6 +4,7 @@ defmodule RequestSeal.AshTest do
 
   alias RequestSeal.{
     Body,
+    Custody,
     Error,
     FieldOccurrence,
     Message,
@@ -557,7 +558,8 @@ defmodule RequestSeal.AshTest do
     secret =
       File.read!(Path.join(@fixtures, "crypto/hmac.txt")) |> String.trim() |> Base.decode64!()
 
-    RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
+    {:ok, key} = Custody.Local.new("hmac-sha256", {:hmac, secret})
+    key
   end
 
   defp verification_key(name) do
