@@ -1051,6 +1051,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
   defp aead_unit do
     key = :crypto.strong_rand_bytes(32)
     iv = :crypto.strong_rand_bytes(12)
+    protected = Base.url_encode64(~s({"alg":"dir","enc":"A256GCM"}), padding: false)
 
     {ct, tag} =
       :crypto.crypto_one_time_aead(
@@ -1058,7 +1059,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         key,
         iv,
         :binary.copy("x", 1_048_576),
-        "",
+        protected,
         16,
         true
       )
@@ -1067,11 +1068,10 @@ defmodule RequestSeal.Test.JWETeardownGate do
       enc: "A256GCM",
       iv: iv,
       ct: ct,
-      protected: "",
+      protected: protected,
       tag: tag,
       width_valid: true,
-      alg: "dir",
-      h: %{}
+      alg: "dir"
     }
 
     observer = self()

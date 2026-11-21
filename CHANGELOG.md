@@ -102,6 +102,10 @@
   authentication, deadlines, ordered caller results, and caller-owned custody.
   Record worker heap/reduction snapshots outside the measured teardown interval,
   with explicitly scoped GC deltas.
+- Release decoded JWE headers after resolver requests and release handles and
+  key-management inputs after worker contributions. Reconstruct successful
+  result headers from the original authenticated protected bytes; retain real
+  fallback AEAD for every undelivered position.
 - Keep JWE custody placement handshakes out of the caller's mailbox. Stamp every
   monitored end in a dedicated high-priority receiver, retaining receiver backlog,
   observer lag, complete role counts and cancellation phase diagnostics. Keep

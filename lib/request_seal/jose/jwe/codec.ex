@@ -387,7 +387,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       ensure(byte_size(protected) <= 21_846, :limit)
 
       h =
-        case object(decode(protected), 16_384) do
+        case header(protected) do
           {:ok, h} -> h
           {:error, e} -> fail(:erlang.map_get(:reason, e), :erlang.map_get(:layer, e))
         end
@@ -455,6 +455,9 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       :throw, {:jose_error, reason, layer} -> error(reason, layer)
     end
   end
+
+  # Admission and successful results decode the same authenticated protected bytes.
+  def header(protected), do: object(decode(protected), 16_384)
 
   defp params(alg, h) when alg in ~w(A128GCMKW A256GCMKW) do
     iv = decode(:maps.get("iv", h, nil))

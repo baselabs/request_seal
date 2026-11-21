@@ -584,7 +584,6 @@ defmodule RequestSeal.JOSEDecryptManyTest do
     {:ok, [{:ok, cek}]} = Custody.unwrap(handle, [{Support.decode(ek), %{}, 256}])
 
     token = %{
-      h: Header.parse(protected),
       alg: "A256KW",
       enc: "A256GCM",
       protected: protected,
