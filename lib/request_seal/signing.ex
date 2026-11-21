@@ -1,6 +1,6 @@
 defmodule RequestSeal.Signing do
   @moduledoc false
-  alias RequestSeal.{Body, Custody, Digest, KeyHandle, Policy, SignatureBase, SignatureFields}
+  alias RequestSeal.{Body, Custody, Digest, KeyHandle, Policy, SignatureFields}
   alias RequestSeal.Adapter.Error
 
   @type spec :: RequestSeal.signing_spec() | full_spec()
@@ -345,12 +345,7 @@ defmodule RequestSeal.Signing do
     message = content_length(message, input)
     input = %{input | parameters: parameters(spec, opts)}
 
-    case SignatureBase.build(message, input, field_schemas: spec.field_schemas) do
-      {:ok, _bytes} -> :ok
-      {:error, %{reason: :limit}} -> fail(:limit)
-      _ -> fail(:unsupported_component)
-    end
-
+    # The core signer builds the base once; its base failures keep these closed reasons.
     case RequestSeal.sign(
            message,
            %{label: spec.label, signature_input: input, algorithm: spec.algorithm},
@@ -360,6 +355,12 @@ defmodule RequestSeal.Signing do
          ) do
       {:ok, signed} ->
         signed
+
+      {:error, %RequestSeal.Error{reason: :signature_base_failed, detail: :limit}} ->
+        fail(:limit)
+
+      {:error, %RequestSeal.Error{reason: :signature_base_failed}} ->
+        fail(:unsupported_component)
 
       {:error, %RequestSeal.Error{reason: :signing_failed, source: %Custody.Error{} = source}} ->
         fail(:signing_failed, source)
