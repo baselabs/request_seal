@@ -3,6 +3,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
   import ExUnit.Assertions
   alias RequestSeal.JOSE.JWE.{Bounds, Codec, Coordinator, Guard, Open, Worker}
   alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
+  alias RequestSeal.Test.JWEWorkerDiagnostics
   @samples 5
   @load_attempts 30
   @placement_attempts 20
@@ -273,6 +274,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
     end
 
     :erlang.trace_pattern({:ets, :foldl, 3}, [{:_, [], [{:return_trace}]}], [:local])
+    :erlang.trace_pattern({Guard, :sweep_registry, 1}, [{:_, [], [{:return_trace}]}], [:local])
 
     s =
       Runtime.start(@cap, topology,
@@ -281,6 +283,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
         near_cap: true,
         policy: %{timeout: 30_000, resolve_timeout: 20_000, unwrap_timeout: 5_000}
       )
+
+    worker_diagnostics = JWEWorkerDiagnostics.start(s)
 
     try do
       {_, _, _, _, _, _, args, _} =
@@ -410,7 +414,13 @@ defmodule RequestSeal.Test.JWETeardownGate do
         end
 
       measured = measurement(result, anchor, placement, failures)
-      put_in(measured, [:diagnostics, :library_before_trigger], setup)
+
+      measured
+      |> put_in([:diagnostics, :library_before_trigger], setup)
+      |> put_in(
+        [:diagnostics, :workers],
+        JWEWorkerDiagnostics.collect(worker_diagnostics, if(trigger == :u, do: anchor, else: nil))
+      )
     after
       Runtime.cleanup(s)
       :erlang.trace_pattern({Coordinator, :resolution_end, 2}, false, [:local])
@@ -425,6 +435,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
       end
 
       :erlang.trace_pattern({:ets, :foldl, 3}, false, [:local])
+      :erlang.trace_pattern({Guard, :sweep_registry, 1}, false, [:local])
     end
   end
 
@@ -522,8 +533,9 @@ defmodule RequestSeal.Test.JWETeardownGate do
           }
 
     sweeps =
-      for {:trace_ts, pid, :return_from, {:ets, :foldl, 3}, awaiting, at} <- s.events,
+      for {:trace_ts, pid, :return_from, {module, function, _}, awaiting, at} <- s.events,
           pid == s.guard and is_integer(awaiting),
+          {module, function} in [{:ets, :foldl}, {Guard, :sweep_registry}],
           do: %{
             at_us: :erlang.convert_time_unit(at, :native, :microsecond) - anchor,
             awaiting: awaiting
@@ -564,6 +576,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
       placement: placement,
       diagnostics: %{
         remaining: s.remaining,
+        workers: [],
         missing_end_roles: missing,
         live_roles: live,
         late_roles: late,
@@ -649,6 +662,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
           if Runtime.info(s.preflight, :message_queue_len) < 2 or Bounds.now() >= d - 1_000 do
             :retry
           else
+            worker_diagnostics = JWEWorkerDiagnostics.start(s)
+
             s = Runtime.quiet(s) |> Runtime.until(d - 1_000)
             :erlang.resume_process(s.preflight)
             result = finish(s) |> Runtime.delivered()
@@ -697,6 +712,17 @@ defmodule RequestSeal.Test.JWETeardownGate do
                 exit: max(0, (exit_at || Bounds.now()) - d),
                 placement_attempts: @placement_attempts - attempts + 1
               })
+            end
+            |> case do
+              %{diagnostics: _} = sample ->
+                put_in(
+                  sample,
+                  [:diagnostics, :workers],
+                  JWEWorkerDiagnostics.collect(worker_diagnostics)
+                )
+
+              retry ->
+                retry
             end
           end
         else
@@ -1073,5 +1099,87 @@ defmodule RequestSeal.Test.JWETeardownGate do
     after
       stop_unit(pid, ref)
     end
+  end
+end
+
+# Cross-process process_info requests run on the target. Capture worker gauges
+# before the trigger and after measurement, never by polling during teardown.
+# A pre-trigger U snapshot carries its offset; exited workers have no end gauge.
+# GC totals use a VM-wide interval, never an invented per-worker attribution.
+defmodule RequestSeal.Test.JWEWorkerDiagnostics do
+  @moduledoc false
+  alias RequestSeal.JOSE.JWE.Bounds
+
+  def start(s) do
+    u =
+      Enum.find_value(s.messages, fn
+        {:trace_ts, _, :send, {_, :member, _, _, _, u, _}, _, _} -> u
+        _ -> nil
+      end)
+
+    vm = vm_gc()
+    workers = for {pid, :worker} <- s.pids, into: %{}, do: {pid, snapshot(pid)}
+    %{workers: workers, u: u, vm: vm}
+  end
+
+  def collect(s, u \\ nil) do
+    u = u || s.u
+    vm = vm_gc()
+
+    for {pid, initial} <- s.workers do
+      ended = snapshot(pid)
+      observed = Bounds.now()
+      at_u = if initial != nil and is_integer(u) and initial.sampled_us <= u, do: initial
+
+      %{
+        worker: inspect(pid),
+        u_us: u || :null,
+        at_u: at_u || :null,
+        u_snapshot: :before_trigger,
+        u_snapshot_offset_us: if(at_u != nil, do: at_u.sampled_us - u, else: :null),
+        before_trigger: initial || :null,
+        at_end: ended || :null,
+        end_snapshot: :after_teardown,
+        end_observed_us: observed,
+        end_snapshot_age_us: if(ended != nil, do: observed - ended.sampled_us, else: :null),
+        gc_scope: :vm_shared_interval,
+        gc_count_delta: vm.count - s.vm.count,
+        gc_words_reclaimed_delta: vm.words - s.vm.words
+      }
+    end
+  end
+
+  defp snapshot(pid) do
+    case Process.info(pid, [:heap_size, :total_heap_size, :reductions]) do
+      nil ->
+        nil
+
+      info ->
+        gc =
+          try do
+            case Process.info(pid, :garbage_collection_info) do
+              {:garbage_collection_info, values} ->
+                for {key, value} <- values, is_integer(value), into: %{}, do: {key, value}
+
+              nil ->
+                %{}
+            end
+          catch
+            :error, :badarg -> %{}
+          end
+
+        %{
+          sampled_us: Bounds.now(),
+          heap_words: Keyword.fetch!(info, :heap_size),
+          total_heap_words: Keyword.fetch!(info, :total_heap_size),
+          reductions: Keyword.fetch!(info, :reductions),
+          garbage_collection_info: gc
+        }
+    end
+  end
+
+  defp vm_gc do
+    {count, words, _} = :erlang.statistics(:garbage_collection)
+    %{count: count, words: words}
   end
 end

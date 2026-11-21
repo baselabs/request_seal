@@ -1,11 +1,11 @@
 --- a/lib/request_seal/jose/jwe/coordinator.ex
 +++ b/lib/request_seal/jose/jwe/coordinator.ex
-@@ -684,7 +684,7 @@
-     failure =
-       if reason == :normal,
-         do: {:decryption_failed, :crypto, nil},
--        else: {:internal_failure, :internal, nil}
-+        else: {:decryption_failed, :crypto, nil}
+@@ -693,7 +693,7 @@
+           failure =
+             if reason == :normal,
+               do: {:decryption_failed, :crypto, nil},
+-              else: {:internal_failure, :internal, nil}
++              else: {:decryption_failed, :crypto, nil}
 
-     s =
-       if map_get(:result, p) == nil and
+           if reason != :normal or map_get(:phase, p) in [:resolved, :refused, :width],
+             do: put(s, i, %{p | phase: :refused, result: failure}, 0),

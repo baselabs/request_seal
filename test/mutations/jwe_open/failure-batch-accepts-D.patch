@@ -1,0 +1,11 @@
+--- a/lib/request_seal/jose/jwe/coordinator.ex
++++ b/lib/request_seal/jose/jwe/coordinator.ex
+@@ -434,7 +434,7 @@
+   defp result(s, i, reason, layer, auth) do
+     case :maps.find(i, map_get(:positions, s)) do
+       {:ok, %{phase: phase, result: nil}} ->
+-        if result_phase?(phase) and Bounds.now() < map_get(:d, s) do
++        if result_phase?(phase) do
+           # A terminal result changes neither admission nor resolution. Keep
+           # those counters intact without rebuilding their HAMT paths per row.
+           positions = :maps.put(i, {:terminal, reason, layer, auth}, map_get(:positions, s))

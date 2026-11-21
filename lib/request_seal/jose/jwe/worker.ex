@@ -3,6 +3,7 @@ defmodule RequestSeal.JOSE.JWE.Worker do
   import :erlang, only: [map_get: 2]
   alias RequestSeal.JOSE.JWE.{Bounds, Codec, Result}
   alias RequestSeal.KeyHandle
+  @failure_batch 4
 
   def run(tag, parent, address, w, lo, hi, r, d, _mode) do
     :erlang.process_flag(:sensitive, true)
@@ -291,7 +292,7 @@ defmodule RequestSeal.JOSE.JWE.Worker do
       {group, groups} ->
         kind = if Bounds.now() >= map_get(:u, group), do: :timeout, else: kind
         revoke(map_get(:route, group))
-        finish_members(map_get(:members, group), %{s | groups: groups}, kind)
+        finish_members(map_get(:members, group), %{s | groups: groups}, kind, {[], 0})
 
       :error ->
         s
@@ -302,16 +303,23 @@ defmodule RequestSeal.JOSE.JWE.Worker do
   # per revoked route would rescan the remaining mailbox once for every group.
   defp revoke({address, _tag}), do: :erlang.unalias(address)
 
-  defp finish_members([], s, _), do: s
+  defp finish_members([], s, _, {controls, _}) do
+    flush_failures(s, controls)
+    s
+  end
 
-  defp finish_members([i | rest], s, kind) do
-    s =
+  defp finish_members([i | rest], s, kind, batch) do
+    {s, batch} =
       case :maps.find(i, map_get(:positions, s)) do
-        {:ok, position} -> finish_position(s, i, position, kind)
-        :error -> s
+        {:ok, position} ->
+          batch = failure(s, i, position, kind, batch)
+          {%{s | positions: :maps.remove(i, map_get(:positions, s))}, batch}
+
+        :error ->
+          {s, batch}
       end
 
-    finish_members(rest, s, kind)
+    finish_members(rest, s, kind, batch)
   end
 
   defp finish_position(s, i, position, outcome) do
@@ -343,7 +351,7 @@ defmodule RequestSeal.JOSE.JWE.Worker do
       # Authentication needs the rows and policy, not the revoked group/route
       # maps or the original position HAMT. Do not keep them live across AEAD.
       s = %{s | groups: %{}, positions: %{}, routes: %{}, u: nil}
-      positions = expire_positions(rows, s, [])
+      positions = expire_positions(rows, s, [], {[], 0})
       %{s | positions: :maps.from_list(positions)}
     else
       s
@@ -360,31 +368,46 @@ defmodule RequestSeal.JOSE.JWE.Worker do
   # All groups have the same U. A prepared position may still have its member
   # message queued. Settle it now as well, so those late messages cannot cause
   # another full expiry pass or grant a new delivery window.
-  defp expire_positions([], _, positions), do: positions
+  defp expire_positions([], s, positions, {controls, _}) do
+    flush_failures(s, controls)
+    positions
+  end
 
-  defp expire_positions([{i, position} | rest], s, positions) do
-    positions =
-      if map_get(:fallback, position) == nil do
-        [{i, position} | positions]
-      else
-        report(
-          map_get(:tag, s),
-          map_get(:parent, s),
-          map_get(:address, s),
-          i,
-          authenticate(
-            map_get(:token, position),
-            map_get(:fallback, position),
-            :timeout,
-            map_get(:p, s)
-          ),
-          map_get(:d, s)
-        )
+  defp expire_positions([{i, position} | rest], s, positions, batch) do
+    if map_get(:fallback, position) == nil do
+      expire_positions(rest, s, [{i, position} | positions], batch)
+    else
+      batch = failure(s, i, position, :timeout, batch)
+      expire_positions(rest, s, positions, batch)
+    end
+  end
 
-        positions
-      end
+  # Only undelivered positions enter this path. Authenticate with their own
+  # prepared CEK before retaining the bounded reason/layer/auth control.
+  defp failure(s, i, position, kind, {controls, count}) do
+    {{:error, error}, auth} =
+      authenticate(
+        map_get(:token, position),
+        map_get(:fallback, position),
+        kind,
+        map_get(:p, s)
+      )
 
-    expire_positions(rest, s, positions)
+    controls = [{i, map_get(:reason, error), map_get(:layer, error), auth} | controls]
+
+    if count + 1 == @failure_batch do
+      flush_failures(s, controls)
+      {[], 0}
+    else
+      {controls, count + 1}
+    end
+  end
+
+  defp flush_failures(_, []), do: :ok
+
+  defp flush_failures(s, controls) do
+    if Bounds.now() < map_get(:d, s),
+      do: send(map_get(:parent, s), {map_get(:tag, s), :results, :lists.reverse(controls)})
   end
 
   def fallback(token) do

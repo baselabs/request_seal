@@ -1,6 +1,6 @@
 defmodule RequestSeal.JWEOpenOraclesTest do
   use ExUnit.Case, async: false
-  alias RequestSeal.JOSE.JWE.{Bounds, Coordinator, Guard, Open}
+  alias RequestSeal.JOSE.JWE.{Bounds, Coordinator, Guard, Open, Worker}
   alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
   @after_compile Runtime
   @moduletag timeout: 600_000
@@ -172,6 +172,45 @@ defmodule RequestSeal.JWEOpenOraclesTest do
     end)
   end
 
+  test "P3 filtered sweep joins every non-resolver across bounded pages" do
+    Runtime.with_peer(fn ->
+      s = Runtime.start(129, :custody)
+      registry = Runtime.registry(s)
+      expected = :ets.tab2list(registry) |> Enum.reject(&match?({{:resolver, _}, _, _}, &1))
+      :erlang.trace_pattern({Guard, :sweep, 3}, true, [:local])
+      :erlang.trace_pattern({Guard, :sweep_pages, 3}, true, [:local])
+      :erlang.trace(s.guard, true, [:call])
+
+      try do
+        result = Runtime.trigger(s, :coordinator)
+
+        assert Enum.all?(s.custody, &(not Process.alive?(&1))) and result.remaining == 0,
+               "filtered sweep must join every live non-resolver row"
+
+        rows =
+          for {:trace_ts, pid, :call, {Guard, :sweep, [row, _, _]}, _} <- result.events,
+              pid == s.guard,
+              do: row
+
+        assert Enum.sort(rows) == Enum.sort(expected),
+               "ETS must exclude only joined resolver rows before the sweep body"
+
+        pages =
+          for {:trace_ts, pid, :call, {Guard, :sweep_pages, [{rows, _}, _, _]}, _} <-
+                result.events,
+              pid == s.guard,
+              do: rows
+
+        assert length(pages) >= 3, "filtered sweep must continue beyond its first page"
+        assert Enum.all?(pages, &(length(&1) <= 64)), "registry pages must stay bounded"
+      after
+        :erlang.trace_pattern({Guard, :sweep, 3}, false, [:local])
+        :erlang.trace_pattern({Guard, :sweep_pages, 3}, false, [:local])
+        Runtime.cleanup(s)
+      end
+    end)
+  end
+
   test "oracle 3 guard coordinator and caller queues have bounded terms" do
     Runtime.with_peer(fn ->
       s =
@@ -205,6 +244,89 @@ defmodule RequestSeal.JWEOpenOraclesTest do
         Runtime.cleanup(s)
       end
     end)
+  end
+
+  test "custody U failure batches preserve bounded queues authentication and strict D" do
+    Runtime.with_peer(
+      fn ->
+        # Two ranges of 128 and 129 force full batches and a final partial
+        # batch from a real custody placement with all callbacks held past U.
+        n = 257
+        # Breakpoint counters, like trace messages, are disabled by sensitivity.
+        # Cover instruments the actual worker BEAM inside this isolated peer;
+        # its execution counters need no change to the production sensitive flag.
+        {:ok, Worker} = :cover.compile_beam(Worker)
+        s = Runtime.start(n, :custody)
+        :erlang.trace_pattern({Coordinator, :result_batch, 2}, true, [:local])
+
+        try do
+          result = Runtime.collect_return(s) |> Runtime.delivered()
+
+          batches =
+            for {:trace_ts, pid, :receive, {_, :results, controls} = message, _} <-
+                  result.messages,
+                pid == s.coordinator,
+                do: {message, controls}
+
+          assert batches != [], "custody U must observe real failure batches"
+
+          assert Enum.all?(batches, fn {message, controls} ->
+                   length(controls) in 1..4 and :erts_debug.flat_size(message) <= 128
+                 end),
+                 "failure batches must keep the four-control cap and 128-word message bound"
+
+          assert Enum.any?(batches, fn {_, controls} -> length(controls) == 4 end)
+          assert Enum.any?(batches, fn {_, controls} -> length(controls) == 1 end)
+          controls = Enum.flat_map(batches, &elem(&1, 1))
+          assert Enum.sort(Enum.map(controls, &elem(&1, 0))) == Enum.to_list(0..(n - 1))
+          assert Enum.all?(controls, &match?({_, :decryption_failed, :crypto, :failed}, &1))
+
+          {:ok, calls} = :cover.analyse(Worker, :calls, :function)
+          aead_calls = Map.new(calls)[{Worker, :aead, 3}]
+
+          assert aead_calls == n,
+                 "each undelivered position must run real fallback AEAD before its failure control: " <>
+                   "#{inspect(aead_calls)} calls for #{n} positions"
+
+          {state, first} =
+            Enum.find_value(Enum.reverse(result.events), fn
+              {:trace_ts, _, :call, {Coordinator, :result_batch, [state, [_ | _] = controls]}, _} ->
+                {state, controls}
+
+              _ ->
+                nil
+            end)
+
+          expired = %{state | d: Bounds.now()}
+
+          assert Coordinator.result_batch(expired, first) == expired,
+                 "failure batches must reject every result at or after D"
+
+          for phase <- [:unadmitted, :ready] do
+            {i, _, _, _} = hd(first)
+            position = %{state.positions[i] | phase: phase}
+            pending = %{state | positions: Map.put(state.positions, i, position)}
+            assert Coordinator.result_batch(pending, [hd(first)]) == pending
+          end
+
+          settled = Coordinator.result_batch(%{state | d: Bounds.now() + 1_000_000}, first)
+          assert Coordinator.result_batch(settled, first) == settled
+          assert settled.settled == state.settled + length(first)
+          assert {:ok, results} = result.return
+          assert length(results) == n
+          assert Enum.all?(results, &match?({:error, %{reason: :decryption_failed}}, &1))
+        after
+          :erlang.trace_pattern({Coordinator, :result_batch, 2}, false, [:local])
+
+          try do
+            Runtime.cleanup(s)
+          after
+            :cover.stop()
+          end
+        end
+      end,
+      2
+    )
   end
 
   test "oracle 4 guard heap stays constant with queued notices after GC" do

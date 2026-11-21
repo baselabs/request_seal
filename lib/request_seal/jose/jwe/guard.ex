@@ -122,8 +122,14 @@ defmodule RequestSeal.JOSE.JWE.Guard do
       # A registered custody child proves P3 joined every resolver notice.
       # Retain the complete registry, but do not look up those ended pids again.
       resolvers_ended = :ets.lookup(map_get(:registry, s), {:custody, 0}) != []
-      s = :maps.put(:resolvers_ended, resolvers_ended, s)
-      awaiting = :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, map_get(:registry, s))
+
+      awaiting =
+        if resolvers_ended do
+          sweep_registry(s)
+        else
+          :ets.foldl(fn row, n -> sweep(row, s, n) end, 0, map_get(:registry, s))
+        end
+
       %{s | ended_at: now, anchor: anchor, stop_at: stop_at, awaiting: awaiting}
     else
       cause(s, now)
@@ -158,14 +164,33 @@ defmodule RequestSeal.JOSE.JWE.Guard do
   # Kept as one named function so the shipped calculation can be return-traced.
   def stop_at(anchor, n), do: anchor + Bounds.teardown(n)
 
+  # Slot zero exists only after the resolver join. Filter those immutable ended
+  # rows inside ETS; copy at most 64 remaining rows into each sweep page.
+  defp sweep_registry(s) do
+    match = [
+      {{{:"$1", :_}, :_, :_}, [{:"=/=", :"$1", :resolver}], [:"$_"]},
+      {{:"$1", :_, :_}, [{:is_atom, :"$1"}], [:"$_"]}
+    ]
+
+    sweep_pages(:ets.select(map_get(:registry, s), match, 64), s, 0)
+  end
+
+  defp sweep_pages(:"$end_of_table", _, n), do: n
+
+  defp sweep_pages({rows, continuation}, s, n) do
+    n = sweep_rows(rows, s, n)
+    sweep_pages(:ets.select(continuation), s, n)
+  end
+
+  defp sweep_rows([], _, n), do: n
+  defp sweep_rows([row | rest], s, n), do: sweep_rows(rest, s, sweep(row, s, n))
+
   defp sweep({:outcome, _}, _, n), do: n
 
   defp sweep({_, pid, :library}, _, n) do
     :erlang.monitor(:process, pid)
     n + 1
   end
-
-  defp sweep({{:resolver, _}, _, :caller}, %{resolvers_ended: true}, n), do: n
 
   defp sweep({slot, pid, :caller}, s, n) do
     %{ended: ended} = s

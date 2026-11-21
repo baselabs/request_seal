@@ -236,6 +236,9 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
       {^tag, :result, i, reason, layer, auth} ->
         loop(result(s, i, reason, layer, auth))
 
+      {^tag, :results, controls} ->
+        loop(result_batch(s, controls))
+
       {^tag, :ended, slot} ->
         loop(ended(s, slot))
 
@@ -359,6 +362,8 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
     # are the only callers. Each starts with result: nil.
     settled = if map_get(:result, p) == nil, do: 0, else: 1
 
+    p = if settled == 0, do: p, else: terminal(map_get(:result, p))
+
     %{
       s
       | positions: :maps.put(i, p, map_get(:positions, s)),
@@ -428,11 +433,11 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
 
   defp result(s, i, reason, layer, auth) do
     case :maps.find(i, map_get(:positions, s)) do
-      {:ok, %{phase: phase, result: nil} = p} ->
+      {:ok, %{phase: phase, result: nil}} ->
         if result_phase?(phase) and Bounds.now() < map_get(:d, s) do
           # A terminal result changes neither admission nor resolution. Keep
           # those counters intact without rebuilding their HAMT paths per row.
-          positions = :maps.put(i, %{p | result: {reason, layer, auth}}, map_get(:positions, s))
+          positions = :maps.put(i, {:terminal, reason, layer, auth}, map_get(:positions, s))
           %{s | positions: positions, settled: map_get(:settled, s) + 1}
         else
           s
@@ -442,6 +447,13 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
         s
     end
   end
+
+  def result_batch(s, []), do: s
+
+  def result_batch(s, [{i, reason, layer, auth} | rest]),
+    do: result_batch(result(s, i, reason, layer, auth), rest)
+
+  defp terminal({reason, layer, auth}), do: {:terminal, reason, layer, auth}
 
   defp ended(s, {:resolver, i} = slot) do
     if is_map_key(map_get(:ended, s), slot) do
@@ -460,6 +472,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
     end
   end
 
+  defp ended(%{expired_u: true} = s, {:custody, _}), do: s
   defp ended(s, {:custody, g}), do: summary(s, g, :error)
   defp ended(s, _), do: s
 
@@ -505,14 +518,14 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp expire_positions([], acc), do: acc
 
   defp expire_positions([{i, p} | rest], {positions, admissions, resolutions, settled}) do
-    case {map_get(:result, p), map_get(:phase, p)} do
-      {nil, :unadmitted} ->
-        p = %{p | phase: :refused, result: expiry(:r, :unadmitted)}
+    case p do
+      %{phase: :unadmitted, result: nil} ->
+        p = terminal(expiry(:r, :unadmitted))
         expire_positions(rest, {[{i, p} | positions], admissions + 1, resolutions, settled + 1})
 
-      {nil, :ready} ->
+      %{phase: :ready, result: nil} ->
         if map_get(:resolver, p) != nil, do: :erlang.exit(map_get(:resolver, p), :kill)
-        p = %{p | phase: :refused, result: expiry(:r, :ready)}
+        p = terminal(expiry(:r, :ready))
         expire_positions(rest, {[{i, p} | positions], admissions, resolutions + 1, settled + 1})
 
       _ ->
@@ -661,12 +674,16 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
       {:ok, w} ->
         {^pid, lo, hi, _} = :maps.get(w, map_get(:workers, s))
         s = %{s | workers: :maps.put(w, {pid, lo, hi, false}, map_get(:workers, s))}
-        s = dead_positions(lo, hi, s, reason)
 
         # Normal completion follows the range's last result send. Its earlier
         # contributions are already sent, or U/D has revoked them. Only an
         # unexpected exit can leave a custodian waiting for this contributor.
-        if reason == :normal, do: s, else: dead_groups(:maps.to_list(map_get(:groups, s)), w, s)
+        if reason == :normal do
+          s
+        else
+          s = dead_positions(lo, hi, s, reason)
+          dead_groups(:maps.to_list(map_get(:groups, s)), w, s)
+        end
 
       :error ->
         s
@@ -676,21 +693,23 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp dead_positions(i, hi, s, _) when i > hi, do: s
 
   defp dead_positions(i, hi, s, reason) do
-    p = :maps.get(i, map_get(:positions, s))
-
-    if map_get(:result, p) == nil and map_get(:resolver, p) != nil,
-      do: :erlang.exit(map_get(:resolver, p), :kill)
-
-    failure =
-      if reason == :normal,
-        do: {:decryption_failed, :crypto, nil},
-        else: {:internal_failure, :internal, nil}
-
     s =
-      if map_get(:result, p) == nil and
-           (reason != :normal or map_get(:phase, p) in [:resolved, :refused, :width]),
-         do: put(s, i, %{p | phase: :refused, result: failure}, 0),
-         else: s
+      case :maps.get(i, map_get(:positions, s)) do
+        %{result: nil} = p ->
+          if map_get(:resolver, p) != nil, do: :erlang.exit(map_get(:resolver, p), :kill)
+
+          failure =
+            if reason == :normal,
+              do: {:decryption_failed, :crypto, nil},
+              else: {:internal_failure, :internal, nil}
+
+          if reason != :normal or map_get(:phase, p) in [:resolved, :refused, :width],
+            do: put(s, i, %{p | phase: :refused, result: failure}, 0),
+            else: s
+
+        _ ->
+          s
+      end
 
     dead_positions(i + 1, hi, s, reason)
   end
@@ -777,18 +796,10 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
 
   defp deadline_positions(i, n, positions, acc) do
     p =
-      :maps.get(i, positions, %{
-        w: 0,
-        phase: :unadmitted,
-        result: nil,
-        resolver: nil,
-        group: nil
-      })
-
-    p =
-      if map_get(:result, p) == nil,
-        do: %{p | result: expiry(:d, map_get(:phase, p))},
-        else: p
+      case :maps.get(i, positions, nil) do
+        {:terminal, _, _, _} = p -> p
+        _ -> terminal(expiry(:d, :unfinished))
+      end
 
     deadline_positions(i + 1, n, positions, [{i, p} | acc])
   end
@@ -814,8 +825,7 @@ defmodule RequestSeal.JOSE.JWE.Coordinator do
   defp settled_messages(n, n, _, _, _), do: :ok
 
   defp settled_messages(i, n, positions, tag, address) do
-    p = :maps.get(i, positions)
-    {reason, layer, auth} = map_get(:result, p)
+    {:terminal, reason, layer, auth} = :maps.get(i, positions)
     send(address, {tag, :settled, i, reason, layer, auth})
     settled_messages(i + 1, n, positions, tag, address)
   end

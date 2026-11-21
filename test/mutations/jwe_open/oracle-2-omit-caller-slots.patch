@@ -1,8 +1,8 @@
 --- a/lib/request_seal/jose/jwe/guard.ex
 +++ b/lib/request_seal/jose/jwe/guard.ex
-@@ -167,7 +167,9 @@
-
-   defp sweep({{:resolver, _}, _, :caller}, %{resolvers_ended: true}, n), do: n
+@@ -192,7 +192,9 @@
+     n + 1
+   end
 
 -  defp sweep({slot, pid, :caller}, s, n) do
 +  defp sweep({_slot, _pid, :caller}, _s, n), do: n

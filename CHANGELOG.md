@@ -87,6 +87,12 @@
   those files to the GitHub release for `v<version>`. Tag pushes execute no
   workflow.
 
+- Compact settled JWE coordinator positions, batch at most four authenticated
+  failure controls, and skip terminal cleanup passes. Filter joined resolver
+  rows in bounded guard sweep pages. Preserve absolute teardown bounds, fallback
+  authentication, deadlines, ordered caller results, and caller-owned custody.
+  Record worker heap/reduction snapshots outside the measured teardown interval,
+  with explicitly scoped GC deltas.
 - Keep JWE custody placement handshakes out of the caller's mailbox. Stamp every
   monitored end in a dedicated high-priority receiver, retaining receiver backlog,
   observer lag, complete role counts and cancellation phase diagnostics. Keep

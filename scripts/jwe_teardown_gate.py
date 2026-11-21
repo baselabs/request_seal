@@ -153,6 +153,12 @@ def markdown(report):
             if elapsed > constants["b_us"] or not complete(diagnostic):
                 rows.append(f"\n{sample['scenario']} sample {index}: {elapsed} us; "
                             f"{placement}; {json.dumps(diagnostic, sort_keys=True)}")
+    # Heap/reduction observations and VM-shared GC intervals are diagnostic
+    # evidence only. Neither their availability nor their values decide pass.
+    workers = {sample["scenario"]: [d.get("workers", []) for d in sample["diagnostics"]]
+               for sample in report["scenarios"]}
+    rows += ["", "Worker observations (pre-trigger and post-teardown snapshots; VM-shared GC deltas):",
+             "```json", json.dumps(workers, indent=2), "```"]
     rows += ["", "| Unit | Five times (us) | Load | CPU steal (%) |", "|---|---|---|---|"]
     for name, values in report["units_us"].items():
         loads, steals = report["units_loads"][name], report["units_steals"][name]

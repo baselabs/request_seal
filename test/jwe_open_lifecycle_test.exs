@@ -597,6 +597,7 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
 
           :erlang.trace_pattern({Coordinator, :worker_down, 3}, true, [:local, :call_count])
           :erlang.trace_pattern({Coordinator, :dead_groups, 3}, true, [:local, :call_count])
+          :erlang.trace_pattern({Coordinator, :dead_positions, 4}, true, [:local, :call_count])
           Enum.each(owned, &send(&1, :continue))
 
           Runtime.await(fn ->
@@ -613,6 +614,10 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
                    {:call_count, 0},
                  "a normal range end must not scan every custody group"
 
+          assert :erlang.trace_info({Coordinator, :dead_positions, 4}, :call_count) ==
+                   {:call_count, 0},
+                 "a normal range end must not scan settled positions"
+
           result = Runtime.collect_return(s) |> Runtime.delivered()
           assert {:ok, results} = result.return
           assert Enum.count(results, &match?({:ok, %{plaintext: "payload"}}, &1)) == 16
@@ -621,6 +626,92 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
         after
           :erlang.trace_pattern({Coordinator, :worker_down, 3}, false, [:local, :call_count])
           :erlang.trace_pattern({Coordinator, :dead_groups, 3}, false, [:local, :call_count])
+          :erlang.trace_pattern({Coordinator, :dead_positions, 4}, false, [:local, :call_count])
+          Runtime.cleanup(s)
+        end
+      end,
+      2
+    )
+  end
+
+  test "terminal positions discard pending state and ignore duplicate results" do
+    Runtime.with_peer(
+      fn ->
+        s = Runtime.start(32, :custody) |> Runtime.delivered()
+
+        try do
+          worker = Enum.find_value(s.pids, fn {pid, role} -> if role == :worker, do: pid end)
+
+          owned =
+            for {:trace_ts, _, :send, {_, :member, i, _, pid, _, _}, ^worker, _} <- s.messages,
+                do: {i, pid}
+
+          assert length(owned) == 16, "one live range must own half the custody placement"
+
+          assert :erlang.trace_pattern(
+                   {Coordinator, :result, 5},
+                   [{:_, [], [{:return_trace}]}],
+                   [:local]
+                 ) == 1,
+                 "the terminal trace must match the production result function"
+
+          Enum.each(owned, fn {_, pid} -> send(pid, :continue) end)
+
+          s =
+            Runtime.collect_event(s, fn
+              {:trace_ts, _, :return_from, {Coordinator, :result, 5}, %{settled: 16}, _} -> true
+              _ -> false
+            end)
+
+          state =
+            Enum.find_value(s.events, fn
+              {:trace_ts, _, :return_from, {Coordinator, :result, 5}, %{settled: 16} = state, _} ->
+                state
+
+              _ ->
+                nil
+            end)
+
+          for {i, _} <- owned do
+            assert state.positions[i] == {:terminal, :ok, :crypto, :ok},
+                   "terminal positions must retain only reason layer and authentication"
+          end
+
+          assert Enum.count(state.positions, fn {_, p} -> is_map(p) end) == 16
+          {i, _} = hd(owned)
+          positions = state.positions
+          send(s.coordinator, {state.tag, :result, i, :decryption_failed, :crypto, :failed})
+
+          s =
+            Runtime.receive_event(
+              s,
+              fn
+                {:trace_ts, _, :return_from, {Coordinator, :result, 5},
+                 %{settled: 16, positions: ^positions}, _} ->
+                  true
+
+                _ ->
+                  false
+              end,
+              Bounds.now() + 1_000_000
+            )
+
+          assert Enum.any?(s.events, fn
+                   {:trace_ts, _, :return_from, {Coordinator, :result, 5},
+                    %{settled: 16, positions: ^positions}, _} ->
+                     true
+
+                   _ ->
+                     false
+                 end),
+                 "duplicate terminal results must preserve the first settlement and counters"
+
+          result = Runtime.collect_return(s)
+          assert {:ok, results} = result.return
+          assert Enum.count(results, &match?({:ok, _}, &1)) == 16
+          assert Enum.count(results, &match?({:error, %{reason: :decryption_failed}}, &1)) == 16
+        after
+          :erlang.trace_pattern({Coordinator, :result, 5}, false, [:local])
           Runtime.cleanup(s)
         end
       end,

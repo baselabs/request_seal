@@ -34,6 +34,8 @@ defmodule RequestSeal.Test.JWEOpenAnalyzer do
     {:ets, :lookup, 2} => "read one slot or outcome",
     {:ets, :lookup_element, 4} =>
       "read a slot pid without copying its row; missing slots have a default",
+    {:ets, :select, 3} => "literal registry match spec excludes joined resolvers in 64-row pages",
+    {:ets, :select, 1} => "continue the same bounded registry sweep without caller code",
     {:ets, :foldl, 3} => "one registry sweep with a literal library function",
     {:ets, :delete, 1} => "free a received child notice",
     {:erlang, :process_flag, 2} => "sensitivity, trap exits and off-heap queues",
