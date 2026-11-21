@@ -187,7 +187,8 @@ class ToolchainTest(unittest.TestCase):
         )]
         self.assertIn("tools/notebooks/mix.exs", sources)
         engine = (ROOT / ".github/postgres.ref").read_text().strip()
-        image_literals = re.compile(r"(?:ghcr\.io/baselabs/)?postgres(?:[:@](?!//)[A-Za-z0-9_.-]+)"
+        # A name after "/" or ":" is URL userinfo (postgres://user:password@host), not an image.
+        image_literals = re.compile(r"(?<![/:\w])(?:ghcr\.io/baselabs/)?postgres(?:[:@](?!//)[A-Za-z0-9_.-]+)"
                                     r"(?:@sha256:[0-9a-f]+)?")
         for path in sources:
             try:
