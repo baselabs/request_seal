@@ -326,7 +326,7 @@ class JWETeardownGateTest(unittest.TestCase):
         report = self.report()
         worker = {"worker": "<worker>", "at_u": {"heap_words": 90000, "reductions": 15000},
                   "at_end": {"heap_words": 120000, "reductions": 25000},
-                  "end_snapshot": "last_live_observation", "end_snapshot_age_us": 6000,
+                  "end_snapshot": "after_teardown", "end_snapshot_age_us": 6000,
                   "gc_scope": "vm_shared_interval", "gc_count_delta": 999999,
                   "gc_words_reclaimed_delta": 999999999999}
         report["scenarios"][0]["diagnostics"][0]["workers"] = [worker]
@@ -341,8 +341,17 @@ class JWETeardownGateTest(unittest.TestCase):
         source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
         for text in ("Process.info(pid, :garbage_collection_info)",
                      ":erlang.statistics(:garbage_collection)", "end_snapshot_age_us",
-                     "gc_scope: :vm_shared_interval", "end_snapshot: :last_live_observation"):
+                     "gc_scope: :vm_shared_interval", "end_snapshot: :after_teardown"):
             self.assertIn(text, source)
+
+    def test_worker_diagnostics_do_not_run_a_sampler_inside_teardown(self):
+        source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
+        helper = source.split("defmodule RequestSeal.Test.JWEWorkerDiagnostics do", 1)[1]
+        self.assertNotRegex(helper, r"\b(?:spawn|spawn_link|spawn_monitor|send_after|sleep)\s*\(",
+                            "diagnostics must not launch a sampler during measured teardown")
+        sample = source[source.index("  def sample(trigger, topology)"):source.index("  defp resolution_stamp")]
+        self.assertLess(sample.index("JWEWorkerDiagnostics.start(s)"), sample.index("{anchor, s, placement}"))
+        self.assertLess(sample.index("measured = measurement("), sample.index("JWEWorkerDiagnostics.collect("))
 
     def test_runner_owns_commands_and_retains_failure_output(self):
         source = (ROOT / "scripts/jwe_teardown_gate.py").read_text()

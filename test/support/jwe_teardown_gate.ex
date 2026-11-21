@@ -298,7 +298,6 @@ defmodule RequestSeal.Test.JWETeardownGate do
       :erlang.trace(s.guard, true, [:arity])
       s = Runtime.quiet(s)
       setup = library_snapshot(s)
-      if topology == :custody, do: JWEWorkerDiagnostics.at_u(worker_diagnostics, member_u(s))
 
       {anchor, s, placement} =
         case trigger do
@@ -327,7 +326,6 @@ defmodule RequestSeal.Test.JWETeardownGate do
                 true = :erlang.suspend_process(s.coordinator)
                 assert Enum.all?(s.resolvers, &Process.alive?/1)
                 at = r + unwrap
-                JWEWorkerDiagnostics.at_u(worker_diagnostics, at)
                 s = Runtime.until(s, at)
 
                 # Debug suspension pauses receive timers since OTP 28 and
@@ -347,7 +345,6 @@ defmodule RequestSeal.Test.JWETeardownGate do
                   end)
 
                 at = resolution_stamp(s) + unwrap
-                JWEWorkerDiagnostics.at_u(worker_diagnostics, at)
                 s = Runtime.until(s, at)
                 {at, s, "P2 end: resolver notices queued at guard through U"}
 
@@ -420,9 +417,11 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
       measured
       |> put_in([:diagnostics, :library_before_trigger], setup)
-      |> put_in([:diagnostics, :workers], JWEWorkerDiagnostics.collect(worker_diagnostics))
+      |> put_in(
+        [:diagnostics, :workers],
+        JWEWorkerDiagnostics.collect(worker_diagnostics, if(trigger == :u, do: anchor, else: nil))
+      )
     after
-      JWEWorkerDiagnostics.stop(worker_diagnostics)
       Runtime.cleanup(s)
       :erlang.trace_pattern({Coordinator, :resolution_end, 2}, false, [:local])
       :erlang.trace_pattern({Open, :wait_end, 1}, false, [:local])
@@ -665,69 +664,65 @@ defmodule RequestSeal.Test.JWETeardownGate do
           else
             worker_diagnostics = JWEWorkerDiagnostics.start(s)
 
-            try do
-              s = Runtime.quiet(s) |> Runtime.until(d - 1_000)
-              :erlang.resume_process(s.preflight)
-              result = finish(s) |> Runtime.delivered()
+            s = Runtime.quiet(s) |> Runtime.until(d - 1_000)
+            :erlang.resume_process(s.preflight)
+            result = finish(s) |> Runtime.delivered()
 
-              result = Runtime.collect_return(result)
+            result = Runtime.collect_return(result)
 
-              exit_at =
-                Enum.find_value(result.events, fn
-                  {:end, pid, at, :normal} when pid == s.preflight -> at
-                  _ -> nil
+            exit_at =
+              Enum.find_value(result.events, fn
+                {:end, pid, at, :normal} when pid == s.preflight -> at
+                _ -> nil
+              end)
+
+            handed =
+              Enum.any?(result.messages, fn
+                {:trace_ts, _, :receive, {_, :handed_off}, _} -> true
+                _ -> false
+              end)
+
+            if handed do
+              {:retry, :handoff_finished_before_d}
+            else
+              failures =
+                checks(fn ->
+                  assert is_integer(exit_at),
+                         "handoff must exit by D plus K_pf: cooperative exit missing"
+
+                  assert {:ok, results} = result.return,
+                         "S5c must return the accepted cardinality"
+
+                  assert length(results) == @cap, "S5c must return the accepted cardinality"
+
+                  assert Enum.all?(
+                           results,
+                           &match?({:error, %{reason: :deadline_exceeded, layer: :crypto}}, &1)
+                         ),
+                         "S5c must fill the D crypto cells"
                 end)
 
-              handed =
-                Enum.any?(result.messages, fn
-                  {:trace_ts, _, :receive, {_, :handed_off}, _} -> true
-                  _ -> false
-                end)
+              placement =
+                "one scheduler; workers_done queued; resumed 1 ms before D; " <>
+                  "attempt #{@placement_attempts - attempts + 1}/#{@placement_attempts}"
 
-              if handed do
-                {:retry, :handoff_finished_before_d}
-              else
-                failures =
-                  checks(fn ->
-                    assert is_integer(exit_at),
-                           "handoff must exit by D plus K_pf: cooperative exit missing"
+              result
+              |> measurement(d, placement, failures)
+              |> Map.merge(%{
+                exit: max(0, (exit_at || Bounds.now()) - d),
+                placement_attempts: @placement_attempts - attempts + 1
+              })
+            end
+            |> case do
+              %{diagnostics: _} = sample ->
+                put_in(
+                  sample,
+                  [:diagnostics, :workers],
+                  JWEWorkerDiagnostics.collect(worker_diagnostics)
+                )
 
-                    assert {:ok, results} = result.return,
-                           "S5c must return the accepted cardinality"
-
-                    assert length(results) == @cap, "S5c must return the accepted cardinality"
-
-                    assert Enum.all?(
-                             results,
-                             &match?({:error, %{reason: :deadline_exceeded, layer: :crypto}}, &1)
-                           ),
-                           "S5c must fill the D crypto cells"
-                  end)
-
-                placement =
-                  "one scheduler; workers_done queued; resumed 1 ms before D; " <>
-                    "attempt #{@placement_attempts - attempts + 1}/#{@placement_attempts}"
-
-                result
-                |> measurement(d, placement, failures)
-                |> Map.merge(%{
-                  exit: max(0, (exit_at || Bounds.now()) - d),
-                  placement_attempts: @placement_attempts - attempts + 1
-                })
-              end
-              |> case do
-                %{diagnostics: _} = sample ->
-                  put_in(
-                    sample,
-                    [:diagnostics, :workers],
-                    JWEWorkerDiagnostics.collect(worker_diagnostics)
-                  )
-
-                retry ->
-                  retry
-              end
-            after
-              JWEWorkerDiagnostics.stop(worker_diagnostics)
+              retry ->
+                retry
             end
           end
         else
@@ -1107,119 +1102,51 @@ defmodule RequestSeal.Test.JWETeardownGate do
   end
 end
 
-# Diagnostic sampling never changes a production worker or its sensitivity.
-# OTP process_info heap gauges survive sensitivity, but not process death.
-# End gauges are the last live observation, with its age reported explicitly.
+# Cross-process process_info requests run on the target. Capture worker gauges
+# before the trigger and after measurement, never by polling during teardown.
+# A pre-trigger U snapshot carries its offset; exited workers have no end gauge.
 # GC totals use a VM-wide interval, never an invented per-worker attribution.
 defmodule RequestSeal.Test.JWEWorkerDiagnostics do
   @moduledoc false
   alias RequestSeal.JOSE.JWE.Bounds
-  @interval_ms 5
 
   def start(s) do
-    owner = self()
-    workers = for {pid, :worker} <- s.pids, do: pid
-
     u =
       Enum.find_value(s.messages, fn
         {:trace_ts, _, :send, {_, :member, _, _, _, u, _}, _, _} -> u
         _ -> nil
       end)
 
-    {pid, ref} =
-      spawn_monitor(fn ->
-        owner_ref = Process.monitor(owner)
-        vm = vm_gc()
-
-        rows =
-          Map.new(workers, fn pid ->
-            snapshot = snapshot(pid)
-            {pid, %{initial: snapshot, last: snapshot, at_u: nil, ended_at: nil, vm_end: vm}}
-          end)
-
-        send(owner, {:worker_diagnostics_ready, self()})
-        sample(owner, owner_ref, rows, u, vm)
-      end)
-
-    receive do
-      {:worker_diagnostics_ready, ^pid} -> {pid, ref}
-      {:DOWN, ^ref, :process, ^pid, _} -> raise "worker diagnostics setup failed"
-    after
-      5_000 ->
-        stop({pid, ref})
-        raise "worker diagnostics setup timed out"
-    end
+    vm = vm_gc()
+    workers = for {pid, :worker} <- s.pids, into: %{}, do: {pid, snapshot(pid)}
+    %{workers: workers, u: u, vm: vm}
   end
 
-  def at_u({pid, _}, at), do: send(pid, {:u, at})
-
-  def collect({pid, _}) do
-    ref = make_ref()
-    send(pid, {:collect, self(), ref})
-
-    receive do
-      {^ref, rows} -> rows
-    after
-      5_000 -> raise "worker diagnostics collection timed out"
-    end
-  end
-
-  def stop({pid, ref}) do
-    Process.exit(pid, :kill)
-
-    receive do
-      {:DOWN, ^ref, :process, ^pid, _} -> :ok
-    end
-  end
-
-  defp sample(owner, owner_ref, rows, u, vm_start) do
-    receive do
-      {:DOWN, ^owner_ref, :process, ^owner, _} ->
-        :ok
-
-      {:u, at} ->
-        sample(owner, owner_ref, update(rows, at), at, vm_start)
-
-      {:collect, ^owner, ref} ->
-        send(owner, {ref, report(update(rows, u), u, vm_start)})
-        sample(owner, owner_ref, rows, u, vm_start)
-    after
-      interval(u) -> sample(owner, owner_ref, update(rows, u), u, vm_start)
-    end
-  end
-
-  defp interval(u) when is_integer(u) do
-    if Bounds.now() < u - @interval_ms * 1_000,
-      do: min(1_000, max(1, div(u - Bounds.now(), 1_000) - @interval_ms)),
-      else: @interval_ms
-  end
-
-  defp interval(_), do: 1_000
-
-  defp update(rows, u) do
+  def collect(s, u \\ nil) do
+    u = u || s.u
     vm = vm_gc()
 
-    Map.new(rows, fn
-      {pid, %{ended_at: nil} = row} ->
-        row =
-          case snapshot(pid) do
-            nil ->
-              %{row | ended_at: Bounds.now(), vm_end: vm}
+    for {pid, initial} <- s.workers do
+      ended = snapshot(pid)
+      observed = Bounds.now()
+      at_u = if initial != nil and is_integer(u) and initial.sampled_us <= u, do: initial
 
-            snapshot ->
-              at_u =
-                if is_integer(u) and (row.at_u == nil or snapshot.sampled_us <= u),
-                  do: snapshot,
-                  else: row.at_u
-
-              %{row | last: snapshot, at_u: at_u, vm_end: vm}
-          end
-
-        {pid, row}
-
-      entry ->
-        entry
-    end)
+      %{
+        worker: inspect(pid),
+        u_us: u || :null,
+        at_u: at_u || :null,
+        u_snapshot: :before_trigger,
+        u_snapshot_offset_us: if(at_u != nil, do: at_u.sampled_us - u, else: :null),
+        before_trigger: initial || :null,
+        at_end: ended || :null,
+        end_snapshot: :after_teardown,
+        end_observed_us: observed,
+        end_snapshot_age_us: if(ended != nil, do: observed - ended.sampled_us, else: :null),
+        gc_scope: :vm_shared_interval,
+        gc_count_delta: vm.count - s.vm.count,
+        gc_words_reclaimed_delta: vm.words - s.vm.words
+      }
+    end
   end
 
   defp snapshot(pid) do
@@ -1254,34 +1181,5 @@ defmodule RequestSeal.Test.JWEWorkerDiagnostics do
   defp vm_gc do
     {count, words, _} = :erlang.statistics(:garbage_collection)
     %{count: count, words: words}
-  end
-
-  defp report(rows, u, vm_start) do
-    for {pid, row} <- rows do
-      %{
-        worker: inspect(pid),
-        sample_interval_us: @interval_ms * 1_000,
-        u_us: u || :null,
-        at_u:
-          if(is_integer(u) and (row.ended_at == nil or row.ended_at >= u),
-            do: row.at_u || :null,
-            else: :null
-          ),
-        u_snapshot: :last_before_or_first_after,
-        u_snapshot_offset_us: if(row.at_u != nil, do: row.at_u.sampled_us - u, else: :null),
-        before_trigger: row.initial || :null,
-        at_end: row.last || :null,
-        end_snapshot: :last_live_observation,
-        end_observed_us: row.ended_at || :null,
-        end_snapshot_age_us:
-          if(row.last != nil and row.ended_at != nil,
-            do: row.ended_at - row.last.sampled_us,
-            else: :null
-          ),
-        gc_scope: :vm_shared_interval,
-        gc_count_delta: row.vm_end.count - vm_start.count,
-        gc_words_reclaimed_delta: row.vm_end.words - vm_start.words
-      }
-    end
   end
 end
