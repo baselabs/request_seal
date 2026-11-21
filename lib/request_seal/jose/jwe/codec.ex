@@ -379,6 +379,9 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
   def admit({:error, _} = error, _, _), do: error
 
+  # Admission and successful results decode the same authenticated protected bytes.
+  def header(protected), do: object(decode(protected), 16_384)
+
   def admit({:ok, parts}, expected, p) do
     try do
       # Preflight validated this plain tree. Keep its exact JSON values through
@@ -387,7 +390,7 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       ensure(byte_size(protected) <= 21_846, :limit)
 
       h =
-        case object(decode(protected), 16_384) do
+        case header(protected) do
           {:ok, h} -> h
           {:error, e} -> fail(:erlang.map_get(:reason, e), :erlang.map_get(:layer, e))
         end

@@ -468,7 +468,7 @@ defmodule RequestSeal.JOSE.JWE.Worker do
   end
 
   defp header(protected) do
-    {:ok, header} = Codec.object(Codec.decode(protected), 16_384)
+    {:ok, header} = Codec.header(protected)
     header
   end
 

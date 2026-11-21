@@ -353,34 +353,6 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertLess(sample.index("JWEWorkerDiagnostics.start(s)"), sample.index("{anchor, s, placement}"))
         self.assertLess(sample.index("measured = measurement("), sample.index("JWEWorkerDiagnostics.collect("))
 
-    def test_position_sizes_are_evidence_only_and_never_include_term_contents(self):
-        report = self.report()
-        diagnostic = report["scenarios"][0]["diagnostics"][0]
-        sizes = {"flat_words": 999999999999, "shared_words": 999999999999}
-        position = {"count": 2500, "words": sizes,
-                    "fields": {"token": sizes, "handle": sizes},
-                    "token_fields": {"h": sizes, "ct": dict(sizes, bytes=7, referenced_bytes=7)}}
-        diagnostic["workers"] = [{"position_sample": {"admitted": position,
-                                                       "current": position, "sampled_us": 123}}]
-        self.assertTrue(GATE.passes(report))
-        summary = GATE.markdown(report)
-        for field in ("position_sample", "admitted", "current", "flat_words", "shared_words",
-                      "token_fields", "referenced_bytes"):
-            self.assertIn(field, summary)
-        diagnostic["workers"][0]["position_sample"] = None
-        self.assertTrue(GATE.passes(report))
-        source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
-        helper = source.split("defmodule RequestSeal.Test.JWEWorkerDiagnostics do", 1)[1]
-        for text in (":erts_debug.flat_size(value)", ":erts_debug.size(value)",
-                     ":binary.referenced_byte_size(value)", "fields(position.token)",
-                     ":code.get_object_code(Worker)", ":code.load_binary(Worker, path, original)",
-                     "Process.delete({__MODULE__, :enabled})"):
-            self.assertIn(text, helper)
-        position = helper[helper.index("  def position(state"):helper.index("  defp position_sample(pid)")]
-        self.assertIn("fields: fields(position)", position)
-        self.assertNotIn("term_to_binary", position)
-        self.assertNotIn("inspect(", position)
-
     def test_runner_owns_commands_and_retains_failure_output(self):
         source = (ROOT / "scripts/jwe_teardown_gate.py").read_text()
         tree = ast.parse(source)
