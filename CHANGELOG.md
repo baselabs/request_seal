@@ -2,6 +2,11 @@
 
 ## Unreleased 2.0.0
 
+- Qualify PostgreSQL replay stores against the public PostgreSQL 18 platform
+  engine. Check its registry digest anonymously before pulling the pinned
+  reference, use password-authenticated disposable loopback containers, and
+  always remove their scratch after testing.
+
 - Add executable guides for custody generation and committed derivation, strict
   authenticated JSON object content, and migration from every changed 1.x key
   operation and JOSE policy. Include them in ExDoc and the package inventory.

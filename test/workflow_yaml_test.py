@@ -1,5 +1,6 @@
 """The workflow policy's strict YAML subset fails closed before inspecting jobs."""
 from pathlib import Path
+import shlex
 import sys
 import unittest
 
@@ -112,9 +113,103 @@ class WorkflowYamlTest(unittest.TestCase):
         self.assertEqual({"workflow_dispatch": ""}, sources["publish.yml"]["on"])
         verify = sources["ci.yml"]["jobs"]["verify"]
         self.assertEqual("verify (${{ matrix.lane }})", verify["name"])
-        self.assertEqual(["5432/tcp"], verify["services"]["postgres"]["ports"])
-        self.assertEqual("--health-cmd \"pg_isready -U postgres\" --health-interval 5s --health-timeout 5s --health-retries 20",
-                         verify["services"]["postgres"]["options"])
+        self.assertNotIn("services", verify)
+        self.assertEqual("ubuntu-24.04", verify["runs-on"])
+
+
+class PlatformPostgresTest(unittest.TestCase):
+    def setUp(self):
+        self.source = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.workflow = load(self.source)
+        self.verify = self.workflow["jobs"]["verify"]
+        self.steps = self.verify["steps"]
+
+    def step(self, name):
+        matches = [step for step in self.steps if step.get("name") == name]
+        self.assertEqual(1, len(matches), name)
+        return matches[0]
+
+    def test_anonymous_current_digest_check_is_the_infra_step_verbatim(self):
+        # Public repository form from infra's ci.md, with only the copy path changed.
+        expected = r'''engine="$(cat .github/postgres.ref)"
+[[ "$engine" =~ ^ghcr\.io/baselabs/postgres:[0-9]+\.[0-9]+-inputs-[0-9a-f]{64}@sha256:[0-9a-f]{64}$ ]]
+current_digest="$(python3 - <<'PY'
+import json, re, urllib.request
+host, path = 'ghcr.io', 'baselabs/postgres'
+with urllib.request.urlopen(f'https://{host}/token?scope=repository:{path}:pull', timeout=30) as response:
+    token = json.load(response)['token']
+request = urllib.request.Request(f'https://{host}/v2/{path}/manifests/current', method='HEAD', headers={
+    'Authorization': 'Bearer ' + token,
+    'Accept': ', '.join(('application/vnd.oci.image.index.v1+json', 'application/vnd.oci.image.manifest.v1+json',
+                         'application/vnd.docker.distribution.manifest.list.v2+json',
+                         'application/vnd.docker.distribution.manifest.v2+json'))})
+with urllib.request.urlopen(request, timeout=30) as response:
+    digest = response.headers.get('Docker-Content-Digest', '')
+if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+    raise SystemExit('ghcr.io/baselabs/postgres:current: registry named no digest')
+print(digest)
+PY
+)"
+if [ "${engine##*@}" != "$current_digest" ]; then
+  echo 'checked PostgreSQL digest differs from ghcr.io/baselabs/postgres:current' >&2; exit 1
+fi
+docker pull "$engine"
+'''
+        self.assertEqual({"name": "Check the public platform engine and pull its digest",
+                          "shell": "bash", "run": expected},
+                         self.step("Check the public platform engine and pull its digest"))
+
+    def test_startup_uses_pulled_engine_disposable_scratch_and_tcp_readiness(self):
+        check = self.step("Check the public platform engine and pull its digest")
+        start = self.step("Start disposable PostgreSQL")
+        self.assertNotIn("if", start)
+        self.assertLess(self.steps.index(check), self.steps.index(start))
+        script = start["run"]
+        self.assertIn('engine="$(cat .github/postgres.ref)"\n', script)
+        command = script[script.index("docker run"):script.index("\nready=false")]
+        self.assertEqual([
+            "docker", "run", "--detach", "--pull=never", "--name", "$REQUESTSEAL_TEST_PG_SERVER",
+            "--publish", "127.0.0.1:$TEST_PG_PORT:5432", "--tmpfs", "/var/lib/pg:uid=26,gid=26,mode=0750",
+            "--tmpfs", "/tmp", "--env", "TEST_PG_USER", "--env", "TEST_PG_PASSWORD",
+            "--env", "TEST_PG_DATABASE", "--entrypoint", "baselabs-test-postgres", "$engine",
+        ], shlex.split(command.replace("\\\n", "")))
+        self.assertIn("for ((attempt=0; attempt<60; attempt++)); do\n", script)
+        self.assertIn('docker exec "$REQUESTSEAL_TEST_PG_SERVER" pg_isready -h 127.0.0.1 '
+                      '-U "$TEST_PG_USER" -d "$TEST_PG_DATABASE"', script)
+        self.assertIn("    ready=true\n    break\n", script)
+        self.assertIn("  sleep 1\n", script)
+        self.assertIn('if [ "$ready" != true ]; then\n  docker logs "$REQUESTSEAL_TEST_PG_SERVER"\n', script)
+        self.assertIn("  exit 1\nfi\n", script)
+        consumers = [step for step in self.steps if step.get("run") in (
+            "mix test --warnings-as-errors", "python3 scripts/check_optional_clients.py", "python3 scripts/check.py")]
+        self.assertEqual(4, len(consumers))
+        self.assertTrue(all(self.steps.index(start) < self.steps.index(step) for step in consumers))
+        self.assertTrue(all("REQUESTSEAL_REPLAY_PG_URL" not in step.get("env", {}) for step in consumers))
+
+    def test_fixture_password_and_contributor_url_are_workflow_environment_only(self):
+        self.assertEqual({"run": {"shell": "bash"}}, self.workflow["defaults"])
+        self.assertIn("# Throwaway fixture values, never credentials for an external service.", self.source)
+        self.assertEqual({"TEST_PG_USER": "postgres", "TEST_PG_PASSWORD": "postgres",
+                          "TEST_PG_DATABASE": "requestseal_test", "TEST_PG_PORT": "18841"}, self.workflow["env"])
+        self.assertEqual("rs-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}",
+                         self.verify["env"]["REQUESTSEAL_TEST_PG_SERVER"])
+        self.assertEqual("postgres://${{ env.TEST_PG_USER }}:${{ env.TEST_PG_PASSWORD }}"
+                         "@127.0.0.1:${{ env.TEST_PG_PORT }}/${{ env.TEST_PG_DATABASE }}",
+                         self.verify["env"]["REQUESTSEAL_REPLAY_PG_URL"])
+        for step in self.steps:
+            self.assertNotIn("$TEST_PG_PASSWORD", step.get("run", ""))
+            self.assertNotIn("REQUESTSEAL_REPLAY_PG_URL=", step.get("run", ""))
+
+    def test_failure_logs_and_unconditional_removal_follow_every_consumer(self):
+        log = self.step("Log PostgreSQL after a failure")
+        stop = self.step("Remove disposable PostgreSQL")
+        self.assertEqual("failure()", log["if"])
+        self.assertEqual("always()", stop["if"])
+        self.assertEqual(self.steps[-2:], [log, stop])
+        self.assertEqual('if docker container inspect "$REQUESTSEAL_TEST_PG_SERVER" > /dev/null 2>&1; then\n'
+                         '  docker logs "$REQUESTSEAL_TEST_PG_SERVER"\nfi\n', log["run"])
+        self.assertEqual('if docker container inspect "$REQUESTSEAL_TEST_PG_SERVER" > /dev/null 2>&1; then\n'
+                         '  docker rm -f -v "$REQUESTSEAL_TEST_PG_SERVER"\nfi\n', stop["run"])
 
 
 class ActionPolicyTest(unittest.TestCase):

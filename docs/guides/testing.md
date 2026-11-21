@@ -53,8 +53,12 @@ checks create and drop their own tables, race 64 tasks across two independent
 pools and one additional claim on an OTP peer node, block a primary key in a real
 transaction, terminate a backend over SQL, and drop a table. The caller must
 allow these operations on a disposable database. No container is started by tests.
-CI supplies a PostgreSQL 18 service URL to every Linux runtime lane, so these tests run in the floor
-and mid `mix test` steps and inside the latest lane's declared gate.
+CI checks the public PostgreSQL 18 platform engine against the current registry digest
+and pulls the immutable reference in `.github/postgres.ref`. Each Linux runtime lane
+starts it on loopback with disposable scratch and password authentication, passes its
+URL through `REQUESTSEAL_REPLAY_PG_URL`, and removes the container after testing.
+These tests run in the floor and mid `mix test` steps and inside the latest lane's
+declared gate.
 
 To run the optional server restart persistence test, also supply a command that
 restarts the PostgreSQL server process while preserving its data directory. The command must

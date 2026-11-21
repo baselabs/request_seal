@@ -17,16 +17,13 @@ pins = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pins)
 
 
-SERVICE_IMAGE = "${{ needs.toolchain.outputs.postgres_image }}"
-
-
 def workflow_sources():
     workflows = ROOT / ".github/workflows"
     return {path.name: path.read_text() for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])}
 
 
 def container_errors(name, source):
-    """Only ci/verify starts services, all from the toolchain's exact output."""
+    """Workflow-managed containers cannot bypass the explicit platform startup."""
     try:
         workflow = load_workflow(source)
     except ValueError as error:
@@ -43,17 +40,8 @@ def container_errors(name, source):
             continue
         if "container" in body:
             errors.append(f"{name}: job container")
-        if "services" not in body:
-            continue
-        if (name, job) != ("ci.yml", "verify"):
+        if "services" in body:
             errors.append(f"{name}: services in {job}")
-        services = body["services"]
-        if not isinstance(services, dict):
-            errors.append(f"{name}: services must be mappings")
-            continue
-        for service in services.values():
-            if not isinstance(service, dict) or service.get("image") != SERVICE_IMAGE:
-                errors.append(f"{name}: image must be {SERVICE_IMAGE}")
     return errors
 
 
@@ -102,8 +90,6 @@ class ToolchainTest(unittest.TestCase):
             )
             values = dict(line.split("=", 1) for line in output.read_text().splitlines())
             expected = pins.toolchain((ROOT / ".tool-versions").read_text())
-            expected |= pins.service_images((ROOT / ".github/service-images").read_text())
-            self.assertRegex(values["postgres_image"], r"^postgres@sha256:[0-9a-f]{64}$")
             self.assertEqual(expected["matrix"], json.loads(values.pop("matrix")))
             self.assertEqual({key: value for key, value in expected.items() if key != "matrix"}, values)
 
@@ -139,64 +125,44 @@ class ToolchainTest(unittest.TestCase):
                     self.assertTrue(any("scripts/toolchain.py --verify-installed" in step.get("run", "")
                                         for step in body["steps"]), name)
 
-    def test_service_images_are_digest_pinned_with_one_home(self):
-        source = (ROOT / ".github/service-images").read_text()
-        image = pins.service_images(source)["postgres_image"]
-        digest = image.split("@sha256:", 1)[1]
-        for changed in (
-            source.replace(image, "postgres:18"),
-            source.replace(image, image[:-1]),
-            source.replace(image, "postgres@sha256:" + digest.upper()),
-            source.replace(image, "other@sha256:" + digest),
-            source + image.join(("postgres=", "\n")),
-            source + "redis=redis@sha256:" + digest + "\n",
-            source.replace("postgres=", "postgres "),
-            "# no services\n",
-        ):
-            with self.subTest(changed=changed), self.assertRaises(ValueError):
-                pins.service_images(changed)
-        # Every workflow takes a service image from the reader's output, never a literal.
+    def test_platform_reference_is_one_complete_digest_pinned_line(self):
+        source = (ROOT / ".github/postgres.ref").read_text()
+        self.assertRegex(source, r"\Aghcr\.io/baselabs/postgres[:]18\.[0-9]+-inputs-[0-9a-f]{64}"
+                                r"@sha256:[0-9a-f]{64}\n\Z")
+        self.assertFalse((ROOT / ".github/service-images").exists())
+        self.assertFalse(hasattr(pins, "service_images"))
+
+    def test_workflow_containers_cannot_bypass_platform_startup(self):
         sources = workflow_sources()
         for name, text in sources.items():
-            self.assertNotIn(digest, text, name)
             self.assertEqual([], container_errors(name, text))
         proofs = sources["ci.yml"]
-        self.assertIn("        image: " + SERVICE_IMAGE + "\n", proofs)
-        verify = "    services:\n      postgres:\n        image: " + SERVICE_IMAGE
         for changed, name in (
-            (proofs.replace(SERVICE_IMAGE, "postgres:18"), "ci.yml"),
-            (proofs.replace(SERVICE_IMAGE, '"postgres:18"'), "ci.yml"),
-            (proofs.replace(verify, "    services: {postgres: {image: postgres:18}}"), "ci.yml"),
-            (proofs.replace(verify, '    services: {postgres: {image: "' + image + '"}}'), "ci.yml"),
-            (proofs.replace("  mutations:\n", "  mutations:\n    container: postgres:18\n"), "ci.yml"),
-            (proofs.replace("  mutations:\n", "  mutations:\n    'container': postgres:18\n"), "ci.yml"),
-            (proofs.replace("        image: " + SERVICE_IMAGE, "        'image': postgres:18"), "ci.yml"),
-            (proofs.replace("  mutations:\n", "  mutations: {container: postgres:18}\n"), "ci.yml"),
-            (proofs.replace("      postgres:\n        image: " + SERVICE_IMAGE,
-                            "      postgres: {image: postgres:18}"), "ci.yml"),
-            ("jobs:\n  mutations: {container: postgres:18}\n", "ci.yml"),
-            ("jobs:\n  verify:\n    services:\n      postgres: {image: postgres:18}\n", "ci.yml"),
-            (proofs.replace("  mutations:\n", "  mutations:\n    container: {image: " + SERVICE_IMAGE + "}\n"),
-             "ci.yml"),
+            (proofs.replace("  mutations:\n", "  mutations:\n    container: sidecar:latest\n"), "ci.yml"),
+            (proofs.replace("  mutations:\n", "  mutations:\n    'container': sidecar:latest\n"), "ci.yml"),
+            (proofs.replace("  mutations:\n", "  mutations: {container: sidecar:latest}\n"), "ci.yml"),
+            ("jobs:\n  mutations: {container: sidecar:latest}\n", "ci.yml"),
+            ("jobs:\n  verify:\n    services:\n      sidecar: {image: sidecar:latest}\n", "ci.yml"),
             (proofs.replace("  teardown:\n", "  teardown:\n    services:\n      postgres:\n        image: "
-                            + SERVICE_IMAGE + "\n"), "ci.yml"),
+                            + "${{ inputs.engine }}\n"), "ci.yml"),
+            (proofs.replace("  verify:\n", "  verify:\n    services:\n      postgres:\n        image: "
+                            + "${{ inputs.engine }}\n"), "ci.yml"),
             (sources["ci.yml"].replace("  qualified:\n", "  qualified:\n    services: {}\n"), "ci.yml"),
-            (proofs.replace("jobs:\n", "services:\n  postgres:\n    image: " + SERVICE_IMAGE + "\njobs:\n"),
+            (proofs.replace("jobs:\n", "services:\n  sidecar:\n    image: sidecar:latest\njobs:\n"),
              "ci.yml"),
-            (proofs.replace(verify, verify), "publish.yml"),
+            ("jobs:\n  release:\n    services:\n      postgres:\n        image: ${{ inputs.engine }}\n", "publish.yml"),
         ):
             with self.subTest(name=name, changed=changed):
+                self.assertNotEqual(proofs, changed)
                 self.assertTrue(container_errors(name, changed))
-        commented = proofs.replace("  mutations:\n", "  mutations:\n    # container: postgres:18\n")
+        commented = proofs.replace("  mutations:\n", "  mutations:\n    # container: sidecar:latest\n")
         self.assertEqual([], container_errors("ci.yml", commented))
         for field, source, line in (
-            ("container", "jobs:\n  mutations:\n    'container': postgres:18\n", 3),
-            ("image", "jobs:\n  verify:\n    services:\n      sidecar:\n        'image': postgres:18\n", 5),
+            ("container", "jobs:\n  mutations:\n    'container': sidecar:latest\n", 3),
+            ("image", "jobs:\n  verify:\n    services:\n      sidecar:\n        'image': sidecar:latest\n", 5),
         ):
             with self.subTest(quoted=field):
                 self.assertIn(f"workflow YAML: <line {line}>:", container_errors("ci.yml", source)[0])
-        self.assertIn("postgres_image: ${{ steps.pins.outputs.postgres_image }}",
-                      (ROOT / ".github/workflows/ci.yml").read_text())
 
     def test_notebook_tooling_requires_the_latest_lane_minor_without_reading_outside_files(self):
         configuration = pins.toolchain((ROOT / ".tool-versions").read_text())
@@ -220,6 +186,9 @@ class ToolchainTest(unittest.TestCase):
             path.startswith(record) or path.endswith(record) for record in records
         )]
         self.assertIn("tools/notebooks/mix.exs", sources)
+        engine = (ROOT / ".github/postgres.ref").read_text().strip()
+        image_literals = re.compile(r"(?:ghcr\.io/baselabs/)?postgres(?:[:@](?!//)[A-Za-z0-9_.-]+)"
+                                    r"(?:@sha256:[0-9a-f]+)?")
         for path in sources:
             try:
                 source = (ROOT / path).read_text()
@@ -227,6 +196,12 @@ class ToolchainTest(unittest.TestCase):
                 continue
             for version in versions:
                 self.assertNotRegex(source, r"(?<![\d.])" + re.escape(version) + r"(?![\d.])", path)
+            if path != ".github/postgres.ref":
+                self.assertNotIn(engine, source, path)
+                self.assertNotIn(engine.split("@sha256:")[1], source, path)
+            if path.startswith((".github/workflows/", "test/")):
+                self.assertEqual([], [ref for ref in image_literals.findall(source)
+                                      if not ref.endswith(":current")], path)
 
 
 if __name__ == "__main__":
