@@ -252,8 +252,11 @@ defmodule RequestSeal.JWEOpenOraclesTest do
         # Two ranges of 128 and 129 force full batches and a final partial
         # batch from a real custody placement with all callbacks held past U.
         n = 257
+        # Breakpoint counters, like trace messages, are disabled by sensitivity.
+        # Cover instruments the actual worker BEAM inside this isolated peer;
+        # its execution counters need no change to the production sensitive flag.
+        {:ok, Worker} = :cover.compile_beam(Worker)
         s = Runtime.start(n, :custody)
-        :erlang.trace_pattern({Worker, :aead, 3}, true, [:local, :call_count])
         :erlang.trace_pattern({Coordinator, :result_batch, 2}, true, [:local])
 
         try do
@@ -278,8 +281,12 @@ defmodule RequestSeal.JWEOpenOraclesTest do
           assert Enum.sort(Enum.map(controls, &elem(&1, 0))) == Enum.to_list(0..(n - 1))
           assert Enum.all?(controls, &match?({_, :decryption_failed, :crypto, :failed}, &1))
 
-          assert :erlang.trace_info({Worker, :aead, 3}, :call_count) == {:call_count, n},
-                 "each undelivered position must run real fallback AEAD before its failure control"
+          {:ok, calls} = :cover.analyse(Worker, :calls, :function)
+          aead_calls = Map.new(calls)[{Worker, :aead, 3}]
+
+          assert aead_calls == n,
+                 "each undelivered position must run real fallback AEAD before its failure control: " <>
+                   "#{inspect(aead_calls)} calls for #{n} positions"
 
           {state, first} =
             Enum.find_value(Enum.reverse(result.events), fn
@@ -309,9 +316,13 @@ defmodule RequestSeal.JWEOpenOraclesTest do
           assert length(results) == n
           assert Enum.all?(results, &match?({:error, %{reason: :decryption_failed}}, &1))
         after
-          :erlang.trace_pattern({Worker, :aead, 3}, false, [:local, :call_count])
           :erlang.trace_pattern({Coordinator, :result_batch, 2}, false, [:local])
-          Runtime.cleanup(s)
+
+          try do
+            Runtime.cleanup(s)
+          after
+            :cover.stop()
+          end
         end
       end,
       2
