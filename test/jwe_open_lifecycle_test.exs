@@ -637,7 +637,7 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
   test "terminal positions discard pending state and ignore duplicate results" do
     Runtime.with_peer(
       fn ->
-        s = Runtime.start(32, :custody)
+        s = Runtime.start(32, :custody) |> Runtime.delivered()
 
         try do
           worker = Enum.find_value(s.pids, fn {pid, role} -> if role == :worker, do: pid end)
@@ -646,19 +646,26 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
             for {:trace_ts, _, :send, {_, :member, i, _, pid, _, _}, ^worker, _} <- s.messages,
                 do: {i, pid}
 
-          :erlang.trace_pattern({Coordinator, :result, 6}, [{:_, [], [{:return_trace}]}], [:local])
+          assert length(owned) == 16, "one live range must own half the custody placement"
+
+          assert :erlang.trace_pattern(
+                   {Coordinator, :result, 5},
+                   [{:_, [], [{:return_trace}]}],
+                   [:local]
+                 ) == 1,
+                 "the terminal trace must match the production result function"
 
           Enum.each(owned, fn {_, pid} -> send(pid, :continue) end)
 
           s =
             Runtime.collect_event(s, fn
-              {:trace_ts, _, :return_from, {Coordinator, :result, 6}, %{settled: 16}, _} -> true
+              {:trace_ts, _, :return_from, {Coordinator, :result, 5}, %{settled: 16}, _} -> true
               _ -> false
             end)
 
           state =
             Enum.find_value(s.events, fn
-              {:trace_ts, _, :return_from, {Coordinator, :result, 6}, %{settled: 16} = state, _} ->
+              {:trace_ts, _, :return_from, {Coordinator, :result, 5}, %{settled: 16} = state, _} ->
                 state
 
               _ ->
@@ -679,7 +686,7 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
             Runtime.receive_event(
               s,
               fn
-                {:trace_ts, _, :return_from, {Coordinator, :result, 6},
+                {:trace_ts, _, :return_from, {Coordinator, :result, 5},
                  %{settled: 16, positions: ^positions}, _} ->
                   true
 
@@ -690,7 +697,7 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
             )
 
           assert Enum.any?(s.events, fn
-                   {:trace_ts, _, :return_from, {Coordinator, :result, 6},
+                   {:trace_ts, _, :return_from, {Coordinator, :result, 5},
                     %{settled: 16, positions: ^positions}, _} ->
                      true
 
@@ -704,7 +711,7 @@ defmodule RequestSeal.JWEOpenLifecycleTest do
           assert Enum.count(results, &match?({:ok, _}, &1)) == 16
           assert Enum.count(results, &match?({:error, %{reason: :decryption_failed}}, &1)) == 16
         after
-          :erlang.trace_pattern({Coordinator, :result, 6}, false, [:local])
+          :erlang.trace_pattern({Coordinator, :result, 5}, false, [:local])
           Runtime.cleanup(s)
         end
       end,
