@@ -58,7 +58,8 @@ jobs:
       matrix: ${{ fromJSON(needs.toolchain.outputs.matrix) }}
     env:
       REQUESTSEAL_TEST_PG_SERVER: rs-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}
-      REQUESTSEAL_REPLAY_PG_URL: postgres://${{ env.TEST_PG_USER }}:${{ env.TEST_PG_PASSWORD }}@127.0.0.1:${{ env.TEST_PG_PORT }}/${{ env.TEST_PG_DATABASE }}
+      # Job env cannot read the env context; the URL repeats the workflow's fixture values.
+      REQUESTSEAL_REPLAY_PG_URL: postgres://postgres:postgres@127.0.0.1:18841/requestseal_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

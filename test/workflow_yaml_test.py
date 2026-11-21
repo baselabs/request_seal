@@ -193,9 +193,14 @@ docker pull "$engine"
                           "TEST_PG_DATABASE": "requestseal_test", "TEST_PG_PORT": "18841"}, self.workflow["env"])
         self.assertEqual("rs-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}",
                          self.verify["env"]["REQUESTSEAL_TEST_PG_SERVER"])
-        self.assertEqual("postgres://${{ env.TEST_PG_USER }}:${{ env.TEST_PG_PASSWORD }}"
-                         "@127.0.0.1:${{ env.TEST_PG_PORT }}/${{ env.TEST_PG_DATABASE }}",
+        env = self.workflow["env"]
+        self.assertEqual(f"postgres://{env['TEST_PG_USER']}:{env['TEST_PG_PASSWORD']}"
+                         f"@127.0.0.1:{env['TEST_PG_PORT']}/{env['TEST_PG_DATABASE']}",
                          self.verify["env"]["REQUESTSEAL_REPLAY_PG_URL"])
+        # GitHub offers no env context in job-level env; such a workflow never starts.
+        for name, job in self.workflow["jobs"].items():
+            for key, value in (job.get("env") or {}).items():
+                self.assertNotIn("${{ env.", str(value), f"{name}.env.{key}")
         for step in self.steps:
             self.assertNotIn("$TEST_PG_PASSWORD", step.get("run", ""))
             self.assertNotIn("REQUESTSEAL_REPLAY_PG_URL=", step.get("run", ""))
