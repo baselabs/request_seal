@@ -151,16 +151,12 @@ jobs:
       # ash_onetime and ash_hooks floors available on that toolchain.
       - if: matrix.lane == 'latest'
         run: python3 scripts/check.py
-      - name: Log PostgreSQL after a failure
-        if: failure()
-        run: |
-          if docker container inspect "$REQUESTSEAL_TEST_PG_SERVER" > /dev/null 2>&1; then
-            docker logs "$REQUESTSEAL_TEST_PG_SERVER"
-          fi
+      # Log, then remove, on every outcome: the server log carries only fixture values.
       - name: Remove disposable PostgreSQL
         if: always()
         run: |
           if docker container inspect "$REQUESTSEAL_TEST_PG_SERVER" > /dev/null 2>&1; then
+            docker logs "$REQUESTSEAL_TEST_PG_SERVER"
             docker rm -f -v "$REQUESTSEAL_TEST_PG_SERVER"
           fi
   mutations:

@@ -200,17 +200,14 @@ docker pull "$engine"
             self.assertNotIn("$TEST_PG_PASSWORD", step.get("run", ""))
             self.assertNotIn("REQUESTSEAL_REPLAY_PG_URL=", step.get("run", ""))
 
-    def test_failure_logs_and_unconditional_removal_follow_every_consumer(self):
-        log = self.step("Log PostgreSQL after a failure")
+    def test_unconditional_log_then_removal_follows_every_consumer(self):
         stop = self.step("Remove disposable PostgreSQL")
-        self.assertEqual("failure()", log["if"])
         self.assertEqual("always()", stop["if"])
-        self.assertEqual(self.steps[-2:], [log, stop])
+        self.assertEqual(self.steps[-1], stop)
         self.assertEqual('if docker container inspect "$REQUESTSEAL_TEST_PG_SERVER" > /dev/null 2>&1; then\n'
-                         '  docker logs "$REQUESTSEAL_TEST_PG_SERVER"\nfi\n', log["run"])
-        self.assertEqual('if docker container inspect "$REQUESTSEAL_TEST_PG_SERVER" > /dev/null 2>&1; then\n'
+                         '  docker logs "$REQUESTSEAL_TEST_PG_SERVER"\n'
                          '  docker rm -f -v "$REQUESTSEAL_TEST_PG_SERVER"\nfi\n', stop["run"])
-
+        self.assertFalse(any("failure()" in str(step.get("if", "")) for step in self.steps))
 
 class ActionPolicyTest(unittest.TestCase):
     def workflow(self, steps):

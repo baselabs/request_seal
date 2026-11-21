@@ -63,7 +63,6 @@ def proof_condition_errors(source, ci_source):
         ("verify", "mix test --warnings-as-errors"): ["matrix.lane == 'floor'", "matrix.lane == 'mid'"],
         ("verify", "python3 scripts/check_optional_clients.py"): ["matrix.lane == 'floor'"],
         ("verify", "python3 scripts/check.py"): ["matrix.lane == 'latest'"],
-        ("verify", "Log PostgreSQL after a failure"): ["failure()"],
         ("verify", "Remove disposable PostgreSQL"): ["always()"],
         ("teardown", "actions/upload-artifact"): ["always()"],
     }
