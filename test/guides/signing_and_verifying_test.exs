@@ -12,7 +12,7 @@ defmodule RequestSeal.GuideSigningAndVerifyingTest do
         {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
         {:ok, key} = RequestSeal.Custody.public_key(handle)
         {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
-        signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+        signer = handle
         ''',
         binding,
         "docs/guides/signing-and-verifying.md",

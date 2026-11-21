@@ -17,7 +17,7 @@ defmodule RequestSeal.WebBotAuth do
   principal. Policy explicitly permits held keys when desired. No network or
   store is started.
 
-  `sign/4` keeps private material behind the caller's arity-two signer and adds a
+  `sign/4` keeps private material behind a caller-owned custody handle and adds a
   dictionary `Signature-Agent` member without replacing other agent members.
   Authorization always remains unevaluated. See `RequestSeal.Error` for reasons.
   """
@@ -115,7 +115,7 @@ defmodule RequestSeal.WebBotAuth do
       iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
       iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
       iex> {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
-      iex> signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+      iex> signer = handle
       iex> {:ok, message} = RequestSeal.Message.request("GET", "https://docs.example.org/guides/index.html", [], nil)
       iex> spec = %{label: "crawler", agent: %{location: "https://crawler.example", type: :directory}, key: key, algorithm: "ed25519", created: 1_760_000_000, expires: 1_760_000_060, nonce: "crawl-0001"}
       iex> {:ok, request} = RequestSeal.WebBotAuth.sign(message, spec, signer)
@@ -718,8 +718,8 @@ defmodule RequestSeal.WebBotAuth do
       * `:nonce` - binary of 1 to 1,024 bytes, or nil.
       * `:components` - optional serialized Inner List of additional component
         identifiers, without parameters. Default `"()"`.
-    * `signer` - arity-two function receiving `(algorithm, signature_base)` and
-      returning `{:ok, signature}` (1 to 1,024 bytes) or `{:error, term}`.
+    * `signer` - a `RequestSeal.KeyHandle` binding the chosen algorithm and
+      granting `:sign`.
     * `opts` - keyword list.
 
   ## Options
@@ -738,7 +738,8 @@ defmodule RequestSeal.WebBotAuth do
       reasons `:missing_signature_input`, `:missing_signature`, `:label_mismatch`,
       `:duplicate_label`, `:duplicate_parameter`, `:invalid_signature_input`,
       `:invalid_signature_field`, and from `RequestSeal.sign/4` `:label_in_use`,
-      `:signature_base_failed`, and `:signer_failed`. Other reasons: see
+      `:signature_base_failed`, `:signer_algorithm_mismatch`, `:signing_failed`,
+      and `:signer_failed`. Other reasons: see
       `RequestSeal.Error`.
 
   ## Examples
@@ -746,7 +747,7 @@ defmodule RequestSeal.WebBotAuth do
       iex> {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
       iex> {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
       iex> {:ok, key} = RequestSeal.Custody.public_key(handle)
-      iex> signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+      iex> signer = handle
       iex> {:ok, message} = RequestSeal.Message.request("GET", "https://docs.example.org/guides/index.html", [], nil)
       iex> spec = %{label: "crawler", agent: %{location: "https://crawler.example", type: :directory}, key: key, algorithm: "ed25519", created: 1_760_000_000, expires: 1_760_000_060, nonce: "crawl-0001"}
       iex> {:ok, signed} = RequestSeal.WebBotAuth.sign(message, spec, signer)
@@ -763,7 +764,7 @@ defmodule RequestSeal.WebBotAuth do
       iex> RequestSeal.Custody.Local.release(handle)
       :ok
   """
-  @spec sign(Message.t(), map(), Policy.signer(), keyword()) ::
+  @spec sign(Message.t(), map(), RequestSeal.KeyHandle.t(), keyword()) ::
           {:ok, Message.t()} | {:error, Error.t()}
   def sign(message, spec, signer, opts \\ []) do
     protect(fn ->
@@ -791,7 +792,8 @@ defmodule RequestSeal.WebBotAuth do
 
       ensure(
         SignatureFields.label?(spec.label) and SignatureFields.algorithm?(spec.algorithm) and
-          spec.algorithm not in ["hmac-sha256", {:jws, "HS256"}] and is_function(signer, 2),
+          spec.algorithm not in ["hmac-sha256", {:jws, "HS256"}] and
+          is_struct(signer, RequestSeal.KeyHandle),
         :invalid_options,
         :input
       )

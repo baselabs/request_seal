@@ -117,9 +117,7 @@ defmodule RequestSeal.ClientAdaptersTest do
           {:ok,
            %{
              algorithm: "hmac-sha256",
-             key: fn _, base, sig ->
-               RequestSeal.Custody.verify(h, base, sig)
-             end
+             key: h
            }}
         end,
         freshness: :not_evaluated,
@@ -373,15 +371,13 @@ defmodule RequestSeal.ClientAdaptersTest do
         chunk
       end)
 
-    signer = fn _a, bytes ->
-      :atomics.add(calls, 1, 1)
-
-      RequestSeal.Custody.sign(h, bytes)
-      |> case do
-        {:ok, signature} -> {:ok, signature}
-        error -> error
-      end
-    end
+    signer = %{
+      h
+      | ref: fn ->
+          :atomics.add(calls, 1, 1)
+          h.ref.()
+        end
+    }
 
     for headers <- [
           [{"host", "example.com"}],
@@ -1036,10 +1032,7 @@ defmodule RequestSeal.ClientAdaptersTest do
              RequestSeal.Finch.sign(r, Peer.spec(), other)
 
     assert {:ok, _} =
-             RequestSeal.Finch.sign(r, Peer.spec(), fn alg, base ->
-               assert alg == h.algorithm
-               RequestSeal.Custody.sign(h, base)
-             end)
+             RequestSeal.Finch.sign(r, Peer.spec(), h)
   end
 
   test "caller-owned digest fields are preserved and all adapter errors redact sensitive input",
@@ -1353,14 +1346,18 @@ defmodule RequestSeal.ClientAdaptersTest do
              RequestSeal.Finch.sign(function_stream, spec, h, body: {:retain, 100})
   end
 
-  test "caller callback exceptions and throws after real cryptography stay redacted", %{handle: h} do
+  test "custody reference exceptions and throws stay redacted", %{handle: h} do
     r = Finch.build(:get, "http://example.com/confidential-path")
 
     for mode <- [:raise, :throw] do
-      signer = fn _, base ->
-        {:ok, _} = RequestSeal.Custody.sign(h, base)
-        if mode == :raise, do: raise("confidential-canary"), else: throw("confidential-canary")
-      end
+      signer = %{
+        h
+        | ref: fn ->
+            if mode == :raise,
+              do: raise("confidential-canary"),
+              else: throw("confidential-canary")
+          end
+      }
 
       assert {:error, %Error{reason: :signing_failed} = error} =
                RequestSeal.Finch.sign(r, %{Peer.spec("()") | digest: nil}, signer)
@@ -1527,15 +1524,18 @@ defmodule RequestSeal.ClientAdaptersTest do
     Peer.finish(task)
   end
 
-  test "function signer deadline terminates its worker", %{handle: h} do
+  test "custody signer deadline terminates its worker", %{handle: h} do
     owner = self()
 
-    signer = fn _, base ->
-      {:links, links} = Process.info(self(), :links)
-      send(owner, {:signer, self(), links})
-      Process.sleep(200)
-      RequestSeal.Custody.sign(h, base)
-    end
+    signer = %{
+      h
+      | ref: fn ->
+          {:links, links} = Process.info(self(), :links)
+          send(owner, {:signer, self(), links})
+          Process.sleep(200)
+          h.ref.()
+        end
+    }
 
     {origin, task} = Peer.start([%{}], h)
     assert {:ok, req} = request(origin, h, [], signer: signer, signing_timeout: 30)
@@ -1688,17 +1688,20 @@ defmodule RequestSeal.ClientAdaptersTest do
     end
   end
 
-  test "caller death cancels an in-flight function signer before transport", %{handle: h} do
+  test "caller death cancels an in-flight custody signer before transport", %{handle: h} do
     owner = self()
 
-    signer = fn _, base ->
-      {:links, links} = Process.info(self(), :links)
-      send(owner, {:signer_started, self(), links})
+    signer = %{
+      h
+      | ref: fn ->
+          {:links, links} = Process.info(self(), :links)
+          send(owner, {:signer_started, self(), links})
 
-      receive do
-        :release -> RequestSeal.Custody.sign(h, base)
-      end
-    end
+          receive do
+            :release -> h.ref.()
+          end
+        end
+    }
 
     {origin, task} = Peer.start([%{}], h)
     assert {:ok, req} = request(origin, h, [], signer: signer)

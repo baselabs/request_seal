@@ -2,6 +2,16 @@
 
 ## Unreleased 2.0.0
 
+- Remove key closures from signing, verification resolver results, negotiation,
+  and JOSE wrapping. Every private-key operation takes an algorithm-bound
+  custody handle; public-key resolvers remain callbacks. Accept-Signature
+  selects from distinct-algorithm handles and refuses unavailable choices with
+  `:negotiation_unfulfillable`. Remove the `signer` and `verify_fun` types.
+- Add `RequestSeal.JOSE.decode_object/2` with an explicit byte budget and the
+  same strict duplicate, depth, width, string and integer rules as protected
+  headers and authenticated `content: :object` payloads. Decode failures return
+  only a bounded error and expose no plaintext.
+
 - Generate RSA, ECDSA, Ed25519, HMAC, AES-KW, and ECDH keys inside sensitive
   custody holders with `RequestSeal.Custody.Local.generate/2`. Add HKDF-SHA256
   parent handles and domain-separated derivation for seven families, with

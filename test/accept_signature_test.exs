@@ -110,10 +110,17 @@ defmodule RequestSeal.AcceptSignatureTest do
     # the real callback on the successful path to calibrate the instrument.
     owner = self()
 
-    signing = fn a, b ->
-      send(owner, :signed_real_bytes)
-      signer("ed25519").(a, b)
-    end
+    handle = signer("ed25519")
+
+    signing = [
+      %{
+        handle
+        | ref: fn ->
+            send(owner, :signed_real_bytes)
+            handle.ref.()
+          end
+      }
+    ]
 
     for choice <- [
           fn _ -> {:ok, %{algorithm: "ed25519", created: nil, expires: nil}} end,
@@ -137,13 +144,16 @@ defmodule RequestSeal.AcceptSignatureTest do
     assert {:ok, requests} = AcceptSignature.parse(corpus()["accept_signature"], target: :request)
 
     error(
-      AcceptSignature.fulfill(unsigned(), requests, &choose/1, signer("rsa_pss"), []),
+      AcceptSignature.fulfill(unsigned(), requests, &choose/1, [signer("rsa_pss")], []),
       :negotiation_unfulfillable,
       :negotiation
     )
 
     m = add(unsigned(), "Cache-Control", "max-age=60")
-    assert {:ok, signed} = AcceptSignature.fulfill(m, requests, &choose/1, signer("rsa_pss"), [])
+
+    assert {:ok, signed} =
+             AcceptSignature.fulfill(m, requests, &choose/1, [signer("rsa_pss")], [])
+
     assert {:ok, _} = RequestSeal.verify(signed, policy(), label: "sig1")
 
     for choice <- [
@@ -152,7 +162,7 @@ defmodule RequestSeal.AcceptSignatureTest do
           fn _ -> {:ok, %{algorithm: "ed25519", created: nil, expires: nil}} end
         ] do
       error(
-        AcceptSignature.fulfill(m, requests, choice, signer("rsa_pss"), []),
+        AcceptSignature.fulfill(m, requests, choice, [signer("rsa_pss")], []),
         :negotiation_unfulfillable,
         :negotiation
       )
@@ -166,14 +176,14 @@ defmodule RequestSeal.AcceptSignatureTest do
         m,
         with_alg,
         fn _ -> {:ok, %{algorithm: "ed25519", created: nil, expires: nil}} end,
-        signer("ed25519"),
+        [signer("ed25519")],
         []
       ),
       :negotiation_unfulfillable,
       :negotiation
     )
 
-    assert {:ok, _} = AcceptSignature.fulfill(m, with_alg, &choose/1, signer("rsa_pss"), [])
+    assert {:ok, _} = AcceptSignature.fulfill(m, with_alg, &choose/1, [signer("rsa_pss")], [])
   end
 
   test "incompatible requested algorithm rejects before entering the signing API" do
@@ -190,7 +200,7 @@ defmodule RequestSeal.AcceptSignatureTest do
       :erlang.trace(self(), true, [:call, {:tracer, tracer}])
 
       error(
-        AcceptSignature.fulfill(unsigned(), requests, chooser, signer("ed25519"), []),
+        AcceptSignature.fulfill(unsigned(), requests, chooser, [signer("ed25519")], []),
         :negotiation_unfulfillable,
         :negotiation
       )
@@ -198,7 +208,10 @@ defmodule RequestSeal.AcceptSignatureTest do
       drain_trace(tracer)
       refute_received :entered_sign
       assert {:ok, plain} = AcceptSignature.parse("s=()", target: :request)
-      assert {:ok, _} = AcceptSignature.fulfill(unsigned(), plain, chooser, signer("ed25519"), [])
+
+      assert {:ok, _} =
+               AcceptSignature.fulfill(unsigned(), plain, chooser, [signer("ed25519")], [])
+
       drain_trace(tracer)
       assert_received :entered_sign
     after
@@ -213,10 +226,11 @@ defmodule RequestSeal.AcceptSignatureTest do
     assert {:ok, requests} = AcceptSignature.parse(~s[s=("@method")], target: :request)
     chooser = fn _ -> {:ok, %{algorithm: "ed25519", created: nil, expires: nil}} end
 
-    {:ok, signed} = AcceptSignature.fulfill(unsigned(), requests, chooser, signer("ed25519"), [])
+    {:ok, signed} =
+      AcceptSignature.fulfill(unsigned(), requests, chooser, [signer("ed25519")], [])
 
     assert {:error, %{reason: :negotiation_unfulfillable, detail: :label_in_use}} =
-             AcceptSignature.fulfill(signed, requests, chooser, signer("ed25519"), [])
+             AcceptSignature.fulfill(signed, requests, chooser, [signer("ed25519")], [])
   end
 
   test "request component serialization preserves parameters and order changes" do
@@ -252,7 +266,7 @@ defmodule RequestSeal.AcceptSignatureTest do
     end
 
     assert {:ok, m} =
-             AcceptSignature.fulfill(unsigned(), requests, chooser, signer("ed25519"), [])
+             AcceptSignature.fulfill(unsigned(), requests, chooser, [signer("ed25519")], [])
 
     inputs = Enum.filter(m.fields, &(String.downcase(&1.name) == "signature-input"))
 
@@ -291,6 +305,50 @@ defmodule RequestSeal.AcceptSignatureTest do
     assert_receive {:trace_delivered, _, ^ref}
     send(tracer, {:flush, ref})
     assert_receive {:flushed, ^ref}
+  end
+
+  test "chooser selects its matching handle without a requested alg and cannot widen the request" do
+    assert {:ok, requests} = AcceptSignature.parse(~s[s=("@method")], target: :request)
+    owner = self()
+
+    chooser = fn _ ->
+      send(owner, :choice)
+      {:ok, %{algorithm: "ed25519", created: nil, expires: nil}}
+    end
+
+    handles = [signer("rsa_pss"), signer("ed25519")]
+    assert {:ok, signed} = AcceptSignature.fulfill(unsigned(), requests, chooser, handles, [])
+    assert_received :choice
+    refute_received :choice
+
+    assert {:ok, _} =
+             RequestSeal.verify(
+               signed,
+               policy(
+                 key_resolver: fn _ -> {:ok, %{algorithm: "ed25519", key: public("ed25519")}} end
+               ),
+               label: "s"
+             )
+
+    error(
+      AcceptSignature.fulfill(unsigned(), requests, chooser, [signer("rsa_pss")], []),
+      :negotiation_unfulfillable,
+      :negotiation
+    )
+
+    for invalid <- [
+          [],
+          [signer("ed25519"), signer("ed25519")],
+          [fn _, _ -> :error end],
+          [nil],
+          signer("ed25519")
+        ] do
+      error(
+        AcceptSignature.fulfill(unsigned(), requests, chooser, invalid, []),
+        :invalid_options,
+        :input
+      )
+    end
   end
 
   defp choose(_),

@@ -21,6 +21,21 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
     def identity(_), do: %RequestSeal.KeyIdentity{kind: :unknown}
   end
 
+  defmodule TransformCustodian do
+    @moduledoc false
+    @behaviour Custody
+    @impl true
+    def sign(ref, _, base, _) do
+      {local, transform} = ref.()
+      transform.(Custody.sign(local, base))
+    end
+
+    @impl true
+    def public_key(_), do: {:error, :unsupported_operation}
+    @impl true
+    def identity(_), do: %RequestSeal.KeyIdentity{kind: :unknown}
+  end
+
   setup do
     # RFC 8032 Section 7.1, test 1: public independent Ed25519 seed.
     seed = Base.decode16!("9D61B19DEFFD5A60BA844AF492EC2CC44449C5697B326919703BAC031CAE7F60")
@@ -36,12 +51,19 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
     %{handle: handle, message: message, spec: spec}
   end
 
-  test "explicit handle preserves function-signer wire bytes", c do
-    assert {:ok, expected} =
-             RequestSeal.sign(c.message, c.spec, fn _, base -> Custody.sign(c.handle, base) end)
+  test "explicit handle signs the exact independently assembled base", c do
+    {:ok, expected} =
+      RequestSeal.Crypto.sign(
+        "ed25519",
+        ~s["@method": GET
+"@path": /
+"@signature-params": ("@method" "@path");alg="ed25519"],
+        {:ed25519,
+         Base.decode16!("9D61B19DEFFD5A60BA844AF492EC2CC44449C5697B326919703BAC031CAE7F60")}
+      )
 
     assert {:ok, actual} = RequestSeal.sign(c.message, c.spec, c.handle)
-    assert actual == expected
+    assert List.last(actual.fields).value == "sig=:" <> Base.encode64(expected) <> ":"
 
     assert {:ok, ^actual} =
              RequestSeal.sign(c.message, c.spec, c.handle, signing_timeout: 300_000)
@@ -178,10 +200,10 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
   # callback boundary. This makes no external conformance claim.
   defp transformed_handle(local, transform) do
     %KeyHandle{
-      custodian: RequestSeal.Signing.FunctionCustodian,
+      custodian: TransformCustodian,
       algorithm: local.algorithm,
       capabilities: [:sign],
-      ref: fn -> fn _, base -> transform.(Custody.sign(local, base)) end end
+      ref: fn -> {local, transform} end
     }
   end
 
@@ -235,18 +257,20 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
     end
   end
 
-  test "function signers still execute synchronously with their existing errors", c do
+  test "both signing forms reject key closures without invoking them", c do
     owner = self()
 
-    signer = fn _, base ->
-      assert self() == owner
-      Custody.sign(c.handle, base)
+    signer = fn _, _ ->
+      send(owner, :forbidden_signer)
+      raise "private"
     end
 
-    assert {:ok, _} = RequestSeal.sign(c.message, c.spec, signer)
+    for spec <- [c.spec, generated_spec()] do
+      assert {:error, %Error{reason: :invalid_options, layer: :input}} =
+               RequestSeal.sign(c.message, spec, signer)
 
-    assert {:error, %Error{reason: :signer_failed}} =
-             RequestSeal.sign(c.message, c.spec, fn _, _ -> raise "private" end)
+      refute_received :forbidden_signer
+    end
   end
 
   test "generated signing specs also preserve custody errors", c do

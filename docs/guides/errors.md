@@ -211,6 +211,17 @@ An explicit commit refusal or a failed derive returns an ordinary error.
 Custody `:unavailable` is nonretryable and marks uncommitted or refused commit
 state; it differs from transport `:custodian_unavailable`.
 
+`JOSE.decode_object/2` requires exactly `max_bytes:` (1 through 1,048,576).
+Invalid options return `:invalid_options`; malformed JSON, a non-object root,
+invalid UTF-8 and floats return `:invalid_header`; duplicate names at any depth
+return `:duplicate_member`. Exceeding the byte, four-container depth, 64-entry
+width, 16,384-byte string/name or ±999,999,999,999,999 integer bound returns
+`:limit`. All are nonretryable input errors. For JWE `content: :object`, these
+same decode errors occur only after authentication and contain no plaintext.
+Key closures reject before invocation: signing and wrapping use `:invalid_options`,
+resolver key results use `:key_resolver_failed`. Accept-Signature fulfillment
+selects a matching custody handle or returns `:negotiation_unfulfillable`.
+
 ## Complete reason inventory
 
 These closed vocabularies are checked against source emissions and each error

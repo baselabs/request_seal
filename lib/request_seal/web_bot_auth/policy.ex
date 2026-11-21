@@ -60,7 +60,6 @@ defmodule RequestSeal.WebBotAuth.Policy do
           field_schemas: map()
         }
   @required [:algorithms, :agents, :cache, :freshness, :content, :replay]
-  @type signer :: RequestSeal.Policy.signer()
   @doc """
   Construct an explicit policy without invoking trust, clock, or storage.
 

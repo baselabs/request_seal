@@ -291,8 +291,7 @@ Enum.map(signed.fields, & &1.name)
 ```
 
 `signing_timeout` is 1–300,000 ms, default 5,000. `field_schemas` remains available.
-The existing arity-two function signer stays synchronous; a valid timeout option
-does not interrupt it. A handle's algorithm must equal `spec.algorithm`.
+Every signing entry point requires a handle whose algorithm equals `spec.algorithm`.
 Mismatch returns `RequestSeal.Error` with reason `:signer_algorithm_mismatch`,
 layer `:input`, and the exact message string
 `"signer algorithm does not match signature specification"`, for both the
@@ -305,7 +304,7 @@ Custody failures return `RequestSeal.Error` with reason `:signing_failed`, layer
 `:deadline_exceeded`. Malformed or excessive signing output uses custody
 `:invalid_signing_output`; malformed custody errors use `:custodian_failure`.
 Both signing forms return these in `source` with outer reason `:signing_failed`.
-Function errors in the explicit form retain the existing `:signer_failed` reason.
+Key closures reject with `:invalid_options` before invocation.
 
 Owner terminate reports keep configured key names and bounded statuses. Both
 terminate and crash reports use bounded atom reasons; private reason terms are

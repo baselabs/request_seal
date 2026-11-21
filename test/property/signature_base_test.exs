@@ -98,7 +98,7 @@ defmodule RequestSeal.SignatureBasePropertyTest do
       for {algorithm, material, public} <- keys do
         assert {:ok, signature} = Crypto.sign(algorithm, base, material)
         assert :ok = Crypto.verify(algorithm, base, signature, public)
-        signer = fn alg, bytes -> Crypto.sign(alg, bytes, material) end
+        signer = RequestSeal.JOSEVectors.local(algorithm, material)
 
         assert {:ok, signed} =
                  RequestSeal.sign(

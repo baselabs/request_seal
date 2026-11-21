@@ -1,6 +1,6 @@
 --- a/lib/request_seal/authentication.ex
 +++ b/lib/request_seal/authentication.ex
-@@ -435,7 +435,7 @@
+@@ -431,7 +431,7 @@
    defp verify_bytes(algorithm, bytes, signature, key) do
      case Crypto.verify(algorithm, bytes, signature, key) do
        :ok -> :ok

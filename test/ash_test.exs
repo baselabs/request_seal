@@ -4,7 +4,7 @@ defmodule RequestSeal.AshTest do
 
   alias RequestSeal.{
     Body,
-    Crypto,
+    Custody,
     Error,
     FieldOccurrence,
     Message,
@@ -522,7 +522,7 @@ defmodule RequestSeal.AshTest do
         trailers: :unavailable
       })
 
-    key = public_key(vector["key"])
+    key = verification_key(vector["key"])
 
     {:ok, policy} =
       Policy.new(%{
@@ -554,16 +554,15 @@ defmodule RequestSeal.AshTest do
     field
   end
 
-  defp public_key("hmac") do
+  defp verification_key("hmac") do
     secret =
       File.read!(Path.join(@fixtures, "crypto/hmac.txt")) |> String.trim() |> Base.decode64!()
 
-    fn algorithm, bytes, signature ->
-      Crypto.verify(algorithm, bytes, signature, {:hmac, secret})
-    end
+    {:ok, key} = Custody.Local.new("hmac-sha256", {:hmac, secret})
+    key
   end
 
-  defp public_key(name) do
+  defp verification_key(name) do
     {:ok, key} =
       PublicKey.import(File.read!(Path.join(@fixtures, "crypto/" <> name <> "_public.pem")), :pem)
 

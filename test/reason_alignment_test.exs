@@ -17,7 +17,7 @@ defmodule RequestSeal.ReasonAlignmentTest do
 
   test "a header that is not a list of pairs is an invalid header, not a limit", c do
     kek = {:aes, :crypto.strong_rand_bytes(32)}
-    wrap = fn alg, cek -> RequestSeal.JOSE.KeyManagement.wrap(alg, cek, %{}, kek) end
+    wrap = RequestSeal.JOSEVectors.local({:jwe, "A256KW"}, kek)
 
     for header <- [%{"alg" => "EdDSA"}, nil, "alg", {"alg", "EdDSA"}] do
       assert {:error, %RequestSeal.JOSE.Error{reason: :invalid_header}} =
@@ -99,7 +99,7 @@ defmodule RequestSeal.ReasonAlignmentTest do
   test "a Web Bot Auth signing agent URL the caller supplies is checked as an option", c do
     {:ok, key} = RequestSeal.Custody.public_key(c.http)
     {:ok, message} = RequestSeal.Message.request("GET", "https://docs.example.org/", [], nil)
-    signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(c.http, bytes) end
+    signer = c.http
 
     for location <- ["http://crawler.example", "https://user@crawler.example", "crawler.example"] do
       spec = %{

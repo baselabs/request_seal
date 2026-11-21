@@ -1,6 +1,6 @@
 defmodule RequestSeal.RetentionTest do
   use ExUnit.Case, async: true
-  alias RequestSeal.{Crypto, Message, Policy, PublicKey, Replay, WebBotAuth}
+  alias RequestSeal.{Message, Policy, PublicKey, Replay, WebBotAuth}
   alias RequestSeal.Replay.{Claim, ETS, Store}
   @max 253_402_300_799
 
@@ -157,10 +157,11 @@ defmodule RequestSeal.RetentionTest do
     material = {:ed25519, elem(:public_key.pem_entry_decode(entry), 2)}
 
     {:ok, signed} =
-      RequestSeal.sign(message, %{label: "s", algorithm: "ed25519", signature_input: input}, fn a,
-                                                                                                b ->
-        Crypto.sign(a, b, material)
-      end)
+      RequestSeal.sign(
+        message,
+        %{label: "s", algorithm: "ed25519", signature_input: input},
+        RequestSeal.JOSEVectors.local("ed25519", material)
+      )
 
     signed
   end

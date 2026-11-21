@@ -1,5 +1,9 @@
 # 0004 — Keep key custody external and discovery controlled
 
+The 1.x key-function alternatives recorded here are superseded by
+[ADR 0027](0027-key-handles-replace-closures.md). In 2.0, key operations use
+algorithm-bound handles; resolver callbacks still select keys.
+
 ## Context
 
 RequestSeal must support local keys, HSM/KMS-style custody, JWK/JWKS, WBA directories, rotation, and revocation without requiring a network or key store. Sender-provided identifiers and URLs are attacker-controlled until a profile-valid trust association is established. [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517.html), [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html) define JWK sets, thumbprints, and OKP keys.
@@ -7,8 +11,7 @@ RequestSeal must support local keys, HSM/KMS-style custody, JWK/JWKS, WBA direct
 ## Decision
 
 Opaque caller-owned handles keep private key material within the selected custodian.
-Generic asymmetric verification resolves public keys; HMAC uses a custody-backed
-verification function and proves shared-secret possession without unique signer attribution.
+Generic asymmetric verification resolves public keys; HMAC resolves a `:verify` custody handle and proves shared-secret possession without unique signer attribution.
 TLS custody remains with the caller; CEKs and IVs never become public metadata.
 Discovery requires explicit profile/caller policy, HTTPS, trusted sources, vetted addresses,
 bounded redirects, response/decompression/key limits, deadlines, cancellation, and freshness.
@@ -65,8 +68,8 @@ Errors follow `RequestSeal.Error` and the key-custody guide; no application auth
 Optional `wrap/4` supports AES Key Wrap ([ADR 0019](0019-aes-key-wrap-custody.md));
 `release/2` supports `Custody.release/1`, and [ADR 0018](0018-ecdh-es-key-agreement.md)
 defines ECDH-ES over P-256, P-384, and X25519.
-JWE accepts algorithm-matching unwrap handles and raw-key unwrap callbacks.
-[ADR 0027](0027-key-handles-replace-closures.md) proposes handle-only key resolution;
+JWE accepts algorithm-matching unwrap handles.
+[ADR 0027](0027-key-handles-replace-closures.md) requires handle-only key resolution;
 [ADR 0026](0026-custody-key-generation-and-derivation.md) defines generation inside
 sensitive holders and atomic derivation with caller-owned cleanup capabilities.
 Public verification selects one label ([ADR 0025](0025-single-label-public-verification.md)).

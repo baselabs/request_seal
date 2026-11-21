@@ -3,25 +3,25 @@
     "expression": "signing_reason",
     "file": "lib/request_seal/accept_signature.ex",
     "kind": "core",
-    "line": 280,
+    "line": 283,
     "allows": [],
-    "comment": "lib/request_seal/accept_signature.ex:280: A matched core error reason is retained only as detail on negotiation_unfulfillable."
+    "comment": "lib/request_seal/accept_signature.ex:283: A matched core error reason is retained only as detail on negotiation_unfulfillable."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/accept_signature.ex",
     "kind": "core",
-    "line": 376,
+    "line": 385,
     "allows": [],
-    "comment": "lib/request_seal/accept_signature.ex:376: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/accept_signature.ex:385: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/accept_signature.ex",
     "kind": "core",
-    "line": 382,
+    "line": 391,
     "allows": [],
-    "comment": "lib/request_seal/accept_signature.ex:382: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/accept_signature.ex:391: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
@@ -51,50 +51,58 @@
     "expression": "invalid",
     "file": "lib/request_seal/authentication.ex",
     "kind": "core",
-    "line": 337,
+    "line": 330,
     "allows": [
       "invalid_signature_field",
       "invalid_signature_input"
     ],
-    "comment": "lib/request_seal/authentication.ex:337: dictionary_entries/4 line 315 selects the invalid reason from the signature field name."
+    "comment": "lib/request_seal/authentication.ex:330: dictionary_entries/4 line 315 selects the invalid reason from the signature field name."
   },
   {
     "expression": "missing",
     "file": "lib/request_seal/authentication.ex",
     "kind": "core",
-    "line": 344,
+    "line": 337,
     "allows": [
       "missing_signature",
       "missing_signature_input"
     ],
-    "comment": "lib/request_seal/authentication.ex:344: dictionary_entries/4 line 314 selects the missing reason from the signature field name."
+    "comment": "lib/request_seal/authentication.ex:337: dictionary_entries/4 line 314 selects the missing reason from the signature field name."
   },
   {
     "expression": "invalid",
     "file": "lib/request_seal/authentication.ex",
     "kind": "core",
-    "line": 357,
+    "line": 350,
     "allows": [
       "invalid_signature_field",
       "invalid_signature_input"
     ],
-    "comment": "lib/request_seal/authentication.ex:357: dictionary_entries/4 line 315 selects the invalid reason from the signature field name."
+    "comment": "lib/request_seal/authentication.ex:350: dictionary_entries/4 line 315 selects the invalid reason from the signature field name."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/authentication.ex",
     "kind": "core",
-    "line": 499,
+    "line": 495,
     "allows": [],
-    "comment": "lib/request_seal/authentication.ex:499: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/authentication.ex:495: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/authentication.ex",
     "kind": "core",
-    "line": 588,
+    "line": 584,
     "allows": [],
-    "comment": "lib/request_seal/authentication.ex:588: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/authentication.ex:584: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+  },
+  {
+    "expression": "reason",
+    "file": "lib/request_seal/authentication.ex",
+    "kind": "core",
+    "line": 586,
+    "allows": [],
+    "comment": "lib/request_seal/authentication.ex:586: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
@@ -108,17 +116,9 @@
     "expression": "reason",
     "file": "lib/request_seal/authentication.ex",
     "kind": "core",
-    "line": 594,
+    "line": 609,
     "allows": [],
-    "comment": "lib/request_seal/authentication.ex:594: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
-  },
-  {
-    "expression": "reason",
-    "file": "lib/request_seal/authentication.ex",
-    "kind": "core",
-    "line": 613,
-    "allows": [],
-    "comment": "lib/request_seal/authentication.ex:613: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/authentication.ex:609: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
@@ -342,9 +342,9 @@
     "expression": "error.reason",
     "file": "lib/request_seal/jose/jwe.ex",
     "kind": "jose",
-    "line": 152,
+    "line": 148,
     "allows": [],
-    "comment": "lib/request_seal/jose/jwe.ex:152: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/jose/jwe.ex:148: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
@@ -470,73 +470,81 @@
     "expression": "reason",
     "file": "lib/request_seal/jose/support.ex",
     "kind": "jose",
-    "line": 86,
+    "line": 13,
     "allows": [],
-    "comment": "lib/request_seal/jose/support.ex:86: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/jose/support.ex:13: Forwards the closed error reason from the shared strict object decoder."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/jose/support.ex",
     "kind": "jose",
-    "line": 88,
+    "line": 21,
     "allows": [],
-    "comment": "lib/request_seal/jose/support.ex:88: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
-  },
-  {
-    "expression": "fallback",
-    "file": "lib/request_seal/jose/support.ex",
-    "kind": "jose",
-    "line": 96,
-    "allows": [],
-    "comment": "lib/request_seal/jose/support.ex:96: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/jose/support.ex:21: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/jose/support.ex",
     "kind": "jose",
-    "line": 98,
+    "line": 23,
     "allows": [],
-    "comment": "lib/request_seal/jose/support.ex:98: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/jose/support.ex:23: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "fallback",
     "file": "lib/request_seal/jose/support.ex",
     "kind": "jose",
-    "line": 103,
+    "line": 31,
     "allows": [],
-    "comment": "lib/request_seal/jose/support.ex:103: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/jose/support.ex:31: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+  },
+  {
+    "expression": "reason",
+    "file": "lib/request_seal/jose/support.ex",
+    "kind": "jose",
+    "line": 33,
+    "allows": [],
+    "comment": "lib/request_seal/jose/support.ex:33: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "fallback",
     "file": "lib/request_seal/jose/support.ex",
     "kind": "jose",
-    "line": 366,
+    "line": 38,
     "allows": [],
-    "comment": "lib/request_seal/jose/support.ex:366: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/jose/support.ex:38: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "fallback",
     "file": "lib/request_seal/jose/support.ex",
     "kind": "jose",
-    "line": 369,
+    "line": 301,
     "allows": [],
-    "comment": "lib/request_seal/jose/support.ex:369: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/jose/support.ex:301: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "fallback",
     "file": "lib/request_seal/jose/support.ex",
     "kind": "jose",
-    "line": 377,
+    "line": 304,
     "allows": [],
-    "comment": "lib/request_seal/jose/support.ex:377: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/jose/support.ex:304: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "fallback",
     "file": "lib/request_seal/jose/support.ex",
     "kind": "jose",
-    "line": 379,
+    "line": 312,
     "allows": [],
-    "comment": "lib/request_seal/jose/support.ex:379: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/jose/support.ex:312: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+  },
+  {
+    "expression": "fallback",
+    "file": "lib/request_seal/jose/support.ex",
+    "kind": "jose",
+    "line": 314,
+    "allows": [],
+    "comment": "lib/request_seal/jose/support.ex:314: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
@@ -714,9 +722,9 @@
     "expression": "reason",
     "file": "lib/request_seal/signing.ex",
     "kind": "custody",
-    "line": 408,
+    "line": 381,
     "allows": [],
-    "comment": "lib/request_seal/signing.ex:408: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/signing.ex:381: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
@@ -738,16 +746,16 @@
     "expression": "reason",
     "file": "lib/request_seal/web_bot_auth.ex",
     "kind": "core",
-    "line": 950,
+    "line": 952,
     "allows": [],
-    "comment": "lib/request_seal/web_bot_auth.ex:950: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/web_bot_auth.ex:952: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
     "file": "lib/request_seal/web_bot_auth.ex",
     "kind": "core",
-    "line": 955,
+    "line": 957,
     "allows": [],
-    "comment": "lib/request_seal/web_bot_auth.ex:955: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/web_bot_auth.ex:957: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   }
 ]

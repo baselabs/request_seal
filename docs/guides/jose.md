@@ -252,6 +252,21 @@ has only `duration` and `items` measurements, with no per-item outcome.
 ## Errors
 
 `RequestSeal.JOSE.Error` carries bounded reasons and no input text. `:invalid_signature` rejects a JWS mismatch. `:decryption_failed` covers key unwrap and AEAD failure without releasing partial plaintext. `:unexpected_member` and `:protected_mismatch` reject public context before resolution.
-`:detached_payload` rejects empty JWS payloads. `:algorithm_not_permitted`, `:invalid_options`, and `:limit` require a supported explicit contract or smaller input. `:unknown_key` and `:key_resolver_failed` come from your resolver; `Nested` adds `:content_type_mismatch` and `:nesting_depth`; a failing wrap callback is `:signer_failed`. Only `:deadline_exceeded` is retryable. Each function's documentation lists the exact reasons it can return.
+`:detached_payload` rejects empty JWS payloads. `:algorithm_not_permitted`, `:invalid_options`, and `:limit` require a supported explicit contract or smaller input. `:unknown_key` and `:key_resolver_failed` come from your resolver; `Nested` adds `:content_type_mismatch` and `:nesting_depth`; a failing custody wrap operation is `:signer_failed`. Only `:deadline_exceeded` is retryable. Each function's documentation lists the exact reasons it can return.
 
 Module docs: `RequestSeal.JOSE`, `RequestSeal.JOSE.JWS`, `RequestSeal.JOSE.JWE`, `RequestSeal.JOSE.Nested`, `RequestSeal.JOSE.KeyManagement`, `RequestSeal.JOSE.Error`.
+
+## Decode an object
+
+`RequestSeal.JOSE.decode_object(bytes, max_bytes: limit)` parses decoded JSON
+bytes as one strict UTF-8 object. It does not authenticate bytes. Use an
+explicit byte limit from 1 through 1,048,576. Duplicate members and floats
+reject, containers have at most 64 entries and four levels, strings and member
+names have at most 16,384 bytes, and integers are within
+±999,999,999,999,999. Invalid options return `:invalid_options`, malformed
+objects return `:invalid_header`, duplicate names return `:duplicate_member`,
+and exceeded bounds return `:limit`, all at layer `:input`.
+
+Set `content: :object` on a JWE decryption policy to decode after authentication.
+A successful result keeps `plaintext` and adds `object`; a decode failure
+returns only the decoder error. It applies to single and batch decryption.

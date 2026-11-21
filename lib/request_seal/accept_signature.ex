@@ -4,8 +4,8 @@ defmodule RequestSeal.AcceptSignature do
 
   A requester serializes ordered requests with `serialize/1` into an
   `Accept-Signature` field. The other party parses them with `parse/2` for its
-  own message kind and signs them with `fulfill/5`, whose chooser and signer
-  own key selection and custody. Created/expires requests are bare true;
+  own message kind and signs them with `fulfill/5`, whose chooser selects an algorithm
+  from caller-owned custody handles. Created/expires requests are bare true;
   nonce, keyid, tag, and alg are strings. Algorithms are exact HTTP registry
   tokens, never JWS selections. Unknown parameters reject. Components include
   their exact parameters; request targets cannot cover `@status` or related
@@ -13,7 +13,7 @@ defmodule RequestSeal.AcceptSignature do
 
   Limits: 16 requests, 65,536 wire bytes, and the signature-base component bounds.
   """
-  alias RequestSeal.{Crypto, Error, Message, Policy, SignatureFields}
+  alias RequestSeal.{Crypto, Error, KeyHandle, Message, Policy, SignatureFields}
   alias RequestSeal.StructuredFields, as: SF
   alias RequestSeal.StructuredFields.Value
   @parameters ~w(keyid alg created expires nonce tag)
@@ -184,8 +184,9 @@ defmodule RequestSeal.AcceptSignature do
       `{:ok, %{algorithm: algorithm, created: integer_or_nil, expires: integer_or_nil}}`
       (an HTTP registry algorithm; times from -999,999,999,999,999 through
       999,999,999,999,999) or `:error`.
-    * `signer` - arity-two function `(algorithm, base)` returning
-      `{:ok, signature_bytes}` or `{:error, term}`.
+    * `handles` - nonempty list of `RequestSeal.KeyHandle` values with distinct
+      HTTP algorithms. The chosen algorithm selects its matching handle.
+      An unavailable algorithm returns `:negotiation_unfulfillable`.
     * `opts` - `[]` or `[field_schemas: schemas]`, passed to `RequestSeal.sign/4`.
 
   ## Returns
@@ -210,11 +211,10 @@ defmodule RequestSeal.AcceptSignature do
       iex> {:ok, requests} =
       ...>   RequestSeal.AcceptSignature.parse(~s[reply=("@method" "@path");created;nonce="chat-7f3a"], target: :request)
       iex> chooser = fn _request -> {:ok, %{algorithm: "ed25519", created: 1_700_000_000, expires: nil}} end
-      iex> signer = fn "ed25519", base -> RequestSeal.Custody.sign(handle, base) end
-      iex> {:ok, signed} = RequestSeal.AcceptSignature.fulfill(message, requests, chooser, signer, [])
+      iex> {:ok, signed} = RequestSeal.AcceptSignature.fulfill(message, requests, chooser, [handle], [])
       iex> signed.fields |> hd() |> Map.fetch!(:value)
       ~s[reply=("@method" "@path");created=1700000000;nonce="chat-7f3a"]
-      iex> {:error, error} = RequestSeal.AcceptSignature.fulfill(message, requests, fn _ -> :error end, signer, [])
+      iex> {:error, error} = RequestSeal.AcceptSignature.fulfill(message, requests, fn _ -> :error end, [handle], [])
       iex> {error.reason, error.layer}
       {:negotiation_unfulfillable, :negotiation}
       iex> RequestSeal.Custody.Local.release(handle)
@@ -224,16 +224,16 @@ defmodule RequestSeal.AcceptSignature do
           Message.t(),
           [request()],
           (request() -> {:ok, map()} | :error),
-          Policy.signer(),
+          [KeyHandle.t()],
           keyword()
         ) :: {:ok, Message.t()} | {:error, Error.t()}
-  def fulfill(message, requests, chooser, signer, opts) do
+  def fulfill(message, requests, chooser, handles, opts) do
     protect(fn ->
       ensure(
         bounded_list?(opts, 0, 1) and Keyword.keyword?(opts) and
           Enum.all?(Keyword.keys(opts), &(&1 == :field_schemas)) and
           Policy.schemas?(Keyword.get(opts, :field_schemas, %{})) and is_function(chooser, 1) and
-          is_function(signer, 2),
+          handles?(handles),
         :invalid_options,
         :input
       )
@@ -252,6 +252,9 @@ defmodule RequestSeal.AcceptSignature do
               request.parameters["alg"] == choice.algorithm,
             :negotiation_unfulfillable
           )
+
+          signer = Enum.find(handles, &(&1.algorithm == choice.algorithm))
+          ensure(signer != nil, :negotiation_unfulfillable)
 
           params =
             Enum.reduce(request.parameters, %{}, fn
@@ -284,6 +287,12 @@ defmodule RequestSeal.AcceptSignature do
 
       {:ok, output}
     end)
+  end
+
+  defp handles?(handles) do
+    bounded_list?(handles, 1, 64) and Enum.all?(handles, &match?(%KeyHandle{}, &1)) and
+      Enum.all?(handles, &(&1.algorithm in Crypto.algorithms())) and
+      length(Enum.uniq_by(handles, & &1.algorithm)) == length(handles)
   end
 
   defp bounded_list?(xs, min, max), do: list_count(xs, 0, min, max)

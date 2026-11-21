@@ -1,10 +1,10 @@
 defmodule RequestSeal.SigningContractTest do
   use ExUnit.Case, async: true
-  alias RequestSeal.{Crypto, Message}
+  alias RequestSeal.Message
 
   defp signer do
     secret = :crypto.strong_rand_bytes(32)
-    fn alg, base -> Crypto.sign(alg, base, {:hmac, secret}) end
+    RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, secret})
   end
 
   defp strict(components \\ ~s[("@method")]) do
@@ -125,11 +125,11 @@ defmodule RequestSeal.SigningContractTest do
              RequestSeal.sign(message, Map.put(spec, :alg, true), handle)
   end
 
-  test "sign spec separates explicit input from core function and key handle" do
+  test "sign spec separates explicit input from generated signing with key handles" do
     Code.Typespec.fetch_specs(RequestSeal)
     |> elem(1)
     |> Enum.find(fn {name, _} -> name == {:sign, 4} end)
-    |> then(fn {_, clauses} -> assert length(clauses) == 4 end)
+    |> then(fn {_, clauses} -> assert length(clauses) == 2 end)
   end
 
   test "builder preserves URL origin while Finch follows the wire authority" do

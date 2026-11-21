@@ -1,6 +1,6 @@
 defmodule RequestSeal.ClockBoundsTest do
   use ExUnit.Case, async: false
-  alias RequestSeal.{Conformance, Crypto, Message, Replay}
+  alias RequestSeal.{Conformance, Message, Replay}
   alias RequestSeal.Discovery.{Cache, Source}
   alias RequestSeal.Custody.Context
   @max 253_402_300_799
@@ -113,7 +113,7 @@ defmodule RequestSeal.ClockBoundsTest do
     key = File.read!("test/fixtures/crypto/ed25519_private.pem")
     [entry] = :public_key.pem_decode(key)
     key = {:ed25519, elem(:public_key.pem_entry_decode(entry), 2)}
-    signer = fn a, b -> Crypto.sign(a, b, key) end
+    signer = RequestSeal.JOSEVectors.local("ed25519", key)
 
     spec = %{
       label: "s",
@@ -171,7 +171,7 @@ defmodule RequestSeal.ClockBoundsTest do
   end
 
   test "Req signing samples edge clocks on the request step without transport" do
-    signer = fn a, b -> Crypto.sign(a, b, {:hmac, String.duplicate("k", 32)}) end
+    signer = RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, String.duplicate("k", 32)})
 
     spec = %{
       label: "s",
@@ -204,7 +204,7 @@ defmodule RequestSeal.ClockBoundsTest do
 
   test "Plug response signing applies edge clocks with and without generated Date" do
     {:ok, request} = Message.request("GET", "https://example.com/", [], nil)
-    signer = fn a, b -> Crypto.sign(a, b, {:hmac, String.duplicate("k", 32)}) end
+    signer = RequestSeal.JOSEVectors.local("hmac-sha256", {:hmac, String.duplicate("k", 32)})
 
     for components <- [~s[("@status")], ~s[("@status" "date")]], now <- [0, @max, -1, @max + 1] do
       spec = %{

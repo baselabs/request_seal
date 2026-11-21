@@ -209,8 +209,8 @@ if Code.ensure_loaded?(Req) do
 
       * `:sign` (required) - the signing specification described in
         `RequestSeal.Finch.sign/4`.
-      * `:signer` (required) - a `RequestSeal.KeyHandle` or an arity-two
-        function signer, as in `RequestSeal.Finch.sign/4`.
+      * `:signer` (required) - a `RequestSeal.KeyHandle`, as in
+        `RequestSeal.Finch.sign/4`.
       * `:verify` (required) - `:none`, or a map with exactly `:policy` (a valid
         `RequestSeal.Policy`), `:label` (the response signature label), and
         `:max_stream_bytes` (a nonnegative integer bound on buffered response
@@ -344,7 +344,7 @@ if Code.ensure_loaded?(Req) do
         Signing.sign_options!(sign_options(opts))
 
         Signing.ensure(
-          is_function(opts[:signer], 2) or match?(%RequestSeal.KeyHandle{}, opts[:signer]),
+          match?(%RequestSeal.KeyHandle{}, opts[:signer]),
           :invalid_options
         )
 

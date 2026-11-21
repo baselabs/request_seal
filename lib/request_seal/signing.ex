@@ -333,7 +333,7 @@ defmodule RequestSeal.Signing do
     spec = normalize_spec!(spec)
     input = spec!(spec, mode)
     timeout = sign_options!(opts)
-    ensure(is_function(signer, 2) or match?(%KeyHandle{}, signer), :invalid_options)
+    ensure(match?(%KeyHandle{}, signer), :invalid_options)
 
     # Same closed reason as the explicit form; adapters keep :invalid_options
     # with the core error as their bounded source.
@@ -345,55 +345,28 @@ defmodule RequestSeal.Signing do
     message = content_length(message, input)
     input = %{input | parameters: parameters(spec, opts)}
 
-    base =
-      case SignatureBase.build(message, input, field_schemas: spec.field_schemas) do
-        {:ok, bytes} -> bytes
-        {:error, %{reason: :limit}} -> fail(:limit)
-        _ -> fail(:unsupported_component)
-      end
-
-    signature =
-      case invoke(signer, spec.algorithm, base, timeout) do
-        {:ok, bytes} when is_binary(bytes) -> bytes
-        {:error, %Custody.Error{} = source} -> fail(:signing_failed, source)
-      end
+    case SignatureBase.build(message, input, field_schemas: spec.field_schemas) do
+      {:ok, _bytes} -> :ok
+      {:error, %{reason: :limit}} -> fail(:limit)
+      _ -> fail(:unsupported_component)
+    end
 
     case RequestSeal.sign(
            message,
            %{label: spec.label, signature_input: input, algorithm: spec.algorithm},
-           fn _, ^base -> {:ok, signature} end,
-           field_schemas: spec.field_schemas
+           signer,
+           field_schemas: spec.field_schemas,
+           signing_timeout: timeout
          ) do
-      {:ok, signed} -> signed
-      {:error, source} -> fail(:signing_failed, source)
+      {:ok, signed} ->
+        signed
+
+      {:error, %RequestSeal.Error{reason: :signing_failed, source: %Custody.Error{} = source}} ->
+        fail(:signing_failed, source)
+
+      {:error, source} ->
+        fail(:signing_failed, source)
     end
-  end
-
-  defp invoke(%KeyHandle{} = handle, _, base, timeout),
-    do: custody_sign(handle, base, timeout)
-
-  defmodule FunctionCustodian do
-    @moduledoc false
-    @behaviour RequestSeal.Custody
-    @impl true
-    def sign(ref, algorithm, base, _context), do: ref.().(algorithm, base)
-    @impl true
-    def public_key(_), do: {:error, :unsupported_operation}
-    @impl true
-    def identity(_), do: {:error, :unsupported_operation}
-  end
-
-  defp invoke(signer, alg, base, timeout) do
-    handle = %KeyHandle{
-      custodian: FunctionCustodian,
-      algorithm: alg,
-      capabilities: [:sign],
-      ref: fn -> signer end
-    }
-
-    # Through custody_sign: the shared output bounds and the custody
-    # telemetry event apply to function signers as well as handles.
-    custody_sign(handle, base, timeout)
   end
 
   # Both HTTP signing forms share output bounds and custody error normalization.

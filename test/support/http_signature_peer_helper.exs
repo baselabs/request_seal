@@ -1,6 +1,6 @@
 defmodule RequestSeal.HTTPSignaturePeer do
   @moduledoc false
-  alias RequestSeal.{Body, Custody, Digest, FieldOccurrence, Message, Policy, TransportFacts}
+  alias RequestSeal.{Body, Digest, FieldOccurrence, Message, Policy, TransportFacts}
   @body ~s[{"hello": "world"}]
   @components ~s[("@method" "@target-uri" "@authority" "@query-param";name="param" "accept" "content-digest" "content-length")]
   @response_components ~s[("@status" "content-digest" "@method";req "@target-uri";req)]
@@ -33,7 +33,7 @@ defmodule RequestSeal.HTTPSignaturePeer do
           {:ok,
            %{
              algorithm: "hmac-sha256",
-             key: fn _, base, sig -> Custody.verify(handle, base, sig) end
+             key: handle
            }}
         end,
         freshness: :not_evaluated,
@@ -207,7 +207,7 @@ defmodule RequestSeal.HTTPSignaturePeer do
       RequestSeal.sign(
         response,
         %{label: "res", signature_input: components, algorithm: "hmac-sha256"},
-        fn _, base -> Custody.sign(handle, base) end
+        handle
       )
 
     fields = if Map.get(action, :unsigned, false), do: response.fields, else: signed.fields

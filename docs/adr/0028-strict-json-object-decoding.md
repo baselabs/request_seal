@@ -1,4 +1,4 @@
-# 0028 — Proposed: Decode JSON objects strictly and only after authentication
+# 0028 — Accepted: Decode JSON objects strictly and only after authentication
 
 ## Context
 
@@ -19,4 +19,4 @@ even when decoding fails.
 
 Header parsing and object payloads share one set of bounds, and the corpus carries the
 boundary cases. Payloads larger than the bounds use binary content and the application's
-own decoder. This record stays Proposed until the change lands on the main branch.
+own decoder. This decision is accepted for the 2.0 strict object API.

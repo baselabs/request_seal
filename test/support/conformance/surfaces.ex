@@ -37,6 +37,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     "key_management.aes_kw/v1" => :aes_kw,
     "key_management.ecdh_kdf/v1" => :ecdh_kdf,
     "key_management.agree/v1" => :agree,
+    "jose.decode_object/v1" => :decode_object,
     "jws.sign" => :jws_sign,
     "jws.verify" => :jws_verify,
     "jwe.decrypt" => :jwe_decrypt,
@@ -258,17 +259,17 @@ defmodule RequestSeal.Conformance.Surfaces do
 
     cond do
       descriptor["behavior"] == "raise" ->
-        fn _ ->
-          {:ok,
-           %{algorithm: "ed25519", key: fn _, _, _ -> raise "verification callback fault" end}}
-        end
+        handle = V.local("ed25519", material(root, "ed25519"))
+        refused = %{handle | ref: fn -> raise "verification custody fault" end}
+        fn _ -> {:ok, %{algorithm: "ed25519", key: refused}} end
 
       descriptor["behavior"] == "unknown" ->
         fn _ -> :error end
 
       name == "hmac-sha256" ->
         key = material(root, name)
-        fn _ -> {:ok, %{algorithm: name, key: fn a, b, s -> Crypto.verify(a, b, s, key) end}} end
+        handle = V.local(name, key)
+        fn _ -> {:ok, %{algorithm: name, key: handle}} end
 
       true ->
         key = public(root, name)
@@ -459,11 +460,12 @@ defmodule RequestSeal.Conformance.Surfaces do
 
     key = material(root, i["key"] || alg)
 
+    handle = V.local(alg, key)
+
     signer =
-      case i["signer"] do
-        "raise" -> fn _, _ -> raise "signing callback fault" end
-        _ -> fn a, b -> Crypto.sign(a, b, key) end
-      end
+      if i["signer"] == "raise",
+        do: %{handle | ref: fn -> raise "signing custody fault" end},
+        else: handle
 
     with {:ok, signed} <- RequestSeal.sign(m, spec, signer, opts) do
       if c["class"] == "byte_exact" do
@@ -472,7 +474,7 @@ defmodule RequestSeal.Conformance.Surfaces do
       else
         pk =
           if alg == "hmac-sha256",
-            do: fn a, b, s -> Crypto.verify(a, b, s, key) end,
+            do: handle,
             else: public(root, alg)
 
         {:ok, p} =
@@ -566,6 +568,25 @@ defmodule RequestSeal.Conformance.Surfaces do
          {:ok, thumbprint} <- PublicKey.thumbprint(key),
          do: {:ok, %{"valid" => true, "public" => %{"thumbprint" => thumbprint}}}
   end
+
+  def decode_object(root, c) do
+    i = c["inputs"]
+
+    with {:ok, object} <-
+           RequestSeal.JOSE.decode_object(C.bytes(C.load(root, i["bytes"])),
+             max_bytes: C.int(i["max_bytes"])
+           ) do
+      {:ok, %{"object" => object_value(object)}}
+    end
+  end
+
+  defp object_value(v) when is_integer(v), do: C.number(v)
+
+  defp object_value(v) when is_map(v),
+    do: Map.new(v, fn {k, value} -> {k, object_value(value)} end)
+
+  defp object_value(v) when is_list(v), do: Enum.map(v, &object_value/1)
+  defp object_value(v), do: v
 
   def jws_sign(root, c) do
     i = c["inputs"]
@@ -1286,10 +1307,11 @@ defmodule RequestSeal.Conformance.Surfaces do
         material = material(root, "ed25519")
 
         {:ok, m} =
-          RequestSeal.sign(m, %{label: "s", algorithm: "ed25519", signature_input: input}, fn a,
-                                                                                              b ->
-            Crypto.sign(a, b, material)
-          end)
+          RequestSeal.sign(
+            m,
+            %{label: "s", algorithm: "ed25519", signature_input: input},
+            V.local("ed25519", material)
+          )
 
         replay = %{
           identifier: :nonce,

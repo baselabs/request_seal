@@ -10,7 +10,7 @@ defmodule RequestSeal.Crypto do
   This low-level boundary returns only signature bytes or mathematical validity.
   It does not establish trust, identity, policy, or authorization. A custodian calls
   it inside its secret boundary; private material is never stored in a public key,
-  message, or result. Caller-owned signing functions connect these primitives
+  message, or result. Caller-owned custody implementations connect these primitives
   to `RequestSeal.sign/4`.
 
   Select an exact identifier from `algorithms/0`, or explicitly select a supported

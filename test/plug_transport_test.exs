@@ -588,7 +588,7 @@ defmodule RequestSeal.PlugTransportTest do
           algorithm: "ed25519",
           signature_input: ~s[("content-digest";tr);keyid="test-key-ed25519"]
         },
-        fn _, base -> RequestSeal.Custody.sign(h, base) end
+        h
       )
 
     # Locally constructed trailer signature over real retained bytes; not an external conformance claim.

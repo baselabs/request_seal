@@ -8,78 +8,13 @@ defmodule RequestSeal.JOSE.Support do
   @jwe @encrypt ++ ~w(A128GCMKW A256GCMKW dir)
   @enc ~w(A128GCM A256GCM)
   def json_object(bytes) do
-    ensure(byte_size(bytes) <= 16_384, :limit)
-    depth(bytes, 0, false, false)
-
-    decoders = %{
-      null: nil,
-      object_push: fn k, v, acc ->
-        ensure(length(acc) < 64, :limit)
-        ensure(not List.keymember?(acc, k, 0), :duplicate_member)
-        [{k, v} | acc]
-      end,
-      array_push: fn v, acc ->
-        ensure(length(acc) < 64, :limit)
-        [v | acc]
-      end
-    }
-
-    {h, _, rest} = :json.decode(bytes, nil, decoders)
-    ensure(json_whitespace?(rest) and is_map(h), :invalid_header)
-    tree(h)
-    h
-  rescue
-    _ -> fail(:invalid_header)
+    case RequestSeal.JOSE.JWE.Codec.object(bytes, 16_384) do
+      {:ok, object} -> object
+      {:error, %Error{reason: reason, layer: layer}} -> fail(reason, layer)
+    end
   end
 
-  defp json_whitespace?(<<>>), do: true
-
-  defp json_whitespace?(<<b, rest::binary>>) when b in [32, 9, 10, 13],
-    do: json_whitespace?(rest)
-
-  defp json_whitespace?(_), do: false
-
-  def tree(v) when is_map(v) do
-    ensure(not is_struct(v) and map_size(v) <= 64, :limit)
-
-    Enum.each(v, fn {k, x} ->
-      ensure(is_binary(k), :invalid_header)
-      ensure(byte_size(k) <= 16_384, :limit)
-      tree(x)
-    end)
-  end
-
-  def tree(v) when is_list(v) do
-    ensure(length(v) <= 64, :limit)
-    Enum.each(v, &tree/1)
-  end
-
-  def tree(v) when is_integer(v),
-    do: ensure(v in -999_999_999_999_999..999_999_999_999_999, :limit)
-
-  def tree(v) when is_binary(v) do
-    ensure(String.valid?(v), :invalid_header)
-    ensure(byte_size(v) <= 16_384, :limit)
-  end
-
-  def tree(v) when v in [nil, true, false], do: :ok
-  def tree(_), do: fail(:invalid_header)
-  defp depth(<<>>, d, string, _), do: ensure(d == 0 and not string, :invalid_header)
-  defp depth(<<_, r::binary>>, d, true, true), do: depth(r, d, true, false)
-  defp depth(<<92, r::binary>>, d, true, false), do: depth(r, d, true, true)
-  defp depth(<<34, r::binary>>, d, s, false), do: depth(r, d, not s, false)
-
-  defp depth(<<b, r::binary>>, d, false, false) when b in [123, 91] do
-    ensure(d < 4, :limit)
-    depth(r, d + 1, false, false)
-  end
-
-  defp depth(<<b, r::binary>>, d, false, false) when b in [125, 93] do
-    ensure(d > 0, :invalid_header)
-    depth(r, d - 1, false, false)
-  end
-
-  defp depth(<<_, r::binary>>, d, s, e), do: depth(r, d, s, e)
+  def tree(value), do: RequestSeal.JOSE.JWE.Codec.tree(value)
 
   @spec ensure(term(), term(), atom()) :: :ok | no_return()
   def ensure(true, _, _), do: :ok
@@ -396,39 +331,8 @@ defmodule RequestSeal.JOSE.Support do
     end
   end
 
-  defmodule FunctionCustodian do
-    @moduledoc false
-    @behaviour RequestSeal.Custody
-    @impl true
-    def sign(ref, alg, bytes, _context) do
-      Process.flag(:sensitive, true)
-      ref.().(alg, bytes)
-    end
-
-    @impl true
-    def public_key(_), do: {:error, :unsupported_operation}
-    @impl true
-    def identity(_), do: {:error, :unsupported_operation}
-  end
-
-  def sign(signer, alg, bytes, timeout) do
-    handle =
-      case signer do
-        %KeyHandle{} = h ->
-          ensure(h.algorithm == {:jws, alg}, :algorithm_mismatch, :key)
-          h
-
-        fun when is_function(fun, 2) ->
-          %KeyHandle{
-            custodian: FunctionCustodian,
-            algorithm: {:jws, alg},
-            ref: fn -> fun end,
-            capabilities: [:sign]
-          }
-
-        _ ->
-          fail(:invalid_options)
-      end
+  def sign(%KeyHandle{} = handle, alg, bytes, timeout) do
+    ensure(handle.algorithm == {:jws, alg}, :algorithm_mismatch, :key)
 
     case Custody.sign(handle, bytes, timeout: timeout) do
       {:ok, signature} -> signature
@@ -436,4 +340,6 @@ defmodule RequestSeal.JOSE.Support do
       _ -> fail(:signer_failed, :crypto)
     end
   end
+
+  def sign(_, _, _, _), do: fail(:invalid_options)
 end

@@ -3,7 +3,7 @@ defmodule RequestSeal.JOSE.JWE do
   Compact RFC 7516 encryption with explicitly pinned algorithms and AES GCM.
 
   `encrypt/4` generates a fresh content-encryption key (CEK) and IV and hands the
-  CEK to an RSA public key, AES-KW handle, or caller wrapper. ECDH-ES instead
+  CEK to an RSA public key or AES-KW handle. ECDH-ES instead
   agrees a fresh CEK with a public recipient, adding its public ephemeral key;
   `decrypt/2` authenticates
   and decrypts under an explicit policy. Key management is `RSA-OAEP-256`,
@@ -72,10 +72,6 @@ defmodule RequestSeal.JOSE.JWE do
       * a `RequestSeal.KeyHandle` binding `{:jwe, "A128KW"}` or
         `{:jwe, "A256KW"}` and granting `:wrap`. Custody wraps a copy of the
         generated CEK and returns no header additions.
-      * an arity-two function receiving `(wire_algorithm, generated_cek_bytes)`
-        and returning `{:ok, %{encrypted_key: bytes, header: %{}}}`. This
-        callback form is refused for ECDH-ES before key work and never
-        receives an agreed CEK.
     * `opts` - keyword list.
 
   ## Options
@@ -99,7 +95,7 @@ defmodule RequestSeal.JOSE.JWE do
       `:algorithm_mismatch` (public key unusable for `alg`), `:invalid_base64`,
       `:invalid_iv`, `:invalid_tag` (malformed `iv`/`tag` additions),
       `:decryption_failed` (encrypted key with the wrong width for `alg`),
-      `:entropy_failure`, `:signer_failed` (wrapper error, exception, or invalid
+      `:entropy_failure`, `:signer_failed` (custody error, exception, or invalid
       result; invalid public key), and `:deadline_exceeded` (the only retryable
       reason). This function has no key resolver and does not return
       `:key_resolver_failed`. Meanings: `RequestSeal.JOSE.Error`.
@@ -115,7 +111,7 @@ defmodule RequestSeal.JOSE.JWE do
       iex> RequestSeal.Custody.release(handle)
       :ok
   """
-  @spec encrypt(JOSE.header(), binary(), PublicKey.t() | KeyHandle.t() | function(), keyword()) ::
+  @spec encrypt(JOSE.header(), binary(), PublicKey.t() | KeyHandle.t(), keyword()) ::
           {:ok, binary()} | {:error, JOSE.Error.t()}
   def encrypt(header, plaintext, recipient, opts \\ []) do
     safe(fn ->
@@ -204,9 +200,6 @@ defmodule RequestSeal.JOSE.JWE do
             _ ->
               fail(:signer_failed, :crypto)
           end
-
-        fun when is_function(fun, 2) ->
-          callback(fn -> fun.(alg, cek) end, :signer_failed, :crypto)
 
         _ ->
           fail(:invalid_options)

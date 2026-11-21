@@ -365,7 +365,7 @@ Uses `message`, `key`, and `handle` from Hello world. Web Bot Auth identifies si
 
 ```elixir
 {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
-signer = fn "ed25519", bytes -> RequestSeal.Custody.sign(handle, bytes) end
+signer = handle
 now = System.system_time(:second)
 
 {:ok, agent_request} =
