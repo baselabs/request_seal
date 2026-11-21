@@ -1,6 +1,6 @@
 defmodule RequestSeal.JWEOpenOraclesTest do
   use ExUnit.Case, async: false
-  alias RequestSeal.JOSE.JWE.{Bounds, Coordinator, Guard, Open, Worker}
+  alias RequestSeal.JOSE.JWE.{Bounds, Coordinator, Guard, Open, Result, Worker}
   alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
   @after_compile Runtime
   @moduletag timeout: 600_000
@@ -256,7 +256,7 @@ defmodule RequestSeal.JWEOpenOraclesTest do
         # Cover instruments the actual worker BEAM inside this isolated peer;
         # its execution counters need no change to the production sensitive flag.
         {:ok, Worker} = :cover.compile_beam(Worker)
-        s = Runtime.start(n, :custody)
+        s = Runtime.start(n, :custody, near_cap: true)
         :erlang.trace_pattern({Coordinator, :result_batch, 2}, true, [:local])
 
         try do
@@ -327,6 +327,64 @@ defmodule RequestSeal.JWEOpenOraclesTest do
       end,
       2
     )
+  end
+
+  test "compacted worker phases preserve every result field and ordered rejections" do
+    Runtime.with_peer(fn ->
+      # Independent RFC 7516 bytes cover reconstruction without reserializing
+      # the protected segment or changing the published plaintext.
+      v = RequestSeal.JOSEVectors.fixture("rfc7516.json")
+      p = RequestSeal.JOSEVectors.jwe_policy(v["key"], "RSA-OAEP", "A256GCM")
+      [protected | _] = String.split(v["compact"], ".")
+
+      assert RequestSeal.JOSE.JWE.decrypt(v["compact"], p) ==
+               {:ok,
+                %Result{
+                  algorithm: "RSA-OAEP",
+                  encryption: "A256GCM",
+                  header: %{"alg" => "RSA-OAEP", "enc" => "A256GCM"},
+                  protected: protected,
+                  plaintext: v["plaintext"],
+                  object: nil
+                }}
+
+      {handle, _} = Runtime.real_key()
+
+      try do
+        expected = Runtime.near_cap()
+        header = [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"pad", expected["pad"]}]
+        plaintext = ~s({"nested":[null,true,{"text":"value"}],"number":-17})
+        {:ok, token} = RequestSeal.JOSE.JWE.encrypt(header, plaintext, handle)
+        [protected, ek, iv, ct, tag] = String.split(token, ".")
+        <<first, rest::binary>> = RequestSeal.JOSEVectors.b64(tag)
+        changed = RequestSeal.JOSEVectors.enc(<<Bitwise.bxor(first, 1), rest::binary>>)
+        tampered = Enum.join([protected, ek, iv, ct, changed], ".")
+        p = Runtime.policy(handle, %{content: :object})
+
+        assert {:ok, [{:ok, first}, {:error, error}, {:ok, last}]} =
+                 RequestSeal.JOSE.JWE.decrypt_many(
+                   for(
+                     bytes <- [token, tampered, token],
+                     do: %{token: bytes, expected: expected}
+                   ),
+                   p
+                 )
+
+        assert first == %Result{
+                 algorithm: "A256KW",
+                 encryption: "A256GCM",
+                 header: Map.new(header),
+                 protected: protected,
+                 plaintext: plaintext,
+                 object: %{"nested" => [nil, true, %{"text" => "value"}], "number" => -17}
+               }
+
+        assert last == first
+        assert error.reason == :decryption_failed and error.layer == :crypto
+      after
+        RequestSeal.Custody.release(handle)
+      end
+    end)
   end
 
   test "oracle 4 guard heap stays constant with queued notices after GC" do

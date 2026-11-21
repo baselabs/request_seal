@@ -257,6 +257,10 @@ defmodule RequestSeal.Test.JWETeardownGate do
   # Verify lanes call this same driver, including its trace pattern, policy,
   # near-cap inputs, placement, timestamped ends and independent collection cap.
   def sample(trigger, topology) do
+    JWEWorkerDiagnostics.with_samples(fn -> sample_positions(trigger, topology) end)
+  end
+
+  defp sample_positions(trigger, topology) do
     :erlang.trace_pattern({Coordinator, :resolution_end, 2}, [{:_, [], [{:return_trace}]}], [
       :local
     ])
@@ -1051,6 +1055,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
   defp aead_unit do
     key = :crypto.strong_rand_bytes(32)
     iv = :crypto.strong_rand_bytes(12)
+    protected = Base.url_encode64(~s({"alg":"dir","enc":"A256GCM"}), padding: false)
 
     {ct, tag} =
       :crypto.crypto_one_time_aead(
@@ -1058,7 +1063,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         key,
         iv,
         :binary.copy("x", 1_048_576),
-        "",
+        protected,
         16,
         true
       )
@@ -1067,11 +1072,10 @@ defmodule RequestSeal.Test.JWETeardownGate do
       enc: "A256GCM",
       iv: iv,
       ct: ct,
-      protected: "",
+      protected: protected,
       tag: tag,
       width_valid: true,
-      alg: "dir",
-      h: %{}
+      alg: "dir"
     }
 
     observer = self()
@@ -1108,7 +1112,141 @@ end
 # GC totals use a VM-wide interval, never an invented per-worker attribution.
 defmodule RequestSeal.Test.JWEWorkerDiagnostics do
   @moduledoc false
-  alias RequestSeal.JOSE.JWE.Bounds
+  alias RequestSeal.JOSE.JWE.{Bounds, Worker}
+
+  # Sensitive workers suppress argument traces and state inspection. In the
+  # isolated test peer only, add one admission hook and a receive clause that
+  # answers an explicit pre-trigger request with sizes, never term contents.
+  # There is no periodic probe and no size walk during measured teardown.
+  def with_samples(fun) do
+    {Worker, original, path} = :code.get_object_code(Worker)
+
+    {:ok, {Worker, [abstract_code: {:raw_abstract_v1, forms}]}} =
+      :beam_lib.chunks(original, [:abstract_code])
+
+    forms = Enum.map(forms, &instrument/1)
+    {:ok, Worker, binary, _} = :compile.forms(forms, [:binary, :debug_info, :return])
+    {:module, Worker} = :code.load_binary(Worker, path, binary)
+    Process.put({__MODULE__, :enabled}, true)
+
+    try do
+      fun.()
+    after
+      Process.delete({__MODULE__, :enabled})
+      :code.purge(Worker)
+      {:module, Worker} = :code.load_binary(Worker, path, original)
+      :code.purge(Worker)
+    end
+  end
+
+  defp instrument({:function, a, :run, 9, body}) do
+    {:function, a, :run, 9,
+     rewrite(body, fn
+       {:call, a, {:atom, _, :loop} = loop, [state]} ->
+         {:call, a, loop, [remote(:admitted, [state])]}
+
+       term ->
+         term
+     end)}
+  end
+
+  defp instrument({:function, a, :loop, 1, [{:clause, b, [state], guards, body}]}) do
+    caller = {:var, 0, :DiagnosticCaller}
+    ref = {:var, 0, :DiagnosticRef}
+    message = {:tuple, 0, [{:atom, 0, :jwe_position_sample}, caller, ref]}
+
+    clause =
+      {:clause, 0, [message], [],
+       [remote(:position, [state, caller, ref]), {:call, 0, {:atom, 0, :loop}, [state]}]}
+
+    body =
+      rewrite(body, fn
+        {:receive, a, clauses, timeout, after_body} ->
+          {:receive, a, [clause | clauses], timeout, after_body}
+
+        term ->
+          term
+      end)
+
+    {:function, a, :loop, 1, [{:clause, b, [state], guards, body}]}
+  end
+
+  defp instrument(form), do: form
+
+  defp rewrite(term, fun) when is_list(term), do: Enum.map(term, &rewrite(&1, fun))
+
+  defp rewrite(term, fun) when is_tuple(term),
+    do: term |> Tuple.to_list() |> Enum.map(&rewrite(&1, fun)) |> List.to_tuple() |> fun.()
+
+  defp rewrite(term, fun), do: fun.(term)
+
+  defp remote(name, args),
+    do: {:call, 0, {:remote, 0, {:atom, 0, __MODULE__}, {:atom, 0, name}}, args}
+
+  def admitted(state) do
+    Process.put({__MODULE__, :admitted}, position_sizes(state))
+    state
+  end
+
+  def position(state, caller, ref) do
+    send(
+      caller,
+      {ref, self(),
+       %{
+         admitted: Process.get({__MODULE__, :admitted}),
+         current: position_sizes(state),
+         sampled_us: Bounds.now()
+       }}
+    )
+  end
+
+  defp position_sizes(state) do
+    positions = state.positions
+
+    case :maps.next(:maps.iterator(positions)) do
+      {index, position, _} ->
+        %{
+          index: index,
+          count: map_size(positions),
+          words: sizes(position),
+          fields: fields(position),
+          token_fields: fields(position.token)
+        }
+
+      :none ->
+        :null
+    end
+  end
+
+  defp fields(map), do: Map.new(map, fn {key, value} -> {key, sizes(value)} end)
+
+  defp sizes(value) do
+    words = %{flat_words: :erts_debug.flat_size(value), shared_words: :erts_debug.size(value)}
+
+    if is_binary(value),
+      do:
+        Map.merge(words, %{
+          bytes: byte_size(value),
+          referenced_bytes: :binary.referenced_byte_size(value)
+        }),
+      else: words
+  end
+
+  defp position_sample(pid) do
+    ref = make_ref()
+    send(pid, {:jwe_position_sample, self(), ref})
+
+    receive do
+      {^ref, ^pid, sample} -> sample
+    after
+      # A queued probe must never survive setup into the measured interval.
+      # Dead workers cannot execute it; a live unresponsive worker aborts setup.
+      1_000 ->
+        if Process.alive?(pid),
+          do: raise("worker position probe did not finish before trigger"),
+          else: :null
+    end
+  end
 
   def start(s) do
     u =
@@ -1117,9 +1255,14 @@ defmodule RequestSeal.Test.JWEWorkerDiagnostics do
         _ -> nil
       end)
 
+    positions =
+      if Process.get({__MODULE__, :enabled}, false),
+        do: for({pid, :worker} <- s.pids, into: %{}, do: {pid, position_sample(pid)}),
+        else: %{}
+
     vm = vm_gc()
     workers = for {pid, :worker} <- s.pids, into: %{}, do: {pid, snapshot(pid)}
-    %{workers: workers, u: u, vm: vm}
+    %{workers: workers, u: u, vm: vm, positions: positions}
   end
 
   def collect(s, u \\ nil) do
@@ -1138,6 +1281,7 @@ defmodule RequestSeal.Test.JWEWorkerDiagnostics do
         u_snapshot: :before_trigger,
         u_snapshot_offset_us: if(at_u != nil, do: at_u.sampled_us - u, else: :null),
         before_trigger: initial || :null,
+        position_sample: Map.get(s.positions, pid, :null),
         at_end: ended || :null,
         end_snapshot: :after_teardown,
         end_observed_us: observed,

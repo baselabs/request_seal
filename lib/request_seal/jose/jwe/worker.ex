@@ -90,21 +90,27 @@ defmodule RequestSeal.JOSE.JWE.Worker do
     if map_size(map_get(:positions, s)) > 0 and Bounds.now() < map_get(:d, s) do
       receive do
         {^tag, :resolver, i, pid} ->
-          case :maps.find(i, map_get(:positions, s)) do
-            {:ok, position} ->
-              t = map_get(:token, position)
+          s =
+            case :maps.find(i, map_get(:positions, s)) do
+              {:ok, position} ->
+                t = map_get(:token, position)
 
-              request = %{
-                algorithm: map_get(:alg, t),
-                encryption: map_get(:enc, t),
-                header: map_get(:h, t)
-              }
+                request = %{
+                  algorithm: map_get(:alg, t),
+                  encryption: map_get(:enc, t),
+                  header: map_get(:h, t)
+                }
 
-              send(pid, {tag, :request, request, map_get(:key_resolver, map_get(:p, s))})
+                send(pid, {tag, :request, request, map_get(:key_resolver, map_get(:p, s))})
 
-            :error ->
-              :ok
-          end
+                # The resolver owns its request copy. Rebuild the public header
+                # from authenticated protected bytes only if this item succeeds.
+                token = :maps.remove(:h, t)
+                %{s | positions: :maps.put(i, %{position | token: token}, map_get(:positions, s))}
+
+              :error ->
+                s
+            end
 
           loop(s)
 
@@ -231,12 +237,13 @@ defmodule RequestSeal.JOSE.JWE.Worker do
         if map_get(:received, group) == count and not map_get(:sent, group) do
           members = map_get(:members, group)
           positions = map_get(:positions, s)
-          contributions = contributions(members, positions, [])
 
           handle =
             if same_handles?(members, positions, map_get(:handle, position)),
               do: map_get(:handle, position),
               else: nil
+
+          {contributions, positions} = contributions(members, positions, [])
 
           if pid != nil and Bounds.now() < u do
             send(
@@ -245,7 +252,11 @@ defmodule RequestSeal.JOSE.JWE.Worker do
             )
           end
 
-          %{s | groups: :maps.put(g, %{group | sent: true}, map_get(:groups, s))}
+          %{
+            s
+            | groups: :maps.put(g, %{group | sent: true}, map_get(:groups, s)),
+              positions: positions
+          }
         else
           %{s | groups: :maps.put(g, group, map_get(:groups, s))}
         end
@@ -262,12 +273,17 @@ defmodule RequestSeal.JOSE.JWE.Worker do
       map_get(:handle, :maps.get(i, positions)) === handle and
         same_handles?(rest, positions, handle)
 
-  defp contributions([], _, acc), do: acc
+  defp contributions([], positions, acc), do: {acc, positions}
 
   defp contributions([i | rest], positions, acc) do
     p = :maps.get(i, positions)
     t = map_get(:token, p)
     item = {i, map_get(:ek, t), map_get(:params, t), Codec.width(map_get(:enc, t)) * 8}
+    # Custody owns its contribution copy; authentication no longer needs the
+    # handle, encrypted key or key-management parameters in the range worker.
+    token = :maps.remove(:params, :maps.remove(:ek, t))
+    position = :maps.remove(:handle, %{p | token: token})
+    positions = :maps.put(i, position, positions)
     contributions(rest, positions, [{i, item, map_get(:route, p)} | acc])
   end
 
@@ -437,7 +453,7 @@ defmodule RequestSeal.JOSE.JWE.Worker do
             %Result{
               algorithm: map_get(:alg, token),
               encryption: map_get(:enc, token),
-              header: map_get(:h, token),
+              header: header(map_get(:protected, token)),
               protected: map_get(:protected, token),
               plaintext: plaintext,
               object: object
@@ -449,6 +465,11 @@ defmodule RequestSeal.JOSE.JWE.Worker do
     else
       {Codec.error(:decryption_failed, :crypto), :failed}
     end
+  end
+
+  defp header(protected) do
+    {:ok, header} = Codec.object(Codec.decode(protected), 16_384)
+    header
   end
 
   defp aead(token, prepared, delivery) do

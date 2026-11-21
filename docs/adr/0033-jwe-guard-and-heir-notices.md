@@ -197,6 +197,18 @@ are labeled without retaining their payload. These observations distinguish
 normal worker completion from a shared coordinator exit without tracing
 sensitive worker data. Custody callbacks run in the Unwrap child itself; this
 path has no nested custody runner or guardian.
+Range workers retain decoded protected headers only until sending their resolver
+requests. They rebuild a successful Result's header from the same authenticated
+protected segment, without reserializing it. Once a group contributes, its worker
+positions drop handles, encrypted keys and key-management parameters; they retain
+the original protected segment, algorithm and encryption, IV, ciphertext, tag,
+width validity, per-position fallback CEK and delivery/group routing until settlement.
+Every undelivered position still performs fallback AEAD. In isolated qualification
+peers, test-only worker instrumentation records one admitted position and one
+pre-trigger position with per-field flat and shared word sizes and binary byte and
+referenced-byte sizes. It returns sizes only, preserves sensitivity, restores the
+original worker module afterward and performs no sampling inside measured teardown.
+These observations never decide the gate verdict.
 Guard kill, owner-flip deadline calculation and finish calls, and coordinator
 range-end and post-kill-pass calls, retain arities and timestamps only. Before
 each timed placement, library-role snapshots retain queue lengths, memory and
