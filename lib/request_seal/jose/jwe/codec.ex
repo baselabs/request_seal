@@ -379,9 +379,6 @@ defmodule RequestSeal.JOSE.JWE.Codec do
 
   def admit({:error, _} = error, _, _), do: error
 
-  # Admission and successful results decode the same authenticated protected bytes.
-  def header(protected), do: object(decode(protected), 16_384)
-
   def admit({:ok, parts}, expected, p) do
     try do
       # Preflight validated this plain tree. Keep its exact JSON values through
@@ -458,6 +455,9 @@ defmodule RequestSeal.JOSE.JWE.Codec do
       :throw, {:jose_error, reason, layer} -> error(reason, layer)
     end
   end
+
+  # Admission and successful results decode the same authenticated protected bytes.
+  def header(protected), do: object(decode(protected), 16_384)
 
   defp params(alg, h) when alg in ~w(A128GCMKW A256GCMKW) do
     iv = decode(:maps.get("iv", h, nil))
