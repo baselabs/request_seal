@@ -121,7 +121,7 @@ defmodule RequestSeal.MultiSignatureSupport do
         "hmac" => "hmac-sha256"
       }[name]
 
-    RequestSeal.JOSEVectors.local(algorithm, material(name))
+    holder(algorithm, material(name))
   end
 
   def hmac(equivalence \\ "published-secret") do
@@ -201,10 +201,23 @@ defmodule RequestSeal.MultiSignatureSupport do
       RequestSeal.sign(
         m,
         %{label: label, signature_input: input, algorithm: alg},
-        RequestSeal.JOSEVectors.local(alg, material(name)),
+        holder(alg, material(name)),
         field_schemas: schemas()
       )
 
     m
+  end
+
+  # One caller-owned local holder per algorithm and material in each test process.
+  defp holder(algorithm, material) do
+    case Process.get({__MODULE__, algorithm, material}) do
+      nil ->
+        {:ok, handle} = Local.new(algorithm, material)
+        Process.put({__MODULE__, algorithm, material}, handle)
+        handle
+
+      handle ->
+        handle
+    end
   end
 end
