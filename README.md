@@ -260,6 +260,8 @@ the expected body, as the webhook script does.
 
 ```elixir
 {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
+# Share this public key with the service that verifies your requests.
+{:ok, public_key} = RequestSeal.Custody.public_key(handle)
 {:ok, apps} = Application.ensure_all_started(:req)
 {:ok, pool} = Finch.start_link(name: OutgoingFinch)
 try do

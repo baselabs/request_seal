@@ -199,6 +199,8 @@ defmodule RequestSeal.ReadmeTest do
       E.eval(
         ~S'''
         {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
+        # Share this public key with the service that verifies your requests.
+        {:ok, public_key} = RequestSeal.Custody.public_key(handle)
         {:ok, apps} = Application.ensure_all_started(:req)
         {:ok, pool} = Finch.start_link(name: OutgoingFinch)
         try do
@@ -222,8 +224,7 @@ defmodule RequestSeal.ReadmeTest do
     assert Keyword.fetch!(binding, :example_result) == 200
     assert_receive {:observed, _, {:ok, captured}, _}, 5_000
 
-    {:ok, outgoing_key} =
-      RequestSeal.PublicKey.import({:ed25519, Keyword.fetch!(binding, :_public)}, :raw)
+    outgoing_key = Keyword.fetch!(binding, :public_key)
 
     {:ok, outgoing_policy} =
       RequestSeal.Policy.new(%{
