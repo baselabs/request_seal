@@ -60,7 +60,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 
 ## Concepts in one minute
 
-- **Key handle:** an opaque reference to a key held by a custodian, such as a local holder process or an SSH agent. Private key bytes stay with the custodian. A local holder lives until you call `RequestSeal.Custody.Local.release/1` or its creator exits; the examples below leave cleanup to process exit.
+- **Key handle:** an algorithm-bound capability held by a custodian, such as a local holder process or an SSH agent. Use `Local.generate/2` for fresh keys; private operations take handles, and resolvers return public keys or handles. A local holder lives until you call `RequestSeal.Custody.Local.release/1` or its creator exits; the examples below leave cleanup to process exit.
 - **Message:** the request or response, including its exact body and ordered headers.
 - **Signing spec:** the label, algorithm, coverage, and lifetime of a signature.
 - **Covered components:** the `("@method" ...)` list is RFC 9421's syntax for which parts of the request are signed.
@@ -72,8 +72,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 Sign a request and verify it. Run this in `iex -S mix` in a project that has RequestSeal installed:
 
 ```elixir
-{_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 components = ~s[("@method" "@scheme" "@authority" "@path")]
 {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
@@ -152,8 +151,7 @@ defmodule WebhookReceiver do
 end
 
 # The sender owns the private key; the receiver gets only its public key.
-{_public, webhook_seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, webhook_handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, webhook_seed})
+{:ok, webhook_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, webhook_key} = RequestSeal.Custody.public_key(webhook_handle)
 webhook_components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]
 
@@ -261,8 +259,7 @@ receiver's trusted key pair, its covered components and digest, and a POST with
 the expected body, as the webhook script does.
 
 ```elixir
-{_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, apps} = Application.ensure_all_started(:req)
 {:ok, pool} = Finch.start_link(name: OutgoingFinch)
 try do
@@ -499,7 +496,18 @@ Here one trusted key uses one namespace. Define your own commitment for your tru
 children from an HKDF parent without exporting their material. A lost commit
 result with unconfirmed destruction returns a redacted cleanup capability;
 call `RequestSeal.Custody.cleanup/2` until destruction is confirmed. See
-[key custody](docs/guides/key-custody.md) for the supported targets and options.
+[generation and derivation](docs/guides/key-generation-and-derivation.md) for runnable lifecycle and cleanup examples.
+
+JOSE verification and decryption require explicit protected maps. JWE opens
+also require resolution and unwrap budgets within the overall timeout.
+`Custody.unwrap/3` accepts indexed batches through a sink and returns an ordered
+list of per-item outcomes; `JWE.decrypt_many/2` withholds its final list until
+completion. See [JOSE](docs/guides/jose.md) for these policies and results.
+`RequestSeal.JOSE.decode_object/2` decodes bounded JSON objects; JWE
+`content: :object` authenticates before decoding and returns no plaintext on a
+decoding error. See [strict object content](docs/guides/json-object-content.md).
+Moving an application from 1.x? [Upgrade to 2.0](docs/guides/upgrading-to-2.0.md)
+maps the changed calls, custom custody callbacks, and version and corpus pins.
 
 `RequestSeal.Telemetry` defines a versioned `:telemetry` contract: verification outcomes, replay claims and custody signing results as low-cardinality reason and layer events with durations. See the [errors guide](docs/guides/errors.md) for the events and safe logging.
 

@@ -36,8 +36,8 @@ IO.puts("Published AES key-wrap bytes recovered exactly")
 Items carry exactly `:token` and `:expected`. Expectations are public protected-header values, checked independently for each position. The first and third items use the same handle. The resolver uses the untrusted `kid` only to look up an already trusted handle; it performs no authorization or other trusted side effect.
 
 ```elixir
-{:ok, handle_a} = Custody.Local.new({:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)})
-{:ok, handle_b} = Custody.Local.new({:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)})
+{:ok, handle_a} = Custody.Local.generate({:jwe, "A256KW"}, [])
+{:ok, handle_b} = Custody.Local.generate({:jwe, "A256KW"}, [])
 [:wrap, :unwrap] = handle_a.capabilities
 [:wrap, :unwrap] = handle_b.capabilities
 handles = %{"key-a" => handle_a, "key-b" => handle_b}
@@ -125,6 +125,34 @@ invalid_expectation = %{first | expected: %{"alg" => "A256KW"}}
 
 IO.puts("Item rejections preserved position and both good neighbors")
 ```
+
+## Decode authenticated objects at each position
+
+Object content uses the same phase budgets and protected expectations as binary
+content. The object is decoded only after authentication. A duplicate member
+returns a positional decoder error with no plaintext; successful neighbors
+retain both authenticated bytes and their `object` map.
+
+```elixir
+object_items =
+  for bytes <- [~s({"page":0}), ~s({"page":1,"page":2})] do
+    {:ok, token} = JWE.encrypt([{"alg", "A256KW"}, {"enc", "A256GCM"}, {"kid", "key-a"}], bytes, handle_a)
+    %{token: token, expected: %{"kid" => "key-a"}}
+  end
+
+{:ok, [
+  {:ok, %{object: %{"page" => 0}, plaintext: ~s({"page":0})}},
+  {:error, object_error}
+]} = JWE.decrypt_many(object_items, Map.put(policy, :content, :object))
+:duplicate_member = object_error.reason
+:input = object_error.layer
+false = Map.has_key?(object_error, :plaintext)
+false = Map.has_key?(object_error, :object)
+IO.puts("Object batch retained a good neighbor and withheld malformed content")
+```
+
+[Strict JSON object content](../docs/guides/json-object-content.md) documents
+all decoder bounds and the standalone `RequestSeal.JOSE.decode_object/2` API.
 
 ## Refuse outer failures before key resolution
 

@@ -8,34 +8,10 @@ defmodule RequestSeal.GuideCredentialProxyTest do
     binding =
       E.eval(
         ~S'''
-        directory = Path.join(System.tmp_dir!(), "requestseal-proxy-#{System.unique_integer([:positive])}")
-        :ok = File.mkdir(directory)
-        :ok = File.chmod(directory, 0o700)
-        seed_file = Path.join(directory, "signing.seed")
-        :ok = File.touch(seed_file)
-        :ok = File.chmod(seed_file, 0o600)
-        ''',
-        binding,
-        "docs/guides/credential-proxy.md",
-        1
-      )
-
-    on_exit(fn -> File.rm_rf!(Keyword.fetch!(binding, :directory)) end)
-
-    binding =
-      E.eval(
-        ~S'''
-        {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-        :ok = File.write(seed_file, Base.url_encode64(seed, padding: false))
-        children = [
-          {RequestSeal.Custody.Local.Owner,
-           name: CredentialProxyExample.Custody,
-           keys: [outbound: {"ed25519", {:file, seed_file, :base64url}}]},
-          {Finch, name: CredentialProxyExample.Finch}
-        ]
-        {:ok, supervisor} = Supervisor.start_link(children, strategy: :one_for_one)
-        {:ok, handle} = RequestSeal.Custody.Local.Owner.fetch(CredentialProxyExample.Custody, :outbound)
+        {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
         {:ok, key} = RequestSeal.Custody.public_key(handle)
+        {:ok, supervisor} = Supervisor.start_link(
+          [{Finch, name: CredentialProxyExample.Finch}], strategy: :one_for_one)
 
         components = ~s[("@method" "@scheme" "@authority" "@path" "content-type" "content-digest")]
         signing = %{
@@ -58,7 +34,7 @@ defmodule RequestSeal.GuideCredentialProxyTest do
         ''',
         binding,
         "docs/guides/credential-proxy.md",
-        2
+        1
       )
 
     on_exit(fn ->
@@ -66,7 +42,8 @@ defmodule RequestSeal.GuideCredentialProxyTest do
       if Process.alive?(supervisor), do: Supervisor.stop(supervisor)
     end)
 
-    assert RequestSeal.Custody.Local.Owner.ready?(CredentialProxyExample.Custody, :outbound)
+    assert {:ok, %RequestSeal.PublicKey{}} =
+             RequestSeal.Custody.public_key(Keyword.fetch!(binding, :handle))
 
     binding =
       E.eval(
@@ -102,8 +79,9 @@ defmodule RequestSeal.GuideCredentialProxyTest do
               when client in ["req", "finch"] do
             case Plug.Conn.read_body(conn, length: 4096, read_timeout: 5_000) do
               {:ok, body, conn} when byte_size(body) <= 4096 ->
-                case RequestSeal.Custody.Local.Owner.fetch(options[:custody], :outbound) do
-                  {:ok, handle} ->
+                handle = options[:handle]
+                case RequestSeal.Custody.public_key(handle) do
+                  {:ok, _public_key} ->
                     case forward(client, body, handle, options) do
                       {:ok, %{status: status, body: bytes}} -> Plug.Conn.send_resp(conn, status, bytes)
                       {:error, _} -> Plug.Conn.send_resp(conn, 502, "upstream exchange failed")
@@ -146,7 +124,7 @@ defmodule RequestSeal.GuideCredentialProxyTest do
         ''',
         binding,
         "docs/guides/credential-proxy.md",
-        3
+        2
       )
 
     binding =
@@ -163,7 +141,7 @@ defmodule RequestSeal.GuideCredentialProxyTest do
         {:ok, proxy_server} = Supervisor.start_child(supervisor,
           Supervisor.child_spec({Bandit,
             plug: {CredentialProxyExample.Proxy,
-              custody: CredentialProxyExample.Custody, upstream: upstream_url, signing: signing},
+              handle: handle, upstream: upstream_url, signing: signing},
             ip: {127, 0, 0, 1}, port: 0, startup_log: false,
             http_options: [compress: false]}, id: :example_proxy))
         {:ok, {_, proxy_port}} = ThousandIsland.listener_info(proxy_server)
@@ -171,7 +149,7 @@ defmodule RequestSeal.GuideCredentialProxyTest do
         ''',
         binding,
         "docs/guides/credential-proxy.md",
-        4
+        3
       )
 
     binding =
@@ -189,7 +167,7 @@ defmodule RequestSeal.GuideCredentialProxyTest do
         ''',
         binding,
         "docs/guides/credential-proxy.md",
-        5
+        4
       )
 
     payload = Keyword.fetch!(binding, :payload)
@@ -261,28 +239,28 @@ defmodule RequestSeal.GuideCredentialProxyTest do
         ''',
         binding,
         "docs/guides/credential-proxy.md",
-        6
+        5
       )
 
     assert [%{status: 503}, %{status: 503}] = Keyword.fetch!(binding, :refusals)
-    refute RequestSeal.Custody.Local.Owner.ready?(CredentialProxyExample.Custody, :outbound)
+
+    assert {:error, %{reason: :key_not_found}} =
+             RequestSeal.Custody.public_key(Keyword.fetch!(binding, :handle))
 
     binding =
       E.eval(
         ~S'''
         :ok = Supervisor.stop(supervisor)
-        :ok = File.rm(seed_file)
-        :ok = File.rmdir(directory)
+        :ok = RequestSeal.Custody.release(handle)
         ''',
         binding,
         "docs/guides/credential-proxy.md",
-        7
+        6
       )
 
-    refute File.exists?(Keyword.fetch!(binding, :directory))
     refute Process.alive?(Keyword.fetch!(binding, :supervisor))
 
-    E.assert_fences("docs/guides/credential-proxy.md", 7)
+    E.assert_fences("docs/guides/credential-proxy.md", 6)
     assert is_list(binding)
   end
 end

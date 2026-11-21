@@ -2,6 +2,15 @@
 
 ## Unreleased 2.0.0
 
+- Add executable guides for custody generation and committed derivation, strict
+  authenticated JSON object content, and migration from every changed 1.x key
+  operation and JOSE policy. Include them in ExDoc and the package inventory.
+- Use generated custody handles throughout key-use guides, recipes, and
+  notebooks. Preserve explicit imports for provisioned keys and published
+  vectors; cover P-256, P-384, and X25519 in the ECDH notebook. Update the README
+  and references for protected maps, decrypt budgets, indexed unwrap results,
+  handle-only key operations, object content, and matching version/corpus pins.
+
 - Remove key closures from signing, verification resolver results, negotiation,
   and JOSE wrapping. Every private-key operation takes an algorithm-bound
   custody handle; public-key resolvers remain callbacks. Accept-Signature
@@ -59,7 +68,7 @@
   refusal classifications with reversing mutations in qualification.
 - Add a runnable decision-hook recipe with signed requests, request-bound signed
   allow/deny responses, and rejection of changed, transplanted or unsigned replies.
-- Add a runnable credential-proxy recipe using supervised local custody and the
+- Add a runnable credential-proxy recipe using caller-owned generated custody and the
   existing Req and Finch adapters, including refusal when custody is unavailable.
 
 - Qualify each candidate in one hosted run, with every runtime lane, mutation and

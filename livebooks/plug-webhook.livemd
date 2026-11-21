@@ -11,8 +11,7 @@ Mix.install([{:request_seal, "~> 2.0"}, {:plug, "~> 1.20.3"}])
 The sender holds the private key. The receiver's policy trusts only the sender's public key and requires the body digest to be signed.
 
 ```elixir
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, sender} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, sender} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, sender_key} = RequestSeal.Custody.public_key(sender)
 
 components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]

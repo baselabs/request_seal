@@ -8,36 +8,8 @@ defmodule RequestSeal.GuideKeyRotationTest do
     binding =
       E.eval(
         ~S'''
-        alias RequestSeal.Custody.Local.Owner
-
-        seed_dir = Path.join(System.tmp_dir!(), "rotation-#{System.unique_integer([:positive])}")
-        File.mkdir_p!(seed_dir)
-
-        write_seed = fn name ->
-          {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-          path = Path.join(seed_dir, name)
-          File.write!(path, Base.url_encode64(seed, padding: false))
-          File.chmod!(path, 0o600)
-          path
-        end
-
-        current_file = write_seed.("current.seed")
-        next_file = write_seed.("next.seed")
-
-        {:ok, supervisor} =
-          Supervisor.start_link(
-            [
-              {Owner,
-               name: Rotation.Custody,
-               keys: [
-                 current: {"ed25519", {:file, current_file, :base64url}},
-                 next: {"ed25519", {:file, next_file, :base64url}}
-               ]}
-            ],
-            strategy: :one_for_one
-          )
-
-        %{current: :ready, next: :ready} = Owner.status(Rotation.Custody)
+        {:ok, current_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
+        {:ok, next_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
         ''',
         binding,
         "docs/guides/key-rotation.md",
@@ -47,7 +19,6 @@ defmodule RequestSeal.GuideKeyRotationTest do
     binding =
       E.eval(
         ~S'''
-        {:ok, next_handle} = RequestSeal.Custody.Local.Owner.fetch(Rotation.Custody, :next)
         {:ok, next_key} = RequestSeal.Custody.public_key(next_handle)
         {:ok, next_jwk} = RequestSeal.PublicKey.export(next_key, :jwk)
         {:ok, next_thumbprint} = RequestSeal.PublicKey.thumbprint(next_key)
@@ -61,7 +32,6 @@ defmodule RequestSeal.GuideKeyRotationTest do
     binding =
       E.eval(
         ~S'''
-        {:ok, current_handle} = RequestSeal.Custody.Local.Owner.fetch(Rotation.Custody, :current)
         {:ok, current_key} = RequestSeal.Custody.public_key(current_handle)
         components = ~s[("@method" "@scheme" "@authority" "@path")]
 
@@ -99,15 +69,14 @@ defmodule RequestSeal.GuideKeyRotationTest do
     binding =
       E.eval(
         ~S'''
-        sign_with = fn name, keyid ->
-          {:ok, handle} = RequestSeal.Custody.Local.Owner.fetch(Rotation.Custody, name)
+        sign_with = fn handle, keyid ->
           {:ok, message} = RequestSeal.Message.request("POST", "https://ci.example.com/artifacts", [], nil)
           spec = %{label: "sig", algorithm: "ed25519", components: components, expires_in: 60, keyid: keyid}
           RequestSeal.sign(message, spec, handle)
         end
 
-        {:ok, before_switch} = sign_with.(:current, "build-2")
-        {:ok, after_switch} = sign_with.(:next, "build-3")
+        {:ok, before_switch} = sign_with.(current_handle, "build-2")
+        {:ok, after_switch} = sign_with.(next_handle, "build-3")
         {:ok, _} = RequestSeal.verify(before_switch, overlap_policy, label: "sig")
         {:ok, _} = RequestSeal.verify(after_switch, overlap_policy, label: "sig")
         ''',
@@ -133,18 +102,11 @@ defmodule RequestSeal.GuideKeyRotationTest do
     binding =
       E.eval(
         ~S'''
-        :ok = Supervisor.terminate_child(supervisor, Rotation.Custody)
-        File.rm!(current_file)
-        {:ok, _} = Supervisor.restart_child(supervisor, Rotation.Custody)
-
-        %{current: :unconfigured, next: :ready} = RequestSeal.Custody.Local.Owner.status(Rotation.Custody)
-
+        :ok = RequestSeal.Custody.release(current_handle)
         {:error, %{reason: :signing_failed, source: %{reason: :key_not_found}}} =
-          RequestSeal.sign(before_switch, %{label: "late", algorithm: "ed25519", components: components, expires_in: 60}, next_handle)
-
-        {:ok, _} = sign_with.(:next, "build-3")
-        :ok = Supervisor.stop(supervisor)
-        File.rm_rf!(seed_dir)
+          sign_with.(current_handle, "build-2")
+        {:ok, _} = sign_with.(next_handle, "build-3")
+        :ok = RequestSeal.Custody.release(next_handle)
         ''',
         binding,
         "docs/guides/key-rotation.md",
@@ -152,7 +114,10 @@ defmodule RequestSeal.GuideKeyRotationTest do
       )
 
     assert Keyword.fetch!(binding, :next_thumbprint) |> byte_size() == 43
-    refute File.exists?(Keyword.fetch!(binding, :seed_dir))
+
+    assert {:error, %{reason: :key_not_found}} =
+             RequestSeal.Custody.public_key(Keyword.fetch!(binding, :next_handle))
+
     E.assert_fences("docs/guides/key-rotation.md", 6)
   end
 end

@@ -27,7 +27,7 @@ ordered/raw transport information, caller-owned custody, explicit profiles, and 
 results. Document each option and error at its public boundary. Add the corresponding
 guide, executable example, notebook, and corpus case as capabilities are implemented.
 
-Run `python3 scripts/check.py` before opening a pull request; qualification runs the same gate, and [testing and evidence](docs/guides/testing.md) covers focused checks.
+Run permitted source-only checks before opening a pull request. Repository builds, tests, ExDoc, and notebooks run only in GitHub-hosted qualification; [testing and evidence](docs/guides/testing.md) describes that gate.
 Conformance claims require independent evidence beyond a local self-round-trip.
 
 Maintainers publish through a separate approved dispatch. Repeating it can finish

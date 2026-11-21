@@ -1,50 +1,22 @@
 # Rotate signing keys
 
-**What you will build:** A sender that moves from one Ed25519 key to the next without rejected requests, and a verifier that accepts both keys during the overlap and then retires the old one. Prerequisite: RequestSeal installed; no framework or network is needed. Keys live in a supervised `RequestSeal.Custody.Local.Owner`, as [key custody](key-custody.md) describes.
+**What you will build:** A sender that moves from one Ed25519 key to the next without rejected requests, and a verifier that accepts both keys during the overlap and then retires the old one. Prerequisite: RequestSeal installed; no framework or network is needed. The calling process owns the generated handles for this example. For persistent keys across owner restarts, use the supervised import owner in [key custody](key-custody.md#long-lived-owner).
 
 Rotation has four steps: add the new key next to the old one, trust both on the verifier, switch the signer, then stop trusting and holding the old key.
 
 ## 1. Add the new key next to the old one
 
-The Owner reads seed files with mode 0600 or stricter. This example writes two generated seeds to a temporary directory; in production you provision the files separately and never generate them in the application.
+Generate each fresh key inside custody. The caller receives handles, never seeds;
+keep its process alive through the overlap and release the retired key explicitly.
 
 ```elixir
-alias RequestSeal.Custody.Local.Owner
-
-seed_dir = Path.join(System.tmp_dir!(), "rotation-#{System.unique_integer([:positive])}")
-File.mkdir_p!(seed_dir)
-
-write_seed = fn name ->
-  {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-  path = Path.join(seed_dir, name)
-  File.write!(path, Base.url_encode64(seed, padding: false))
-  File.chmod!(path, 0o600)
-  path
-end
-
-current_file = write_seed.("current.seed")
-next_file = write_seed.("next.seed")
-
-{:ok, supervisor} =
-  Supervisor.start_link(
-    [
-      {Owner,
-       name: Rotation.Custody,
-       keys: [
-         current: {"ed25519", {:file, current_file, :base64url}},
-         next: {"ed25519", {:file, next_file, :base64url}}
-       ]}
-    ],
-    strategy: :one_for_one
-  )
-
-%{current: :ready, next: :ready} = Owner.status(Rotation.Custody)
+{:ok, current_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
+{:ok, next_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 ```
 
 Publish the new public key wherever verifiers find keys. For a JWKS or a Web Bot Auth key directory, export it as a JWK; its thumbprint is the Web Bot Auth key ID:
 
 ```elixir
-{:ok, next_handle} = RequestSeal.Custody.Local.Owner.fetch(Rotation.Custody, :next)
 {:ok, next_key} = RequestSeal.Custody.public_key(next_handle)
 {:ok, next_jwk} = RequestSeal.PublicKey.export(next_key, :jwk)
 {:ok, next_thumbprint} = RequestSeal.PublicKey.thumbprint(next_key)
@@ -56,7 +28,6 @@ Publish the new public key wherever verifiers find keys. For a JWKS or a Web Bot
 The verifier's resolver maps each key ID to a configured key. During the overlap it accepts either:
 
 ```elixir
-{:ok, current_handle} = RequestSeal.Custody.Local.Owner.fetch(Rotation.Custody, :current)
 {:ok, current_key} = RequestSeal.Custody.public_key(current_handle)
 components = ~s[("@method" "@scheme" "@authority" "@path")]
 
@@ -89,18 +60,17 @@ overlap_policy = policy_for.(%{"build-2" => current_key, "build-3" => next_key})
 
 ## 3. Switch the signer
 
-Fetch the handle for each signing operation and change the key ID together with the key. Requests signed before the switch still verify during the overlap:
+Select the handle and key ID together for each signing operation. Requests signed before the switch still verify during the overlap:
 
 ```elixir
-sign_with = fn name, keyid ->
-  {:ok, handle} = RequestSeal.Custody.Local.Owner.fetch(Rotation.Custody, name)
+sign_with = fn handle, keyid ->
   {:ok, message} = RequestSeal.Message.request("POST", "https://ci.example.com/artifacts", [], nil)
   spec = %{label: "sig", algorithm: "ed25519", components: components, expires_in: 60, keyid: keyid}
   RequestSeal.sign(message, spec, handle)
 end
 
-{:ok, before_switch} = sign_with.(:current, "build-2")
-{:ok, after_switch} = sign_with.(:next, "build-3")
+{:ok, before_switch} = sign_with.(current_handle, "build-2")
+{:ok, after_switch} = sign_with.(next_handle, "build-3")
 {:ok, _} = RequestSeal.verify(before_switch, overlap_policy, label: "sig")
 {:ok, _} = RequestSeal.verify(after_switch, overlap_policy, label: "sig")
 ```
@@ -119,27 +89,24 @@ retired_policy = policy_for.(%{"build-3" => next_key})
   RequestSeal.verify(before_switch, retired_policy, label: "sig")
 ```
 
-Then remove the old seed from the Owner's configuration and restart the Owner. A restart rereads every source and ends every handle it issued, so a cached handle reports `:key_not_found`; fetch a new one:
+Release the retired private key. Releasing it leaves the new handle usable;
+release the new key too when the example ends:
 
 ```elixir
-:ok = Supervisor.terminate_child(supervisor, Rotation.Custody)
-File.rm!(current_file)
-{:ok, _} = Supervisor.restart_child(supervisor, Rotation.Custody)
-
-%{current: :unconfigured, next: :ready} = RequestSeal.Custody.Local.Owner.status(Rotation.Custody)
-
+:ok = RequestSeal.Custody.release(current_handle)
 {:error, %{reason: :signing_failed, source: %{reason: :key_not_found}}} =
-  RequestSeal.sign(before_switch, %{label: "late", algorithm: "ed25519", components: components, expires_in: 60}, next_handle)
-
-{:ok, _} = sign_with.(:next, "build-3")
-:ok = Supervisor.stop(supervisor)
-File.rm_rf!(seed_dir)
+  sign_with.(current_handle, "build-2")
+{:ok, _} = sign_with.(next_handle, "build-3")
+:ok = RequestSeal.Custody.release(next_handle)
 ```
 
-In a deployment, remove the `current` entry from the child specification instead of leaving it unconfigured.
+With provisioned Owner sources, remove the retired entry from the child
+specification and restart the Owner. It rereads every source and ends every
+previously issued handle; fetch the current handle per operation. Generated
+handles belong to their original process and do not persist through its exit.
 
 ## Discovered keys
 
 When verifiers fetch keys from a JWKS URI or a key directory, publish the new key before signing with it, and remove the old key after the overlap. Verifiers using `RequestSeal.Discovery.Cache` pick up changes on refresh; `RequestSeal.Discovery.Cache.refresh/2` forces one, and `RequestSeal.Discovery.Cache.remove/3` revokes a thumbprint immediately. [Key discovery](key-discovery.md) shows both against a real HTTPS publisher.
 
-For decryption keys, import the new recipient handle, check it with `RequestSeal.Custody.public_key/1`, let your JWE key resolver choose among the configured handles, and release the old handle once no message for it can still arrive. See [JOSE](jose.md).
+For decryption keys, generate or import the new recipient handle, check it with `RequestSeal.Custody.public_key/1`, let your JWE key resolver choose among the configured handles, and release the old handle once no message for it can still arrive. See [JOSE](jose.md).

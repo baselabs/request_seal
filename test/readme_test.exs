@@ -37,8 +37,7 @@ defmodule RequestSeal.ReadmeTest do
     binding =
       E.eval(
         ~S'''
-        {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-        {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+        {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
         {:ok, key} = RequestSeal.Custody.public_key(handle)
         components = ~s[("@method" "@scheme" "@authority" "@path")]
         {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
@@ -107,8 +106,7 @@ defmodule RequestSeal.ReadmeTest do
         end
 
         # The sender owns the private key; the receiver gets only its public key.
-        {_public, webhook_seed} = :crypto.generate_key(:eddsa, :ed25519)
-        {:ok, webhook_handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, webhook_seed})
+        {:ok, webhook_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
         {:ok, webhook_key} = RequestSeal.Custody.public_key(webhook_handle)
         webhook_components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]
 
@@ -200,8 +198,7 @@ defmodule RequestSeal.ReadmeTest do
     binding =
       E.eval(
         ~S'''
-        {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-        {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+        {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
         {:ok, apps} = Application.ensure_all_started(:req)
         {:ok, pool} = Finch.start_link(name: OutgoingFinch)
         try do

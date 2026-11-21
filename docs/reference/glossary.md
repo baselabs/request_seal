@@ -12,7 +12,7 @@
 | Authentication | Successful cryptography plus all required profile, trust, integrity, time and replay rules. |
 | Authorization | The caller's decision about what the authenticated party may do. |
 | Custodian | Owner of signing, secret-bearing verification, key-wrapping, key-unwrapping, or key-derivation capability; an opaque handle may invoke a remote HSM/KMS without exposing its key. |
-| Key handle | An opaque, algorithm-bound reference to a key held by a custodian; private key bytes never leave the custodian. |
+| Key handle | An opaque, algorithm-bound reference to a key held by a custodian; private operations use the custody contract, with no raw-key closure alternative. Imports can originate in caller memory, and direct unwrap returns CEKs to its caller. |
 | Generated key | Key material drawn from the CSPRNG inside a sensitive Local holder by `RequestSeal.Custody.Local.generate/2`; only a handle is returned. |
 | Derivation parent | A `{:derive, "hkdf-sha256"}` handle holding 32–64 IKM bytes and granting only `:derive`. |
 | Derivation family | A versioned HKDF label separating DHKEM, Ed25519 seed, HMAC, and AES-KW outputs independently of domain bytes. |
@@ -38,6 +38,10 @@
 | Envelope | Source-selected authenticated unit: HTTP signatures and required nested signatures, or explicitly selected generic JOSE nesting. |
 | Transport evidence | Caller-declared HTTP version and TLS facts (`evidence: :declared`); a declaration cannot prove a connection's security prerequisites. |
 | Recipient integrity | Successful authenticated decryption under an approved recipient key; independently required origin and request association remain separate. |
+| Protected map | Explicit JOSE `expected` values and `permitted` member names; JWS also chooses `embedded_key`. Public header checks precede key resolution and authentication. |
+| Decryption phase budget | Explicit JWE admission/resolution (R), per-group unwrap (U), and overall content (D) deadlines; no default budget is inferred. |
+| Indexed unwrap | One custody call that delivers each indexed CEK outcome directly to its owner's revocable sink, with an ordered final result list. |
+| Strict object content | JWE `content: :object` authenticates before bounded JSON object decoding. Success adds `object`; decoding failure returns no plaintext. |
 | Content digest | Hash of the HTTP message content; distinct from a selected representation's digest. |
 | Counterpart | A specific independent implementation or deployed peer used for interoperability evidence. |
 | Conformance corpus | Source-attributed positive and negative wire cases with deterministic expected results. |

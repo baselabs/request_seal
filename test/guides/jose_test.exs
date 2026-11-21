@@ -8,8 +8,7 @@ defmodule RequestSeal.GuideJoseTest do
     binding =
       E.eval(
         ~S'''
-        {_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-        {:ok, jose_handle} = RequestSeal.Custody.Local.new({:jws, "EdDSA"}, {:ed25519, seed})
+        {:ok, jose_handle} = RequestSeal.Custody.Local.generate({:jws, "EdDSA"}, [])
         {:ok, jose_key} = RequestSeal.Custody.public_key(jose_handle)
         {:ok, token} = RequestSeal.JOSE.JWS.sign([{"alg", "EdDSA"}], "signed payload", jose_handle)
         ''',
@@ -44,9 +43,7 @@ defmodule RequestSeal.GuideJoseTest do
     binding =
       E.eval(
         ~S'''
-        {:ok, wrapping_handle} = RequestSeal.Custody.Local.new(
-          {:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)}
-        )
+        {:ok, wrapping_handle} = RequestSeal.Custody.Local.generate({:jwe, "A256KW"}, [])
 
         {:ok, encrypted} =
           RequestSeal.JOSE.JWE.encrypt(
@@ -85,6 +82,7 @@ defmodule RequestSeal.GuideJoseTest do
         inner.payload
         # => "signed payload"
         :ok = RequestSeal.Custody.release(wrapping_handle)
+        :ok = RequestSeal.Custody.release(jose_handle)
         ''',
         binding,
         "docs/guides/jose.md",

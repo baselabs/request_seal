@@ -8,11 +8,10 @@ Mix.install([{:request_seal, "~> 2.0"}])
 
 ## Hold a key behind a handle
 
-`RequestSeal.Custody.Local.new/3` keeps the private seed in its own process and returns an opaque handle. Only the public key leaves it.
+`RequestSeal.Custody.Local.generate/2` creates the private key inside a sensitive holder and returns an algorithm-bound handle. The caller can request public metadata without exporting the private key.
 
 ```elixir
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
 
@@ -226,6 +225,33 @@ IO.puts("First delivery accepted; the repeat rejected as replayed")
 ```
 
 ETS loses its claims when the owner stops. For several nodes or restarts, use durable storage; see [replay protection](../docs/guides/replay-protection.md).
+
+## Derive a child without exporting its key
+
+Derivation imports a root and returns a usable child only after acknowledged
+atomic commitment. This reproducible example uses public test bytes from
+[RFC 3394 Section 4.3](https://www.rfc-editor.org/rfc/rfc3394.html#section-4.3)
+as its IKM, not a production root. The versioned RequestSeal framing composes
+[RFC 5869](https://www.rfc-editor.org/rfc/rfc5869.html). Its domain is an explicit
+application choice, not a signing profile. The child outlives a released parent.
+
+```elixir
+example_ikm = Base.decode16!("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F")
+{:ok, parent} = RequestSeal.Custody.Local.new({:derive, "hkdf-sha256"}, {:ikm, example_ikm})
+{:ok, child} = RequestSeal.Custody.derive(parent, "ed25519", "notebook/signing/v1", timeout: 5_000)
+{:ok, child_key} = RequestSeal.Custody.public_key(child)
+:ok = RequestSeal.Custody.release(parent)
+{:ok, signature} = RequestSeal.Custody.sign(child, "derived-key example")
+:ok = RequestSeal.Crypto.verify("ed25519", "derived-key example", signature, child_key)
+:ok = RequestSeal.Custody.release(child)
+IO.puts("Committed child signed after parent release; both handles released")
+```
+
+If a real custodian returns `{:cleanup_required, cleanup, error}`, retain that
+redacted capability and retry `RequestSeal.Custody.cleanup(cleanup, timeout: 5_000)`
+until `:ok`. A timeout does not confirm destruction. See the
+[generation and derivation guide](../docs/guides/key-generation-and-derivation.md)
+for every result shape and the callback contract.
 
 ## Release the key
 

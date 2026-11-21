@@ -11,10 +11,9 @@ Mix.install([{:request_seal, "~> 2.0"}])
 The payload is a sensor reading. `{:jws, "EdDSA"}` binds the handle to the JOSE algorithm name, which is separate from the HTTP signature name `"ed25519"`.
 
 ```elixir
-reading = ~s({"sensor":"greenhouse-3","temperature_c":21.4})
+reading = ~s({"sensor":"greenhouse-3","temperature_c":21})
 
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, signing_handle} = RequestSeal.Custody.Local.new({:jws, "EdDSA"}, {:ed25519, seed})
+{:ok, signing_handle} = RequestSeal.Custody.Local.generate({:jws, "EdDSA"}, [])
 {:ok, signing_key} = RequestSeal.Custody.public_key(signing_handle)
 
 {:ok, token} =
@@ -42,7 +41,7 @@ The resolver supplies the trusted key; a `kid` or `x5c` header alone confers no 
 
 ```elixir
 [protected, _payload, signature] = String.split(token, ".")
-forged_payload = Base.url_encode64(~s({"sensor":"greenhouse-3","temperature_c":35.0}), padding: false)
+forged_payload = Base.url_encode64(~s({"sensor":"greenhouse-3","temperature_c":35}), padding: false)
 
 {:error, %{reason: :invalid_signature, layer: :crypto}} =
   RequestSeal.JOSE.JWS.verify(Enum.join([protected, forged_payload, signature], "."), jws_policy)
@@ -59,9 +58,7 @@ IO.puts("Changed payload and unlisted algorithm rejected")
 The JWE wraps a fresh content-encryption key with an AES key you hold. The wrapping key stays in its sensitive custody holder.
 
 ```elixir
-{:ok, wrapping_handle} = RequestSeal.Custody.Local.new(
-  {:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)}
-)
+{:ok, wrapping_handle} = RequestSeal.Custody.Local.generate({:jwe, "A256KW"}, [])
 
 {:ok, encrypted} =
   RequestSeal.JOSE.JWE.encrypt(
@@ -115,15 +112,51 @@ IO.puts("Nested envelope verified; altered ciphertext rejected")
 
 Successful decryption shows the envelope was made with the shared wrapping key; it does not identify who made it. The inner signature identifies the signing key.
 
+## Decode an authenticated object and withhold malformed content
+
+The strict object decoder narrows [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html)
+with explicit byte and tree bounds, duplicate rejection, and integer-only numbers.
+`content: :object` decodes only after JWE authentication. A successful result
+carries both `object` and `plaintext`; decoding failure returns only an error.
+
+```elixir
+{:ok, %{"sensor" => "greenhouse-3", "temperature_c" => 21}} =
+  RequestSeal.JOSE.decode_object(inner.payload, max_bytes: 1024)
+
+object_header = [{"alg", "A256KW"}, {"enc", "A256GCM"}, {"cty", "application/json"}]
+object_policy = jwe_policy
+  |> Map.put(:content, :object)
+  |> Map.put(:protected, %{expected: %{"cty" => "application/json"}, permitted: []})
+{:ok, object_token} = RequestSeal.JOSE.JWE.encrypt(object_header, reading, wrapping_handle)
+{:ok, object_result} = RequestSeal.JOSE.JWE.decrypt(object_token, object_policy)
+%{"temperature_c" => 21} = object_result.object
+^reading = object_result.plaintext
+
+{:ok, duplicate_token} = RequestSeal.JOSE.JWE.encrypt(
+  object_header, ~s({"count":1,"count":2}), wrapping_handle
+)
+{:error, decode_error} = RequestSeal.JOSE.JWE.decrypt(duplicate_token, object_policy)
+:duplicate_member = decode_error.reason
+:input = decode_error.layer
+false = Map.has_key?(decode_error, :plaintext)
+false = Map.has_key?(decode_error, :object)
+{:error, %{reason: :invalid_header}} =
+  RequestSeal.JOSE.decode_object(~s({"temperature_c":21.4}), max_bytes: 1024)
+IO.puts("Authenticated object decoded; duplicate members and floats rejected without a result")
+```
+
+Omitting `content:` or choosing `:binary` leaves `object: nil`. The byte budget
+for object content is `max_plaintext`; strings, nesting, container widths, and
+integer bounds also apply. See [strict object content](../docs/guides/json-object-content.md).
+
 ## Decrypt with a recipient key handle
 
 For RSA-OAEP, the recipient's private key lives in a handle bound to `{:jwe, "RSA-OAEP-256"}`. Senders encrypt to its public key; the resolver returns the handle.
 
 ```elixir
-private = :public_key.generate_key({:rsa, 2048, 65537})
-pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPrivateKey, private)])
-
-{:ok, recipient} = RequestSeal.Custody.Local.import({:jwe, "RSA-OAEP-256"}, pem, :pem)
+{:ok, recipient} = RequestSeal.Custody.Local.generate(
+  {:jwe, "RSA-OAEP-256"}, bits: 2048, timeout: 30_000
+)
 {:ok, recipient_public} = RequestSeal.Custody.public_key(recipient)
 
 {:ok, sealed_note} =

@@ -28,7 +28,7 @@ Format `request-seal-conformance-corpus-index/1` requires:
   pre-release suffix between releases. The declared gate fails when they differ.
   The release workflow refuses development snapshots (a first pre-release identifier
   starting with `dev`) and accepts other pre-releases. It publishes the corpus only
-  for a tag equal to both, pointing at the release commit.
+  for a version matching both. The resulting tag identifies the published commit after readback.
 - `files`: every regular file below sources and cases, sorted by relative path,
   each with `path` and lowercase hexadecimal `sha256`.
 - `cases`: unique `id`, `manifest`, `surface` and `class` entries. A batch also
@@ -45,6 +45,16 @@ or missing files and unsafe paths, execute each single and asserted batch item o
 counted not-applicable items against their declared counts in each batch, and
 executed plus not-applicable count against singles plus declared batch counts. A digest mismatch or
 unknown format rejects the whole corpus before conformance results are accepted.
+
+## Match the 2.0 package
+
+Keep the release tag, source commit, and index SHA-256 together when updating a
+counterpart. A 1.x pin cannot qualify the 2.0 contract. The 2.0 surfaces include
+protected-member policies, handle-only resolver descriptors, indexed batch opens,
+AES-KW and ECDH-ES, custody derivation, and `jose.decode_object/v1`. Decoder
+cases cover object and tree bounds, UTF-8, integer limits, duplicate names, and
+nonobject or floating-point refusals. A parser success establishes no authentication.
+See [the upgrade guide](../guides/upgrading-to-2.0.md) for public call changes.
 
 ## Single manifests
 
@@ -90,6 +100,7 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `key_management.aes_kw/v1` | `alg` (A128KW/A256KW), `kek` byte tag, `operation` (wrap/unwrap), and `key_data` or `wrapped` byte tag | `wrapped` or `key_data` byte tag |
 | `key_management.ecdh_kdf/v1` | `z`, `apu`, `apv` byte tags; `algorithm_id` string; `keydatalen` tagged bits (128/256) | `output` byte tag |
 | `key_management.agree/v1` | `alg`, `enc`, `recipient` JWK pairs, `recipient_private` JWK pairs/source ref, `ephemeral_private` byte tag, optional `cek` byte tag for +KW, decoded `apu`/`apv` byte tags | `cek`, `encrypted_key` byte tags and `epk` JWK pairs |
+| `jose.decode_object/v1` | JSON `bytes` byte tag and tagged `max_bytes` | Decoded `object` with exact integers tagged, or a bounded JOSE `rule_id` |
 | `jwe.protected/v1` | `token` compact string; `policy` with `expected` ordered JSON pairs and `permitted` names | `{"accepted":true}` after protected admission; no decryption claim |
 | `jwe.decrypt_many/v1` | `items` with compact `token` strings and `expected` pairs, named custody `keys`, and indexed `resolver` outcomes | Positional `results`, each with tagged `index` and `plaintext` bytes or `rule_id` |
 | `key.import` | Public material and format | `{"valid":true,"public":{"thumbprint":"<RFC 7638 thumbprint>"}}` |

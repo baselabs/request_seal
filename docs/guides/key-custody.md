@@ -1,6 +1,6 @@
-# Keep signing keys behind a handle
+# Keep keys behind a custody handle
 
-**What you will build:** A local signing handle that keeps private key material in its holder process, verifies exact signed bytes, and can be explicitly released. Prerequisite: RequestSeal installed. Ed25519 follows [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html); public JWK thumbprints follow [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html) and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html).
+Create signing and decryption handles, verify exact bytes, and release keys when their owner no longer needs them. Install RequestSeal as described in the [README](../../README.md#installation), then run these examples in `iex -S mix`. Ed25519 follows [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html); public JWK thumbprints follow [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html) and [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html).
 
 
 `RequestSeal.Custody.Local.generate/2` creates fresh keys inside a sensitive
@@ -27,13 +27,13 @@ release capability. Retry `Custody.cleanup/2`, with a required `timeout:`, until
 `:ok`. The capability grants no key operations. Generation and derivation never
 export raw keys or identities through telemetry; symmetric equivalence stays
 unknown. Key material supplied to `new/3` or `import/4` remains a caller-owned
-import path.
+import path. The [generation and derivation guide](key-generation-and-derivation.md)
+shows the complete runnable lifecycle and error handling.
 
 ## 1. Create an example key handle
 
 ```elixir
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
 ```
@@ -63,19 +63,16 @@ Keep reusable handles in a long-lived owning process. Holders stop when their cr
 
 ## Decryption keys
 
-For RSA-OAEP recipient custody, import an unencrypted private PEM into an
-algorithm-bound unwrap handle. This example generates an RSA key locally; use
-your existing PEM when provisioning a long-lived owner. The operation follows
+For RSA-OAEP recipient custody, generate an algorithm-bound unwrap handle.
+For an existing unencrypted private PEM, use `Local.import/4` instead.
+The operation follows
 [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html) and
 [RFC 7518 Section 4.3](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.3).
 Encrypt to the handle's public key and return the handle from the resolver:
 
 ```elixir
-private = :public_key.generate_key({:rsa, 2048, 65537})
-pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPrivateKey, private)])
-
 {:ok, recipient_handle} =
-  RequestSeal.Custody.Local.import({:jwe, "RSA-OAEP-256"}, pem, :pem)
+  RequestSeal.Custody.Local.generate({:jwe, "RSA-OAEP-256"}, bits: 2048, timeout: 30_000)
 
 # Run this health check at startup, before accepting encrypted messages.
 {:ok, recipient_public} = RequestSeal.Custody.public_key(recipient_handle)
@@ -112,7 +109,7 @@ and middle process receive only the summary; your decrypt caller can
 receive only the authenticated result. A direct `Custody.unwrap/3` caller receives
 unwrapped bytes and owns their protection. On the BEAM, binaries are immutable:
 a CEK that crossed those processes cannot be zeroed and stays in their heaps
-until garbage collection. The mitigation is process-level, not memory-level —
+until garbage collection. The mitigation is process-level:
 every CEK-bearing process marks itself sensitive, so process inspection and
 tracing from outside cannot observe the CEK (exercised by the repository's JWE
 tests).
@@ -167,10 +164,14 @@ not raise the agent's limit.
 
 `RequestSeal.Custody.Error` uses bounded reasons. `:key_not_found` means the holder or agent key is gone. `:key_mismatch` means the material cannot serve the selected algorithm. `:unsupported_format` includes PKCS #8 v2 containers. `:deadline_exceeded` stops the operation. Agent `:custodian_unavailable` can describe a retryable pre-send connection failure; post-send `:custodian_protocol` is nonretryable because the signing request may already have reached the agent. `:custodian_rejected` means the agent does not hold the trusted key; `:unsupported_algorithm` means no implementation for that selection. Only `:deadline_exceeded` and `:custodian_unavailable` are retryable. Verification proves mathematical validity, not identity attribution or authority.
 
+## Wrap and unwrap indexed items
+
 AES-KW handles grant a nonempty subset of `[:wrap, :unwrap]`; ECDH-ES, GCMKW, and `dir`
 handles grant only `[:unwrap]`. `Custody.wrap/3` accepts a 128- or 256-bit CEK.
 `Custody.unwrap/3` accepts a list of `{encrypted_key, params, content_bits}` and
-returns results in that order. Params are `%{}` except GCMKW's decoded
+returns `{:ok, results}` in that order, each `{:ok, cek}`,
+`{:error, :decryption_failed}`, or `{:error, :deadline_exceeded}`. Validation
+failures return one `{:error, %RequestSeal.Custody.Error{}}`. Params are `%{}` except GCMKW's decoded
 `%{iv: twelve_bytes, tag: sixteen_bytes}` and ECDH's
 `%{epk: public_key, apu: bytes, apv: bytes, algorithm_id: id, key_bits: bits}`.
 The custodian receives decoded params and never parses a protected header. Per-item failures are closed
@@ -178,10 +179,19 @@ The custodian receives decoded params and never parses a protected header. Per-i
 validation retain bounded custody errors. Accepted items survive a later stall.
 `Custody.release/1` is idempotent; `:ok` confirms destruction.
 
+Custom custodians implement `unwrap(ref, algorithm, indexed_items, sink, context)`.
+Each item is `{index, encrypted_key, params, content_bits}`. The holder calls
+`RequestSeal.Custody.Sink.deliver(sink, index, {:ok, cek})` or delivers `:error`;
+the callback returns only `:ok` or a bounded error. A settled index never changes,
+and the sink rejects late, unknown, malformed, or wrong-width deliveries. The
+runner receives no CEKs. See [the 2.0 migration](upgrading-to-2.0.md#migrate-unwrap-calls-results-and-custom-custodians)
+for the former callback and result shapes.
+
 ## ECDH recipient keys
 
 Bind a handle to `{:jwe, "ECDH-ES"}`, `{:jwe, "ECDH-ES+A128KW"}`, or
-`{:jwe, "ECDH-ES+A256KW"}`. `Local.new/3` takes
+`{:jwe, "ECDH-ES+A256KW"}`. Generate one with `Local.generate/2` and an explicit
+`curve:`. For existing scalars, `Local.new/3` takes
 `{:ec, "P-256" | "P-384", scalar}` (32 or 48 bytes), or
 `{:x25519, scalar}` (32 bytes). Construction performs an actual agreement and
 recovery round trip. These handles grant only `[:unwrap]`; requesting `:wrap`

@@ -7,8 +7,7 @@
 Create keys inside the test and release them when it ends. In an ExUnit `setup` block, call `RequestSeal.Custody.Local.release/1` from `on_exit/1`. The examples below check results with pattern matches so they run anywhere; in your tests, write the same checks with `assert`:
 
 ```elixir
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]
 ```

@@ -7,8 +7,7 @@
 Generate a key and select acceptance rules once. A signing specification requires `label`, `algorithm`, `components`, and a positive `expires_in`. Req and Finch share the defaults of `RequestSeal.sign/4`: creation time, a fresh random nonce per attempt, and the algorithm parameter (omitted for JWS tuples). Key ID, tag, and digest default to nil; field schemas default to `%{}`. Full explicit specs remain supported.
 
 ```elixir
-{_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest")]
 

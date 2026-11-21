@@ -1,12 +1,11 @@
 # Sign JWS and encrypt JWE envelopes
 
-**What you will build:** A compact signed JWS wrapped in an encrypted JWE, with authentication of both envelopes before reading the payload. Prerequisite: RequestSeal installed; no framework is needed. Sources: [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html), and [RFC 7518](https://www.rfc-editor.org/rfc/rfc7518.html).
+Sign a compact JWS, encrypt it inside a JWE, and authenticate both envelopes before reading the payload. Install RequestSeal from the [README](../../README.md#installation), then run these blocks in `iex -S mix`; no framework is needed. Sources: [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html), and [RFC 7518](https://www.rfc-editor.org/rfc/rfc7518.html).
 
 ## 1. Sign and verify JWS
 
 ```elixir
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, jose_handle} = RequestSeal.Custody.Local.new({:jws, "EdDSA"}, {:ed25519, seed})
+{:ok, jose_handle} = RequestSeal.Custody.Local.generate({:jws, "EdDSA"}, [])
 {:ok, jose_key} = RequestSeal.Custody.public_key(jose_handle)
 {:ok, token} = RequestSeal.JOSE.JWS.sign([{"alg", "EdDSA"}], "signed payload", jose_handle)
 ```
@@ -33,9 +32,7 @@ HTTP and JOSE algorithm tokens are separate; `{:jws, "EdDSA"}` binds this handle
 ## 2. Encrypt the signed envelope and verify the inner signature
 
 ```elixir
-{:ok, wrapping_handle} = RequestSeal.Custody.Local.new(
-  {:jwe, "A256KW"}, {:aes, :crypto.strong_rand_bytes(32)}
-)
+{:ok, wrapping_handle} = RequestSeal.Custody.Local.generate({:jwe, "A256KW"}, [])
 
 {:ok, encrypted} =
   RequestSeal.JOSE.JWE.encrypt(
@@ -70,6 +67,7 @@ jwe_policy = %{
 inner.payload
 # => "signed payload"
 :ok = RequestSeal.Custody.release(wrapping_handle)
+:ok = RequestSeal.Custody.release(jose_handle)
 ```
 
 The wrapping key stays in its sensitive custody holder. Encryption uses fresh content-encryption keys and IVs from the CSPRNG. `RequestSeal.JOSE.Nested.verify/4` also supports one-level JWS-in-JWE verification with explicit outer/inner policies and `content_types: ["JWS"]` when the outer protected header declares `cty: "JWS"`.
@@ -85,7 +83,7 @@ another JOSE envelope (`application/jose`, `application/jose+json`,
 
 For RSA-OAEP or ECDH-ES, keep the recipient's private key in an algorithm-bound custody
 handle and return that handle from the key resolver. [Decryption keys](key-custody.md#decryption-keys)
-shows the import, the startup health check, and why a released handle fails
+shows generation, the import alternative, the startup health check, and why a released handle fails
 exactly like a forged message.
 
 ## ECDH recipients
@@ -220,7 +218,7 @@ bytes, checked before scanning it. Exceeding an expectation bound is positional
 `:invalid_policy`. Single open reports all three as `:invalid_policy`. Shared
 occurrences count individually. A resolver with a large keyring captures a
 registered name, ETS table or `persistent_term` key. A returned handle also has
-4,096-word and 16,384-binary-byte bounds, including its function environment;
+4,096-word and 16,384-binary-byte bounds, including any reference closure environment;
 an oversized answer is that item's `:key_resolver_failed`.
 
 F is D + 100 ms. Teardown has B(n) = 20 ms + 15 microseconds per item, with
@@ -269,4 +267,10 @@ and exceeded bounds return `:limit`, all at layer `:input`.
 
 Set `content: :object` on a JWE decryption policy to decode after authentication.
 A successful result keeps `plaintext` and adds `object`; a decode failure
-returns only the decoder error. It applies to single and batch decryption.
+returns only the decoder error. It applies to single and batch decryption. Omitting `content:` or selecting
+`:binary` leaves `object: nil`. The object byte budget is `max_plaintext`.
+[Strict object content](json-object-content.md) shows runnable success and
+rejection examples, including batch positions.
+
+For fresh keys use [generation and derivation](key-generation-and-derivation.md);
+for changed 1.x call shapes see [the 2.0 upgrade](upgrading-to-2.0.md).

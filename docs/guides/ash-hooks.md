@@ -22,8 +22,7 @@ caller. The receiver requires every covered component, freshness, and body integ
 [durable replay store](replay-protection.md) when each signed nonce must be spent once.
 
 ```elixir
-{_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 components = ~s[("@method" "@scheme" "@authority" "@path" "content-digest" "content-type" "webhook-id")]
 spec = %{

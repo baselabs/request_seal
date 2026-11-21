@@ -21,11 +21,9 @@ long-lived custody handle and configures trust in the other's public key
 independently. An inbound key ID never establishes that trust.
 
 ```elixir
-{_public, caller_seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, caller_handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, caller_seed})
+{:ok, caller_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, caller_key} = RequestSeal.Custody.public_key(caller_handle)
-{_public, service_seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, service_handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, service_seed})
+{:ok, service_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, service_key} = RequestSeal.Custody.public_key(service_handle)
 
 request_components = ~s[("@method" "@scheme" "@authority" "@path" "content-type" "content-digest")]

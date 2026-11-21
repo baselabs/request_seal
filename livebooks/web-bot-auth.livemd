@@ -11,8 +11,7 @@ Mix.install([{:request_seal, "~> 2.0"}])
 Web Bot Auth identifies a key by its SHA-256 JWK thumbprint, which becomes the signature's `keyid`.
 
 ```elixir
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
 signer = handle
@@ -106,8 +105,7 @@ A held key identifies the key, not the owner of `crawler.example`: the principal
   RequestSeal.WebBotAuth.verify(other_page, agent_policy)
 
 # A key the verifier does not hold.
-{_, stranger_seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, stranger} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, stranger_seed})
+{:ok, stranger} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, stranger_key} = RequestSeal.Custody.public_key(stranger)
 
 {:ok, stranger_request} =

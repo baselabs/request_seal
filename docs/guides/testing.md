@@ -1,12 +1,14 @@
 # Testing and evidence
 
-## Run the current gate
+## Qualify the current source
 
 Use the Elixir/OTP pairs and Node pin in `.tool-versions`, with OpenSSL and
 OpenSSH tools (`ssh-agent`, `ssh-add`, `ssh-keygen`) on `PATH`.
 Commands support macOS and Linux; Windows development uses WSL2.
-CI runs the full gate on Linux and the Python process-ownership tests on macOS,
-including kqueue timeout and closed-descriptor cleanup checks.
+Repository builds and runtime tests run only in GitHub-hosted qualification on
+a `kci/` ref. The commands below describe hosted checks, not developer-machine
+steps. The full gate runs on Linux; Python process-ownership tests also run on
+hosted macOS, including kqueue timeout and closed-descriptor cleanup checks.
 ```sh
 mix deps.get
 python3 scripts/check.py

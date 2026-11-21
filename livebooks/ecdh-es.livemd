@@ -1,6 +1,6 @@
 # ECDH-ES agreement and JWE in Livebook
 
-This notebook runs P-256 and X25519 key agreement, encrypts compact JWEs to public recipient keys, and decrypts through caller-owned custody handles. It covers direct ECDH-ES and both AES key-wrap variants from [RFC 7518 §4.6](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.6), with X25519 as specified by [RFC 8037 §3.2](https://www.rfc-editor.org/rfc/rfc8037.html#section-3.2). It uses real local cryptography and needs no network peer beyond the Hex install.
+This notebook runs P-256, P-384, and X25519 key agreement, encrypts compact JWEs to public recipient keys, and decrypts through caller-owned custody handles. It covers direct ECDH-ES and both AES key-wrap variants from [RFC 7518 §4.6](https://www.rfc-editor.org/rfc/rfc7518.html#section-4.6), with X25519 as specified by [RFC 8037 §3.2](https://www.rfc-editor.org/rfc/rfc8037.html#section-3.2). It uses real local cryptography and needs no network peer beyond the Hex install.
 
 ```elixir
 Mix.install([{:request_seal, "~> 2.0"}])
@@ -28,30 +28,22 @@ end
 IO.puts("Published X25519 public bytes reproduced")
 ```
 
-## Create recipients for both curves and every agreement mode
+## Create recipients for all three curves and every agreement mode
 
-Each handle binds one JOSE algorithm and grants only `:unwrap`. The sender receives its public key; the scalar is passed to custody when constructing the handle. Here each mode gets its own fresh key pair.
+Each handle binds one JOSE algorithm and grants only `:unwrap`. The sender receives its public key; generation happens inside the sensitive holder. Each curve and mode gets its own fresh key pair.
 
 ```elixir
 recipients =
-  for {curve, native} <- [{"P-256", :secp256r1}, {"X25519", :x25519}],
+  for curve <- ["P-256", "P-384", "X25519"],
       algorithm <- ["ECDH-ES", "ECDH-ES+A128KW", "ECDH-ES+A256KW"] do
-    {_public, private} = :crypto.generate_key(:ecdh, native)
-
-    material =
-      case curve do
-        "P-256" -> {:ec, curve, private}
-        "X25519" -> {:x25519, private}
-      end
-
-    {:ok, handle} = Custody.Local.new({:jwe, algorithm}, material)
+    {:ok, handle} = Custody.Local.generate({:jwe, algorithm}, curve: curve)
     [:unwrap] = handle.capabilities
     {:ok, public} = Custody.public_key(handle)
     %{curve: curve, algorithm: algorithm, handle: handle, public: public}
   end
 
-6 = length(recipients)
-IO.puts("Six algorithm-bound recipients ready")
+9 = length(recipients)
+IO.puts("Nine algorithm-bound recipients ready")
 ```
 
 ## Inspect the agreement primitive
@@ -89,7 +81,7 @@ for recipient <- recipients do
   false = first.header == second.header
 end
 
-IO.puts("Fresh agreement and public-only epk checked for all six recipients")
+IO.puts("Fresh agreement and public-only epk checked for all nine recipients")
 ```
 
 ## Encrypt to public keys and decrypt through custody
@@ -147,8 +139,8 @@ envelopes =
     Map.put(recipient, :token, token)
   end
 
-6 = length(envelopes)
-IO.puts("All six envelopes authenticated and decrypted")
+9 = length(envelopes)
+IO.puts("All nine envelopes authenticated and decrypted")
 ```
 
 ## Reject altered content, malformed public keys, and wrong custody

@@ -13,8 +13,7 @@ match. Cover `@scheme` (or `@target-uri`) whenever scheme matters; the examples
 below cover `@scheme`.
 
 ```elixir
-{_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-{:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+{:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
 {:ok, key} = RequestSeal.Custody.public_key(handle)
 {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
 signer = handle

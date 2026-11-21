@@ -8,8 +8,7 @@ defmodule RequestSeal.GuideKeyCustodyTest do
     binding =
       E.eval(
         ~S'''
-        {_public_bytes, seed} = :crypto.generate_key(:eddsa, :ed25519)
-        {:ok, handle} = RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed})
+        {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", [])
         {:ok, key} = RequestSeal.Custody.public_key(handle)
         {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
         ''',
@@ -62,11 +61,8 @@ defmodule RequestSeal.GuideKeyCustodyTest do
     binding =
       E.eval(
         ~S'''
-        private = :public_key.generate_key({:rsa, 2048, 65537})
-        pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPrivateKey, private)])
-
         {:ok, recipient_handle} =
-          RequestSeal.Custody.Local.import({:jwe, "RSA-OAEP-256"}, pem, :pem)
+          RequestSeal.Custody.Local.generate({:jwe, "RSA-OAEP-256"}, bits: 2048, timeout: 30_000)
 
         # Run this health check at startup, before accepting encrypted messages.
         {:ok, recipient_public} = RequestSeal.Custody.public_key(recipient_handle)

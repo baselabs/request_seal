@@ -5,6 +5,16 @@ major release line. This page says what each line keeps stable, what may change
 in a minor release, and how a public API is deprecated. Security support is in
 [SECURITY.md](../../SECURITY.md).
 
+## Move an application to 2.0
+
+The [2.0 upgrade guide](../guides/upgrading-to-2.0.md) maps the 1.x call and
+result changes: handle-only private operations, explicit protected maps,
+phase budgets, indexed unwrap, generation and committed derivation, and strict
+object content. Counterparts adopt the matching major's corpus and errors
+together; the [corpus reference](corpus-format.md) defines the pins.
+The source is on the 2.0 development line; stable release guarantees apply to
+its published major line. Proposed contracts alone establish no capability.
+
 ## What a major release line keeps stable
 
 Within a major release line, a release never removes or incompatibly changes:
