@@ -221,5 +221,9 @@ defmodule RequestSeal.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
-  def application, do: [extra_applications: [:crypto, :public_key]]
+  def application, do: [extra_applications: [:crypto, :public_key | test_applications(Mix.env())]]
+
+  # The JWE oracles count sensitive worker calls with :cover, which ships in :tools.
+  defp test_applications(:test), do: [:tools]
+  defp test_applications(_), do: []
 end
