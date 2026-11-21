@@ -722,9 +722,9 @@
     "expression": "reason",
     "file": "lib/request_seal/signing.ex",
     "kind": "custody",
-    "line": 381,
+    "line": 382,
     "allows": [],
-    "comment": "lib/request_seal/signing.ex:381: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
+    "comment": "lib/request_seal/signing.ex:382: Forwards the bounded reason from the helper call sites or an existing error; adds no new reason."
   },
   {
     "expression": "reason",
