@@ -43,7 +43,7 @@ Add optional dependencies for the integrations you use. The table is a reference
 | `:ash` | `>= 3.37.4 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
 | `:ash_onetime` | `~> 1.9 and >= 1.9.2` | Recommended durable replay; Elixir 1.20+ |
 | `:ash_hooks` | `>= 3.0.0 and < 4.0.0` | Webhook signing and verification; Elixir 1.20+ |
-| `:postgrex` | `~> 0.22.4` | PostgreSQL replay storage using your existing connection |
+| `:postgrex` | `>= 0.22.4 and < 0.24.0` | PostgreSQL replay storage using your existing connection |
 
 For both HTTP scripts below, paste this complete list into your `deps/0` function. Jason decodes the webhook JSON:
 
