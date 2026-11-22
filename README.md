@@ -37,7 +37,7 @@ Add optional dependencies for the integrations you use. The table is a reference
 | --- | --- | --- |
 | `:plug` | `~> 1.20.3` | Plug pipelines, also used by Phoenix |
 | `:bandit` | `~> 1.15` | To run the example receiver |
-| `:phoenix` | `~> 1.8.15` | Only for the Phoenix controller example |
+| `:phoenix` | `~> 1.8.17` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.24.0 and < 0.25.0` | Finch transport and caller-started pools |
 | `:ash` | `>= 3.37.4 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |

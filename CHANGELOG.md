@@ -2,6 +2,9 @@
 
 ## Unreleased 2.0.0
 
+- Raise the Phoenix floor for the controller example, the test suite and the
+  notebooks to 1.8.17, which fixes CVE-2026-128361 and CVE-2026-129344.
+
 - Qualify PostgreSQL replay stores against the public PostgreSQL 18 platform
   engine. Check its registry digest anonymously before pulling the pinned
   reference, use password-authenticated disposable loopback containers, and

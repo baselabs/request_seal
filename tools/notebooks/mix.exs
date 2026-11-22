@@ -19,7 +19,7 @@ defmodule RequestSealNotebooks.MixProject do
         {:bandit, "~> 1.15", override: true, runtime: false},
         # Livebook 0.19.10 pins ecto 3.13.6 (EEF-CVE-2026-118391); 3.14.3 is the fixed release.
         {:ecto, "~> 3.14.3", override: true, runtime: false},
-        {:phoenix, "~> 1.8.15", override: true, runtime: false},
+        {:phoenix, "~> 1.8.17", override: true, runtime: false},
         {:phoenix_html, "~> 4.4", override: true, runtime: false},
         {:phoenix_live_view, "~> 1.2.14", override: true, runtime: false},
         {:plug, "~> 1.20.3", override: true, runtime: false},
