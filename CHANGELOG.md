@@ -8,6 +8,8 @@
   classification. Keep HTTP/2 partial-upload reruns `:unknown`, and exercise
   delivery classification in the fresh dependency-floor consumer.
 
+- Admit Postgrex 0.23 for PostgreSQL replay storage; the floor stays at 0.22.4.
+
 - Raise the Phoenix floor for the controller example, the test suite and the
   notebooks to 1.8.17, which fixes CVE-2026-128361 and CVE-2026-129344.
 

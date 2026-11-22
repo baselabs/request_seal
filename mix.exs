@@ -204,7 +204,7 @@ defmodule RequestSeal.MixProject do
       {:plug, ">= 1.20.3 and < 2.0.0", optional: true, runtime: false},
       {:bandit, ">= 1.15.0 and < 2.0.0", only: :test},
       {:phoenix, ">= 1.8.17 and < 2.0.0", only: :test},
-      {:postgrex, "~> 0.22.4", optional: true, runtime: false}
+      {:postgrex, ">= 0.22.4 and < 0.24.0", optional: true, runtime: false}
     ] ++ test_dependencies ++ owned_integrations()
   end
 
