@@ -1,8 +1,10 @@
 defmodule RequestSeal.Adapter.Delivery do
   @moduledoc false
 
-  # Req 0.7.5 Req.Finch.normalize_error/1 preserves reasons and HTTP versions.
-  # Finch 0.24.0 Error.wrap/1 preserves Mint reasons in its own wrappers.
+  # Req 0.7.5 lib/req/finch.ex normalize_error/1:349-376 preserves reasons and
+  # HTTP versions, but :370-371 drops Finch.TransportError.phase (also in 0.7.4).
+  # Finch 0.25.0 lib/finch/error.ex Error.wrap/1:36-40 preserves its own errors
+  # (including phase) and wraps Mint reasons without adding phase evidence.
   def classify(result, adapter, bodyless? \\ true)
 
   def classify({:ok, %{__struct__: response, status: status}}, adapter, _bodyless?)
@@ -22,6 +24,16 @@ defmodule RequestSeal.Adapter.Delivery do
   def classify(
         {:error, %RequestSeal.Adapter.Error{adapter: adapter, stage: :sign, attempt: 1}},
         adapter,
+        _bodyless?
+      ),
+      do: :refused
+
+  # Finch 0.25.0 lib/finch/http1/conn.ex Conn.connect/2:53-68 sets :connect
+  # only after Mint.HTTP.connect/4 fails, before Pool.request/6 calls
+  # Conn.request/8 (lib/finch/http1/pool.ex:63-65). No request byte was sent.
+  def classify(
+        {:error, %{__struct__: Finch.TransportError, reason: _, phase: :connect}},
+        :finch,
         _bodyless?
       ),
       do: :refused
@@ -47,31 +59,35 @@ defmodule RequestSeal.Adapter.Delivery do
 
   defp http2?(_, _), do: false
 
-  # Name resolution happens only inside Mint 1.11.0 Core.Transport.TCP.connect/3,
-  # so :nxdomain precedes any request byte. Socket errors on an open connection
-  # reuse the same struct and POSIX reason (HTTP1.stream/2, lines 553-556;
-  # HTTP2.stream/2, line 1042; TCP.send/2 and recv/3), so :econnrefused,
-  # :ehostunreach, :enetunreach, :timeout, :closed and TLS alerts prove no phase.
+  # Mint 1.11.0 lib/mint/core/transport/tcp.ex TCP.connect/3:15-45 resolves
+  # names before any request byte. TCP.send/2:58-60 and recv/3:66-68 reuse the
+  # same reason wrapper on an open socket, so socket reasons alone prove no
+  # phase. Finch's :connect field above supplies the missing HTTP/1 evidence;
+  # raw Mint and Req transport errors do not carry it.
   defp transport(:nxdomain), do: :refused
 
-  # Mint 1.11.0 HTTP2.negotiate/4, lines 1369-1377, precedes any HTTP request.
+  # Mint 1.11.0 lib/mint/http2.ex HTTP2.negotiate/4:1369-1377 precedes requests.
   defp transport(:protocol_not_negotiated), do: :refused
   defp transport({:bad_alpn_protocol, protocol}) when is_binary(protocol), do: :refused
   defp transport(_), do: :unknown
 
-  # Mint 1.11.0 HTTP2.handle_rst_stream/3, line 2426, reports the stream's code.
-  # handle_goaway/3, lines 2844-2853, emits :unprocessed only above last_stream_id.
+  # Mint 1.11.0 lib/mint/http2.ex HTTP2.handle_rst_stream/3:2426 reports the
+  # stream's code. handle_goaway/3:2844-2853 emits :unprocessed only above
+  # last_stream_id. Finch 0.25.0 lib/finch/http2/pool.ex handle_response/3:866-885
+  # forwards the wrapped error even while the stream is still uploading.
   # A connection-level GOAWAY code alone does not identify an unprocessed stream.
   defp http2({:server_closed_request, :refused_stream}, _), do: :refused
   defp http2(:unprocessed, _), do: :refused
   defp http2(reason, :req), do: pool(reason)
   defp http2(_, _), do: :unknown
 
-  # Finch 0.24.0 HTTP2.Pool.disconnected/3:342 and connecting/3:397 return
-  # immediately, before send_request/7. Req normalizes these to HTTP/2 errors.
+  # Finch 0.25.0 lib/finch/http2/pool.ex HTTP2.Pool.disconnected/3:347-348 and
+  # connecting/3:407-408 return before send_request/6:736. Req normalizes these
+  # to HTTP/2 errors (Req 0.7.5 lib/req/finch.ex normalize_error/1:361-362).
   # For a non-nil body, any HTTP/2 refusal may follow a :read_only rerun of a
-  # partially sent request (HTTP2.Pool.connected_read_only/3:599-605;
-  # Finch.__stream__/6:848-855). Only nil starts RequestStream in :done.
+  # partially sent request (same pool file, connected_read_only/3:579-592;
+  # lib/finch.ex Finch.__stream__/6:853-860). Only nil starts RequestStream in
+  # :done (lib/finch/http2/request_stream.ex RequestStream.new/1:6-21).
   defp pool(reason) when reason in [:disconnected, :connection_not_ready], do: :refused
   defp pool(_), do: :unknown
 end

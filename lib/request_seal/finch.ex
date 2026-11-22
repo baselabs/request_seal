@@ -50,19 +50,23 @@ if Code.ensure_loaded?(Finch) do
 
     `:answered` means an integer HTTP status was returned, except 502 and 504:
     those gateway responses leave origin processing unknown (RFC 9110 Sections
-    15.6.3 and 15.6.5). `:refused` means a name-resolution failure (`:nxdomain`),
-    failed ALPN negotiation, an HTTP/2 stream explicitly left unprocessed
-    (RFC 9113 Section 8.7), a pool that rejected the request before sending it,
-    or this adapter's own attach/sign refusal before send.
+    15.6.3 and 15.6.5). `:refused` means an HTTP/1 connection failure reported
+    as `%Finch.TransportError{phase: :connect}` (DNS, TCP, or TLS), a
+    name-resolution failure (`:nxdomain`), failed ALPN negotiation, an HTTP/2
+    stream explicitly left unprocessed (RFC 9113 Section 8.7), a pool that
+    rejected the request before sending it, or this adapter's own attach/sign
+    refusal before send.
     Only `:refused` is safe to retry automatically. `:unknown` requires the
     application's own idempotency protection; `:answered` does not promise that
     repeating the operation is safe or that its response was authenticated.
 
-    The locked clients report socket errors from connect and from an open
-    connection with the same reason, so a refused connection, an unreachable
-    host or network, a socket timeout and a TLS alert all return `:unknown`:
-    each can also follow a sent request. Receive timeouts, closed connections,
-    response-verification failures, and unrecognized terms are `:unknown`.
+    Finch 0.25 sets `phase: :connect` only when opening an HTTP/1 connection
+    fails, proving no request byte was sent, regardless of the body. Without
+    that phase, a socket reason alone cannot distinguish connect from an open
+    connection, so a refused connection, an unreachable host or network, a
+    socket timeout and a TLS alert return `:unknown`. Receive timeouts,
+    closed connections, response-verification failures, and unrecognized
+    terms are `:unknown`.
     No retry is performed, and the error struct's retry policy is not changed.
 
     An HTTP/2 stream or pool refusal is `:refused` only when `request.body` is
@@ -70,6 +74,8 @@ if Code.ensure_loaded?(Finch) do
     partially sent HTTP/2 request after `:read_only`, losing the earlier send
     evidence. Name-resolution and ALPN failures remain pre-send refusals;
     HTTP/2 background connection failures instead surface as pool errors.
+    HTTP/2 receive timeouts measure idle time and still return `:unknown`.
+    Req 0.7.x discards Finch's phase, so its classifier cannot use this rule.
 
     ## Parameters
 
@@ -90,6 +96,11 @@ if Code.ensure_loaded?(Finch) do
         iex> error = %Finch.TransportError{reason: :econnrefused}
         iex> RequestSeal.Finch.classify({:error, error}, request)
         :unknown
+        iex> error = %Finch.TransportError{reason: :econnrefused, phase: :connect}
+        iex> RequestSeal.Finch.classify({:error, error}, request)
+        :refused
+        iex> RequestSeal.Finch.classify({:error, error}, %{request | body: "body"})
+        :refused
         iex> error = %Finch.TransportError{reason: :timeout}
         iex> RequestSeal.Finch.classify({:error, error}, request)
         :unknown

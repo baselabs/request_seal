@@ -39,7 +39,7 @@ Add optional dependencies for the integrations you use. The table is a reference
 | `:bandit` | `~> 1.15` | To run the example receiver |
 | `:phoenix` | `~> 1.8.17` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
-| `:finch` | `>= 0.24.0 and < 0.25.0` | Finch transport and caller-started pools |
+| `:finch` | `>= 0.25.0 and < 0.26.0` | Finch transport and caller-started pools |
 | `:ash` | `>= 3.37.4 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
 | `:ash_onetime` | `~> 1.9 and >= 1.9.2` | Recommended durable replay; Elixir 1.20+ |
 | `:ash_hooks` | `>= 3.0.0 and < 4.0.0` | Webhook signing and verification; Elixir 1.20+ |
@@ -51,7 +51,7 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
 [
   {:request_seal, "~> 2.0"},
   {:req, "~> 0.7.4"},
-  {:finch, ">= 0.24.0 and < 0.25.0"},
+  {:finch, ">= 0.25.0 and < 0.26.0"},
   {:plug, "~> 1.20.3"},
   {:bandit, "~> 1.15"},
   {:jason, "~> 1.4"}

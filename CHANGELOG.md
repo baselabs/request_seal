@@ -2,6 +2,12 @@
 
 ## Unreleased 2.0.0
 
+- Require Finch `>= 0.25.0 and < 0.26.0`. Classify its HTTP/1 transport
+  failures with `phase: :connect` as `:refused`, proving no request byte was
+  sent; Req 0.7.x drops that phase and retains conservative socket-error
+  classification. Keep HTTP/2 partial-upload reruns `:unknown`, and exercise
+  delivery classification in the fresh dependency-floor consumer.
+
 - Raise the Phoenix floor for the controller example, the test suite and the
   notebooks to 1.8.17, which fixes CVE-2026-128361 and CVE-2026-129344.
 

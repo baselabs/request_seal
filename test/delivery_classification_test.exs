@@ -26,16 +26,26 @@ defmodule RequestSeal.DeliveryClassificationTest do
     end
   end
 
-  test "a closed local port is unknown because open connections report the same reason",
+  test "a closed local port refuses only when Finch preserves the HTTP/1 connect phase",
        %{handle: handle} do
     {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
     {:ok, {_, port}} = :inet.sockname(listener)
     :ok = :gen_tcp.close(listener)
 
-    for client <- [:req, :finch] do
-      {result, request} = send_request(client, "http://127.0.0.1:#{port}", handle)
-      assert {:error, %{reason: :econnrefused}} = result
-      assert classify(client, result, request) == :unknown
+    for client <- [:req, :finch], body <- [nil, "", Peer.body()] do
+      {result, request} =
+        send_request(client, "http://127.0.0.1:#{port}", handle, [], __MODULE__.Pool, body)
+
+      case client do
+        :finch ->
+          assert {:error, %Finch.TransportError{reason: :econnrefused, phase: :connect}} = result
+          assert classify(client, result, request) == :refused
+
+        :req ->
+          assert {:error, %Req.TransportError{reason: :econnrefused} = error} = result
+          refute Map.has_key?(error, :phase)
+          assert classify(client, result, request) == :unknown
+      end
     end
   end
 
@@ -203,10 +213,28 @@ defmodule RequestSeal.DeliveryClassificationTest do
       {origin, task} = Peer.start([:hold], handle)
       {result, request} = send_request(client, origin, handle, receive_timeout: 50)
       assert {:error, %{reason: :timeout}} = result
+      if client == :finch, do: assert({:error, %Finch.TransportError{phase: nil}} = result)
       assert classify(client, result, request) == :unknown
       assert_receive {:wire_request, _, {:ok, _}}
       assert_receive {:holding, _}
       assert_receive {:peer_closed, {:error, :closed}}
+      Peer.finish(task)
+    end
+  end
+
+  test "a socket closed after receiving the signed request has no connect phase", c do
+    for client <- [:req, :finch] do
+      {origin, task} = Peer.start([:timeout], c.handle)
+      opts = [receive_timeout: 1_000]
+
+      {result, request} =
+        send_request(client, origin, c.handle, opts, __MODULE__.Pool, Peer.body())
+
+      assert {:error, %{reason: :closed}} = result
+      if client == :finch, do: assert({:error, %Finch.TransportError{phase: nil}} = result)
+      assert classify(client, result, request) == :unknown
+      assert_receive {:wire_request, %{body: %{bytes: body}}, {:ok, _}}
+      assert body == Peer.body()
       Peer.finish(task)
     end
   end
@@ -292,6 +320,9 @@ defmodule RequestSeal.DeliveryClassificationTest do
       assert_receive {:h2_rerun_headers, second, second_stream, _}
       assert first != second
       assert second_stream > 0
+      assert_receive {:h2_rerun_partial_body, ^second, bytes, data_flags}
+      assert bytes > 0 and bytes < byte_size(body)
+      assert Bitwise.band(data_flags, 1) == 0
       assert classify(client, result, request) == :unknown
 
       case client do
@@ -359,6 +390,24 @@ defmodule RequestSeal.DeliveryClassificationTest do
             {:tls_alert, {:handshake_failure, ~c"alert"}}
           ] do
         assert classify(client, {:error, struct!(transport, reason: reason)}, request) == :unknown
+      end
+    end
+
+    for reason <- [
+          :econnrefused,
+          :ehostunreach,
+          :enetunreach,
+          :timeout,
+          :closed,
+          {:tls_alert, {:handshake_failure, ~c"alert"}}
+        ],
+        body <- [nil, "", "body", {:stream, ["body"]}] do
+      result = {:error, %Finch.TransportError{reason: reason, phase: :connect}}
+      assert RequestSeal.Finch.classify(result, %{request | body: body}) == :refused
+
+      for phase <- [nil, :unknown, :send, :recv] do
+        result = {:error, %Finch.TransportError{reason: reason, phase: phase}}
+        assert RequestSeal.Finch.classify(result, %{request | body: body}) == :unknown
       end
     end
 
@@ -552,14 +601,11 @@ defmodule RequestSeal.DeliveryClassificationTest do
           :ok = :gen_tcp.send(socket, <<8::24, 7, 0, 0::32, stream_id::32, 0::32>>)
 
         {:refuse, ^stream_id} ->
-          # Finch 0.24.0 HTTP2.Pool.handle_response/3 reads the receive telemetry
-          # that complete_request_if_done/3 sets only after the whole body is
-          # sent. Refusing a still-uploading stream exits the pool, so open both
-          # windows and read the full body before refusing the rerun.
-          :ok = :gen_tcp.send(socket, <<6::24, 4, 0, 0::32, 4::16, 1_048_576::32>>)
-          :ok = :gen_tcp.send(socket, <<4::24, 8, 0, 0::32, 0::1, 1_048_576::31>>)
-
-          request_body(socket, stream_id)
+          # Finch 0.25.0 lib/finch/http2/pool.ex handle_response/3:866-885
+          # now returns stream errors during upload. Refuse the rerun while
+          # its body still exceeds the peer's eight-byte stream window.
+          {bytes, data_flags} = request_data(socket, stream_id)
+          send(owner, {:h2_rerun_partial_body, self(), bytes, data_flags})
           :ok = :gen_tcp.send(socket, <<4::24, 3, 0, stream_id::32, 7::32>>)
       after
         5_000 -> flunk("HTTP/2 peer did not receive its response instruction")
@@ -589,13 +635,6 @@ defmodule RequestSeal.DeliveryClassificationTest do
     case h2_frame(socket) do
       {0, flags, ^stream_id, data} -> {byte_size(data), flags}
       _ -> request_data(socket, stream_id)
-    end
-  end
-
-  defp request_body(socket, stream_id) do
-    case h2_frame(socket) do
-      {0, flags, ^stream_id, _data} when Bitwise.band(flags, 1) == 1 -> :ok
-      _ -> request_body(socket, stream_id)
     end
   end
 

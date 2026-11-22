@@ -1,6 +1,6 @@
 # Sign Req and Finch requests and verify responses
 
-**What you will build:** A Req client that signs outgoing JSON requests and verifies signed responses, followed by the equivalent Finch calls. Install Req (`~> 0.7.4`) and Finch (`>= 0.24.0 and < 0.25.0`), and run the receiver from [Phoenix and Plug](phoenix-and-plug.md) on Phoenix's development default port 4000 at `http://127.0.0.1:4000/webhooks`. These examples use [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) and [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html).
+**What you will build:** A Req client that signs outgoing JSON requests and verifies signed responses, followed by the equivalent Finch calls. Install Req (`~> 0.7.4`) and Finch (`>= 0.25.0 and < 0.26.0`), and run the receiver from [Phoenix and Plug](phoenix-and-plug.md) on Phoenix's development default port 4000 at `http://127.0.0.1:4000/webhooks`. These examples use [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) and [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html).
 
 ## 1. Shared setup and outgoing coverage
 
@@ -165,24 +165,32 @@ make repeating the operation safe. Status 502 or 504 is `:unknown`, since a
 gateway cannot establish whether the origin processed the request
 ([RFC 9110 Sections 15.6.3 and 15.6.5](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.6.3)).
 
+Finch 0.25 [reports `%Finch.TransportError{phase: :connect}`](https://github.com/sneako/finch/blob/v0.25.0/lib/finch/transport_error.ex#L5-L8) when opening an
+HTTP/1 connection fails during DNS, TCP, or TLS setup. Finch's classifier
+returns `:refused` for that phase regardless of the request body: no request
+byte was sent. Without `phase: :connect`, socket reasons alone cannot prove
+delivery. Req 0.7.x discards Finch's phase when constructing
+`Req.TransportError`, so its refused connections, unreachable hosts or networks,
+socket timeouts, and TLS alerts remain `:unknown`
+([Req 0.7.5 `normalize_error/1`](https://github.com/wojtekmach/req/blob/v0.7.5/lib/req/finch.ex#L370-L372)).
 Receive timeouts, mid-exchange closes, failed response verification, and unknown
-errors require the application's own idempotency protection. The locked clients
-report a socket error with the same reason whether it happened during connect or
-on an open connection after sending, so a refused connection, an unreachable host
-or network, a socket timeout and a TLS alert also remain `:unknown`. A
-name-resolution failure (`:nxdomain`) on the first attempt happens before any
-connection exists and is `:refused`. First-attempt HTTP/2 REFUSED_STREAM and
+errors require the application's own idempotency protection. A name-resolution
+failure (`:nxdomain`) on the first attempt happens before any connection exists
+and is `:refused` for either client. First-attempt HTTP/2 REFUSED_STREAM and
 GOAWAY's per-stream unprocessed indication supply explicit refusal evidence
 only when the sent Finch request body is nil
 ([RFC 9113 Section 8.7](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7)).
 
-Finch can restart a partially sent HTTP/2 request after a `:read_only` pool error.
+Finch 0.25 can still restart a partially sent HTTP/2 request after a `:read_only` pool error.
 Both classifiers therefore return `:unknown` for HTTP/2 stream or pool refusals
 when the sent Finch body was non-nil, including `""`. A nil body cannot take
 that partial-upload rerun path. Req records this fact from the finalized Finch
 body; Finch's classifier reads it from the supplied request. Raw DNS and ALPN
 failures stay pre-send refusals: HTTP/2 connection failures happen in the
-background pool and surface as pool errors, which follow the body rule.
+background pool and surface as pool errors, which follow the body rule. The
+pool's `:disconnected` and `:connection_not_ready` reject before sending the
+current request, but may follow that hidden rerun. HTTP/2 receive timeouts
+measure idle time in Finch 0.25; they still leave delivery `:unknown`.
 
 ```elixir
 :answered = RequestSeal.Finch.classify({:ok, response}, request)

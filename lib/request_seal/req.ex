@@ -132,9 +132,11 @@ if Code.ensure_loaded?(Req) do
     application's own idempotency protection; `:answered` does not promise that
     repeating the operation is safe or that its response was authenticated.
 
-    The locked clients report socket errors from connect and from an open
-    connection with the same reason, so a refused connection, an unreachable
-    host or network, a socket timeout and a TLS alert all return `:unknown`:
+    Req 0.7.x discards Finch 0.25's `TransportError.phase` in
+    [`Req.Finch.normalize_error/1`](https://github.com/wojtekmach/req/blob/v0.7.5/lib/req/finch.ex#L370-L372).
+    It reports socket errors from connect and from an open connection with
+    the same reason, so a refused connection, an unreachable host or network,
+    a socket timeout and a TLS alert all return `:unknown`:
     each can also follow a sent request. Receive timeouts, closed connections,
     response-verification failures, and unrecognized terms are `:unknown`.
     No retry is performed, and the error struct's retry policy is not changed.
@@ -144,7 +146,8 @@ if Code.ensure_loaded?(Req) do
     rules out that earlier send; `""` does not. The final error step applies
     this body rule before returning the error. Raw name-resolution and ALPN
     failures remain pre-send refusals: HTTP/2 background connection failures
-    instead surface as pool errors, which follow the body rule.
+    instead surface as pool errors, which follow the body rule. HTTP/2
+    receive timeouts measure idle time and still return `:unknown`.
 
     ## Examples
 

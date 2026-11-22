@@ -14,8 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 FLOOR_COVERAGE = {
     "telemetry": ("test/telemetry_test.exs",),
     "ash": ("test/ash_test.exs", "test/support/ash"),
-    "req": ("test/client_adapters_test.exs", "test/support/http_signature_peer_helper.exs"),
-    "finch": ("test/client_adapters_test.exs", "test/support/http_signature_peer_helper.exs"),
+    "req": (
+        "test/client_adapters_test.exs", "test/delivery_classification_test.exs",
+        "test/support/http_signature_peer_helper.exs",
+    ),
+    "finch": (
+        "test/client_adapters_test.exs", "test/delivery_classification_test.exs",
+        "test/support/http_signature_peer_helper.exs",
+    ),
     "plug": (
         "test/plug_transport_test.exs", "test/plug_phoenix_test.exs", "test/plug_target_fidelity_test.exs",
         "test/support/plug_transport_helper.exs", "test/support/plug_phoenix_helper.exs",
