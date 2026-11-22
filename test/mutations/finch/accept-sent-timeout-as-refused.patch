@@ -1,10 +1,10 @@
 --- a/lib/request_seal/adapter/delivery.ex
 +++ b/lib/request_seal/adapter/delivery.ex
-@@ -57,6 +57,7 @@
-   # Mint 1.11.0 HTTP2.negotiate/4, lines 1369-1377, precedes any HTTP request.
+@@ -69,6 +69,7 @@
+   # Mint 1.11.0 lib/mint/http2.ex HTTP2.negotiate/4:1369-1377 precedes requests.
    defp transport(:protocol_not_negotiated), do: :refused
    defp transport({:bad_alpn_protocol, protocol}) when is_binary(protocol), do: :refused
 +  defp transport(:timeout), do: :refused
    defp transport(_), do: :unknown
 
-   # Mint 1.11.0 HTTP2.handle_rst_stream/3, line 2426, reports the stream's code.
+   # Mint 1.11.0 lib/mint/http2.ex HTTP2.handle_rst_stream/3:2426 reports the
