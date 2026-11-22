@@ -29,10 +29,10 @@ No service is required by the scaffold; no fail-open fallback, implicit authoriz
 This public repository builds and tests only in GitHub-hosted qualification on a
 `kci/` ref, never on a developer's machine or the build box. Qualification runs the
 covering parts of `python3 scripts/check.py`, and a change reaches the default branch
-only through `kimosabe-land --repo . --sha <full sha>`. Pure Python source checks that
+only through the landing tool. Pure Python source checks that
 compile nothing may run locally with `python3 -I -B`. Pure Python unit tests whose
 files have been read and do not invoke Mix may run locally with `mix` absent from
-`PATH`; compilation-dependent Python tests stay hosted. Only `kimosabe-land` watches
+`PATH`; compilation-dependent Python tests stay hosted. Only the landing tool watches
 a run; sessions do not poll GitHub. Pull requests execute no project code. Use the
 exact `.tool-versions` runtimes, locked dependency fetches, both advisory feeds,
 immutable action pins and measured job timeouts. Qualification only restores caches;
@@ -52,16 +52,15 @@ confidential design detail, machine path, or link into a private path belongs he
 
 ## CI/CD and releases
 
-Follow infra's baselabs/docs/ci.md, “What infra requires of every product”
-(commit df62d12d320adc85ec5519620e78c1ca9f32f949). Send workflow changes to infra
-with repository, branch and full commit for review before landing.
-Land only through `kimosabe-land --repo . --sha <full sha>`;
+Follow the CI maintainers' requirements for every product. Send workflow changes to
+the CI maintainers with repository, branch and full commit for review before landing.
+Land only through the landing tool;
 the default-branch ruleset requires the exact `qualified` check with no bypass.
 Never use classic branch protection alongside that ruleset.
 
 Sessions never release, publish, tag, dispatch workflows or hold registry keys.
-After a qualified version commit lands, send infra the repository, full commit,
-version, publication contents and green qualification run. Infra declares the
+After a qualified version commit lands, send the release maintainers the repository, full commit,
+version, publication contents and green qualification run. The release maintainers declare the
 `publish` environment and secrets through its declaration, obtains owner approval,
 dispatches `publish.yml`, reads publication back and tags the published commit.
 No tag push starts a workflow. A first registry publication belongs to the owner.
@@ -75,11 +74,11 @@ Docs builds are not byte-stable, so docs bytes are never compared: every docs
 archive carries `release.json` naming package, version and the dispatched commit.
 Existing docs are never uploaded again; unkeyed readback compares package bytes and
 requires the served docs' `release.json` to name the dispatched commit or its
-default-branch ancestor, the published commit infra tags. When that is an ancestor,
+default-branch ancestor, the published commit the release maintainers tag. When that is an ancestor,
 planning refuses before any upload unless the package, corpus and SBOM pass the
 guide's attestation checks for it. Consumer verification
 files, with the served docs archive, leave publication as one `release-assets`
-artifact; infra creates the GitHub release for `v<version>` from it after readback
+artifact; the release maintainers create the GitHub release for `v<version>` from it after readback
 and tagging.
 This library has no deploy chart or `argocd/deploy/` path.
 Sessions do not publish or deploy. Mirror pushes

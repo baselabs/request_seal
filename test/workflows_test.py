@@ -299,7 +299,7 @@ class QualificationTest(unittest.TestCase):
                     self.assertNotIn("jwe_teardown_gate", command, workflow.name)
 
     def test_every_upload_sets_retention_for_its_reader(self):
-        # Estate rule (infra ci.md): 1 day for an artifact a later job of the same run
+        # CI rule: 1 day for an artifact a later job of the same run
         # downloads, 7 days for anything read after the run.
         found = 0
         for workflow in workflows():

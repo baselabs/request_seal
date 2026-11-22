@@ -246,7 +246,7 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
         configuration = docs.public_configuration(ROOT)
         self.assertRegex(configuration["version"], r"^\d+\.\d+\.\d+(?:-[\w.-]+)?$")
         self.assertEqual([], docs.package_errors(ROOT, configuration))
-        for path in ("test/fixtures/web_bot_auth/PROVENANCE.md", ".env", ".kimosabe/release-files.txt", "scripts/check.py"):
+        for path in ("test/fixtures/web_bot_auth/PROVENANCE.md", ".env", "notes/release-files.txt", "scripts/check.py"):
             with self.subTest(path=path):
                 changed = dict(configuration)
                 changed["files"] = configuration["files"] | {path}

@@ -129,8 +129,8 @@ class PlatformPostgresTest(unittest.TestCase):
         self.assertEqual(1, len(matches), name)
         return matches[0]
 
-    def test_anonymous_current_digest_check_is_the_infra_step_verbatim(self):
-        # Public repository form from infra's ci.md, with only the copy path changed.
+    def test_anonymous_current_digest_check_is_the_platform_step_verbatim(self):
+        # The platform engine's public-repository form, with only the copy path changed.
         expected = r'''engine="$(cat .github/postgres.ref)"
 [[ "$engine" =~ ^ghcr\.io/baselabs/postgres:[0-9]+\.[0-9]+-inputs-[0-9a-f]{64}@sha256:[0-9a-f]{64}$ ]]
 current_digest="$(python3 - <<'PY'
