@@ -37,8 +37,9 @@ defmodule RequestSeal.Test.HostConditions do
   end
 
   def admitted?(steal, foreign),
-    do: is_number(steal) and steal >= 0 and steal <= 5 and
-          is_number(foreign) and foreign >= 0 and foreign <= 10
+    do:
+      is_number(steal) and steal >= 0 and steal <= 5 and
+        is_number(foreign) and foreign >= 0 and foreign <= 10
 
   defp process_stats do
     for entry <- File.ls!("/proc"), {pid, ""} <- [Integer.parse(entry)], pid > 0 do

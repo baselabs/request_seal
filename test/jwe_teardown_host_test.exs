@@ -28,6 +28,7 @@ defmodule RequestSeal.JWETeardownHostTest do
     end
 
     high_steal = "cpu 30 25 40 1019 80 65 75 6 32 24"
+
     assert HostConditions.percentages(before, high_steal, process, [process_stat(30, 45)]) ==
              {6.0, 0.0}
 
@@ -61,7 +62,9 @@ defmodule RequestSeal.JWETeardownHostTest do
     refute unrelated in after_processes
     assert length(before) == 4
     assert length(after_processes) == 4
-    assert HostConditions.percentages(before_cpu, after_cpu, before, after_processes) == {5.0, 4.0}
+
+    assert HostConditions.percentages(before_cpu, after_cpu, before, after_processes) ==
+             {5.0, 4.0}
   end
 
   test "unit setup loads code without executing a measured operation" do
@@ -119,10 +122,12 @@ defmodule RequestSeal.JWETeardownHostTest do
       :erlang.trace_pattern({RequestSeal.JOSE.JWE.Worker, :authenticate, 4}, false, [])
     end
   end
+
   defp process_stat(user, system, options \\ []) do
     pid = Keyword.get(options, :pid, 123)
     parent = Keyword.get(options, :parent, 1)
     waited = Keyword.get(options, :waited, 0)
+
     "#{pid} (beam ) smp) S #{parent} 2 3 0 -1 0 0 0 0 0 #{user} #{system} #{waited} 0 20 0 8 0 1234"
   end
 end

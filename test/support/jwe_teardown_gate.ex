@@ -222,7 +222,8 @@ defmodule RequestSeal.Test.JWETeardownGate do
     wait_until(window + @cpu_window_us)
     process_after = HostConditions.process_snapshot(:after)
     cpu_after = HostConditions.cpu_stat()
-    {steal, foreign} = HostConditions.percentages(cpu_before, cpu_after, process_before, process_after)
+    {steal, foreign} =
+      HostConditions.percentages(cpu_before, cpu_after, process_before, process_after)
 
     observation = %{
       load: load,
