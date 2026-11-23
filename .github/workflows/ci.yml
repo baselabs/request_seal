@@ -22,12 +22,20 @@ concurrency:
   cancel-in-progress: true
 jobs:
   process-ownership-macos:
+    needs: toolchain
     runs-on: macos-15
     timeout-minutes: 5 # run 44281082286: cold 1m11s (<2.5m)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.toolchain.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ needs.toolchain.outputs.python }}
+        run: python3 -I -c 'import platform, sys; sys.exit(platform.python_version() != sys.argv[1])' "$EXPECTED_PYTHON"
       - run: python3 -B -m unittest discover -s test -p processes_test.py
   toolchain:
     runs-on: ubuntu-24.04
@@ -35,6 +43,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       nodejs: ${{ steps.pins.outputs.nodejs }}
+      python: ${{ steps.pins.outputs.python }}
       elixir: ${{ steps.pins.outputs.elixir }}
       otp: ${{ steps.pins.outputs.otp }}
     steps:
@@ -45,6 +54,13 @@ jobs:
         run: scripts/toolchain.sh >> "$GITHUB_OUTPUT"
       - name: Test the shared toolchain reader
         run: scripts/toolchain.sh --self-test
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ steps.pins.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ steps.pins.outputs.python }}
+        run: python3 -I -c 'import platform, sys; sys.exit(platform.python_version() != sys.argv[1])' "$EXPECTED_PYTHON"
       - id: matrix
         env:
           TOOLCHAIN_OUTPUTS: ${{ toJSON(steps.pins.outputs) }}
@@ -77,6 +93,13 @@ jobs:
         with:
           node-version: ${{ needs.toolchain.outputs.nodejs }}
           package-manager-cache: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.toolchain.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ needs.toolchain.outputs.python }}
+        run: python3 -I -c 'import platform, sys; sys.exit(platform.python_version() != sys.argv[1])' "$EXPECTED_PYTHON"
       - name: Refuse a differing installed runtime
         env:
           ELIXIR: ${{ matrix.elixir }}
@@ -176,6 +199,13 @@ jobs:
           elixir-version: ${{ needs.toolchain.outputs.elixir }}
           otp-version: ${{ needs.toolchain.outputs.otp }}
           version-type: strict
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.toolchain.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ needs.toolchain.outputs.python }}
+        run: python3 -I -c 'import platform, sys; sys.exit(platform.python_version() != sys.argv[1])' "$EXPECTED_PYTHON"
       - name: Refuse a differing installed runtime
         env:
           ELIXIR: ${{ needs.toolchain.outputs.elixir }}
@@ -201,6 +231,13 @@ jobs:
           elixir-version: ${{ needs.toolchain.outputs.elixir }}
           otp-version: ${{ needs.toolchain.outputs.otp }}
           version-type: strict
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.toolchain.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ needs.toolchain.outputs.python }}
+        run: python3 -I -c 'import platform, sys; sys.exit(platform.python_version() != sys.argv[1])' "$EXPECTED_PYTHON"
       - name: Refuse a differing installed runtime
         env:
           ELIXIR: ${{ needs.toolchain.outputs.elixir }}
@@ -230,6 +267,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.toolchain.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ needs.toolchain.outputs.python }}
+        run: python3 -I -c 'import platform, sys; sys.exit(platform.python_version() != sys.argv[1])' "$EXPECTED_PYTHON"
       - name: Require every proof job in this run to have succeeded
         env:
           GH_TOKEN: ${{ github.token }}

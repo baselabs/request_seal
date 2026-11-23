@@ -50,7 +50,8 @@ class ToolchainTest(unittest.TestCase):
 
     def test_workflows_only_read_versions_through_the_shared_reader(self):
         runtime_fields = {"erlef/setup-beam": ("elixir-version", "otp-version"),
-                          "actions/setup-node": ("node-version",)}
+                          "actions/setup-node": ("node-version",),
+                          "actions/setup-python": ("python-version",)}
         for name, source in workflow_sources().items():
             self.assertIn('scripts/toolchain.sh >> "$GITHUB_OUTPUT"', source)
             self.assertNotIn("version-file:", source)

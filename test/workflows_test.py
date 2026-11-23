@@ -2,7 +2,10 @@
 import ast
 import json
 from pathlib import Path
+import platform
 import re
+import shlex
+import subprocess
 import sys
 import unittest
 
@@ -107,16 +110,49 @@ class QualificationTest(unittest.TestCase):
         self.assertEqual({"ci.yml", "cache-warmer.yml", "publish.yml"}, {p.name for p in workflows()})
         self.assertFalse(any("uses" in body for body in ci.values()))
 
-    def test_python_is_runner_tooling_and_never_a_product_runtime(self):
+    def test_every_job_installs_and_checks_the_readers_exact_python_pin(self):
         pins = (ROOT / ".tool-versions").read_text()
-        self.assertNotRegex(pins, r"(?m)^\s*python(?:\s|$)")
+        self.assertRegex(pins, r"(?m)^python \d+\.\d+\.\d+$")
+        action = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
+        probe = ("python3 -I -c 'import platform, sys; "
+                 "sys.exit(platform.python_version() != sys.argv[1])' \"$EXPECTED_PYTHON\"")
+        programs = set()
         for path in workflows():
             source = path.read_text()
-            self.assertNotIn("actions/setup-python", source, path.name)
-            self.assertNotIn("python-version", source, path.name)
+            self.assertIn(action + " # v5.6.0", source)
             self.assertNotIn("version-file", source, path.name)
-        check = (ROOT / "scripts/check.py").read_text()
-        self.assertNotIn("actions/setup-python", check)
+            for job, body in jobs(source).items():
+                with self.subTest(workflow=path.name, job=job):
+                    steps = body["steps"]
+                    readers = [step for step in steps if step.get("id") == "pins"]
+                    output = "steps.pins" if readers else "needs.toolchain"
+                    expected = "${{ " + output + ".outputs.python }}"
+                    setups = [step for step in steps if step.get("uses", "").startswith("actions/setup-python@")]
+                    self.assertEqual(1, len(setups))
+                    setup = setups[0]
+                    self.assertEqual(action, setup["uses"])
+                    self.assertEqual({"python-version": expected}, setup["with"])
+                    self.assertNotIn("if", setup)
+                    refusal = steps[steps.index(setup) + 1]
+                    self.assertEqual("Refuse a differing installed Python", refusal["name"])
+                    self.assertNotIn("if", refusal)
+                    self.assertEqual({"EXPECTED_PYTHON": expected}, refusal["env"])
+                    self.assertEqual(probe, refusal["run"])
+                    self.assertFalse(any("python3" in step.get("run", "")
+                                         for step in steps[:steps.index(setup)]))
+                    if readers:
+                        self.assertLess(steps.index(readers[0]), steps.index(setup))
+                    else:
+                        needs = body["needs"]
+                        self.assertIn("toolchain", [needs] if isinstance(needs, str) else needs)
+                    programs.add(shlex.split(refusal["run"])[3])
+        self.assertEqual(1, len(programs))
+        for expected, status in ((platform.python_version(), 0), ("0.0.0", 1)):
+            result = subprocess.run([sys.executable, "-I", "-B", "-c", next(iter(programs)), expected],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(status, result.returncode)
+        ci = jobs(text("ci.yml"))
+        self.assertEqual("${{ steps.pins.outputs.python }}", ci["toolchain"]["outputs"]["python"])
 
     def test_no_pull_request_or_tag_executes_a_workflow(self):
         for path in workflows():
@@ -262,7 +298,9 @@ class QualificationTest(unittest.TestCase):
     def test_proof_steps_run_unconditionally_except_the_declared_lane_and_evidence_steps(self):
         self.assertEqual([], proof_condition_errors(text("ci.yml"), text("ci.yml")))
         process = jobs(text("ci.yml"))["process-ownership-macos"]
-        tests = [step for step in process["steps"] if "run" in step]
+        self.assertEqual("toolchain", process["needs"])
+        tests = [step for step in process["steps"] if "run" in step
+                 and step.get("name") != "Refuse a differing installed Python"]
         self.assertEqual([{"run": "python3 -B -m unittest discover -s test -p processes_test.py"}], tests)
 
     def test_condition_bindings_reject_relocation_and_extra_conditions(self):

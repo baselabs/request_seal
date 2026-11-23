@@ -40,10 +40,11 @@ TCP listeners, an OpenSSH agent, and PostgreSQL.
 Core consumer checks run without clients or frameworks installed.
 CI reads `.tool-versions` only through the unchanged shared reader at
 `scripts/toolchain.sh`, called directly by path. Its default pair and `beam_lanes`
-output supply the latest, floor, and mid proofs; its Node output supplies
-setup-node. After setup, the shared reader refuses differing installed BEAM
-and Node versions. Python is runner tooling, supplied by the hosted runner's
-`python3`. The qualification verdict consumes that same matrix.
+output supply the latest, floor, and mid proofs; its Node and Python outputs
+supply their setup actions. After setup, the shared reader refuses differing
+installed BEAM and Node versions. Every job also compares the installed Python
+version with the reader's Python output before running its checks. The
+qualification verdict consumes that same matrix.
 All three lockfiles fetch with `--check-locked` and retain separate advisory checks
 through both `mix hex.audit` and `mix deps.audit`.
 Publishing safety is defined by the runtime guard and actual Hex artifact metadata.

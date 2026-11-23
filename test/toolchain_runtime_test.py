@@ -30,7 +30,7 @@ class ToolchainRuntimeTest(unittest.TestCase):
 
     def test_no_tracked_source_copies_an_exact_pin(self):
         pins = configuration()
-        versions = {pins["nodejs"]} | {
+        versions = {pins["nodejs"], pins["python"]} | {
             value for lane in pins["matrix"]["include"] for key, value in lane.items() if key != "lane"
         }
         # Records state the toolchain a past result was produced on; locks are resolver output.

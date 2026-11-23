@@ -2,7 +2,7 @@
 
 ## Qualify the current source
 
-Use the Elixir/OTP pairs and Node pin in `.tool-versions`, with OpenSSL and
+Use the Elixir/OTP pairs, Node, and Python pins in `.tool-versions`, with OpenSSL and
 OpenSSH tools (`ssh-agent`, `ssh-add`, `ssh-keygen`) on `PATH`.
 Commands support macOS and Linux; Windows development uses WSL2.
 Repository builds and runtime tests run only in GitHub-hosted qualification on
@@ -27,7 +27,7 @@ mix test test/property --warnings-as-errors
 MIX_ENV=test mix run bench/ceilings.exs
 ```
 
-Hosted qualification reads product runtimes through `scripts/toolchain.sh`. Its
+Hosted qualification reads CI runtimes through `scripts/toolchain.sh`. Its
 compatibility matrix runs these properties on the floor and mid pairs as part
 of `mix test`; the default pair runs the declared gate. Setup refuses any
 installed runtime that differs from the reader's output.
