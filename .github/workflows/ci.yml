@@ -258,7 +258,7 @@ jobs:
   release-gate-self-check:
     needs: toolchain
     runs-on: ubuntu-24.04
-    timeout-minutes: 10 # no green run yet; measure the first green run
+    timeout-minutes: 5 # run 45224811554: 40s
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
