@@ -371,10 +371,17 @@ class PublicationTest(unittest.TestCase):
         self.assertIn('System.fetch_env!("HEX_API_KEY")', uploader)
         self.assertIn("auth = [key: key]", uploader)
         self.assertIn('unless upload in ["package-and-docs", "docs"]', uploader)
-        self.assertIn('if upload == "package-and-docs" do\n  Hex.API.Release.publish', uploader)
+        self.assertIn('Hex.API.Release.get(nil, "request_seal", version, auth)', uploader)
+        self.assertIn('Hex.API.Release.get_staged(url, auth)', uploader)
+        self.assertIn('/packages/request_seal/releases/#{version}/staged', uploader)
+        self.assertIn('Hex.API.Release.publish(nil, package, auth, fn _ -> :ok end, replace: false)', uploader)
+        self.assertLess(uploader.index('state = read_release!'), uploader.index('for kind <- uploads do'))
+        self.assertLess(uploader.index('stop_if_staged!(version, state)'), uploader.index('for kind <- uploads do'))
+        self.assertLess(uploader.index('remaining_uploads!(version, uploads, state)'),
+                        uploader.index('for kind <- uploads do'))
         self.assertIn("replace: false", uploader)
-        self.assertIn('Hex.API.ReleaseDocs.publish(nil, "request_seal", version, File.read!(docs_path), auth)', uploader)
-        self.assertIn("Hex upload is held for approval; approve it and dispatch again", uploader)
+        self.assertIn('Hex.API.ReleaseDocs.publish(nil, "request_seal", version, docs, auth)', uploader)
+        self.assertIn("is staged for approval; approve it on hex.pm, then dispatch again", uploader)
         for forbidden in ("Code.eval", "Code.require", "Mix.Task.run", "inspect(", "System.cmd"):
             self.assertNotIn(forbidden, uploader)
 

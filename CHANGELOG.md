@@ -2,6 +2,10 @@
 
 ## Unreleased 2.0.0
 
+- Detect Hex releases staged for approval before uploading, compare their package
+  checksum with the inspected archive, and stop with the approval URL and expiry.
+  Redispatch after approval keeps the served package and uploads only missing docs.
+
 - Require Finch `>= 0.25.0 and < 0.26.0`. Classify its HTTP/1 transport
   failures with `phase: :connect` as `:refused`, proving no request byte was
   sent; Req 0.7.x drops that phase and retains conservative socket-error
