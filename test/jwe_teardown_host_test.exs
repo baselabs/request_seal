@@ -20,6 +20,7 @@ defmodule RequestSeal.JWETeardownHostTest do
   test "tick resolution sets inclusive limits for steal and signed foreign CPU" do
     before_cpu = "cpu 100 0 0 900 0 0 0 0"
     before = [process_stat(10, 10)]
+
     cases = [
       {117, 66, false},
       {-17, 66, false},

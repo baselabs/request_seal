@@ -217,6 +217,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
     wait_until(window + @cpu_window_us)
     process_after = HostConditions.process_snapshot(:after)
     cpu_after = HostConditions.cpu_stat()
+
     observation =
       cpu_before
       |> HostConditions.metrics(cpu_after, process_before, process_after, cpus)
