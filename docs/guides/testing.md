@@ -142,8 +142,9 @@ maximum as a fraction of B and derived K_pf as a fraction of its bound.
 Linux samples use the same tick-resolution rule as the release gates. Foreign
 CPU is the aggregate busy CPU time from `/proc/stat`
 minus the CPU time of the BEAM process tree running that workload, including
-isolated peers. The [shared admission rule](../adr/0031-performance-release-gates.md)
-defines how to account for exited descendants. For `C` logical CPUs and `K`
+isolated peers. It credits the CPU deltas of processes visible at both
+boundaries and the BEAM's waited child CPU delta, after discounting the
+pre-window CPU of descendants visible only at the start. For `C` logical CPUs and `K`
 elapsed aggregate CPU ticks, the resolution is `e = 100 × 4 × C / K` percentage
 points. At each boundary, the host and process counters each advance in whole
 USER_HZ ticks and can lag by less than one tick per running CPU. The short
