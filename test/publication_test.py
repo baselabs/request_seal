@@ -375,10 +375,14 @@ class PublicationTest(unittest.TestCase):
         self.assertIn('Hex.API.Release.get_staged(url, auth)', uploader)
         self.assertIn('/packages/request_seal/releases/#{version}/staged', uploader)
         self.assertIn('Hex.API.Release.publish(nil, package, auth, fn _ -> :ok end, replace: false)', uploader)
-        self.assertLess(uploader.index('state = read_release!'), uploader.index('for kind <- uploads do'))
-        self.assertLess(uploader.index('stop_if_staged!(version, state)'), uploader.index('for kind <- uploads do'))
+        loop = uploader.index('Enum.reduce(uploads, :uploaded, fn kind, state ->')
+        self.assertLess(uploader.index('state = read_release!'), loop)
+        self.assertLess(uploader.index('stop_if_staged!(version, state)'), loop)
         self.assertLess(uploader.index('remaining_uploads!(version, uploads, state)'),
-                        uploader.index('for kind <- uploads do'))
+                        loop)
+        self.assertIn('state = upload_state!(kind, state, result, package)', uploader)
+        self.assertLess(uploader.index('state = upload_state!(kind, state, result, package)'),
+                        uploader.index('end)\n\n    stop_if_staged!(version, state)'))
         self.assertIn("replace: false", uploader)
         self.assertIn('Hex.API.ReleaseDocs.publish(nil, "request_seal", version, docs, auth)', uploader)
         self.assertIn("is staged for approval; approve it on hex.pm, then dispatch again", uploader)

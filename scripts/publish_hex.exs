@@ -27,22 +27,25 @@ defmodule PublishHex do
     uploads = if upload == "package-and-docs", do: [:package, :docs], else: [:docs]
     uploads = remaining_uploads!(version, uploads, state)
 
-    for kind <- uploads do
-      result =
-        request(fn ->
-          case kind do
-            :package ->
-              Hex.API.Release.publish(nil, package, auth, fn _ -> :ok end, replace: false)
+    state =
+      Enum.reduce(uploads, :uploaded, fn kind, state ->
+        result =
+          request(fn ->
+            case kind do
+              :package ->
+                Hex.API.Release.publish(nil, package, auth, fn _ -> :ok end, replace: false)
 
-            :docs ->
-              Hex.API.ReleaseDocs.publish(nil, "request_seal", version, docs, auth)
-          end
-        end)
+              :docs ->
+                Hex.API.ReleaseDocs.publish(nil, "request_seal", version, docs, auth)
+            end
+          end)
 
-      state = accepted!(kind, result)
-      stop_if_staged!(version, state)
-      IO.puts("Hex #{kind} upload accepted")
-    end
+        state = upload_state!(kind, state, result, package)
+        if state == :uploaded, do: IO.puts("Hex #{kind} upload accepted")
+        state
+      end)
+
+    stop_if_staged!(version, state)
 
     IO.puts("Upload step complete; unkeyed read-back must verify both archives")
     :ok
@@ -113,8 +116,44 @@ defmodule PublishHex do
     unless :package in uploads,
       do: Mix.raise("Hex release disappeared after planning; publication refused")
 
+    unless :docs in uploads,
+      do: Mix.raise("Hex new release requires a docs upload plan; publication refused")
+
     uploads
   end
+
+  # Only a package staged by this invocation may receive its planned docs.
+  def upload_state!(:package, :uploaded, response, _package) do
+    case accepted!(:package, response) do
+      {:staged, metadata} -> {:awaiting_docs, metadata}
+      :uploaded -> :uploaded
+    end
+  end
+
+  def upload_state!(
+        :docs,
+        {:awaiting_docs, _},
+        {:ok,
+         {status, _, %{"status" => "staged", "kind" => "release", "checksum" => checksum} = body}},
+        package
+      )
+      when status in 200..299 do
+    unless is_binary(checksum) and String.downcase(checksum) == sha256(package),
+      do: staged_docs_refused!()
+
+    staged(body)
+  end
+
+  def upload_state!(:docs, {:awaiting_docs, _}, _response, _package),
+    do: staged_docs_refused!()
+
+  def upload_state!(:docs, :uploaded, response, _package), do: accepted!(:docs, response)
+
+  defp staged_docs_refused!,
+    do:
+      Mix.raise(
+        "Hex staged release documentation did not join the inspected package; publication refused"
+      )
 
   # Hex 2.7.0 hex.publish classifies every 2xx by body status, not HTTP 202.
   def accepted!(_kind, {:ok, {status, _, %{"status" => "staged"} = body}})
@@ -141,6 +180,8 @@ defmodule PublishHex do
 
     remaining_uploads!(version, [], state)
   end
+
+  def stop_if_staged!(_version, {:awaiting_docs, _}), do: staged_docs_refused!()
 
   def stop_if_staged!(_version, _state), do: :ok
 

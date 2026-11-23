@@ -4,7 +4,9 @@
 
 - Detect Hex releases staged for approval before uploading, compare their package
   checksum with the inspected archive, and stop with the approval URL and expiry.
-  Redispatch after approval keeps the served package and uploads only missing docs.
+  Attach docs to a freshly staged release only when their response names the same
+  package checksum. Redispatch after approval keeps the served package and uploads
+  only missing docs.
 
 - Require Finch `>= 0.25.0 and < 0.26.0`. Classify its HTTP/1 transport
   failures with `phase: :connect` as `:refused`, proving no request byte was

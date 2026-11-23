@@ -29,6 +29,66 @@ defmodule RequestSeal.PublishHexTest do
     end
   end
 
+  test "a fresh staged package receives joined docs before the staged exit" do
+    for status <- [200, 201, 202, 299] do
+      pending =
+        PublishHex.upload_state!(:package, :uploaded, {:ok, {201, %{}, staged()}}, "package")
+
+      assert {:awaiting_docs, _} = pending
+      body = Map.put(staged(), "kind", "release")
+      joined = PublishHex.upload_state!(:docs, pending, {:ok, {status, %{}, body}}, "package")
+      assert {:staged, _} = joined
+
+      notice =
+        capture_io(fn ->
+          assert_raise Mix.Error, PublishHex.staged_message("0.4.0"), fn ->
+            PublishHex.stop_if_staged!("0.4.0", joined)
+          end
+        end)
+
+      assert notice =~ "::notice::Hex approval pending at #{body["html_url"]}"
+      assert notice =~ "expires at #{body["expires_at"]}"
+    end
+  end
+
+  test "docs must join the fresh staged release with the inspected package checksum" do
+    pending =
+      PublishHex.upload_state!(:package, :uploaded, {:ok, {201, %{}, staged()}}, "package")
+
+    joined = Map.put(staged(), "kind", "release")
+
+    refusal =
+      "Hex staged release documentation did not join the inspected package; publication refused"
+
+    for response <- [
+          {:ok, {201, %{}, Map.put(joined, "checksum", String.duplicate("0", 64))}},
+          {:ok, {201, %{}, Map.put(joined, "kind", "docs")}},
+          {:ok, {201, %{}, Map.delete(joined, "kind")}},
+          {:ok, {200, %{}, Map.delete(joined, "status")}},
+          {:ok, {201, %{}, Map.put(joined, "status", "approved")}},
+          {:ok, {200, %{}, %{}}},
+          {:ok, {403, %{}, "untrusted response"}},
+          {:error, "untrusted response"}
+        ] do
+      assert_raise Mix.Error, refusal, fn ->
+        PublishHex.upload_state!(:docs, pending, response, "package")
+      end
+    end
+
+    # A package-only plan cannot announce approval without its docs joining it.
+    assert_raise Mix.Error, refusal, fn -> PublishHex.stop_if_staged!("0.4.0", pending) end
+  end
+
+  test "direct successful uploads retain the ordinary package and docs flow" do
+    assert :uploaded ==
+             PublishHex.upload_state!(:package, :uploaded, {:ok, {201, %{}, %{}}}, "package")
+
+    assert :uploaded ==
+             PublishHex.upload_state!(:docs, :uploaded, {:ok, {201, %{}, %{}}}, "package")
+
+    assert :ok == PublishHex.stop_if_staged!("0.4.0", :uploaded)
+  end
+
   test "matching staged release stops before any planned package or docs upload" do
     state = PublishHex.staged_state!({:ok, {200, %{}, staged()}}, "package")
     assert {:staged, _} = state
@@ -94,6 +154,12 @@ defmodule RequestSeal.PublishHexTest do
     assert_raise Mix.Error, ~r/disappeared after planning/, fn ->
       PublishHex.remaining_uploads!("0.4.0", [:docs], :missing)
     end
+
+    assert_raise Mix.Error,
+                 "Hex new release requires a docs upload plan; publication refused",
+                 fn ->
+                   PublishHex.remaining_uploads!("0.4.0", [:package], :missing)
+                 end
 
     retired = staged() |> Map.put("retirement", %{"reason" => "security"})
 
