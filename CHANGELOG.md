@@ -207,7 +207,8 @@
   raising handlers retain telemetry's normal isolation and the caller's result.
 - Verify 72 distinct JWE reversing mutations with a passing clean baseline per
   selected test and commit, then the named rejection and a clean reversal.
-  The teardown and release gates admit windows using foreign CPU and CPU steal.
+  The teardown and release gates account for tick resolution in CPU admission.
+  Release admission spans both workloads and their warmups in each sample set.
   The teardown gate measures absolute Bounds limits with host identity, retry
   evidence, and an off-heap final-report observer. The Python runner brackets
   retained per-attempt counters with its own Linux readings and independently

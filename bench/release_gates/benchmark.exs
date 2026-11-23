@@ -41,9 +41,26 @@ defmodule RequestSeal.ReleaseGateBenchmark do
     {open_page, open_single, valid_page?, close} = workload.(kek, page, single, object)
 
     try do
+      load_before = loadavg()
+      cpu_before = HostConditions.cpu_stat()
+      process_before = HostConditions.process_snapshot(:before)
+      page_times = measure(open_page, page_samples, valid_page?)
+      single_times = measure(open_single, single_samples, &(&1 == single_plaintext))
+      process_after = HostConditions.process_snapshot(:after)
+      cpu_after = HostConditions.cpu_stat()
+      load_after = loadavg()
+
       %{
-        page: measure(open_page, page_samples, valid_page?),
-        single: measure(open_single, single_samples, &(&1 == single_plaintext)),
+        page: summarize_times(page_times),
+        single: summarize_times(single_times),
+        host_window: %{
+          load_before: load_before,
+          load_after: load_after,
+          cpu_before: cpu_before,
+          cpu_after: cpu_after,
+          process_before: process_before,
+          process_after: process_after
+        },
         otp: System.otp_release(),
         schedulers_online: System.schedulers_online(),
         version: to_string(Application.spec(:request_seal, :vsn))
@@ -55,35 +72,18 @@ defmodule RequestSeal.ReleaseGateBenchmark do
 
   defp measure(open, count, valid?) do
     Enum.each(1..@warmups, fn _ -> verify!(open.(), valid?) end)
-    load_before = loadavg()
-    cpu_before = HostConditions.cpu_stat()
-    process_before = HostConditions.process_snapshot(:before)
 
-    samples =
-      for _ <- 1..count do
-        start = System.monotonic_time(:nanosecond)
-        result = open.()
-        elapsed = System.monotonic_time(:nanosecond) - start
-        verify!(result, valid?)
-        elapsed / 1_000
-      end
-
-    process_after = HostConditions.process_snapshot(:after)
-    cpu_after = HostConditions.cpu_stat()
-    load_after = loadavg()
-
-    %{
-      median_us: median(samples),
-      samples: length(samples),
-      warmups: @warmups,
-      load_before: load_before,
-      load_after: load_after,
-      cpu_before: cpu_before,
-      cpu_after: cpu_after,
-      process_before: process_before,
-      process_after: process_after
-    }
+    for _ <- 1..count do
+      start = System.monotonic_time(:nanosecond)
+      result = open.()
+      elapsed = System.monotonic_time(:nanosecond) - start
+      verify!(result, valid?)
+      elapsed / 1_000
+    end
   end
+
+  defp summarize_times(samples),
+    do: %{median_us: median(samples), samples: length(samples), warmups: @warmups}
 
   defp verify!(result, valid?) do
     unless valid?.(result), do: raise("workload did not recover the expected content")
@@ -103,7 +103,8 @@ defmodule RequestSeal.ReleaseGateBenchmark do
   defp token(kek, plaintext, header_bytes) do
     cek = :crypto.strong_rand_bytes(32)
     wrap_iv = :crypto.strong_rand_bytes(12)
-    {wrapped, wrap_tag} = :crypto.crypto_one_time_aead(:aes_256_gcm, kek, wrap_iv, cek, "", 16, true)
+    {wrapped, wrap_tag} =
+      :crypto.crypto_one_time_aead(:aes_256_gcm, kek, wrap_iv, cek, "", 16, true)
 
     fields = %{
       "alg" => "A256GCMKW",

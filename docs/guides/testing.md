@@ -139,12 +139,17 @@ derived K_pf against Bounds K_pf. The constants are 170 ms and 5 ms respectively
 the gate reads them from the library. JSON and Markdown retain each scenario's
 maximum as a fraction of B and derived K_pf as a fraction of its bound.
 
-Linux samples require at most 5% CPU steal and 0–10% foreign CPU over the
-sample window. Foreign CPU is the aggregate busy CPU time from `/proc/stat`
+Linux samples use the same tick-resolution rule as the release gates. Foreign
+CPU is the aggregate busy CPU time from `/proc/stat`
 minus the CPU time of the BEAM process tree running that workload, including
 isolated peers. The [shared admission rule](../adr/0031-performance-release-gates.md)
-defines how to account for exited descendants. Both percentages use the total
-elapsed CPU time across the host. The artifact records the raw counters,
+defines how to account for exited descendants. For `C` logical CPUs and `K`
+elapsed aggregate CPU ticks, the resolution is `e = 100 × 4 × C / K` percentage
+points. At each boundary, the host and process counters each advance in whole
+USER_HZ ticks and can lag by less than one tick per running CPU. The short
+per-workload self-check spans in hosted run 45240645239 reported 12.5%, −33.3%,
+11.1% and 16.7% foreign CPU. Admit steal up to `5 + e` and foreign CPU from
+`−e` to `10 + e`, inclusive. The artifact records `e` and the raw counters,
 diagnostic load averages, percentages, online schedulers, logical CPUs, CPU
 model and OTP release. Counter windows span at least 20 ms to avoid zero-tick windows
 for short units; the observation delay stays outside every timed unit. A zero

@@ -152,15 +152,9 @@ defmodule RequestSeal.Test.JWETeardownGate do
   end
 
   def host do
-    logical =
-      case :erlang.system_info(:logical_processors) do
-        n when is_integer(n) and n > 0 -> n
-        _ -> System.schedulers_online()
-      end
-
     %{
       schedulers_online: System.schedulers_online(),
-      logical_cpus: logical,
+      logical_cpus: HostConditions.logical_cpus(),
       cpu_model: cpu_model(File.read!("/proc/cpuinfo")),
       otp: List.to_string(:erlang.system_info(:otp_release)),
       elixir: System.version()
@@ -197,7 +191,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
     {result, observation} = sample.()
     seen = [observation | seen]
 
-    if HostConditions.admitted?(observation.steal, observation.foreign_cpu) do
+    if observation.admitted do
       Map.merge(result, %{
         load: observation.load,
         steal: observation.steal,
@@ -210,6 +204,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
   end
 
   defp observe_host_sample(fun) do
+    cpus = HostConditions.logical_cpus()
     loadavg = File.read!("/proc/loadavg") |> String.trim()
     [first | _] = String.split(loadavg)
     load = String.to_float(first)
@@ -222,20 +217,18 @@ defmodule RequestSeal.Test.JWETeardownGate do
     wait_until(window + @cpu_window_us)
     process_after = HostConditions.process_snapshot(:after)
     cpu_after = HostConditions.cpu_stat()
-    {steal, foreign} =
-      HostConditions.percentages(cpu_before, cpu_after, process_before, process_after)
-
-    observation = %{
-      load: load,
-      steal: if(steal == nil, do: :null, else: steal),
-      foreign_cpu: if(foreign == nil, do: :null, else: foreign),
-      loadavg: loadavg,
-      cpu_before: cpu_before,
-      cpu_after: cpu_after,
-      process_before: process_before,
-      process_after: process_after,
-      schedulers_online: System.schedulers_online()
-    }
+    observation =
+      cpu_before
+      |> HostConditions.metrics(cpu_after, process_before, process_after, cpus)
+      |> Map.merge(%{
+        load: load,
+        loadavg: loadavg,
+        cpu_before: cpu_before,
+        cpu_after: cpu_after,
+        process_before: process_before,
+        process_after: process_after,
+        schedulers_online: System.schedulers_online()
+      })
 
     {result, observation}
   end

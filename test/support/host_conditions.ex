@@ -3,6 +3,18 @@ defmodule RequestSeal.Test.HostConditions do
 
   def cpu_stat, do: File.read!("/proc/stat") |> String.split("\n", parts: 2) |> hd()
 
+  def logical_cpus do
+    case :erlang.system_info(:logical_processors) do
+      count when is_integer(count) and count > 0 ->
+        count
+
+      :unknown ->
+        "/proc/stat"
+        |> File.stream!()
+        |> Enum.count(&Regex.match?(~r/^cpu[0-9]+\s/, &1))
+    end
+  end
+
   def process_snapshot(:before) do
     root = File.read!("/proc/self/stat")
     process_tree(root, process_stats())
@@ -25,21 +37,29 @@ defmodule RequestSeal.Test.HostConditions do
     [root | descendant_stats(root_pid, children)]
   end
 
-  def percentages(before_cpu, after_cpu, before_processes, after_processes) do
+  def metrics(before_cpu, after_cpu, before_processes, after_processes, cpus)
+      when is_integer(cpus) and cpus > 0 do
     start = cpu_times(before_cpu)
     stop = cpu_times(after_cpu)
     elapsed = stop.total - start.total
     stolen = stop.steal - start.steal
     workload = workload_times(before_processes, after_processes)
     foreign = stop.busy - start.busy - workload
-    steal = if elapsed > 0 and stolen >= 0 and stolen <= elapsed, do: 100 * stolen / elapsed
-    {steal, if(elapsed > 0, do: 100 * foreign / elapsed)}
-  end
+    valid_steal = elapsed > 0 and stolen >= 0 and stolen <= elapsed
+    # Compare percentages after multiplying by elapsed to keep exact tick boundaries.
+    budget = 100 * 4 * cpus
 
-  def admitted?(steal, foreign),
-    do:
-      is_number(steal) and steal >= 0 and steal <= 5 and
-        is_number(foreign) and foreign >= 0 and foreign <= 10
+    admitted =
+      valid_steal and 100 * stolen <= 5 * elapsed + budget and
+        -budget <= 100 * foreign and 100 * foreign <= 10 * elapsed + budget
+
+    %{
+      steal: if(valid_steal, do: 100 * stolen / elapsed, else: :null),
+      foreign_cpu: if(elapsed > 0, do: 100 * foreign / elapsed, else: :null),
+      resolution: if(elapsed > 0, do: budget / elapsed, else: :null),
+      admitted: admitted
+    }
+  end
 
   defp process_stats do
     for entry <- File.ls!("/proc"), {pid, ""} <- [Integer.parse(entry)], pid > 0 do

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Measure absolute trigger-to-last-end-marker monotonic microseconds against
-Bounds B(10,000), and derived K_pf against Bounds K_pf. Admit windows with at most
-5% CPU steal and 0–10% foreign CPU, measured from aggregate and BEAM process
-counters. Exhausted host-condition or placement budgets
+Bounds B(10,000), and derived K_pf against Bounds K_pf. Admit windows using CPU
+steal and foreign CPU with a tick-resolution allowance from aggregate and BEAM
+process counters. Exhausted host-condition or placement budgets
 fail, never skip. Retain host identity, observations and absolute headroom.
 CPU counter windows span at least 20 ms; that observation delay is outside all
 timed units and does not alter the absolute runtime measurements.
@@ -62,7 +62,7 @@ def bracketed(history, brackets):
     return True
 
 
-def host_samples(conditions, loads, steals, online, attempts, brackets, *, ordered=True):
+def host_samples(conditions, loads, steals, online, attempts, cpus, brackets, *, ordered=True):
     if not (len(conditions) == len(loads) == len(steals) == 5):
         return False
     previous = brackets["before"]["stat"]
@@ -79,7 +79,7 @@ def host_samples(conditions, loads, steals, online, attempts, brackets, *, order
         if ordered and not monotonic(previous, history[0]["cpu_before"]):
             return False
         previous = history[-1]["cpu_after"]
-        accepted = admit(history, attempts)
+        accepted = admit(history, attempts, cpus)
         if accepted is not history[-1] or accepted["load"] != load or accepted["steal"] != steal:
             return False
     return True
@@ -170,11 +170,12 @@ def _passes(report):
                 for topology in ("resolvers", "queued", "custody")}
     expected |= {"S5c", "D/token_scan", "D/expected", "D/name"}
     constants, host = report["constants"], report["host"]
+    cpus = host["logical_cpus"]
     bound, k_pf, attempts = constants["b_us"], constants["k_pf_us"], constants["host_attempts"]
     if (constants["n"], bound, k_pf) != bounds():
         return False
     if not (bound > 0 and k_pf > 0 and attempts > 0 and constants["placement_attempts"] > 0
-            and host["schedulers_online"] > 0 and host["logical_cpus"] > 0
+            and host["schedulers_online"] > 0 and type(cpus) is int and cpus > 0
             and host["cpu_model"].strip() and host["otp"].strip()):
         return False
     if (report["final_report_observer_queue"] != "off_heap" or
@@ -201,7 +202,7 @@ def _passes(report):
                 len(row["diagnostics"]) != 5 or not all(complete(d) for d in row["diagnostics"])):
             return False
         if row["headroom"] != max(row["times_us"]) / bound or not host_samples(
-                row["host_conditions"], row["loads"], row["steals"], {online}, attempts, brackets):
+                row["host_conditions"], row["loads"], row["steals"], {online}, attempts, cpus, brackets):
             return False
     units = report["units_us"]
     if set(units) != {"separator_and_accounting", "expected_validation_and_serialization",
@@ -218,7 +219,7 @@ def _passes(report):
         if name == "preflight_exit":
             online |= {1, 2}
         if not host_samples(report["units_host_conditions"][name], report["units_loads"][name],
-                            report["units_steals"][name], online, attempts, brackets,
+                            report["units_steals"][name], online, attempts, cpus, brackets,
                             ordered=name != "preflight_exit"):
             return False
     longest = max(value for name, values in units.items()

@@ -9,7 +9,7 @@ from statistics import median
 import subprocess
 import sys
 
-from host_conditions import admitted, load_average, metrics
+from host_conditions import load_average, metrics
 import processes
 from release import package_version
 
@@ -47,14 +47,13 @@ def nonempty(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def observe(window):
+def observe(window, cpus):
     counters = {key: window[key] for key in ("cpu_before", "cpu_after", "process_before", "process_after")}
     loads = (window["load_before"], window["load_after"])
     if not all(nonempty(value) for value in (*loads, counters["cpu_before"], counters["cpu_after"])):
         raise ValueError("incomplete /proc window")
     observation = {"loadavg": max(loads, key=load_average), **counters}
-    observation.update(metrics(observation))
-    return {**observation, "admitted": admitted(observation)}
+    return metrics(observation, cpus)
 
 
 def summarize(sample_sets, host, mode, candidate_version):
@@ -83,14 +82,14 @@ def summarize(sample_sets, host, mode, candidate_version):
                     type(window["warmups"]) is not int or window["warmups"] != 30 or
                     not positive(window["median_us"])):
                 raise ValueError(f"invalid {name} evidence for sample set {index}")
-            observation = observe(window)
-            if window["admission"] != observation:
-                raise ValueError(f"invalid {name} admission for sample set {index}")
-            if not observation["admitted"]:
-                rejected.append({"sample_set": index, "side": side, "workload": name,
-                                 "load": observation["load"], "steal": observation["steal"],
-                                 "foreign_cpu": observation["foreign_cpu"]})
             times[name][side].append(window["median_us"])
+        observation = observe(sample_set["host_window"], cpus)
+        if sample_set["admission"] != observation:
+            raise ValueError(f"invalid host admission for sample set {index}")
+        if not observation["admitted"]:
+            rejected.append({"sample_set": index, "side": side, "load": observation["load"],
+                             "steal": observation["steal"], "foreign_cpu": observation["foreign_cpu"],
+                             "resolution": observation["resolution"]})
 
     workloads = {}
     for name, by_side in times.items():
@@ -107,7 +106,9 @@ def summarize(sample_sets, host, mode, candidate_version):
 def run_round(args, mode, candidate_version):
     output = {"round": args.id, "commit": args.commit, "mode": mode, "sample_sets": []}
     try:
-        cpus = int(processes.run(["nproc"], capture_output=True, text=True, timeout=10).stdout)
+        cpus = os.cpu_count()
+        if cpus is None:
+            raise ValueError("unavailable logical CPU count")
         cpu_model = next(line.split(":", 1)[1].strip()
                          for line in Path("/proc/cpuinfo").read_text().splitlines()
                          if line.startswith("model name"))
@@ -128,9 +129,7 @@ def run_round(args, mode, candidate_version):
                                "workload.exs", mode, path],
                               cwd=PROJECTS / side, extra_env=environments[side], timeout=120)
                 sample_set = json.loads(path.read_text())
-                for name in WORKLOADS:
-                    window = sample_set[name]
-                    window["admission"] = observe(window)
+                sample_set["admission"] = observe(sample_set["host_window"], cpus)
                 output["sample_sets"].append({"side": side, **sample_set})
         output.update(summarize(output["sample_sets"], output["host"], mode, candidate_version))
         print(f"Round {args.id} ({mode}): {'admitted' if output['admitted'] else 'unmeasured'}")
@@ -165,10 +164,8 @@ def collect(paths, mode, commit, candidate_version):
                 raise ValueError("stored round summary disagrees with sample sets")
             if mode == "self-check":
                 host_windows = [
-                    {"sample_set": index, "side": sample_set["side"], "workload": name,
-                     "foreign_cpu": sample_set[name]["admission"]["foreign_cpu"]}
+                    {"sample_set": index, "side": sample_set["side"], **sample_set["admission"]}
                     for index, sample_set in enumerate(round_data["sample_sets"], 1)
-                    for name in WORKLOADS
                 ]
             if summary["admitted"]:
                 admitted[number] = summary["workloads"]
@@ -202,16 +199,18 @@ def print_verdict(verdict):
     print(f"Admitted rounds: {len(verdict['admitted_rounds'])}")
     for number, reasons in verdict["unmeasured_rounds"].items():
         for reason in reasons:
-            print(f"Round {number} unmeasured ({reason['side']} {reason['workload']}, "
+            print(f"Round {number} unmeasured ({reason['side']}, "
                   f"sample set {reason['sample_set']}): load {reason['load']}, "
-                  f"steal {reason['steal']}%, foreign CPU {reason['foreign_cpu']}%")
+                  f"steal {reason['steal']}%, foreign CPU {reason['foreign_cpu']}%, "
+                  f"resolution {reason['resolution']} percentage points")
     for error in verdict["errors"]:
         print(error)
     if verdict["mode"] == "self-check":
         print("Self-check: schema and measurement mechanics only")
         for window in verdict["host_windows"]:
-            print(f"Self-check {window['side']} {window['workload']} (sample set {window['sample_set']}): "
-                  f"foreign CPU {window['foreign_cpu']}%")
+            print(f"Self-check {window['side']} (sample set {window['sample_set']}): "
+                  f"foreign CPU {window['foreign_cpu']}%, steal {window['steal']}%, "
+                  f"resolution {window['resolution']} percentage points")
     else:
         print(f"{'Gate':<20} {'Median':>12} {'Limit':>8} {'Rounds needed':>14}  Result")
         for name, gate in verdict["gates"].items():

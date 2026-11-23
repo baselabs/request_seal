@@ -5,34 +5,54 @@ defmodule RequestSeal.JWETeardownHostTest do
   test "zero elapsed CPU windows are rejected and record null percentages" do
     cpu = "cpu 10 20 30 1000 50 60 70 0 15 19"
     process = [process_stat(20, 10)]
-    assert HostConditions.percentages(cpu, cpu, process, process) == {nil, nil}
-    refute HostConditions.admitted?(nil, nil)
+    measured = HostConditions.metrics(cpu, cpu, process, process, 4)
 
-    assert :json.encode(%{steal: :null, foreign_cpu: :null})
-           |> IO.iodata_to_binary()
-           |> :json.decode() == %{"steal" => :null, "foreign_cpu" => :null}
+    assert measured == %{steal: :null, foreign_cpu: :null, resolution: :null, admitted: false}
+
+    assert :json.encode(measured) |> IO.iodata_to_binary() |> :json.decode() == %{
+             "steal" => :null,
+             "foreign_cpu" => :null,
+             "resolution" => :null,
+             "admitted" => false
+           }
   end
 
-  test "host admission subtracts the measured process and rejects skew" do
-    before = "cpu 10 20 30 1000 50 60 70 0 15 19"
-    after_cpu = "cpu 30 25 40 1020 80 65 75 5 32 24"
-    process = [process_stat(20, 10)]
+  test "tick resolution sets inclusive limits for steal and signed foreign CPU" do
+    before_cpu = "cpu 100 0 0 900 0 0 0 0"
+    before = [process_stat(10, 10)]
+    cases = [
+      {117, 66, false},
+      {-17, 66, false},
+      {-16, 66, true},
+      {116, 66, true},
+      {20, 67, false}
+    ]
 
-    cases = [{45, 0.0, true}, {35, 10.0, true}, {34, 11.0, false}, {46, -1.0, false}]
+    for {foreign, steal, admitted?} <- cases do
+      after_cpu = "cpu 500 0 0 #{1500 - steal} 0 0 0 #{steal}"
+      after_processes = [process_stat(410 - foreign, 10)]
 
-    for {system, foreign, admitted?} <- cases do
-      assert HostConditions.percentages(before, after_cpu, process, [process_stat(30, system)]) ==
-               {5.0, foreign}
-
-      assert HostConditions.admitted?(5.0, foreign) == admitted?
+      assert HostConditions.metrics(before_cpu, after_cpu, before, after_processes, 4) == %{
+               steal: steal / 10,
+               foreign_cpu: foreign / 10,
+               resolution: 1.6,
+               admitted: admitted?
+             }
     end
+  end
 
-    high_steal = "cpu 30 25 40 1019 80 65 75 6 32 24"
+  test "a short span can admit signed skew larger than 10 percent" do
+    before_cpu = "cpu 100 0 0 900 0 0 0 0"
+    after_cpu = "cpu 104 0 0 908 0 0 0 0"
+    before = [process_stat(10, 10)]
+    after_processes = [process_stat(18, 10)]
 
-    assert HostConditions.percentages(before, high_steal, process, [process_stat(30, 45)]) ==
-             {6.0, 0.0}
-
-    refute HostConditions.admitted?(6.0, 0.0)
+    assert HostConditions.metrics(before_cpu, after_cpu, before, after_processes, 4) == %{
+             steal: 0.0,
+             foreign_cpu: -400 / 12,
+             resolution: 1600 / 12,
+             admitted: true
+           }
   end
 
   test "live and reaped descendants contribute only observed window CPU" do
@@ -63,8 +83,12 @@ defmodule RequestSeal.JWETeardownHostTest do
     assert length(before) == 4
     assert length(after_processes) == 4
 
-    assert HostConditions.percentages(before_cpu, after_cpu, before, after_processes) ==
-             {5.0, 4.0}
+    assert HostConditions.metrics(before_cpu, after_cpu, before, after_processes, 4) == %{
+             steal: 5.0,
+             foreign_cpu: 4.0,
+             resolution: 16.0,
+             admitted: true
+           }
   end
 
   test "unit setup loads code without executing a measured operation" do
@@ -128,6 +152,7 @@ defmodule RequestSeal.JWETeardownHostTest do
     parent = Keyword.get(options, :parent, 1)
     waited = Keyword.get(options, :waited, 0)
 
-    "#{pid} (beam ) smp) S #{parent} 2 3 0 -1 0 0 0 0 0 #{user} #{system} #{waited} 0 20 0 8 0 1234"
+    "#{pid} (beam ) smp) S #{parent} 2 3 0 -1 0 0 0 0 0 " <>
+      "#{user} #{system} #{waited} 0 20 0 8 0 1234"
   end
 end

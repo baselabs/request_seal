@@ -14,10 +14,10 @@ import jwe_release_gates as gate  # noqa: E402
 COMMIT = "a" * 40
 CANDIDATE = "2.0.0-dev"
 CPU_BEFORE = "cpu 10 20 30 1000 50 60 70 0 15 19"
-CPU_AFTER = "cpu 30 25 40 1020 80 65 75 5 32 24"
+CPU_AFTER = "cpu 210 70 130 1184 350 110 120 66 185 69"
 NORMAL_LOAD = "4.00 0.00 0.00 1/42 123"
 HIGH_LOAD = "4.01 0.00 0.00 1/42 123"
-HIGH_STEAL = "cpu 30 25 40 1019 80 65 75 6 32 24"
+HIGH_STEAL = "cpu 210 70 130 1183 350 110 120 67 185 69"
 
 
 def process_stat(user, system, *, pid=123, ppid=1, waited=0, start=1234):
@@ -34,35 +34,30 @@ def artifact(number=1, page=(4200, 4200), single=(43.75, 140), *,
     sets, rejected = [], []
     for offset, side in enumerate(["baseline", "candidate"] * pairs):
         sample_set = {"side": side, "version": versions[side], **runtime}
+        breach = reject if offset == 1 else None
+        foreign_ticks = {"foreign": 117, "skew": -17}.get(breach, 0 if high_load else 116)
+        loadavg, load = (HIGH_LOAD, 4.01) if high_load else (NORMAL_LOAD, 4.0)
+        sample_set["host_window"] = {
+            "load_before": NORMAL_LOAD,
+            "load_after": loadavg,
+            "cpu_before": CPU_BEFORE,
+            "cpu_after": HIGH_STEAL if breach == "steal" else CPU_AFTER,
+            "process_before": [process_stat(20, 10)],
+            "process_after": [process_stat(30, 450 - foreign_ticks)],
+        }
+        sample_set["admission"] = {
+            "load": load, "steal": 6.7 if breach == "steal" else 6.6,
+            "foreign_cpu": foreign_ticks / 10, "resolution": 1.6, "admitted": breach is None,
+        }
+        if breach:
+            metrics = {key: value for key, value in sample_set["admission"].items() if key != "admitted"}
+            rejected.append({"sample_set": offset + 1, "side": side, **metrics})
         for name, times, count in (("page", page, page_count), ("single", single, single_count)):
-            foreign_breach = reject in ("foreign", "skew") and offset == 0 and name == "page"
-            steal_breach = reject == "steal" and offset == 1 and name == "single"
-            loadavg, load = (HIGH_LOAD, 4.01) if high_load else (NORMAL_LOAD, 4.0)
-            after, steal = (HIGH_STEAL, 6.0) if steal_breach else (CPU_AFTER, 5.0)
-            foreign = 0.0 if high_load else 10.0
-            if foreign_breach:
-                foreign = {"foreign": 11.0, "skew": -1.0}[reject]
-            process_before = [process_stat(20, 10)]
-            process_after = [process_stat(30, 45 - int(foreign))]
-            admitted = not (foreign_breach or steal_breach)
             sample_set[name] = {
                 "median_us": times[offset % 2],
                 "samples": count,
                 "warmups": 30,
-                "load_before": NORMAL_LOAD,
-                "load_after": loadavg,
-                "cpu_before": CPU_BEFORE,
-                "cpu_after": after,
-                "process_before": process_before,
-                "process_after": process_after,
-                "admission": {"loadavg": loadavg, "load": load, "cpu_before": CPU_BEFORE,
-                              "cpu_after": after, "process_before": process_before,
-                              "process_after": process_after, "steal": steal,
-                              "foreign_cpu": foreign, "admitted": admitted},
             }
-            if not admitted:
-                rejected.append({"sample_set": offset + 1, "side": side, "workload": name,
-                                 "load": load, "steal": steal, "foreign_cpu": foreign})
         sets.append(sample_set)
     return {
         "round": number,
@@ -146,30 +141,38 @@ class ReleaseGatesTest(unittest.TestCase):
         self.assertEqual(list(range(1, 21)), verdict["admitted_rounds"])
         self.assertEqual({name: "pass" for name in gate.GATES}, statuses(verdict))
 
-    def test_host_rejection_excludes_a_whole_round_and_leaves_ratios_unmeasured(self):
-        for rule, value, measured in (("foreign", 11, "foreign_cpu"), ("skew", -1, "foreign_cpu"),
-                                     ("steal", 6, "steal")):
+    def test_rejected_sample_set_excludes_both_workloads_from_a_round(self):
+        for rule, value, measured in (("foreign", 11.7, "foreign_cpu"), ("skew", -1.7, "foreign_cpu"),
+                                     ("steal", 6.7, "steal")):
             with self.subTest(rule=rule):
+                row = artifact(reject=rule)
+                summary = gate.summarize(row["sample_sets"], row["host"], "release", CANDIDATE)
+                self.assertFalse(summary["admitted"])
                 verdict = collect([artifact(i, reject=rule if i >= 20 else None)
                                    for i in range(1, gate.ROUNDS + 1)])
                 self.assertFalse(verdict["passed"])
+                self.assertEqual([], verdict["errors"])
                 self.assertEqual(19, len(verdict["admitted_rounds"]))
                 self.assertEqual({"page_absolute_us": "pass", "page_relative": "unmeasured",
                                   "single_absolute_us": "pass", "single_relative": "unmeasured"},
                                  statuses(verdict))
-                self.assertEqual(value, verdict["unmeasured_rounds"][20][0][measured])
-                self.assertEqual([], verdict["errors"])
+                rejection, = verdict["unmeasured_rounds"][20]
+                self.assertEqual((2, "candidate", value, 1.6),
+                                 (rejection["sample_set"], rejection["side"], rejection[measured],
+                                  rejection["resolution"]))
 
     def test_high_load_with_zero_foreign_cpu_is_admitted(self):
-        window = artifact(high_load=True)["sample_sets"][0]["page"]
-        self.assertTrue(gate.observe(window)["admitted"])
-        self.assertEqual(0, gate.observe(window)["foreign_cpu"])
+        window = artifact(high_load=True)["sample_sets"][0]["host_window"]
+        observation = gate.observe(window, 4)
+        self.assertTrue(observation["admitted"])
+        self.assertEqual(0, observation["foreign_cpu"])
         verdict = collect([artifact(i, high_load=True) for i in range(1, gate.ROUNDS + 1)])
         self.assertTrue(verdict["passed"], verdict)
         self.assertEqual(list(range(1, gate.ROUNDS + 1)), verdict["admitted_rounds"])
 
     def test_process_tree_replay_credits_only_observed_window_cpu(self):
-        window = artifact()["sample_sets"][0]["page"]
+        window = artifact()["sample_sets"][0]["host_window"]
+        window["cpu_after"] = "cpu 30 25 40 1020 80 65 75 5 32 24"
         window["process_before"] = [
             process_stat(20, 10, waited=100),
             process_stat(10, 5, pid=124, ppid=123),
@@ -184,15 +187,15 @@ class ReleaseGatesTest(unittest.TestCase):
         ]
         # BEAM +5, persistent child +15, grandchild +3, reaped child +18.
         # The new live child has no baseline. The host had 45 busy ticks.
-        self.assertEqual(gate.observe(window)["foreign_cpu"], 4.0)
+        self.assertEqual(gate.observe(window, 4)["foreign_cpu"], 4.0)
         window["process_after"].append(process_stat(40, 5, pid=128, ppid=1))
         with self.assertRaisesRegex(ValueError, "rooted process tree"):
-            gate.observe(window)
+            gate.observe(window, 4)
 
     def test_malformed_or_incomplete_round_evidence_fails(self):
         for issue in ("invalid-json", "missing", "duplicate", "order", "missing-window", "counts",
                       "version", "commit", "forged-admission", "invalid-proc", "missing-process",
-                      "forged-process", "different-process", "skewed-ratio", "runtime-error"):
+                      "forged-process", "different-process", "forged-resolution", "skewed-ratio", "runtime-error"):
             with self.subTest(issue=issue):
                 rows = [artifact(i) for i in range(1, gate.ROUNDS)]
                 last = artifact(gate.ROUNDS)
@@ -211,15 +214,17 @@ class ReleaseGatesTest(unittest.TestCase):
                 elif issue == "commit":
                     last["commit"] = "b" * 40
                 elif issue == "forged-admission":
-                    last["sample_sets"][0]["page"]["load_after"] = HIGH_LOAD
+                    last["sample_sets"][0]["host_window"]["load_after"] = HIGH_LOAD
                 elif issue == "invalid-proc":
-                    last["sample_sets"][0]["single"]["cpu_before"] = False
+                    last["sample_sets"][0]["host_window"]["cpu_before"] = False
                 elif issue == "missing-process":
-                    del last["sample_sets"][0]["page"]["process_before"]
+                    del last["sample_sets"][0]["host_window"]["process_before"]
                 elif issue == "forged-process":
-                    last["sample_sets"][0]["page"]["process_after"] = [process_stat(30, 34)]
+                    last["sample_sets"][0]["host_window"]["process_after"] = [process_stat(30, 333)]
                 elif issue == "different-process":
-                    last["sample_sets"][0]["page"]["process_after"] = [process_stat(30, 35, pid=321)]
+                    last["sample_sets"][0]["host_window"]["process_after"] = [process_stat(30, 334, pid=321)]
+                elif issue == "forged-resolution":
+                    last["sample_sets"][0]["admission"]["resolution"] = 100.0
                 elif issue == "skewed-ratio":
                     last["workloads"]["page"]["ratio"] = 0.5
                 elif issue == "runtime-error":
@@ -236,11 +241,12 @@ class ReleaseGatesTest(unittest.TestCase):
         self.assertTrue(verdict["passed"], verdict)
         self.assertEqual({}, verdict["gates"])
         self.assertEqual([], verdict["admitted_rounds"])
-        self.assertEqual(4, len(verdict["host_windows"]))
+        self.assertEqual(2, len(verdict["host_windows"]))
         output = io.StringIO()
         with redirect_stdout(output):
             gate.print_verdict(verdict)
-        self.assertEqual(4, sum(line.startswith("Self-check ") and "foreign CPU 10.0%" in line
+        self.assertEqual(2, sum(line.startswith("Self-check ") and "foreign CPU 11.6%" in line
+                               and "resolution 1.6" in line
                                for line in output.getvalue().splitlines()))
         self.assertFalse(collect([row])["passed"])
         row["sample_sets"].pop()

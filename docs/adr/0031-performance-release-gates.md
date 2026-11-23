@@ -22,14 +22,23 @@ on shared infrastructure vary with hardware and active load.
    baseline (A) and the candidate (B) as separate processes in A/B/A/B/A/B order. Each sample
    set uses 30 warmups, then the median of 15 pages or 2,000 single opens. A round's ratio for
    each workload is the median of its B sample sets divided by the median of its A sample sets.
-3. Admit a round only when every sample window has CPU steal at most 5% and foreign CPU
-   between 0% and 10%, inclusive. Subtract the measured BEAM process tree's user and
-   system CPU time from the aggregate delta of user, nice, system, IRQ and softirq time.
+3. Observe each sample set from immediately before its first page warmup through
+   its final single-open sample. Admit the round only when all its sample sets
+   satisfy the CPU limits. Subtract the measured BEAM process tree's user and
+   system CPU time from the aggregate delta of user, nice, system, IRQ and softirq.
    Credit the CPU deltas of processes visible at both boundaries and the BEAM's waited
    child CPU delta after discounting pre-window CPU of descendants visible only at the
-   start. Divide by total elapsed CPU time across the host, counting guest time once
-   in user and nice. Keep raw host and process tree readings and record negative foreign
-   CPU caused by counter skew. Keep rejected observations as unmeasured rounds.
+   start. Express steal and foreign CPU as percentages of total elapsed host CPU
+   ticks `K`, counting guest time once in user and nice. For `C` logical CPUs,
+   allow a resolution of `e = 100 × 4 × C / K` percentage points. The host and
+   process counters each advance in whole USER_HZ ticks and can each lag by
+   less than one tick per running CPU at each of the two boundaries. The
+   per-workload self-check in hosted run 45240645239 reported 12.5%, −33.3%,
+   11.1% and 16.7% foreign CPU over near-empty spans.
+   Admit sample sets with steal at most `5 + e` and foreign CPU between `−e`
+   and `10 + e`, inclusive. Retain raw host and process tree readings, signed
+   foreign CPU, steal and `e`. A zero-tick span cannot be admitted. Any rejected
+   sample set leaves its round unmeasured.
    One-minute load includes the measured workload itself and is retained for diagnostics.
    In round 10 of hosted run 45226491587, it rose from 3.28 to 4.17 on a four-vCPU
    runner with zero steal.
@@ -40,8 +49,8 @@ on shared infrastructure vary with hardware and active load.
 5. Publish only after the collector records a passing verdict for the dispatched commit.
    Any failed or unmeasured gate fails the run. The workflow keeps each round's evidence
    and the verdict. The qualification run exercises a reduced self-check of the measurements
-   and evidence schema. Its collector prints foreign CPU for every sample window for
-   inspection without enforcing admission or the performance thresholds in that mode.
+   and evidence schema. Its collector prints foreign CPU, steal and resolution
+   for every sample set without enforcing admission or the performance thresholds.
 6. Custody holder capacity uses a separate harness.
 
 ## Alternatives

@@ -89,33 +89,36 @@ def load_average(text):
     return value
 
 
-def metrics(observation):
+def metrics(observation, cpus):
+    if type(cpus) is not int or cpus < 1:
+        raise ValueError("invalid logical CPU count")
     before = cpu_counters(observation["cpu_before"])
     after = cpu_counters(observation["cpu_after"])
     workload = workload_times(observation["process_before"], observation["process_after"])
     user, nice, system, idle, iowait, irq, softirq, stolen = (b - a for a, b in zip(before, after))
     elapsed = user + nice + system + idle + iowait + irq + softirq + stolen
     foreign = user + nice + system + irq + softirq - workload
+    valid_steal = elapsed > 0 and 0 <= stolen <= elapsed
+    # Compare percentages after multiplying by elapsed to keep exact tick boundaries.
+    budget = 100 * 4 * cpus
     return {
         "load": load_average(observation["loadavg"]),
-        "steal": 100 * stolen / elapsed if elapsed > 0 and 0 <= stolen <= elapsed else None,
+        "steal": 100 * stolen / elapsed if valid_steal else None,
         "foreign_cpu": 100 * foreign / elapsed if elapsed > 0 else None,
+        "resolution": budget / elapsed if elapsed > 0 else None,
+        "admitted": (valid_steal and 100 * stolen <= 5 * elapsed + budget
+                     and -budget <= 100 * foreign <= 10 * elapsed + budget),
     }
 
 
-def admitted(metrics):
-    steal, foreign = metrics["steal"], metrics["foreign_cpu"]
-    return steal is not None and 0 <= steal <= 5 and foreign is not None and 0 <= foreign <= 10
-
-
-def admit(observations, attempts):
+def admit(observations, attempts, cpus):
     """Replay the retry budget from retained /proc samples."""
     seen = []
     for observation in observations[:attempts]:
-        measured = metrics(observation)
+        measured = metrics(observation, cpus)
         seen.append(measured)
         if any(observation[key] != value for key, value in measured.items()):
             raise ValueError("host observation disagrees with /proc counters")
-        if admitted(measured):
+        if measured["admitted"]:
             return observation
     raise HostConditionExhausted("host condition exhausted: " + json.dumps(seen))

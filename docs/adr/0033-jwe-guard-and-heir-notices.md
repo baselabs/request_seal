@@ -254,7 +254,7 @@ five samples still include their own first data access, allocation, heap
 growth and garbage collection within the unit; no sample is warmed or dropped.
 
 Samples use the [shared CPU interference rule](0031-performance-release-gates.md).
-Steal must be at most 5% and foreign CPU between 0% and 10% across the window.
+Steal and foreign CPU use the tick-resolution allowance for each window.
 Each workload measures its own BEAM process, including the isolated peers.
 Raw host and process counters, load, CPU model, logical CPU count, online
 schedulers, OTP release and headroom accompany measurements.
@@ -266,8 +266,8 @@ units only with a measurable CPU accounting denominator. A zero elapsed window
 is rejected and consumes a host-condition attempt on both sides.
 The second-trigger reversing mutation reopens causes in the reached join loop;
 the ended-state check clause remains necessary for the coordinator EXIT path.
-Load and steal share 30 host-condition attempts; invalid placements have 20
-attempts. Exhausting either budget fails and reports the observed attempts.
+Foreign CPU and steal share 30 host-condition attempts. Invalid placements
+have 20 attempts. Exhausting either budget fails and reports the observed attempts.
 These are verification obligations, not one-run performance claims.
 
 Whole-VM custody lifecycle assertions run in isolated peers and retain exact

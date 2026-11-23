@@ -2,7 +2,6 @@
 import ast
 import copy
 import importlib.util
-import os
 import sys
 from pathlib import Path
 import unittest
@@ -14,6 +13,8 @@ GATE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GATE)
 from host_conditions import metrics  # noqa: E402
 
+HOST_CPUS = 4
+
 
 def process_stat(user, system):
     return f"123 (beam.smp) S 1 2 3 0 -1 0 0 0 0 0 {user} {system} 0 0 20 0 8 0 1234"
@@ -23,7 +24,8 @@ class JWETeardownGateTest(unittest.TestCase):
     def observation(self, load=0.5, steal=0, online=2, offset=0, foreign=0):
         # Real /proc/stat layout, including guest counters (already in user).
         return {"loadavg": f"{load} 0.25 0.10 1/100 42", "load": load, "steal": steal,
-                "foreign_cpu": foreign,
+                "foreign_cpu": foreign, "resolution": 16.0,
+                "admitted": steal <= 21 and -16 <= foreign <= 26,
                 "cpu_before": "cpu " + " ".join(str(value + offset) for value in
                     (100, 0, 0, 900, 0, 0, 0, 0)) + " 20 0\n",
                 "cpu_after": "cpu " + " ".join(str(value + offset) for value in
@@ -59,7 +61,7 @@ class JWETeardownGateTest(unittest.TestCase):
                 "constants": {"n": 10_000, "b_us": 170_000, "k_pf_us": 5_000,
                               "host_attempts": 30, "placement_attempts": 20,
                               "collection_cap_us": 10_000_000},
-                "host": {"schedulers_online": 2, "logical_cpus": os.cpu_count(),
+                "host": {"schedulers_online": 2, "logical_cpus": HOST_CPUS,
                          "cpu_model": "Test CPU", "otp": "28"},
                 "units_us": {key: [200 if key == "preflight_exit" else 100] * 5 for key in units},
                 "units_loads": {key: [0.5] * 5 for key in units},
@@ -74,7 +76,7 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertTrue(GATE.passes(report))
         for kind in ("missing", "duplicate", "slow", "negative", "load", "kpf", "unit",
                      "byte_exit", "unit_load", "tampered_derived", "steal", "host", "headroom",
-                     "bounds"):
+                     "bounds", "resolution"):
             changed = copy.deepcopy(report)
             if kind == "missing":
                 changed["scenarios"].pop()
@@ -102,6 +104,8 @@ class JWETeardownGateTest(unittest.TestCase):
                 del changed["host"]["cpu_model"]
             elif kind == "bounds":
                 changed["constants"]["b_us"] += 1
+            elif kind == "resolution":
+                changed["scenarios"][0]["host_conditions"][0][0]["resolution"] = 17.0
             else:
                 changed["scenarios"][0]["headroom"] = 0.5
             with self.subTest(kind=kind):
@@ -113,11 +117,44 @@ class JWETeardownGateTest(unittest.TestCase):
     def test_proc_parsing_excludes_guest_and_checks_counter_window(self):
         observation = self.observation(steal=5)
         self.assertEqual(GATE.cpu_counters(observation["cpu_before"]), [100, 0, 0, 900, 0, 0, 0, 0])
-        self.assertEqual(metrics(observation), {"load": 0.5, "steal": 5.0, "foreign_cpu": 0.0})
+        self.assertEqual(metrics(observation, HOST_CPUS),
+                         {"load": 0.5, "steal": 5.0, "foreign_cpu": 0.0,
+                          "resolution": 16.0, "admitted": True})
         observation["cpu_after"] = observation["cpu_before"]
-        self.assertEqual(metrics(observation), {"load": 0.5, "steal": None, "foreign_cpu": None})
+        self.assertEqual(metrics(observation, HOST_CPUS),
+                         {"load": 0.5, "steal": None, "foreign_cpu": None,
+                          "resolution": None, "admitted": False})
         with self.assertRaises(ValueError):
             GATE.cpu_counters("cpu0 1 2 3 4 5 6 7 8\n")
+
+    def test_tick_resolution_changes_admission_at_both_foreign_limits_and_steal(self):
+        cases = ((117, 66, False), (-17, 66, False), (-16, 66, True), (116, 66, True),
+                 (20, 67, False))
+        for foreign, steal, accepted in cases:
+            with self.subTest(foreign_ticks=foreign, steal_ticks=steal):
+                observation = {
+                    "loadavg": "0.5 0.25 0.1 1/100 42",
+                    "cpu_before": "cpu 100 0 0 900 0 0 0 0",
+                    "cpu_after": f"cpu 500 0 0 {1500 - steal} 0 0 0 {steal}",
+                    "process_before": [process_stat(10, 10)],
+                    "process_after": [process_stat(410 - foreign, 10)],
+                }
+                measurement = metrics(observation, HOST_CPUS)
+                self.assertEqual(1.6, measurement["resolution"])
+                self.assertEqual(foreign / 10, measurement["foreign_cpu"])
+                self.assertEqual(steal / 10, measurement["steal"])
+                self.assertIs(accepted, measurement["admitted"])
+
+    def test_short_spans_admit_signed_skew_inside_tick_resolution(self):
+        for foreign_ticks in (-4, 4):
+            with self.subTest(foreign_ticks=foreign_ticks):
+                observation = self.observation()
+                observation["cpu_after"] = "cpu 104 0 0 908 0 0 0 0"
+                observation["process_after"] = [process_stat(14 - foreign_ticks, 10)]
+                measured = metrics(observation, HOST_CPUS)
+                self.assertEqual(1600 / 12, measured["resolution"])
+                self.assertEqual(100 * foreign_ticks / 12, measured["foreign_cpu"])
+                self.assertTrue(measured["admitted"])
 
     def test_failed_samples_retain_the_full_matrix_and_placement_diagnostics(self):
         report = self.report()
@@ -179,25 +216,25 @@ class JWETeardownGateTest(unittest.TestCase):
                 self.assertFalse(GATE.passes(changed))
 
     def test_steal_rejection_retries_and_never_admits_rejected_measurement(self):
-        rejected, accepted = self.observation(steal=6), self.observation(steal=5, offset=100)
+        rejected, accepted = self.observation(steal=22), self.observation(steal=21, offset=100)
         history = [rejected, accepted]
-        self.assertIs(GATE.admit(history, 30), accepted)
+        self.assertIs(GATE.admit(history, 30, HOST_CPUS), accepted)
         report = self.report()
         row = report["scenarios"][0]
         row["host_conditions"][0] = history
-        row["steals"][0] = 5
+        row["steals"][0] = 21
         self.assertTrue(GATE.passes(report))
-        row["steals"][0] = 6
+        row["steals"][0] = 22
         self.assertFalse(GATE.passes(report))
 
     def test_foreign_cpu_and_skew_consume_retry_attempts(self):
-        rejected = self.observation(foreign=11)
-        skewed = self.observation(foreign=-1, offset=100)
-        accepted = self.observation(foreign=10, offset=200)
+        rejected = self.observation(foreign=27)
+        skewed = self.observation(foreign=-17, offset=100)
+        accepted = self.observation(foreign=26, offset=200)
         history = [rejected, skewed, accepted]
-        self.assertIs(GATE.admit(history, 3), accepted)
+        self.assertIs(GATE.admit(history, 3, HOST_CPUS), accepted)
         with self.assertRaisesRegex(ValueError, "host condition exhausted"):
-            GATE.admit(history, 2)
+            GATE.admit(history, 2, HOST_CPUS)
         report = self.report()
         report["scenarios"][0]["host_conditions"][0] = history
         self.assertTrue(GATE.passes(report))
@@ -205,7 +242,7 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertFalse(GATE.passes(report))
 
     def test_high_load_with_zero_foreign_cpu_is_admitted(self):
-        load = os.cpu_count() + 1
+        load = HOST_CPUS + 1
         report = self.report()
         for row in report["scenarios"]:
             row["loads"] = [load] * 5
@@ -215,11 +252,12 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertTrue(GATE.passes(report))
 
     def test_shared_host_budget_exhausts_with_every_observed_figure(self):
-        history = [self.observation(load=3, foreign=-1), self.observation(steal=6, offset=100),
-                   self.observation(steal=7, offset=200)]
+        history = [self.observation(load=3, foreign=-17), self.observation(steal=22, offset=100),
+                   self.observation(steal=23, offset=200)]
         with self.assertRaisesRegex(ValueError, "host condition exhausted") as context:
-            GATE.admit(history, 3)
-        for value in ('"load": 3.0', '"steal": 6.0', '"steal": 7.0', '"foreign_cpu": -1.0'):
+            GATE.admit(history, 3, HOST_CPUS)
+        for value in ('"load": 3.0', '"steal": 22.0', '"steal": 23.0',
+                      '"foreign_cpu": -17.0', '"resolution": 16.0'):
             self.assertIn(value, str(context.exception))
         self.assertIn(str(context.exception), GATE.markdown({"error": str(context.exception)}))
 
@@ -236,14 +274,10 @@ class JWETeardownGateTest(unittest.TestCase):
     def test_zero_elapsed_window_consumes_a_host_condition_attempt(self):
         zero, accepted = self.observation(), self.observation(offset=100)
         zero["cpu_after"] = zero["cpu_before"]
-        zero["steal"] = None
-        zero["foreign_cpu"] = None
-        source = (ROOT / "test/support/jwe_teardown_gate.ex").read_text()
-        self.assertIn("steal: if(steal == nil, do: :null, else: steal)", source)
-        self.assertIn("foreign_cpu: if(foreign == nil, do: :null, else: foreign)", source)
-        self.assertIs(GATE.admit([zero, accepted], 2), accepted)
+        zero.update(steal=None, foreign_cpu=None, resolution=None, admitted=False)
+        self.assertIs(GATE.admit([zero, accepted], 2, HOST_CPUS), accepted)
         with self.assertRaisesRegex(ValueError, "host condition exhausted"):
-            GATE.admit([zero, accepted], 1)
+            GATE.admit([zero, accepted], 1, HOST_CPUS)
         report = self.report()
         report["scenarios"][0]["host_conditions"][0] = [zero, accepted]
         self.assertTrue(GATE.passes(report))
@@ -273,7 +307,7 @@ class JWETeardownGateTest(unittest.TestCase):
                 # Total still advances and steal stays zero; individual fields regress.
                 history[0]["cpu_after"] = "cpu 201 0 0 899 0 0 0 0"
             elif kind == "backwards_attempt":
-                history.insert(0, self.observation(steal=6, offset=100))
+                history.insert(0, self.observation(steal=22, offset=100))
             elif kind == "backwards_sample":
                 row["host_conditions"][1] = [self.observation()]
             elif kind == "missing_brackets":
@@ -304,13 +338,13 @@ class JWETeardownGateTest(unittest.TestCase):
         self.assertEqual(GATE.bounds(), (10_000, 170_000, 5_000))
         for token in ("@samples 5", "@cap 10_000", "@host_attempts 30", "@placement_attempts 20",
                       "/proc/loadavg", "/proc/cpuinfo", "cpu_before", "cpu_after",
-                      "process_before", "process_after", "HostConditions.admitted?",
+                      "process_before", "process_after", "HostConditions.metrics", "observation.admitted",
                       "schedulers_online", "logical_cpus", "attempts - 1, seen",
                       "{tag, :cardinality, @cap", "{tag, :row, @cap - 1", "{tag, :handed_off}",
                       "{tag, :preflight, :deadline}", "process_flag(:message_queue_data, :off_heap)"):
             self.assertIn(token, source)
         host = (ROOT / "test/support/host_conditions.ex").read_text()
-        for token in ("/proc/stat", "/proc/self/stat", "steal <= 5", "foreign <= 10"):
+        for token in ("/proc/stat", "/proc/self/stat", "100 * 4 * cpus", "resolution:"):
             self.assertIn(token, host)
         self.assertNotIn(":gate_final_report", source)
         self.assertNotIn("assert not handed", source)
