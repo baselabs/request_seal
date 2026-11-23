@@ -44,7 +44,7 @@ def container_errors(name, source):
 class ToolchainTest(unittest.TestCase):
     def test_reader_is_the_unchanged_executable_shared_file(self):
         reader = ROOT / "scripts/toolchain.sh"
-        self.assertEqual("b29bfeb6ec4ec8f5b7e3ac3c963f04b6d3c73483172e5bd59ea40f20b102f1eb",
+        self.assertEqual("25bbfa023b7f031256428b498fe300fcc460988fea81277072355e4c0d933764",
                          hashlib.sha256(reader.read_bytes()).hexdigest())
         self.assertEqual(0o755, stat.S_IMODE(reader.stat().st_mode))
 

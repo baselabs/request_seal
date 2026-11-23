@@ -42,8 +42,8 @@ CI reads `.tool-versions` only through the unchanged shared reader at
 `scripts/toolchain.sh`, called directly by path. Its default pair and `beam_lanes`
 output supply the latest, floor, and mid proofs; its Node and Python outputs
 supply their setup actions. After setup, the shared reader refuses differing
-installed BEAM and Node versions. Every job also compares the installed Python
-version with the reader's Python output before running its checks. The
+installed BEAM and Node versions, and every job uses it to refuse a differing
+installed Python before running its checks. The
 qualification verdict consumes that same matrix.
 All three lockfiles fetch with `--check-locked` and retain separate advisory checks
 through both `mix hex.audit` and `mix deps.audit`.

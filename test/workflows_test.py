@@ -2,9 +2,7 @@
 import ast
 import json
 from pathlib import Path
-import platform
 import re
-import shlex
 import subprocess
 import sys
 import unittest
@@ -114,9 +112,8 @@ class QualificationTest(unittest.TestCase):
         pins = (ROOT / ".tool-versions").read_text()
         self.assertRegex(pins, r"(?m)^python \d+\.\d+\.\d+$")
         action = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
-        probe = ("python3 -I -c 'import platform, sys; "
-                 "sys.exit(platform.python_version() != sys.argv[1])' \"$EXPECTED_PYTHON\"")
-        programs = set()
+        pin = re.search(r"(?m)^python (\d+\.\d+\.\d+)$", pins)[1]
+        probe = 'scripts/toolchain.sh --installed "python=$EXPECTED_PYTHON"'
         for path in workflows():
             source = path.read_text()
             self.assertIn(action + " # v5.6.0", source)
@@ -145,12 +142,10 @@ class QualificationTest(unittest.TestCase):
                     else:
                         needs = body["needs"]
                         self.assertIn("toolchain", [needs] if isinstance(needs, str) else needs)
-                    programs.add(shlex.split(refusal["run"])[3])
-        self.assertEqual(1, len(programs))
-        for expected, status in ((platform.python_version(), 0), ("0.0.0", 1)):
-            result = subprocess.run([sys.executable, "-I", "-B", "-c", next(iter(programs)), expected],
-                                    capture_output=True, text=True, timeout=30)
-            self.assertEqual(status, result.returncode)
+        for expected, status in ((pin, 0), ("0.0.0", 1)):
+            result = subprocess.run(["scripts/toolchain.sh", "--installed", f"python={expected}"],
+                                    cwd=ROOT, capture_output=True, text=True, timeout=30)
+            self.assertEqual(status, result.returncode, result.stderr)
         ci = jobs(text("ci.yml"))
         self.assertEqual("${{ steps.pins.outputs.python }}", ci["toolchain"]["outputs"]["python"])
 
