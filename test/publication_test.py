@@ -324,12 +324,17 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual({"workflow_dispatch": ""}, workflow["on"])
         self.assertNotIn("qualified", source)
         actor = 'contains(fromJSON(\'["corepay","palermo-git"]\'), github.actor) && contains(fromJSON(\'["corepay","palermo-git"]\'), github.triggering_actor)'
-        for job in workflow["jobs"].values():
-            self.assertEqual(actor, job["if"])
-            self.assertEqual("publish", job["environment"])
+        for name, job in workflow["jobs"].items():
+            self.assertIn(actor, job["if"])
             steps = job["steps"]
             self.assertEqual('test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"', steps[0]["run"])
             keyed = [step for step in steps if "secrets." in str(step)]
+            if name != "publish":
+                self.assertNotIn("environment", job)
+                self.assertEqual([], keyed)
+                continue
+            self.assertEqual(actor, job["if"])
+            self.assertEqual("publish", job["environment"])
             self.assertEqual(1, len(keyed))
             step = keyed[0]
             self.assertEqual("${{ secrets.HEX_API_KEY }}", step["env"]["HEX_API_KEY"])

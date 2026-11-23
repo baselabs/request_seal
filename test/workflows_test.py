@@ -11,9 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import qualify  # noqa: E402
 from workflow_yaml import load as load_workflow  # noqa: E402
+from jwe_release_gates import ROUNDS  # noqa: E402
 
 WORKFLOWS = ROOT / ".github/workflows"
-PROOFS = {"process-ownership-macos", "toolchain", "verify", "mutations", "teardown"}
+PROOFS = {"process-ownership-macos", "toolchain", "verify", "mutations", "teardown",
+          "release-gate-self-check"}
 VERIFY_MATRIX = json.dumps({"include": [{"lane": lane} for lane in ("floor", "mid", "latest")]})
 
 
@@ -67,6 +69,7 @@ def proof_condition_errors(source, ci_source):
         ("verify", "python3 scripts/check.py"): ["matrix.lane == 'latest'"],
         ("verify", "Remove disposable PostgreSQL"): ["always()"],
         ("teardown", "actions/upload-artifact"): ["always()"],
+        ("release-gate-self-check", "actions/upload-artifact"): ["always()"],
     }
     if conditions != expected:
         errors.append("proof conditions must bind exactly to the declared job and step")
@@ -180,7 +183,7 @@ class QualificationTest(unittest.TestCase):
     def test_inventory_is_every_proof_and_one_verify_leg_per_lane(self):
         self.assertEqual(
             {"process-ownership-macos", "toolchain", "mutations", "teardown",
-             "verify (floor)", "verify (mid)", "verify (latest)"},
+             "release-gate-self-check", "verify (floor)", "verify (mid)", "verify (latest)"},
             qualify.expected_jobs(VERIFY_MATRIX),
         )
 
@@ -351,6 +354,28 @@ class QualificationTest(unittest.TestCase):
                 for command in commands:
                     self.assertNotIn("scripts/mutations.py", command, workflow.name)
                     self.assertNotIn("jwe_teardown_gate", command, workflow.name)
+
+    def test_only_publication_requires_all_full_performance_rounds(self):
+        ci = jobs(text("ci.yml"))
+        pub = jobs(text("publish.yml"))
+        self.assertNotIn("release-gate-round", ci)
+        self.assertNotIn("release-gate-verdict", ci)
+        self_check = next(step["run"] for step in ci["release-gate-self-check"]["steps"]
+                          if step.get("name") == "Run both versions and validate the retained evidence")
+        for command in ("round --id 1", "collect"):
+            self.assertIn(f"jwe_release_gates.py {command} --self-check", self_check)
+        rounds, verdict = pub["release-gate-round"], pub["release-gate-verdict"]
+        self.assertEqual([str(i) for i in range(1, ROUNDS + 1)], rounds["strategy"]["matrix"]["round"])
+        self.assertEqual("false", rounds["strategy"]["fail-fast"])
+        self.assertEqual("release-gate-round", verdict["needs"])
+        self.assertEqual("release-gate-verdict", pub["publish"]["needs"])
+        for job in (rounds, verdict):
+            self.assertEqual("ubuntu-24.04", job["runs-on"])
+            self.assertNotIn("environment", job)
+            self.assertIn("github.actor", job["if"])
+            self.assertIn("github.triggering_actor", job["if"])
+            self.assertEqual('test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"', job["steps"][0]["run"])
+            self.assertNotIn("--self-check", str(job["steps"]))
 
     def test_every_upload_sets_retention_for_its_reader(self):
         # CI rule: 1 day for an artifact a later job of the same run

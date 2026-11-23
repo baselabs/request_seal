@@ -27,7 +27,8 @@ registry credentials and the later tag. Workflow changes require review before l
    history, including deleted content and commit messages, before accepting a cut.
 3. Submit the candidate through the protected landing process. The candidate
    qualifies in one GitHub-hosted run on a `kci/` ref. Every runtime lane,
-   mutation and teardown proof must pass.
+   mutation and teardown proof must pass, along with the reduced performance
+   harness self-check.
    The final check is `qualified`; the default-branch ruleset requires it without
    bypass. Only the landing process watches the run.
 4. Give release maintainers the repository, full commit, version, publication
@@ -38,6 +39,8 @@ registry credentials and the later tag. Workflow changes require review before l
    refuses any other ref as its first step. It trusts the default-branch ruleset
    without re-checking `qualified`. A package name absent from Hex is refused;
    first publication is the owner's decision.
+   The publication job waits for a passing paired performance verdict on the
+   exact dispatched commit. See [performance gates](#performance-gates).
 5. The unkeyed publication steps install the exact latest `.tool-versions` pair,
    refuse differing installed releases, fetch `--check-locked`, audit both feeds,
    verify the corpus pin and build deterministic corpus assets. They validate
@@ -77,6 +80,22 @@ registry credentials and the later tag. Workflow changes require review before l
    download, attestation and Hex-byte checks. After release, advance
    `@version` to the next development version and update documented installs,
    corpus release identity and its digest pin.
+
+### Performance gates
+
+The publication workflow runs 20 paired rounds on fresh GitHub-hosted
+`ubuntu-24.04` VMs. Download the round artifacts and the verdict from the
+dispatch run to inspect the per-round medians, ratios and host conditions.
+The [decision record](../adr/0031-performance-release-gates.md) defines the
+workloads, admission rule and four thresholds. Failed and unmeasured gates
+block publication. Each dispatch collects its fixed set of rounds once.
+
+When both relative gates pass and an absolute gate is the only failure, give
+the owner the verdict and round artifacts. The owner decides whether to
+change the absolute threshold or approve a dedicated benchmark host. That
+decision requires updating the accepted contract and requalifying the
+change before publication. Keep the recorded thresholds and do not rerun a
+failed measurement to obtain a passing result.
 
 ### Finish a held publication
 

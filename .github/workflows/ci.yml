@@ -255,9 +255,50 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: ${{ runner.temp }}/jwe-teardown.json
+  release-gate-self-check:
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10 # no green run yet; measure the first green run
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ needs.toolchain.outputs.elixir }}
+          otp-version: ${{ needs.toolchain.outputs.otp }}
+          version-type: strict
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.toolchain.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ needs.toolchain.outputs.python }}
+        run: scripts/toolchain.sh --installed "python=$EXPECTED_PYTHON"
+      - name: Refuse a differing installed runtime
+        env:
+          ELIXIR: ${{ needs.toolchain.outputs.elixir }}
+          OTP: ${{ needs.toolchain.outputs.otp }}
+        run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - name: Run both versions and validate the retained evidence
+        run: |
+          python3 scripts/jwe_release_gates.py round --id 1 --self-check --commit "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/release-gate-self-check/round.json"
+          python3 scripts/jwe_release_gates.py collect --self-check --commit "$GITHUB_SHA" \
+            --rounds "$RUNNER_TEMP/release-gate-self-check" \
+            --output "$RUNNER_TEMP/release-gate-self-check/verdict.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: release-gate-self-check
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/release-gate-self-check/
   qualified:
     if: always()
-    needs: [process-ownership-macos, toolchain, verify, mutations, teardown]
+    needs: [process-ownership-macos, toolchain, verify, mutations, teardown, release-gate-self-check]
     runs-on: ubuntu-24.04
     timeout-minutes: 5 # run 44281082286: cold 5s (<2.5m)
     permissions:
