@@ -51,7 +51,21 @@ on shared infrastructure vary with hardware and active load.
    and the verdict. The qualification run exercises a reduced self-check of the measurements
    and evidence schema. Its collector prints foreign CPU, steal and resolution
    for every sample set without enforcing admission or the performance thresholds.
-6. Custody holder capacity uses a separate harness.
+6. Custody holder capacity uses a separate harness, run once before release from a
+   measurement branch that never lands. It compared (b), one serial holder per
+   `RequestSeal.Custody.Local` handle with batch grouping in `decrypt_many/2`, against (a),
+   one holder per online scheduler per handle chosen round robin. Each of 24 hosted
+   ubuntu-24.04 VMs ran b/a/b/a/b/a in separate processes over 2-second windows, with
+   single-token (S1) and page (P1) callers at 1, S and 4S, where S is the online scheduler
+   count. Item 3's CPU limits applied to every window. The rule, fixed before the run,
+   selects (a) only if the S1 throughput ratio a/b at 4S has a median of at least 1.5 and
+   a 95% bootstrap lower bound above 1.2, the single-caller p50 latency ratios for S1 and
+   P1 are at most 1.05, and the P1 throughput ratio at 4S is at least 1.0.
+   Hosted run 45264120027 admitted all 24 rounds. It measured a median S1 throughput ratio of 0.999 at 4S (bootstrap
+   lower bound 0.993), S1 and P1 single-caller latency ratios of 1.043 and 1.001, and a P1
+   throughput ratio of 0.990 at 4S. It selected (b). The shipped holder stays one serial
+   holder per handle; extra holders would multiply resident key copies without measured
+   capacity gain.
 
 ## Alternatives
 
