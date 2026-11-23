@@ -207,10 +207,11 @@
   raising handlers retain telemetry's normal isolation and the caller's result.
 - Verify 72 distinct JWE reversing mutations with a passing clean baseline per
   selected test and commit, then the named rejection and a clean reversal.
-  The teardown gate measures absolute Bounds limits with load and CPU steal
-  admission based on host logical CPUs, host identity, retry evidence, and an
-  off-heap final-report observer. The Python runner brackets retained per-attempt
-  counters with its own Linux readings and independently checks the derivation.
+  The teardown and release gates admit windows using foreign CPU and CPU steal.
+  The teardown gate measures absolute Bounds limits with host identity, retry
+  evidence, and an off-heap final-report observer. The Python runner brackets
+  retained per-attempt counters with its own Linux readings and independently
+  checks the derivation.
 - Regenerate native JOSE inventories and disclosure allowlists after removing
   obsolete native case files from every generated surface, without leaving Python
   bytecode caches. Malformed native allowlist blocks have a named error.

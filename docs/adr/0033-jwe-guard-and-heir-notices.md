@@ -253,13 +253,14 @@ The token, JSON candidate and AEAD ciphertext are built before timing. All
 five samples still include their own first data access, allocation, heap
 growth and garbage collection within the unit; no sample is warmed or dropped.
 
-Samples require Linux load average at most available host logical CPUs
-(falling back to the main node's online schedulers when availability is unknown) and aggregate CPU
-steal at most 5% across the sample window. Raw counters, load, CPU model, logical
-CPU count, online schedulers, OTP release and headroom accompany measurements.
+Samples use the [shared CPU interference rule](0031-performance-release-gates.md).
+Steal must be at most 5% and foreign CPU between 0% and 10% across the window.
+Each workload measures its own BEAM process, including the isolated peers.
+Raw host and process counters, load, CPU model, logical CPU count, online
+schedulers, OTP release and headroom accompany measurements.
 The Python runner independently brackets the run with Linux CPU and load
-readings, rejects regressing or out-of-bracket per-attempt counters, and checks
-load against both the recorded admission capacity and its own CPU count.
+readings, rejects regressing or out-of-bracket aggregate CPU counters, and
+replays admission from each attempt's raw counters.
 Counter windows span at least 20 ms, outside the timed units, to admit short
 units only with a measurable CPU accounting denominator. A zero elapsed window
 is rejected and consumes a host-condition attempt on both sides.

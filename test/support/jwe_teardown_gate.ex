@@ -2,10 +2,11 @@ defmodule RequestSeal.Test.JWETeardownGate do
   @moduledoc false
   import ExUnit.Assertions
   alias RequestSeal.JOSE.JWE.{Bounds, Codec, Coordinator, Guard, Open, Worker}
+  alias RequestSeal.Test.HostConditions
   alias RequestSeal.Test.JWEOpenRuntime, as: Runtime
   alias RequestSeal.Test.JWEWorkerDiagnostics
   @samples 5
-  @load_attempts 30
+  @host_attempts 30
   @placement_attempts 20
   @cap 10_000
   @cpu_window_us 20_000
@@ -16,7 +17,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
           topology <- [:resolvers, :queued, :custody] do
         samples =
           for _ <- 1..@samples do
-            host_sample(fn -> Runtime.with_peer(fn -> sample(trigger, topology) end) end)
+            host_sample(fn -> sample(trigger, topology) end, :online)
           end
 
         %{
@@ -32,19 +33,14 @@ defmodule RequestSeal.Test.JWETeardownGate do
 
     handoffs =
       for _ <- 1..@samples do
-        host_sample(fn -> Runtime.with_peer(fn -> handoff(@placement_attempts) end, 1) end, 1)
+        host_sample(fn -> handoff(@placement_attempts) end, 1)
       end
 
     byte_scenarios =
       for unit <- [:token_scan, :expected, :name] do
         samples =
           for _ <- 1..@samples do
-            host_sample(
-              fn ->
-                Runtime.with_peer(fn -> byte_deadline(unit, @placement_attempts) end, 2)
-              end,
-              2
-            )
+            host_sample(fn -> byte_deadline(unit, @placement_attempts) end, 2)
           end
 
         %{
@@ -145,7 +141,7 @@ defmodule RequestSeal.Test.JWETeardownGate do
         n: @cap,
         b_us: Bounds.teardown(@cap),
         k_pf_us: Bounds.preflight(),
-        load_attempts: @load_attempts,
+        host_attempts: @host_attempts,
         placement_attempts: @placement_attempts,
         cpu_window_min_us: @cpu_window_us,
         collection_cap_us: Runtime.collection_cap()
@@ -159,39 +155,16 @@ defmodule RequestSeal.Test.JWETeardownGate do
     logical =
       case :erlang.system_info(:logical_processors) do
         n when is_integer(n) and n > 0 -> n
-        _ -> host_cpus()
+        _ -> System.schedulers_online()
       end
 
     %{
       schedulers_online: System.schedulers_online(),
       logical_cpus: logical,
-      admission_cpus: host_cpus(),
       cpu_model: cpu_model(File.read!("/proc/cpuinfo")),
       otp: List.to_string(:erlang.system_info(:otp_release)),
       elixir: System.version()
     }
-  end
-
-  def host_cpus do
-    case :erlang.system_info(:logical_processors_available) do
-      n when is_integer(n) and n > 0 -> n
-      _ -> System.schedulers_online()
-    end
-  end
-
-  def steal_percent(before, after_cpu) do
-    start = cpu_times(before)
-    stop = cpu_times(after_cpu)
-    elapsed = stop.total - start.total
-    stolen = stop.steal - start.steal
-    if elapsed > 0 and stolen >= 0 and stolen <= elapsed, do: 100 * stolen / elapsed, else: nil
-  end
-
-  def cpu_times(text) do
-    ["cpu" | fields] = text |> String.split("\n") |> hd() |> String.split()
-    values = fields |> Enum.take(8) |> Enum.map(&String.to_integer/1)
-    true = length(values) == 8
-    %{total: Enum.sum(values), steal: Enum.at(values, 7)}
   end
 
   def cpu_model(text) do
@@ -207,51 +180,63 @@ defmodule RequestSeal.Test.JWETeardownGate do
     end)
   end
 
-  def host_admitted?(result, steal),
-    do: result != nil and is_number(steal) and steal >= 0 and steal <= 5
+  defp host_sample(fun, schedulers \\ :local) do
+    sample =
+      case schedulers do
+        :local -> fn -> observe_host_sample(fun) end
+        _ -> fn -> Runtime.with_peer(fn -> observe_host_sample(fun) end, schedulers) end
+      end
 
-  def host_sample(
-        fun,
-        online \\ System.schedulers_online(),
-        attempts \\ @load_attempts,
-        seen \\ []
-      )
+    host_sample(sample, @host_attempts, [])
+  end
 
-  def host_sample(_, _, 0, seen),
+  defp host_sample(_, 0, seen),
     do: raise("host condition exhausted: #{inspect(Enum.reverse(seen), limit: :infinity)}")
 
-  def host_sample(fun, online, attempts, seen) do
-    cpus = host_cpus()
+  defp host_sample(sample, attempts, seen) do
+    {result, observation} = sample.()
+    seen = [observation | seen]
+
+    if HostConditions.admitted?(observation.steal, observation.foreign_cpu) do
+      Map.merge(result, %{
+        load: observation.load,
+        steal: observation.steal,
+        host_conditions: Enum.reverse(seen)
+      })
+    else
+      Process.sleep(1_000)
+      host_sample(sample, attempts - 1, seen)
+    end
+  end
+
+  defp observe_host_sample(fun) do
     loadavg = File.read!("/proc/loadavg") |> String.trim()
     [first | _] = String.split(loadavg)
     load = String.to_float(first)
-    before = File.read!("/proc/stat") |> String.split("\n") |> hd()
+    cpu_before = HostConditions.cpu_stat()
+    process_before = HostConditions.process_snapshot(:before)
     window = Bounds.now()
-    result = if load <= cpus, do: fun.(), else: nil
+    result = fun.()
     # CPU accounting uses ticks. Extend only the observation window, outside
     # every timed unit, so a sub-tick unit still has a measurable denominator.
     wait_until(window + @cpu_window_us)
-    after_cpu = File.read!("/proc/stat") |> String.split("\n") |> hd()
-    steal = steal_percent(before, after_cpu)
+    process_after = HostConditions.process_snapshot(:after)
+    cpu_after = HostConditions.cpu_stat()
+    {steal, foreign} = HostConditions.percentages(cpu_before, cpu_after, process_before, process_after)
 
     observation = %{
       load: load,
       steal: if(steal == nil, do: :null, else: steal),
+      foreign_cpu: if(foreign == nil, do: :null, else: foreign),
       loadavg: loadavg,
-      cpu_before: before,
-      cpu_after: after_cpu,
-      schedulers_online: online,
-      admission_cpus: cpus
+      cpu_before: cpu_before,
+      cpu_after: cpu_after,
+      process_before: process_before,
+      process_after: process_after,
+      schedulers_online: System.schedulers_online()
     }
 
-    seen = [observation | seen]
-
-    if host_admitted?(result, steal) do
-      Map.merge(result, %{load: load, steal: steal, host_conditions: Enum.reverse(seen)})
-    else
-      Process.sleep(1_000)
-      host_sample(fun, online, attempts - 1, seen)
-    end
+    {result, observation}
   end
 
   # Verify lanes call this same driver, including its trace pattern, policy,

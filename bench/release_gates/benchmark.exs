@@ -1,5 +1,8 @@
+Code.require_file("../../test/support/host_conditions.ex", __DIR__)
+
 defmodule RequestSeal.ReleaseGateBenchmark do
   @moduledoc false
+  alias RequestSeal.Test.HostConditions
   @warmups 30
 
   def run(mode, workload) do
@@ -53,7 +56,8 @@ defmodule RequestSeal.ReleaseGateBenchmark do
   defp measure(open, count, valid?) do
     Enum.each(1..@warmups, fn _ -> verify!(open.(), valid?) end)
     load_before = loadavg()
-    cpu_before = cpu_stats()
+    cpu_before = HostConditions.cpu_stat()
+    process_before = HostConditions.process_snapshot(:before)
 
     samples =
       for _ <- 1..count do
@@ -64,7 +68,8 @@ defmodule RequestSeal.ReleaseGateBenchmark do
         elapsed / 1_000
       end
 
-    cpu_after = cpu_stats()
+    process_after = HostConditions.process_snapshot(:after)
+    cpu_after = HostConditions.cpu_stat()
     load_after = loadavg()
 
     %{
@@ -74,7 +79,9 @@ defmodule RequestSeal.ReleaseGateBenchmark do
       load_before: load_before,
       load_after: load_after,
       cpu_before: cpu_before,
-      cpu_after: cpu_after
+      cpu_after: cpu_after,
+      process_before: process_before,
+      process_after: process_after
     }
   end
 
@@ -120,5 +127,4 @@ defmodule RequestSeal.ReleaseGateBenchmark do
   defp json(value), do: IO.iodata_to_binary(:json.encode(value))
   defp b64(bytes), do: Base.url_encode64(bytes, padding: false)
   defp loadavg, do: File.read!("/proc/loadavg") |> String.trim()
-  defp cpu_stats, do: File.read!("/proc/stat") |> String.split("\n", parts: 2) |> hd()
 end

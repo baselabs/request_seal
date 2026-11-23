@@ -139,19 +139,22 @@ derived K_pf against Bounds K_pf. The constants are 170 ms and 5 ms respectively
 the gate reads them from the library. JSON and Markdown retain each scenario's
 maximum as a fraction of B and derived K_pf as a fraction of its bound.
 
-Linux samples require `/proc/loadavg` at most the host's available logical CPUs
-(falling back to the main node's online schedulers when unknown), and CPU steal
-from `/proc/stat` at most 5% over the sample window. The artifact records the raw
-counters, loads, steal percentages, online schedulers, logical CPUs, CPU model
-and OTP release. Counter windows span at least 20 ms to avoid zero-tick windows
+Linux samples require at most 5% CPU steal and 0–10% foreign CPU over the
+sample window. Foreign CPU is the aggregate busy CPU time from `/proc/stat`
+minus the CPU time of the BEAM process tree running that workload, including
+isolated peers. The [shared admission rule](../adr/0031-performance-release-gates.md)
+defines how to account for exited descendants. Both percentages use the total
+elapsed CPU time across the host. The artifact records the raw counters,
+diagnostic load averages, percentages, online schedulers, logical CPUs, CPU
+model and OTP release. Counter windows span at least 20 ms to avoid zero-tick windows
 for short units; the observation delay stays outside every timed unit. A zero
 elapsed window is rejected. Final report sends target an observer whose recorded
 message queue flag must be `off_heap`.
 The Python runner reads `/proc/stat` and `/proc/loadavg` before and after the
-Elixir run, retaining those independent brackets. Every per-attempt CPU counter
-must be monotonic and lie within those brackets. Python checks load against the
-recorded host admission capacity and its own logical CPU count.
-Load and steal share 30 host-condition attempts. Placements have
+Elixir run, retaining those independent brackets. Aggregate CPU counters must
+be monotonic and lie within those brackets. Python replays the admission
+decision from each attempt's raw host and process counters.
+Foreign CPU and steal share 30 host-condition attempts. Placements have
 20 attempts; a handoff completed before D is retried. Exhausting either budget
 fails, with the observed attempts. No host rejection becomes a skip or a relaxed
 runtime bound.

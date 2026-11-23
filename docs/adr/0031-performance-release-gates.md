@@ -22,8 +22,17 @@ on shared infrastructure vary with hardware and active load.
    baseline (A) and the candidate (B) as separate processes in A/B/A/B/A/B order. Each sample
    set uses 30 warmups, then the median of 15 pages or 2,000 single opens. A round's ratio for
    each workload is the median of its B sample sets divided by the median of its A sample sets.
-3. Admit a round only when every sample window has one-minute load at most the host's logical
-   CPU count and CPU steal at most 5%. Keep rejected observations as unmeasured rounds.
+3. Admit a round only when every sample window has CPU steal at most 5% and foreign CPU
+   between 0% and 10%, inclusive. Subtract the measured BEAM process tree's user and
+   system CPU time from the aggregate delta of user, nice, system, IRQ and softirq time.
+   Credit the CPU deltas of processes visible at both boundaries and the BEAM's waited
+   child CPU delta after discounting pre-window CPU of descendants visible only at the
+   start. Divide by total elapsed CPU time across the host, counting guest time once
+   in user and nice. Keep raw host and process tree readings and record negative foreign
+   CPU caused by counter skew. Keep rejected observations as unmeasured rounds.
+   One-minute load includes the measured workload itself and is retained for diagnostics.
+   In round 10 of hosted run 45226491587, it rose from 3.28 to 4.17 on a four-vCPU
+   runner with zero steal.
 4. Across admitted rounds, the candidate median must be at most 4,200 microseconds for a page
    and 140 microseconds for a single open, each over at least five rounds. The median of the
    per-round paired ratios must be at most 1.00 for a page and 3.2 for a single open, each
@@ -31,7 +40,8 @@ on shared infrastructure vary with hardware and active load.
 5. Publish only after the collector records a passing verdict for the dispatched commit.
    Any failed or unmeasured gate fails the run. The workflow keeps each round's evidence
    and the verdict. The qualification run exercises a reduced self-check of the measurements
-   and evidence schema.
+   and evidence schema. Its collector prints foreign CPU for every sample window for
+   inspection without enforcing admission or the performance thresholds in that mode.
 6. Custody holder capacity uses a separate harness.
 
 ## Alternatives

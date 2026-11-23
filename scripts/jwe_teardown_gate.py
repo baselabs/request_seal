@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Measure absolute trigger-to-last-end-marker monotonic microseconds against
-Bounds B(10,000), and derived K_pf against Bounds K_pf. Samples are admitted only
-when /proc/loadavg is at most the host logical CPU admission count and /proc/stat CPU steal is at
-most 5% over the sample window. Exhausted host-condition or placement budgets
+Bounds B(10,000), and derived K_pf against Bounds K_pf. Admit windows with at most
+5% CPU steal and 0–10% foreign CPU, measured from aggregate and BEAM process
+counters. Exhausted host-condition or placement budgets
 fail, never skip. Retain host identity, observations and absolute headroom.
 CPU counter windows span at least 20 ms; that observation delay is outside all
 timed units and does not alter the absolute runtime measurements.
@@ -20,7 +20,7 @@ import re
 import sys
 
 import processes
-from host_conditions import admit as admit_host, cpu_times, load_average, steal_percent
+from host_conditions import admit, cpu_counters, load_average
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,15 +39,6 @@ def bounds():
         raise ValueError("Bounds derivation changed; update its independent gate check")
     n = values["max_tokens"]
     return n, values["base_teardown_us"] + values["per_item_teardown_us"] * n, values["preflight_us"]
-
-
-def admit(observations, cpus, attempts):
-    return admit_host(observations, min(cpus, os.cpu_count()), attempts)
-
-
-def cpu_counters(text):
-    cpu_times(text)
-    return tuple(int(value) for value in text.splitlines()[0].split()[1:9])
 
 
 def monotonic(before, after):
@@ -71,7 +62,7 @@ def bracketed(history, brackets):
     return True
 
 
-def host_samples(conditions, loads, steals, online, attempts, cpus, brackets, *, ordered=True):
+def host_samples(conditions, loads, steals, online, attempts, brackets, *, ordered=True):
     if not (len(conditions) == len(loads) == len(steals) == 5):
         return False
     previous = brackets["before"]["stat"]
@@ -83,12 +74,12 @@ def host_samples(conditions, loads, steals, online, attempts, cpus, brackets, *,
         if selected_online not in online or any(
                 row["schedulers_online"] != selected_online for row in history):
             return False
-        if any(row["admission_cpus"] != cpus for row in history) or not bracketed(history, brackets):
+        if not bracketed(history, brackets):
             return False
         if ordered and not monotonic(previous, history[0]["cpu_before"]):
             return False
         previous = history[-1]["cpu_after"]
-        accepted = admit(history, cpus, attempts)
+        accepted = admit(history, attempts)
         if accepted is not history[-1] or accepted["load"] != load or accepted["steal"] != steal:
             return False
     return True
@@ -100,7 +91,7 @@ def markdown(report):
                 json.dumps(report.get("host", {})) + "\n" + report.get("output", ""))
     host, constants = report["host"], report["constants"]
     rows = [f"Host: {host['cpu_model']}; logical CPUs: {host['logical_cpus']}; "
-            f"online schedulers: {host['schedulers_online']}; admission CPUs: {host['admission_cpus']}; "
+            f"online schedulers: {host['schedulers_online']}; "
             f"OTP: {host['otp']}.",
             f"Absolute limits from Bounds: B({constants['n']}) = {constants['b_us']} us; "
             f"K_pf = {constants['k_pf_us']} us.", "",
@@ -179,23 +170,20 @@ def _passes(report):
                 for topology in ("resolvers", "queued", "custody")}
     expected |= {"S5c", "D/token_scan", "D/expected", "D/name"}
     constants, host = report["constants"], report["host"]
-    bound, k_pf, attempts = constants["b_us"], constants["k_pf_us"], constants["load_attempts"]
+    bound, k_pf, attempts = constants["b_us"], constants["k_pf_us"], constants["host_attempts"]
     if (constants["n"], bound, k_pf) != bounds():
         return False
     if not (bound > 0 and k_pf > 0 and attempts > 0 and constants["placement_attempts"] > 0
             and host["schedulers_online"] > 0 and host["logical_cpus"] > 0
             and host["cpu_model"].strip() and host["otp"].strip()):
         return False
-    cpus = host["admission_cpus"]
-    if (not isinstance(cpus, int) or not 0 < cpus <= host["logical_cpus"] or
-            not os.cpu_count() or cpus > os.cpu_count() or
-            report["final_report_observer_queue"] != "off_heap" or
+    if (report["final_report_observer_queue"] != "off_heap" or
             constants["collection_cap_us"] != 10_000_000 or
             attempts != 30 or constants["placement_attempts"] != 20):
         return False
     brackets = report["host_brackets"]
     for snapshot in brackets.values():
-        cpu_times(snapshot["stat"])
+        cpu_counters(snapshot["stat"])
         load_average(snapshot["loadavg"])
     if set(brackets) != {"before", "after"} or not monotonic(
             brackets["before"]["stat"], brackets["after"]["stat"]):
@@ -213,7 +201,7 @@ def _passes(report):
                 len(row["diagnostics"]) != 5 or not all(complete(d) for d in row["diagnostics"])):
             return False
         if row["headroom"] != max(row["times_us"]) / bound or not host_samples(
-                row["host_conditions"], row["loads"], row["steals"], {online}, attempts, cpus, brackets):
+                row["host_conditions"], row["loads"], row["steals"], {online}, attempts, brackets):
             return False
     units = report["units_us"]
     if set(units) != {"separator_and_accounting", "expected_validation_and_serialization",
@@ -230,7 +218,7 @@ def _passes(report):
         if name == "preflight_exit":
             online |= {1, 2}
         if not host_samples(report["units_host_conditions"][name], report["units_loads"][name],
-                            report["units_steals"][name], online, attempts, cpus, brackets,
+                            report["units_steals"][name], online, attempts, brackets,
                             ordered=name != "preflight_exit"):
             return False
     longest = max(value for name, values in units.items()
