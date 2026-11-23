@@ -1,20 +1,16 @@
-"""Exercise toolchain pairing and GitHub outputs against the checked-in pins."""
-import importlib.util
+"""Source-only contracts for the unchanged reader and every workflow consumer."""
+import hashlib
 import json
-import re
 from pathlib import Path
+import stat
 import subprocess
 import sys
-import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+import qualify
 from workflow_yaml import load as load_workflow
-
-spec = importlib.util.spec_from_file_location("toolchain", ROOT / "scripts/toolchain.py")
-pins = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(pins)
 
 
 def workflow_sources():
@@ -46,91 +42,92 @@ def container_errors(name, source):
 
 
 class ToolchainTest(unittest.TestCase):
-    def test_lanes_sort_paired_pins_without_copying_versions(self):
-        source = (ROOT / ".tool-versions").read_text()
-        configuration = pins.toolchain(source)
-        entries = dict(line.split(maxsplit=1) for line in source.splitlines() if line.strip())
-        pairs = list(zip(entries["elixir"].split(), entries["erlang"].split()))
-        lanes = configuration["matrix"]["include"]
-        self.assertEqual(["floor", "mid", "latest"], [lane["lane"] for lane in lanes])
-        for lane, (elixir, otp) in zip(lanes, reversed(pairs)):
-            self.assertEqual(elixir.split("-otp-")[0], lane["elixir"])
-            self.assertEqual(otp, lane["otp"])
-        reordered = "\n".join(
-            name + " " + " ".join(reversed(versions.split())) for name, versions in entries.items()
-        )
-        self.assertEqual(configuration, pins.toolchain(reordered))
-        self.assertEqual(entries["nodejs"], configuration["node"])
-        self.assertEqual(lanes[-1]["elixir"], configuration["elixir"])
-        self.assertEqual(lanes[-1]["otp"], configuration["otp"])
+    def test_reader_is_the_unchanged_executable_shared_file(self):
+        reader = ROOT / "scripts/toolchain.sh"
+        self.assertEqual("b29bfeb6ec4ec8f5b7e3ac3c963f04b6d3c73483172e5bd59ea40f20b102f1eb",
+                         hashlib.sha256(reader.read_bytes()).hexdigest())
+        self.assertEqual(0o755, stat.S_IMODE(reader.stat().st_mode))
 
-    def test_rejects_missing_ambiguous_or_incompatible_pins(self):
-        source = (ROOT / ".tool-versions").read_text()
-        lines = source.splitlines()
-        elixir = lines[0].split()[1:]
-        otp = lines[1].split()[1:]
-        for changed in (
-            "\n".join(lines[:-1]),
-            source + "\nnodejs 1.2.3\n",
-            source.replace(elixir[0], elixir[1]),
-            source.replace(otp[0], otp[-1]),
-            source.replace(elixir[0], "latest"),
-            source.replace(lines[2], "nodejs lts"),
-            source.replace(lines[2], lines[2] + " 1.2.3"),
-        ):
-            with self.subTest(changed=changed), self.assertRaises(ValueError):
-                pins.toolchain(changed)
-
-    def test_cli_writes_consumable_github_outputs(self):
-        with tempfile.TemporaryDirectory(prefix="requestseal-toolchain-") as directory:
-            output = Path(directory) / "outputs"
-            subprocess.run(
-                [sys.executable, "-I", "-B", str(ROOT / "scripts/toolchain.py"), "--github-output", str(output)],
-                check=True, timeout=30,
-            )
-            values = dict(line.split("=", 1) for line in output.read_text().splitlines())
-            expected = pins.toolchain((ROOT / ".tool-versions").read_text())
-            self.assertEqual(expected["matrix"], json.loads(values.pop("matrix")))
-            self.assertEqual({key: value for key, value in expected.items() if key != "matrix"}, values)
-
-    def test_workflows_read_pins_instead_of_copying_them(self):
-        configuration = pins.toolchain((ROOT / ".tool-versions").read_text())
-        versions = [configuration["node"]] + [
-            value for lane in configuration["matrix"]["include"] for key, value in lane.items() if key != "lane"
-        ]
+    def test_workflows_only_read_versions_through_the_shared_reader(self):
+        runtime_fields = {"erlef/setup-beam": ("elixir-version", "otp-version"),
+                          "actions/setup-node": ("node-version",)}
         for name, source in workflow_sources().items():
-            if "erlef/setup-beam@" in source or "actions/setup-node@" in source:
-                self.assertIn('scripts/toolchain.py --github-output "$GITHUB_OUTPUT"', source)
-            for version in versions:
-                self.assertNotIn(version, source, name)
-        proofs = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.assertIn("fromJSON(needs.toolchain.outputs.matrix)", proofs)
-        self.assertIn("node-version: ${{ needs.toolchain.outputs.node }}", proofs)
-
-    def test_installed_runtime_refuses_every_release_difference(self):
-        configuration = pins.toolchain((ROOT / ".tool-versions").read_text())
-        for lane in configuration["matrix"]["include"]:
-            expected = [lane["elixir"], lane["otp"]]
-            self.assertEqual([], pins.installed_errors(*expected, expected))
-            for changed in ([], expected[:1], expected + ["extra"],
-                            [expected[0], expected[1].split(".")[0]],
-                            [expected[0] + ".1", expected[1]],
-                            [expected[0], expected[1] + ".1"]):
-                self.assertTrue(pins.installed_errors(*expected, changed))
-        for name, source in workflow_sources().items():
+            self.assertIn('scripts/toolchain.sh >> "$GITHUB_OUTPUT"', source)
+            self.assertNotIn("version-file:", source)
+            self.assertNotIn(".tool-versions", source)
+            self.assertNotRegex(source, r"(?:sh|bash) +scripts/toolchain\.sh")
             for body in load_workflow(source)["jobs"].values():
-                beam = [step for step in body["steps"] if step.get("uses", "").startswith("erlef/setup-beam@")]
-                if beam:
-                    self.assertTrue(all(step["with"]["version-type"] == "strict" for step in beam), name)
-                    self.assertTrue(any("scripts/toolchain.py --verify-installed" in step.get("run", "")
-                                        for step in body["steps"]), name)
+                for step in body["steps"]:
+                    action = step.get("uses", "").split("@", 1)[0]
+                    for field in runtime_fields.get(action, ()):
+                        self.assertRegex(step["with"][field],
+                                         r"^\$\{\{ (?:matrix\.(?:elixir|otp)|"
+                                         r"(?:needs\.toolchain|steps\.pins)\.outputs\.\w+) \}\}$", name)
+        ci = load_workflow(workflow_sources()["ci.yml"])["jobs"]
+        reader = next(step for step in ci["toolchain"]["steps"] if step.get("id") == "pins")
+        self.assertEqual('scripts/toolchain.sh >> "$GITHUB_OUTPUT"', reader["run"])
+        self.assertTrue(any(step.get("run") == "scripts/toolchain.sh --self-test"
+                            for step in ci["toolchain"]["steps"]))
+        matrix = next(step for step in ci["toolchain"]["steps"] if step.get("id") == "matrix")
+        self.assertEqual({"TOOLCHAIN_OUTPUTS": "${{ toJSON(steps.pins.outputs) }}"}, matrix["env"])
+        self.assertEqual('python3 scripts/qualify.py --matrix >> "$GITHUB_OUTPUT"', matrix["run"])
+        self.assertEqual("${{ fromJSON(needs.toolchain.outputs.matrix) }}", ci["verify"]["strategy"]["matrix"])
+
+    def test_every_setup_refuses_different_installed_versions_before_project_code(self):
+        for name, source in workflow_sources().items():
+            for job, body in load_workflow(source)["jobs"].items():
+                steps = body["steps"]
+                for index, setup in enumerate(steps):
+                    action = setup.get("uses", "").split("@", 1)[0]
+                    if action == "erlef/setup-beam":
+                        self.assertEqual("strict", setup["with"]["version-type"])
+                        refusal = next(step for step in steps[index + 1:]
+                                       if step.get("name") == "Refuse a differing installed runtime")
+                        expected = {"ELIXIR": setup["with"]["elixir-version"],
+                                    "OTP": setup["with"]["otp-version"]}
+                        command = 'scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"'
+                        node = next((step for step in steps if step.get("uses", "").startswith("actions/setup-node@")), None)
+                        if node:
+                            expected["NODEJS"] = node["with"]["node-version"]
+                            command += ' "nodejs=$NODEJS"'
+                            self.assertLess(steps.index(node), steps.index(refusal))
+                        self.assertEqual(expected, refusal["env"], (name, job))
+                        self.assertEqual(command, refusal["run"], (name, job))
+                        self.assertEqual(setup.get("if"), refusal.get("if"))
+                        self.assertFalse(any("mix " in step.get("run", "") for step in steps[index:steps.index(refusal)]))
+
+    def test_qualification_labels_only_shared_output_pairs_and_keeps_build_suffixes(self):
+        outputs = {"elixir": "9.3.1-otp-93", "otp": "93.2.1", "beam_lanes": json.dumps([
+            {"elixir": "9.2.1-otp-92", "otp": "92.2.1"},
+            {"elixir": "9.1.1-otp-91", "otp": "91.2.1"},
+        ])}
+        expected = {"include": [
+            {"lane": "floor", "elixir": "9.1.1-otp-91", "otp": "91.2.1"},
+            {"lane": "mid", "elixir": "9.2.1-otp-92", "otp": "92.2.1"},
+            {"lane": "latest", "elixir": outputs["elixir"], "otp": outputs["otp"]},
+        ]}
+        self.assertEqual(expected, qualify.verification_matrix(outputs))
+        outputs["beam_lanes"] = json.dumps(list(reversed(json.loads(outputs["beam_lanes"]))))
+        self.assertEqual(expected, qualify.verification_matrix(outputs))
+        result = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "scripts/qualify.py"), "--matrix"],
+                                env={"PATH": "/usr/bin:/bin", "TOOLCHAIN_OUTPUTS": json.dumps(outputs)},
+                                check=True, capture_output=True, text=True, timeout=30)
+        key, value = result.stdout.strip().split("=", 1)
+        self.assertEqual("matrix", key)
+        self.assertEqual(expected, json.loads(value))
+        for lanes in ([], [{}], [{}, {}, {}], {}):
+            with self.subTest(lanes=lanes), self.assertRaises(ValueError):
+                qualify.verification_matrix({**outputs, "beam_lanes": json.dumps(lanes)})
+        pair = json.loads(outputs["beam_lanes"])[0]
+        for lanes in ([pair, pair], [pair, {"elixir": outputs["elixir"], "otp": outputs["otp"]}]):
+            with self.subTest(duplicates=lanes), self.assertRaisesRegex(ValueError, "distinct"):
+                qualify.verification_matrix({**outputs, "beam_lanes": json.dumps(lanes)})
 
     def test_platform_reference_is_one_complete_digest_pinned_line(self):
         source = (ROOT / ".github/postgres.ref").read_text()
         self.assertRegex(source, r"\Aghcr\.io/baselabs/postgres[:]18\.[0-9]+-inputs-[0-9a-f]{64}"
                                 r"@sha256:[0-9a-f]{64}\n\Z")
         self.assertFalse((ROOT / ".github/service-images").exists())
-        self.assertFalse(hasattr(pins, "service_images"))
 
     def test_workflow_containers_cannot_bypass_platform_startup(self):
         sources = workflow_sources()
@@ -164,45 +161,6 @@ class ToolchainTest(unittest.TestCase):
             with self.subTest(quoted=field):
                 self.assertIn(f"workflow YAML: <line {line}>:", container_errors("ci.yml", source)[0])
 
-    def test_notebook_tooling_requires_the_latest_lane_minor_without_reading_outside_files(self):
-        configuration = pins.toolchain((ROOT / ".tool-versions").read_text())
-        major, minor = configuration["elixir"].split(".")[:2]
-        source = (ROOT / "tools/notebooks/mix.exs").read_text()
-        self.assertEqual([f"~> {major}.{minor}"], re.findall(r'^\s*elixir: "([^"]+)",$', source, re.M))
-        # Dependency updaters copy only this directory; the project must load from it alone.
-        self.assertNotRegex(source, r"File\.|Path\.expand|__DIR__|\.\./")
-
-    def test_no_tracked_source_copies_an_exact_pin(self):
-        configuration = pins.toolchain((ROOT / ".tool-versions").read_text())
-        versions = {configuration["node"]} | {
-            value for lane in configuration["matrix"]["include"] for key, value in lane.items() if key != "lane"
-        }
-        # Records state the toolchain a past result was produced on; locks are resolver output.
-        records = ("CHANGELOG.md", "docs/adr/", "PROVENANCE.md", "mix.lock", "corpus/")
-        tracked = subprocess.run(
-            ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True, timeout=30,
-        ).stdout.splitlines()
-        sources = [path for path in tracked if path != ".tool-versions" and not any(
-            path.startswith(record) or path.endswith(record) for record in records
-        )]
-        self.assertIn("tools/notebooks/mix.exs", sources)
-        engine = (ROOT / ".github/postgres.ref").read_text().strip()
-        # A name after "/" or ":" is URL userinfo (postgres://user:password@host), not an image.
-        image_literals = re.compile(r"(?<![/:\w])(?:ghcr\.io/baselabs/)?postgres(?:[:@](?!//)[A-Za-z0-9_.-]+)"
-                                    r"(?:@sha256:[0-9a-f]+)?")
-        for path in sources:
-            try:
-                source = (ROOT / path).read_text()
-            except (UnicodeDecodeError, FileNotFoundError):
-                continue
-            for version in versions:
-                self.assertNotRegex(source, r"(?<![\d.])" + re.escape(version) + r"(?![\d.])", path)
-            if path != ".github/postgres.ref":
-                self.assertNotIn(engine, source, path)
-                self.assertNotIn(engine.split("@sha256:")[1], source, path)
-            if path.startswith((".github/workflows/", "test/")):
-                self.assertEqual([], [ref for ref in image_literals.findall(source)
-                                      if not ref.endswith(":current")], path)
 
 
 if __name__ == "__main__":

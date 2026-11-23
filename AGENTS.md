@@ -34,7 +34,8 @@ compile nothing may run locally with `python3 -I -B`. Pure Python unit tests who
 files have been read and do not invoke Mix may run locally with `mix` absent from
 `PATH`; compilation-dependent Python tests stay hosted. Only the landing tool watches
 a run; sessions do not poll GitHub. Pull requests execute no project code. Use the
-exact `.tool-versions` runtimes, locked dependency fetches, both advisory feeds,
+exact runtimes from the unchanged shared `scripts/toolchain.sh` reader, called
+directly by path, locked dependency fetches, both advisory feeds,
 immutable action pins and measured job timeouts. Qualification only restores caches;
 the default-branch cache warmer is their sole writer. The separate default-branch
 publication and cache-warmer workflows perform only their specified work on hosted

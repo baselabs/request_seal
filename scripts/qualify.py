@@ -9,22 +9,34 @@ executions. Both direct results and every actual lane conclusion must succeed.""
 import argparse
 import json
 import os
-from pathlib import Path
 import sys
 from urllib.request import Request, urlopen
 
-import toolchain
-
-ROOT = Path(__file__).resolve().parents[1]
 VERDICT = "qualified"
 # Every proof job in .github/workflows/ci.yml; verify runs once per toolchain lane.
 JOBS = ("process-ownership-macos", "toolchain", "mutations", "teardown")
 LANE_JOB = "verify"
 
 
-def expected_jobs(tool_versions):
+def verification_matrix(outputs):
+    """Label this repository's compatibility proofs from the shared reader's outputs."""
+    lanes = json.loads(outputs["beam_lanes"])
+    if not isinstance(lanes, list) or len(lanes) != 2:
+        raise ValueError("Qualification requires two compatibility lanes and the default")
+    default = {"elixir": outputs["elixir"], "otp": outputs["otp"]}
+    if len({lane["elixir"].split("-otp-", 1)[0] for lane in [*lanes, default]}) != 3:
+        raise ValueError("Qualification requires three distinct Elixir releases")
+    lanes.sort(key=lambda lane: tuple(map(int, lane["elixir"].split("-otp-", 1)[0].split("."))))
+    return {"include": [dict(lane=name, **pair) for name, pair in zip(("floor", "mid"), lanes)] + [
+        dict(lane="latest", **default),
+    ]}
+
+
+def expected_jobs(matrix):
     """Check names of the proofs as the candidate run reports them."""
-    lanes = [lane["lane"] for lane in toolchain.toolchain(tool_versions)["matrix"]["include"]]
+    lanes = [lane["lane"] for lane in json.loads(matrix)["include"]]
+    if sorted(lanes) != ["floor", "latest", "mid"]:
+        raise ValueError("Qualification requires exactly the floor, mid, and latest proofs")
     names = [*JOBS, *(f"{LANE_JOB} ({lane})" for lane in lanes)]
     return set(names)
 
@@ -77,9 +89,15 @@ def run_jobs(api, repository, run_id, token):
 
 
 def main():
-    argparse.ArgumentParser(description=__doc__).parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--matrix", action="store_true", help="Label the shared reader's runtime lanes")
+    args = parser.parse_args()
     environment = os.environ
-    expected = expected_jobs((ROOT / ".tool-versions").read_text())
+    if args.matrix:
+        matrix = verification_matrix(json.loads(environment["TOOLCHAIN_OUTPUTS"]))
+        print("matrix=" + json.dumps(matrix, separators=(",", ":")))
+        return 0
+    expected = expected_jobs(environment["VERIFY_MATRIX"])
     jobs = run_jobs(environment["GITHUB_API_URL"], environment["GITHUB_REPOSITORY"],
                     environment["GITHUB_RUN_ID"], environment["GH_TOKEN"])
     refused = refusals(json.loads(environment.get("PROOFS_RESULTS", "null")), jobs, expected)

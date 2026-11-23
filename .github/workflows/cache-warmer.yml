@@ -10,6 +10,9 @@ permissions:
 concurrency:
   group: cache-warmer-${{ github.ref }}
   cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
 jobs:
   dialyzer:
     runs-on: ubuntu-24.04
@@ -23,7 +26,7 @@ jobs:
         with:
           persist-credentials: false
       - id: pins
-        run: python3 scripts/toolchain.py --github-output "$GITHUB_OUTPUT"
+        run: scripts/toolchain.sh >> "$GITHUB_OUTPUT"
       - id: lookup
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -38,13 +41,15 @@ jobs:
           elixir-version: ${{ steps.pins.outputs.elixir }}
           otp-version: ${{ steps.pins.outputs.otp }}
           version-type: strict
-      - name: Build the exact cold PLT
+      - name: Refuse a differing installed runtime
         if: steps.lookup.outputs.cache-hit != 'true'
         env:
-          EXPECTED_ELIXIR: ${{ steps.pins.outputs.elixir }}
-          EXPECTED_OTP: ${{ steps.pins.outputs.otp }}
+          ELIXIR: ${{ steps.pins.outputs.elixir }}
+          OTP: ${{ steps.pins.outputs.otp }}
+        run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
+      - name: Build the exact cold PLT
+        if: steps.lookup.outputs.cache-hit != 'true'
         run: |
-          python3 scripts/toolchain.py --verify-installed
           mix local.hex --force
           mix local.rebar --force
           mix deps.get --check-locked

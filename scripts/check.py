@@ -125,7 +125,7 @@ def ci_action_errors(workflow, required_actions=None):
             return ["CI workflow steps must be mappings"]
         actions.extend(step["uses"] for step in steps if "uses" in step)
     if required_actions is None:
-        required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node"}
+        required_actions = {"actions/checkout", "erlef/setup-beam", "actions/setup-node"}
     local = re.compile(r"\./\.github/workflows/[A-Za-z0-9_.-]+\.yml")
     pinned = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[0-9a-f]{40}")
     if (not required_actions.issubset({ref.split("@", 1)[0] for ref in [*calls, *actions] if isinstance(ref, str)})
@@ -139,7 +139,7 @@ def check_ci_actions():
     workflows = ROOT / ".github/workflows"
     errors = ci_action_errors((workflows / "ci.yml").read_text())
     errors += ci_action_errors((workflows / "publish.yml").read_text(), {
-        "actions/checkout", "erlef/setup-beam", "actions/setup-python",
+        "actions/checkout", "erlef/setup-beam",
         "actions/upload-artifact", "actions/attest",
     })
     for workflow in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):

@@ -4,9 +4,10 @@ Open issues and pull requests at [baselabs/request_seal](https://github.com/base
 Pull requests execute no project code. A maintainer reviews outside contributions,
 then submits the candidate commit through the landing process on a `kci/` ref.
 Its hosted qualification must pass before the default branch advances.
-Qualification restores analysis caches; a separate default-branch workflow warms
-them. Notebooks execute against the inspected packed source, so a version can
-qualify before it exists on Hex.
+Qualification reads `.tool-versions` only through the shared `scripts/toolchain.sh`
+reader and refuses differing installed versions. It restores analysis caches;
+a separate default-branch workflow warms them. Notebooks execute against the
+inspected packed source, so a version can qualify before it exists on Hex.
 Contributions are licensed under Apache-2.0, as section 5 of the [license](LICENSE) describes.
 Report vulnerabilities as [SECURITY.md](SECURITY.md) describes, never in a public issue.
 

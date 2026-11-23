@@ -13,6 +13,7 @@ from workflow_yaml import load as load_workflow  # noqa: E402
 
 WORKFLOWS = ROOT / ".github/workflows"
 PROOFS = {"process-ownership-macos", "toolchain", "verify", "mutations", "teardown"}
+VERIFY_MATRIX = json.dumps({"include": [{"lane": lane} for lane in ("floor", "mid", "latest")]})
 
 
 def text(name):
@@ -76,7 +77,7 @@ def proof_condition_errors(source, ci_source):
 
 def proof_jobs(conclusion="success", **changes):
     """A run's job listing as the Actions API reports it, every proof succeeding by default."""
-    names = sorted(qualify.expected_jobs((ROOT / ".tool-versions").read_text()))
+    names = sorted(qualify.expected_jobs(VERIFY_MATRIX))
     listing = [{"name": name, "status": "completed", "conclusion": conclusion} for name in names]
     listing.append({"name": "qualified", "status": "in_progress", "conclusion": None})
     for name, job in changes.items():
@@ -106,6 +107,17 @@ class QualificationTest(unittest.TestCase):
         self.assertEqual({"ci.yml", "cache-warmer.yml", "publish.yml"}, {p.name for p in workflows()})
         self.assertFalse(any("uses" in body for body in ci.values()))
 
+    def test_python_is_runner_tooling_and_never_a_product_runtime(self):
+        pins = (ROOT / ".tool-versions").read_text()
+        self.assertNotRegex(pins, r"(?m)^\s*python(?:\s|$)")
+        for path in workflows():
+            source = path.read_text()
+            self.assertNotIn("actions/setup-python", source, path.name)
+            self.assertNotIn("python-version", source, path.name)
+            self.assertNotIn("version-file", source, path.name)
+        check = (ROOT / "scripts/check.py").read_text()
+        self.assertNotIn("actions/setup-python", check)
+
     def test_no_pull_request_or_tag_executes_a_workflow(self):
         for path in workflows():
             events = triggers(path.read_text())
@@ -126,7 +138,8 @@ class QualificationTest(unittest.TestCase):
         self.assertEqual("always()", verdict["if"])
         self.assertEqual(set(ci) - {"qualified"}, set(verdict["needs"]))
         self.assertEqual({"actions": "read", "contents": "read"}, verdict["permissions"])
-        self.assertEqual({"GH_TOKEN": "${{ github.token }}", "PROOFS_RESULTS": "${{ toJSON(needs) }}"},
+        self.assertEqual({"GH_TOKEN": "${{ github.token }}", "PROOFS_RESULTS": "${{ toJSON(needs) }}",
+                          "VERIFY_MATRIX": "${{ needs.toolchain.outputs.matrix }}"},
                          verdict["steps"][-1]["env"])
         self.assertEqual("python3 scripts/qualify.py", verdict["steps"][-1]["run"])
         for path in workflows():
@@ -137,11 +150,19 @@ class QualificationTest(unittest.TestCase):
         self.assertEqual(
             {"process-ownership-macos", "toolchain", "mutations", "teardown",
              "verify (floor)", "verify (mid)", "verify (latest)"},
-            qualify.expected_jobs((ROOT / ".tool-versions").read_text()),
+            qualify.expected_jobs(VERIFY_MATRIX),
         )
 
+    def test_inventory_refuses_missing_duplicated_or_unrecognized_lanes(self):
+        for lanes in ([], ["floor", "mid"], ["floor", "floor", "latest"], ["floor", "mid", "extra"]):
+            with self.subTest(lanes=lanes), self.assertRaises(ValueError):
+                qualify.expected_jobs(json.dumps({"include": [{"lane": lane} for lane in lanes]}))
+        source = (ROOT / "scripts/qualify.py").read_text()
+        self.assertNotIn(".tool-versions", source)
+        self.assertNotIn("import toolchain", source)
+
     def test_verdict_refuses_every_outcome_but_each_proof_succeeding_once(self):
-        expected = qualify.expected_jobs((ROOT / ".tool-versions").read_text())
+        expected = qualify.expected_jobs(VERIFY_MATRIX)
         leg = "verify (mid)"
         self.assertEqual([], qualify.refusals(direct_results(), proof_jobs(), expected))
         for label, proofs_result, listing, reason in (
@@ -171,7 +192,7 @@ class QualificationTest(unittest.TestCase):
                 self.assertIn(reason, qualify.refusals(proofs_result, listing, expected))
 
     def test_every_direct_dependency_must_exist_and_succeed(self):
-        expected = qualify.expected_jobs((ROOT / ".tool-versions").read_text())
+        expected = qualify.expected_jobs(VERIFY_MATRIX)
         for name in PROOFS:
             for result in ("failure", "cancelled", "skipped", "neutral", None):
                 changed = direct_results()

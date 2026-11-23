@@ -28,16 +28,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.12'
       - run: python3 -B -m unittest discover -s test -p processes_test.py
   toolchain:
     runs-on: ubuntu-24.04
     timeout-minutes: 5 # run 44170631454: cold 10s (<2.5m)
     outputs:
-      matrix: ${{ steps.pins.outputs.matrix }}
-      node: ${{ steps.pins.outputs.node }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      nodejs: ${{ steps.pins.outputs.nodejs }}
       elixir: ${{ steps.pins.outputs.elixir }}
       otp: ${{ steps.pins.outputs.otp }}
     steps:
@@ -45,7 +42,13 @@ jobs:
         with:
           persist-credentials: false
       - id: pins
-        run: python3 scripts/toolchain.py --github-output "$GITHUB_OUTPUT"
+        run: scripts/toolchain.sh >> "$GITHUB_OUTPUT"
+      - name: Test the shared toolchain reader
+        run: scripts/toolchain.sh --self-test
+      - id: matrix
+        env:
+          TOOLCHAIN_OUTPUTS: ${{ toJSON(steps.pins.outputs) }}
+        run: python3 scripts/qualify.py --matrix >> "$GITHUB_OUTPUT"
   verify:
     name: verify (${{ matrix.lane }})
     needs: toolchain
@@ -70,18 +73,16 @@ jobs:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
           version-type: strict
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.12'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: ${{ needs.toolchain.outputs.node }}
+          node-version: ${{ needs.toolchain.outputs.nodejs }}
           package-manager-cache: false
       - name: Refuse a differing installed runtime
         env:
-          EXPECTED_ELIXIR: ${{ matrix.elixir }}
-          EXPECTED_OTP: ${{ matrix.otp }}
-        run: python3 scripts/toolchain.py --verify-installed
+          ELIXIR: ${{ matrix.elixir }}
+          OTP: ${{ matrix.otp }}
+          NODEJS: ${{ needs.toolchain.outputs.nodejs }}
+        run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP" "nodejs=$NODEJS"
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get --check-locked
@@ -175,14 +176,11 @@ jobs:
           elixir-version: ${{ needs.toolchain.outputs.elixir }}
           otp-version: ${{ needs.toolchain.outputs.otp }}
           version-type: strict
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.12'
       - name: Refuse a differing installed runtime
         env:
-          EXPECTED_ELIXIR: ${{ needs.toolchain.outputs.elixir }}
-          EXPECTED_OTP: ${{ needs.toolchain.outputs.otp }}
-        run: python3 scripts/toolchain.py --verify-installed
+          ELIXIR: ${{ needs.toolchain.outputs.elixir }}
+          OTP: ${{ needs.toolchain.outputs.otp }}
+        run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get --check-locked
@@ -203,14 +201,11 @@ jobs:
           elixir-version: ${{ needs.toolchain.outputs.elixir }}
           otp-version: ${{ needs.toolchain.outputs.otp }}
           version-type: strict
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.12'
       - name: Refuse a differing installed runtime
         env:
-          EXPECTED_ELIXIR: ${{ needs.toolchain.outputs.elixir }}
-          EXPECTED_OTP: ${{ needs.toolchain.outputs.otp }}
-        run: python3 scripts/toolchain.py --verify-installed
+          ELIXIR: ${{ needs.toolchain.outputs.elixir }}
+          OTP: ${{ needs.toolchain.outputs.otp }}
+        run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get --check-locked
@@ -239,4 +234,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PROOFS_RESULTS: ${{ toJSON(needs) }}
+          VERIFY_MATRIX: ${{ needs.toolchain.outputs.matrix }}
         run: python3 scripts/qualify.py

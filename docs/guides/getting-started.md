@@ -6,13 +6,15 @@ Edit RequestSeal source and executable documentation, then qualify the candidate
 
 ## Prerequisites
 
-To develop this repository, use the latest Elixir/OTP pair and Node pin from
-`.tool-versions`, Python 3.12 (the version CI runs), Git, Hex, the OpenSSL
+To develop this repository, use the default Elixir/OTP pair and Node pin from
+`.tool-versions`, Python 3, Git, Hex, the OpenSSL
 command-line tool, and OpenSSH tools (`ssh-agent`,
 `ssh-add`, and `ssh-keygen`). Node is required for the
 reciprocal JOSE tests against the independent Node WebCrypto peer; OpenSSL runs
 reciprocal signature checks. `.tool-versions` lists the exact Elixir/OTP pair of every CI
-lane, the development default first, and the Node version; Python is not pinned there, and CI uses 3.12. Use a version manager such as asdf
+lane, the development default first, and the Node version. CI reads product
+runtimes only through the shared reader at `scripts/toolchain.sh` and uses the
+hosted runner's `python3`. Use a version manager such as asdf
 or mise, then confirm `elixir --version` from this checkout. macOS and Linux use the
 same commands; Windows developers use a clone inside WSL2's filesystem.
 For the supported consumer range, see the [README](../../README.md).

@@ -30,20 +30,17 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - id: pins
-        run: python3 scripts/toolchain.py --github-output "$GITHUB_OUTPUT"
+        run: scripts/toolchain.sh >> "$GITHUB_OUTPUT"
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
           elixir-version: ${{ steps.pins.outputs.elixir }}
           otp-version: ${{ steps.pins.outputs.otp }}
           version-type: strict
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.12'
       - name: Refuse a differing installed runtime
         env:
-          EXPECTED_ELIXIR: ${{ steps.pins.outputs.elixir }}
-          EXPECTED_OTP: ${{ steps.pins.outputs.otp }}
-        run: python3 scripts/toolchain.py --verify-installed
+          ELIXIR: ${{ steps.pins.outputs.elixir }}
+          OTP: ${{ steps.pins.outputs.otp }}
+        run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
       - name: Verify untagged release identity
         id: identity
         env:

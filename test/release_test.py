@@ -970,7 +970,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_release_actions_use_immutable_commits(self):
         workflow = (ROOT / ".github/workflows/publish.yml").read_text()
-        required = {"actions/checkout", "erlef/setup-beam", "actions/setup-python",
+        required = {"actions/checkout", "erlef/setup-beam",
                     "actions/upload-artifact", "actions/attest"}
         self.assertEqual([], gate.ci_action_errors(workflow, required))
         for action in required:

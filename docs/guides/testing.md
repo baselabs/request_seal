@@ -24,9 +24,13 @@ generated cases with an explicit fixed seed and no elapsed-time cutoff:
 
 ```sh
 mix test test/property --warnings-as-errors
-ASDF_ELIXIR_VERSION="$(awk '$1 == "elixir" {print $NF}' .tool-versions)" ASDF_ERLANG_VERSION="$(awk '$1 == "erlang" {print $NF}' .tool-versions)" MIX_BUILD_ROOT=_build/floor mix test test/property --warnings-as-errors
 MIX_ENV=test mix run bench/ceilings.exs
 ```
+
+Hosted qualification reads product runtimes through `scripts/toolchain.sh`. Its
+compatibility matrix runs these properties on the floor and mid pairs as part
+of `mix test`; the default pair runs the declared gate. Setup refuses any
+installed runtime that differs from the reader's output.
 
 The benchmark reports local resource use and OAEP timing; it establishes no conformance claim.
 Generated-key measurements and independent published vectors are distinct evidence.
