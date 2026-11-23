@@ -16,7 +16,7 @@ from release import package_version
 ROOT = Path(__file__).resolve().parents[1]
 PROJECTS = ROOT / "bench/release_gates"
 BASELINE = "1.0.0"
-ROUNDS = 20
+ROUNDS = 24
 WORKLOADS = ("page", "single")
 SIZES = {
     "release": {"pairs": 3, "page": 15, "single": 2000},

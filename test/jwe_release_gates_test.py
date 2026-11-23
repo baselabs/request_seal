@@ -79,9 +79,9 @@ def statuses(verdict):
 
 class ReleaseGatesTest(unittest.TestCase):
     def test_all_four_exact_thresholds_and_host_boundaries_pass(self):
-        verdict = collect([artifact(i) for i in range(1, 21)])
+        verdict = collect([artifact(i) for i in range(1, gate.ROUNDS + 1)])
         self.assertTrue(verdict["passed"], verdict)
-        self.assertEqual(20, len(verdict["admitted_rounds"]))
+        self.assertEqual(gate.ROUNDS, len(verdict["admitted_rounds"]))
         self.assertEqual({"page_absolute_us": 4200, "page_relative": 1.0,
                           "single_absolute_us": 140, "single_relative": 3.2},
                          {name: decision["value"] for name, decision in verdict["gates"].items()})
@@ -94,14 +94,14 @@ class ReleaseGatesTest(unittest.TestCase):
             ("single_relative", {"single": (43, 140)}),
         ):
             with self.subTest(failed=failed):
-                verdict = collect([artifact(i, **settings) for i in range(1, 21)])
+                verdict = collect([artifact(i, **settings) for i in range(1, gate.ROUNDS + 1)])
                 self.assertFalse(verdict["passed"])
                 self.assertEqual({name: "fail" if name == failed else "pass" for name in gate.GATES},
                                  statuses(verdict))
 
     def test_relative_uses_median_of_ratios_and_round_uses_median_of_each_side(self):
         rows = [artifact(i, page=(100, 100) if i <= 8 else (4000, 4000) if i <= 16 else (1000, 4200))
-                for i in range(1, 21)]
+                for i in range(1, gate.ROUNDS + 1)]
         rows[0]["sample_sets"][0]["page"]["median_us"] = 1
         rows[0]["sample_sets"][1]["page"]["median_us"] = 100_000
         verdict = collect(rows)
@@ -110,23 +110,30 @@ class ReleaseGatesTest(unittest.TestCase):
         self.assertEqual(4000, verdict["gates"]["page_absolute_us"]["value"])
 
     def test_fewer_than_five_admitted_rounds_leave_every_gate_unmeasured(self):
-        verdict = collect([artifact(i, reject="load" if i > 4 else None) for i in range(1, 21)])
+        verdict = collect([artifact(i, reject="load" if i > 4 else None) for i in range(1, gate.ROUNDS + 1)])
         self.assertFalse(verdict["passed"])
         self.assertEqual([1, 2, 3, 4], verdict["admitted_rounds"])
         self.assertEqual({name: "unmeasured" for name in gate.GATES}, statuses(verdict))
-        self.assertEqual(16, len(verdict["unmeasured_rounds"]))
+        self.assertEqual(gate.ROUNDS - 4, len(verdict["unmeasured_rounds"]))
         self.assertEqual([], verdict["errors"])
 
     def test_five_admitted_rounds_measure_both_absolute_gates(self):
-        verdict = collect([artifact(i, reject="load" if i > 5 else None) for i in range(1, 21)])
+        verdict = collect([artifact(i, reject="load" if i > 5 else None) for i in range(1, gate.ROUNDS + 1)])
         self.assertEqual({"page_absolute_us": "pass", "page_relative": "unmeasured",
                           "single_absolute_us": "pass", "single_relative": "unmeasured"},
                          statuses(verdict))
 
+    def test_twenty_admitted_rounds_measure_every_gate(self):
+        verdict = collect([artifact(i, reject="load" if i > 20 else None) for i in range(1, gate.ROUNDS + 1)])
+        self.assertTrue(verdict["passed"], verdict)
+        self.assertEqual(list(range(1, 21)), verdict["admitted_rounds"])
+        self.assertEqual({name: "pass" for name in gate.GATES}, statuses(verdict))
+
     def test_either_host_rule_excludes_a_whole_round_and_leaves_ratios_unmeasured(self):
         for rule, value, measured in (("load", 4.01, "load"), ("steal", 6, "steal")):
             with self.subTest(rule=rule):
-                verdict = collect([artifact(i, reject=rule if i == 20 else None) for i in range(1, 21)])
+                verdict = collect([artifact(i, reject=rule if i >= 20 else None)
+                                   for i in range(1, gate.ROUNDS + 1)])
                 self.assertFalse(verdict["passed"])
                 self.assertEqual(19, len(verdict["admitted_rounds"]))
                 self.assertEqual({"page_absolute_us": "pass", "page_relative": "unmeasured",
@@ -139,12 +146,12 @@ class ReleaseGatesTest(unittest.TestCase):
         for issue in ("invalid-json", "missing", "duplicate", "order", "missing-window", "counts",
                       "version", "commit", "forged-admission", "invalid-proc", "skewed-ratio", "runtime-error"):
             with self.subTest(issue=issue):
-                rows = [artifact(i) for i in range(1, 20)]
-                last = artifact(20)
+                rows = [artifact(i) for i in range(1, gate.ROUNDS)]
+                last = artifact(gate.ROUNDS)
                 if issue == "invalid-json":
                     last = "["
                 elif issue == "duplicate":
-                    last["round"] = 19
+                    last["round"] = gate.ROUNDS - 1
                 elif issue == "order":
                     last["sample_sets"][0], last["sample_sets"][1] = last["sample_sets"][1], last["sample_sets"][0]
                 elif issue == "missing-window":

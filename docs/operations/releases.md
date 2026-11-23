@@ -83,7 +83,7 @@ registry credentials and the later tag. Workflow changes require review before l
 
 ### Performance gates
 
-The publication workflow runs 20 paired rounds on fresh GitHub-hosted
+The publication workflow runs 24 paired rounds on fresh GitHub-hosted
 `ubuntu-24.04` VMs. Download the round artifacts and the verdict from the
 dispatch run to inspect the per-round medians, ratios and host conditions.
 The [decision record](../adr/0031-performance-release-gates.md) defines the

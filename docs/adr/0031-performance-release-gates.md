@@ -18,7 +18,7 @@ on shared infrastructure vary with hardware and active load.
    calls `decrypt_many/2` with `content: :object` through a custody handle. The 299-byte
    single token opens to a 32-byte plaintext without decoding, through an unwrap closure on
    1.0.0 and a GCMKW local custody handle on the candidate.
-2. Run 20 rounds on fresh GitHub-hosted `ubuntu-24.04` VMs. Each VM runs the published
+2. Run 24 rounds on fresh GitHub-hosted `ubuntu-24.04` VMs. Each VM runs the published
    baseline (A) and the candidate (B) as separate processes in A/B/A/B/A/B order. Each sample
    set uses 30 warmups, then the median of 15 pages or 2,000 single opens. A round's ratio for
    each workload is the median of its B sample sets divided by the median of its A sample sets.
