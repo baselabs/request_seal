@@ -5,7 +5,7 @@ to a configured upstream using either Req or Finch. Its clients submit payloads
 without receiving keys or custody handles. The runnable example starts two real
 loopback Bandit listeners: the proxy and an upstream that verifies signatures.
 Install the optional Req, Finch and Plug packages from the
-[client guide](req-and-finch.md), plus Bandit (`~> 1.15`) for the example listeners.
+[client guide](req-and-finch.md), plus Bandit (`>= 1.15.0 and < 2.0.0`) for the example listeners.
 RequestSeal starts no server or pool automatically.
 
 This applies [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) signatures,

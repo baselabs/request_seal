@@ -6,7 +6,7 @@ signs either an allow or deny response. The caller verifies the response before
 reading its decision. Install the optional Req, Finch, Plug and Bandit packages
 using the versions in the [Req and Finch](req-and-finch.md) and
 [Plug](phoenix-and-plug.md) guides; this runnable example also uses Bandit
-(`~> 1.15`). RequestSeal starts none of these processes itself.
+(`>= 1.15.0 and < 2.0.0`). RequestSeal starts none of these processes itself.
 
 The recipe applies [RFC 9421 Section 2.4](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.4)
 request-bound response signatures and [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html)

@@ -443,6 +443,92 @@ File.cd!(hd(System.argv()), fn -> guard.([]) end)
         self.assertEqual(["public documentation inventory must include README.md"], docs.inventory_errors(ROOT, set(), self.paths))
 
 
+class DependencyRequirementsTest(unittest.TestCase):
+    def requirements(self):
+        return docs.source_configuration(ROOT)["requirements"]
+
+    def test_repository_dependency_requirements_match_mix(self):
+        paths = {"README.md"} | {
+            path.relative_to(ROOT).as_posix()
+            for directory in ("livebooks", "docs/guides")
+            for path in (ROOT / directory).rglob("*")
+            if path.suffix in (".md", ".livemd")
+        }
+        requirements = self.requirements()
+        self.assertEqual(">= 1.20.3 and < 2.0.0", requirements["plug"])
+        for relative in sorted(paths):
+            with self.subTest(relative=relative):
+                self.assertEqual([], docs.dependency_errors(
+                    relative, (ROOT / relative).read_text(), requirements))
+
+    def test_readme_requirement_row_drift_names_the_dependency(self):
+        source = (ROOT / "README.md").read_text()
+        requirements = self.requirements()
+        original = f'| `:plug` | `{requirements["plug"]}` |'
+        self.assertIn(original, source)
+        changed = source.replace(original, '| `:plug` | `~> 1.20.3` |', 1)
+        self.assertEqual([
+            "README.md: dependency :plug requirement must equal mix.exs: >= 1.20.3 and < 2.0.0"
+        ], docs.dependency_errors("README.md", changed, requirements))
+
+    def test_readme_deps_entry_drift_names_the_dependency(self):
+        source = (ROOT / "README.md").read_text()
+        requirements = self.requirements()
+        original = '{:bandit, "' + requirements["bandit"] + '"}'
+        self.assertIn(original, source)
+        changed = source.replace(original, '{:bandit, "~> 1.15"}', 1)
+        self.assertEqual([
+            "README.md: dependency :bandit requirement must equal mix.exs: >= 1.15.0 and < 2.0.0"
+        ], docs.dependency_errors("README.md", changed, requirements))
+
+    def test_livebook_install_drift_names_the_dependency(self):
+        relative = "livebooks/plug-webhook.livemd"
+        source = (ROOT / relative).read_text()
+        requirements = self.requirements()
+        self.assertIn(requirements["plug"], source)
+        changed = source.replace(requirements["plug"], "~> 1.20.3", 1)
+        self.assertEqual([
+            relative + ": dependency :plug requirement must equal mix.exs: >= 1.20.3 and < 2.0.0"
+        ], docs.dependency_errors(relative, changed, requirements))
+
+    def test_multiline_guide_installs_check_every_declared_dependency(self):
+        requirements = self.requirements()
+        source = ('```elixir\nMix.install(\n  [\n'
+                  '    {:request_seal, "~> 2.0"},\n'
+                  '    {:req, "' + requirements["req"] + '"},\n'
+                  '    {:finch, "' + requirements["finch"] + '"}\n'
+                  '  ]\n)\n```\n')
+        relative = "docs/guides/req-and-finch.md"
+        self.assertEqual([], docs.dependency_errors(relative, source, requirements))
+        for name in ("req", "finch"):
+            with self.subTest(name=name):
+                changed = source.replace(requirements[name], "~> 0.0.0", 1)
+                self.assertEqual([
+                    f"{relative}: dependency :{name} requirement must equal mix.exs: {requirements[name]}"
+                ], docs.dependency_errors(relative, changed, requirements))
+
+    def test_unowned_requirements_keep_their_existing_rules(self):
+        requirements = self.requirements()
+        self.assertNotIn("jason", requirements)
+        source = 'Mix.install([{:request_seal, "~> 0.1.0"}, {:jason, "~> 1.4"}])'
+        self.assertEqual([], docs.dependency_errors("livebooks/environment.livemd", source, requirements))
+        self.assertTrue(any("install requirement" in error for error in
+                            docs.release_errors("livebooks/environment.livemd", source, "2.0.0-dev")))
+
+    def test_nested_install_options_do_not_hide_later_dependencies(self):
+        requirements = self.requirements()
+        source = ('Mix.install([{:req, "' + requirements["req"] + '", only: [:dev], runtime: false},\n'
+                  '             {:finch, "' + requirements["finch"] + '"}],\n'
+                  '            config: [example: [text: "closing )"]])\n'
+                  '{:plug, "an unrelated tuple outside Mix.install"}\n')
+        relative = "docs/guides/req-and-finch.md"
+        self.assertEqual([], docs.dependency_errors(relative, source, requirements))
+        changed = source.replace(requirements["finch"], "~> 0.0.0", 1)
+        self.assertEqual([
+            f"{relative}: dependency :finch requirement must equal mix.exs: {requirements['finch']}"
+        ], docs.dependency_errors(relative, changed, requirements))
+
+
 class NotebookProcessTest(unittest.TestCase):
     def execute(self, source, **options):
         with tempfile.TemporaryDirectory() as directory:

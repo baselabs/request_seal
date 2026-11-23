@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Align documented dependency requirements with the package declarations and reject drift in installation examples.
+
 - Detect Hex releases staged for approval before uploading, compare their package
   checksum with the inspected archive, and stop with the approval URL and expiry.
   Attach docs to a freshly staged release only when their response names the same

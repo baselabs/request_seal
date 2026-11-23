@@ -66,6 +66,7 @@ UNPUBLISHED = re.compile(
     re.IGNORECASE,
 )
 INSTALL = re.compile(r"\{\s*:request_seal\s*,\s*([^}]*)\}", re.DOTALL)
+DEPENDENCY_REQUIREMENT = re.compile(r'\{\s*:([a-z]\w*)\s*,\s*"([^"\n]*)"')
 
 
 def public_paths(root):
@@ -88,6 +89,8 @@ def public_configuration(root):
         'path = case entry do {path, _options} -> path; path -> path end; '
         'IO.puts("REQUEST_SEAL_PUBLIC_DOCUMENT\\t" <> path) end; '
         'IO.puts("REQUEST_SEAL_VERSION\\t" <> project[:version]); '
+        'IO.puts(["REQUEST_SEAL_DEPENDENCIES\\t", :json.encode(Map.new(project[:deps], '
+        'fn dependency -> {elem(dependency, 0), elem(dependency, 1)} end))]); '
         'for pattern <- project[:package][:files] do '
         'IO.puts("REQUEST_SEAL_PACKAGE_PATTERN\\t" <> pattern); '
         'for path <- Path.wildcard(pattern, match_dot: true), File.regular?(path), '
@@ -107,11 +110,15 @@ def public_configuration(root):
     versions = values("REQUEST_SEAL_VERSION\t")
     if len(versions) != 1:
         raise ValueError("invalid package version configuration")
+    dependencies = values("REQUEST_SEAL_DEPENDENCIES\t")
+    if len(dependencies) != 1:
+        raise ValueError("invalid dependency requirement configuration")
     return {
         "documents": set(entries),
         "version": versions[0],
         "patterns": values("REQUEST_SEAL_PACKAGE_PATTERN\t"),
         "files": set(values("REQUEST_SEAL_PACKAGE_FILE\t")),
+        "requirements": json.loads(dependencies[0]),
     }
 
 
@@ -167,6 +174,35 @@ def release_errors(relative, source, version=None):
         elif version is not None and requirement[1] != install_requirement(version):
             errors.append(f"{relative}: RequestSeal install requirement must be {install_requirement(version)}")
     return errors
+
+
+def dependency_errors(relative, source, requirements):
+    """Keep consumer dependency examples byte-identical to Mix's requirements."""
+    if relative == "README.md":
+        documented = re.findall(r'^\s*\|\s*`:([a-z]\w*)`\s*\|\s*`([^`]*)`\s*\|', source, re.MULTILINE)
+        documented.extend(DEPENDENCY_REQUIREMENT.findall(source))
+    elif relative.startswith(("livebooks/", "docs/guides/")):
+        documented = []
+        for install in re.finditer(r'\bMix\.install\s*\(', source):
+            # Nested options must not truncate the install; parentheses inside
+            # strings or comments do not delimit its arguments.
+            arguments = source[install.end():]
+            depth = 1
+            for token in re.finditer(r'"(?:\\.|[^"\\])*"|#[^\n]*|[()]', arguments):
+                if token[0] == "(":
+                    depth += 1
+                elif token[0] == ")":
+                    depth -= 1
+                if depth == 0:
+                    documented.extend(DEPENDENCY_REQUIREMENT.findall(arguments[:token.start()]))
+                    break
+    else:
+        return []
+    return [
+        f"{relative}: dependency :{name} requirement must equal mix.exs: {requirements[name]}"
+        for name, requirement in documented
+        if name != "request_seal" and name in requirements and requirement != requirements[name]
+    ]
 
 
 def safe_document_path(path):
@@ -382,7 +418,7 @@ def first_party_link_errors(root, relative, url, version, published, references)
     return []
 
 
-def content_errors(root, relative, source, paths, version=None, published=None, references=None, *, check_links=True):
+def content_errors(root, relative, source, paths, version=None, published=None, references=None, *, check_links=True, requirements=None):
     root = root.resolve()
     errors = []
     path = root / relative
@@ -392,6 +428,8 @@ def content_errors(root, relative, source, paths, version=None, published=None, 
     if INTERNAL_PROCESS.search(source):
         errors.append(f"{relative}: internal process material is not public documentation")
     errors.extend(release_errors(relative, source, version))
+    if requirements is not None:
+        errors.extend(dependency_errors(relative, source, requirements))
     if not check_links:
         return errors
     for offset, target, ambiguous in extract_destinations(source):
@@ -619,6 +657,7 @@ def source_configuration(root):
         "files": set(documents) | {"mix.exs"} | {
             path.relative_to(root).as_posix() for path in (root / "lib").rglob("*.ex")
         },
+        "requirements": dict(DEPENDENCY_REQUIREMENT.findall(source)),
     }
 
 
@@ -633,7 +672,8 @@ def check_source(root=ROOT):
         if path.is_file() and not path.is_symlink():
             source = path.read_text()
             errors.extend(content_errors(root, relative, source, paths,
-                                         configuration["version"], check_links=False))
+                                         configuration["version"], check_links=False,
+                                         requirements=configuration["requirements"]))
             if relative in approved:
                 errors.extend(fence_errors(root, relative, source))
     return approved, errors
@@ -658,7 +698,8 @@ def check(root=ROOT, docs_output=None):
             if path.is_file() and not path.is_symlink():
                 source = path.read_bytes().decode("utf-8")
                 errors.extend(content_errors(root, relative, source, paths, configuration["version"], configuration["documents"], references,
-                                             check_links=relative in scan_paths))
+                                             check_links=relative in scan_paths,
+                                             requirements=configuration["requirements"]))
                 errors.extend(fence_errors(root, relative, source))
         errors.extend(tracked_link_errors(root, paths, configuration["version"], configuration["documents"], references,
                                          approved, configuration))

@@ -35,9 +35,9 @@ Add optional dependencies for the integrations you use. The table is a reference
 
 | Dependency | Requirement | Use |
 | --- | --- | --- |
-| `:plug` | `~> 1.20.3` | Plug pipelines, also used by Phoenix |
-| `:bandit` | `~> 1.15` | To run the example receiver |
-| `:phoenix` | `~> 1.8.17` | Only for the Phoenix controller example |
+| `:plug` | `>= 1.20.3 and < 2.0.0` | Plug pipelines, also used by Phoenix |
+| `:bandit` | `>= 1.15.0 and < 2.0.0` | To run the example receiver |
+| `:phoenix` | `>= 1.8.17 and < 2.0.0` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.25.0 and < 0.26.0` | Finch transport and caller-started pools |
 | `:ash` | `>= 3.37.4 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
@@ -52,8 +52,8 @@ For both HTTP scripts below, paste this complete list into your `deps/0` functio
   {:request_seal, "~> 2.0"},
   {:req, "~> 0.7.4"},
   {:finch, ">= 0.25.0 and < 0.26.0"},
-  {:plug, "~> 1.20.3"},
-  {:bandit, "~> 1.15"},
+  {:plug, ">= 1.20.3 and < 2.0.0"},
+  {:bandit, ">= 1.15.0 and < 2.0.0"},
   {:jason, "~> 1.4"}
 ]
 ```
