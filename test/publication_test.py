@@ -318,6 +318,104 @@ class PublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "differs from mix.exs"):
             publication.prepare(self.root, self.root, "99.0.0", "c" * 40)
 
+    def test_changelog_gate_is_verbatim_and_precedes_release_processing(self):
+        expected = r'''python3 -I - "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" "$VERSION" <<'PY'
+import io, re, sys, tarfile
+archive, version = sys.argv[1], sys.argv[2]
+def refuse(message):
+    raise SystemExit(f'{archive}: {message}; publication refused')
+with tarfile.open(archive, 'r:*') as outer:
+    if 'contents.tar.gz' in outer.getnames():
+        package = tarfile.open(fileobj=io.BytesIO(outer.extractfile('contents.tar.gz').read()), mode='r:gz')
+        root = ''
+    else:
+        package, root = outer, 'package/'
+    found = [member for member in package.getmembers() if member.isfile()
+             and re.fullmatch(re.escape(root) + r'(?i:changelog(?:\.md|\.markdown|\.txt)?)', member.name)]
+    if len(found) != 1:
+        refuse('the package must ship exactly one root CHANGELOG')
+    try:
+        lines = package.extractfile(found[0]).read().decode('utf-8').splitlines()
+    except UnicodeDecodeError:
+        refuse('the packaged CHANGELOG is not UTF-8')
+headings, fence = {}, False
+for index, line in enumerate(lines):
+    if re.match(r' {0,3}(```|~~~)', line):
+        fence = not fence
+    elif not fence and (match := re.match(r' {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$', line)):
+        headings[index] = (len(match.group(1)), match.group(2) or '')
+token = re.compile(r'(?<![0-9A-Za-z.+-])v?' + re.escape(version) + r'(?![0-9A-Za-z.+-])')
+stamped = [index for index, (_, title) in headings.items() if token.search(title)]
+if not stamped:
+    refuse(f'the packaged CHANGELOG has no section for {version}')
+at, level = stamped[0], headings[stamped[0]][0]
+def written(start):
+    end = next((index for index, (depth, _) in headings.items() if index > start and depth <= level), len(lines))
+    return any(line.strip() for index, line in enumerate(lines[start + 1:end], start + 1) if index not in headings)
+if not written(at):
+    refuse(f'the packaged CHANGELOG section for {version} is empty')
+for start, (depth, title) in headings.items():
+    if start < at and depth == level and written(start):
+        refuse(f'the packaged CHANGELOG has entries above {version}, under "{title}"')
+print(f'{archive}: the packaged CHANGELOG is stamped for {version}')
+PY
+'''
+        name = "Refuse a package whose changelog is not stamped for its version"
+        jobs = load((ROOT / ".github/workflows/publish.yml").read_text())["jobs"]
+        steps = jobs["publish"]["steps"]
+        matches = [(job, index) for job, job_body in jobs.items()
+                   for index, step in enumerate(job_body["steps"]) if step.get("name") == name]
+        self.assertEqual(1, len(matches))
+        job, position = matches[0]
+        self.assertEqual("publish", job)
+        self.assertEqual({"name": name, "shell": "bash", "run": expected,
+                          "env": {"VERSION": "${{ steps.identity.outputs.version }}"}},
+                         steps[position])
+        names = [step.get("name") for step in steps]
+        self.assertEqual(["Build and inspect the package and documentation without a key",
+                          name, "Generate and verify package dependency SBOM"],
+                         names[position - 1:position + 2])
+        for following in ("Plan only missing uploads, and prove kept docs' commit owns every release asset",
+                          "Upload only the missing inspected archives"):
+            self.assertIn(following, names[position + 2:])
+
+    def test_changelog_gate_reads_the_hex_package_and_rejects_unstamped_releases(self):
+        steps = load((ROOT / ".github/workflows/publish.yml").read_text())["jobs"]["publish"]["steps"]
+        script = next(step["run"] for step in steps
+                      if step.get("name") == "Refuse a package whose changelog is not stamped for its version")
+        version = "2.3.4"
+        runner = self.root / "runner temp"
+        archive = runner / "requestseal-archives" / f"request_seal-{version}.tar"
+        archive.parent.mkdir(parents=True)
+        prior = b"## 2.3.3 - 2026-11-16\n\n- Prior release.\n"
+        current = b"## 2.3.4 - 2026-11-17\n\n- Released behavior.\n\n"
+        unreleased = b"# Changelog\n\n## Unreleased\n\n"
+        for changelog, refusal in (
+            (unreleased + current + prior, None),
+            (unreleased + b"- Pending changes.\n\n" + current + prior,
+             "has entries above 2.3.4"),
+            (b"## 2.3.5 - 2026-11-18\n\n- Newer release.\n\n" + current + prior,
+             "has entries above 2.3.4"),
+            (unreleased + prior, "has no section for 2.3.4"),
+            (unreleased + b"## 2.3.4 - 2026-11-17\n\n" + prior,
+             "section for 2.3.4 is empty"),
+        ):
+            with self.subTest(refusal=refusal, changelog=changelog):
+                self.package(files=[("CHANGELOG.md", changelog)]).replace(archive)
+                result = subprocess.run(
+                    ["/bin/bash", "--noprofile", "--norc", "-e", "-o", "pipefail"],
+                    input=script, capture_output=True, text=True, timeout=30,
+                    env={"RUNNER_TEMP": str(runner), "VERSION": version,
+                         "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin"},
+                )
+                if refusal is None:
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertIn("the packaged CHANGELOG is stamped for 2.3.4", result.stdout)
+                else:
+                    self.assertEqual(1, result.returncode, result.stdout)
+                    self.assertIn(refusal, result.stderr)
+                    self.assertIn("publication refused", result.stderr)
+
     def test_dispatch_boundary_key_isolation_and_native_uploads(self):
         source = (ROOT / ".github/workflows/publish.yml").read_text()
         workflow = load(source)

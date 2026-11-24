@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Verify that the inspected Hex archive ships a changelog stamped for its version before planning publication.
+
 - Gate publication on hosted paired JWE page and single-open measurements against RequestSeal 1.0.0.
 
 - Align documented dependency requirements with the package declarations and reject drift in installation examples.
