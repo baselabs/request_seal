@@ -455,7 +455,7 @@ class DependencyRequirementsTest(unittest.TestCase):
             if path.suffix in (".md", ".livemd")
         }
         requirements = self.requirements()
-        self.assertEqual(">= 1.20.3 and < 2.0.0", requirements["plug"])
+        self.assertEqual(">= 1.20.4 and < 2.0.0", requirements["plug"])
         for relative in sorted(paths):
             with self.subTest(relative=relative):
                 self.assertEqual([], docs.dependency_errors(
@@ -466,9 +466,9 @@ class DependencyRequirementsTest(unittest.TestCase):
         requirements = self.requirements()
         original = f'| `:plug` | `{requirements["plug"]}` |'
         self.assertIn(original, source)
-        changed = source.replace(original, '| `:plug` | `~> 1.20.3` |', 1)
+        changed = source.replace(original, '| `:plug` | `~> 1.20.4` |', 1)
         self.assertEqual([
-            "README.md: dependency :plug requirement must equal mix.exs: >= 1.20.3 and < 2.0.0"
+            "README.md: dependency :plug requirement must equal mix.exs: >= 1.20.4 and < 2.0.0"
         ], docs.dependency_errors("README.md", changed, requirements))
 
     def test_readme_deps_entry_drift_names_the_dependency(self):
@@ -486,9 +486,9 @@ class DependencyRequirementsTest(unittest.TestCase):
         source = (ROOT / relative).read_text()
         requirements = self.requirements()
         self.assertIn(requirements["plug"], source)
-        changed = source.replace(requirements["plug"], "~> 1.20.3", 1)
+        changed = source.replace(requirements["plug"], "~> 1.20.4", 1)
         self.assertEqual([
-            relative + ": dependency :plug requirement must equal mix.exs: >= 1.20.3 and < 2.0.0"
+            relative + ": dependency :plug requirement must equal mix.exs: >= 1.20.4 and < 2.0.0"
         ], docs.dependency_errors(relative, changed, requirements))
 
     def test_multiline_guide_installs_check_every_declared_dependency(self):
@@ -689,7 +689,7 @@ class BuildContractsTest(unittest.TestCase):
         self.assertEqual("0.7.4", published["req"]["floor"])
         self.assertEqual("1.4.2", published["telemetry"]["floor"])
         self.assertEqual("3.38.1", published["ash"]["floor"])
-        self.assertEqual("1.20.3", published["plug"]["floor"])
+        self.assertEqual("1.20.4", published["plug"]["floor"])
         self.assertEqual("0.22.4", published["postgrex"]["floor"])
         if "ash_onetime" in published:
             self.assertEqual("1.9.2", published["ash_onetime"]["floor"])

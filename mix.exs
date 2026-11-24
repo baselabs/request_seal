@@ -201,7 +201,7 @@ defmodule RequestSeal.MixProject do
       # Consumers own client startup; importing this library starts no pool.
       {:req, "~> 0.7.4", optional: true, runtime: false},
       {:finch, ">= 0.25.0 and < 0.26.0", optional: true, runtime: false},
-      {:plug, ">= 1.20.3 and < 2.0.0", optional: true, runtime: false},
+      {:plug, ">= 1.20.4 and < 2.0.0", optional: true, runtime: false},
       {:bandit, ">= 1.15.0 and < 2.0.0", only: :test},
       {:phoenix, ">= 1.8.17 and < 2.0.0", only: :test},
       {:postgrex, ">= 0.22.4 and < 0.24.0", optional: true, runtime: false}

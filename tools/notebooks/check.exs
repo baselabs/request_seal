@@ -234,14 +234,14 @@ if "--self-test" in System.argv() do
   hex_install = inspect({:request_seal, RequestSeal.NotebookCheck.install_requirement(root)})
 
   with_integration =
-    String.replace(source, hex_install <> "])", hex_install <> ", {:plug, \"~> 1.20.3\"}])")
+    String.replace(source, hex_install <> "])", hex_install <> ", {:plug, \"~> 1.20.4\"}])")
 
   integration_local = RequestSeal.NotebookCheck.local_source!(with_integration, root)
 
   unless with_integration != source and
            String.contains?(
              integration_local,
-             inspect({:request_seal, [path: root]}) <> ", {:plug, \"~> 1.20.3\"}])"
+             inspect({:request_seal, [path: root]}) <> ", {:plug, \"~> 1.20.4\"}])"
            ),
          do: raise("Local notebook execution must keep integration dependencies")
 

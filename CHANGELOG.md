@@ -22,6 +22,8 @@
 
 - The optional Ash integration requires `ash >= 3.38.1` (EEF-CVE-2026-124283, EEF-CVE-2026-120299).
 
+- Require Plug `>= 1.20.4` (EEF-CVE-2026-120287) and lock `db_connection` to `2.10.3` (EEF-CVE-2026-133555).
+
 - Raise the Phoenix floor for the controller example, the test suite and the
   notebooks to 1.8.17, which fixes CVE-2026-128361 and CVE-2026-129344.
 
