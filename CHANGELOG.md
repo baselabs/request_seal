@@ -20,6 +20,8 @@
 
 - Admit Postgrex 0.23 for PostgreSQL replay storage; the floor stays at 0.22.4.
 
+- The optional Ash integration requires `ash >= 3.38.1` (EEF-CVE-2026-124283, EEF-CVE-2026-120299).
+
 - Raise the Phoenix floor for the controller example, the test suite and the
   notebooks to 1.8.17, which fixes CVE-2026-128361 and CVE-2026-129344.
 

@@ -195,7 +195,7 @@ defmodule RequestSeal.MixProject do
       # through it (ADR 0006). No transitive dependencies.
       {:telemetry, ">= 1.4.2 and < 2.0.0"},
       # Require the Ash security patch line used by the optional integrations.
-      {:ash, ">= 3.37.4 and < 4.0.0", optional: true},
+      {:ash, ">= 3.38.1 and < 4.0.0", optional: true},
       {:simple_sat, "~> 0.1", only: :test},
       # Use stable Req; 0.8.0-rc.0 is a release candidate.
       # Consumers own client startup; importing this library starts no pool.

@@ -40,7 +40,7 @@ Add optional dependencies for the integrations you use. The table is a reference
 | `:phoenix` | `>= 1.8.17 and < 2.0.0` | Only for the Phoenix controller example |
 | `:req` | `~> 0.7.4` | Req signing and response verification; also add Finch |
 | `:finch` | `>= 0.25.0 and < 0.26.0` | Finch transport and caller-started pools |
-| `:ash` | `>= 3.37.4 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
+| `:ash` | `>= 3.38.1 and < 4.0.0` | Ash scope protocol and authorization-enabled actions |
 | `:ash_onetime` | `~> 1.9 and >= 1.9.2` | Recommended durable replay; Elixir 1.20+ |
 | `:ash_hooks` | `>= 3.0.0 and < 4.0.0` | Webhook signing and verification; Elixir 1.20+ |
 | `:postgrex` | `>= 0.22.4 and < 0.24.0` | PostgreSQL replay storage using your existing connection |

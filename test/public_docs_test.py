@@ -688,7 +688,7 @@ class BuildContractsTest(unittest.TestCase):
         self.assertEqual("0.25.0", published["finch"]["floor"])
         self.assertEqual("0.7.4", published["req"]["floor"])
         self.assertEqual("1.4.2", published["telemetry"]["floor"])
-        self.assertEqual("3.37.4", published["ash"]["floor"])
+        self.assertEqual("3.38.1", published["ash"]["floor"])
         self.assertEqual("1.20.3", published["plug"]["floor"])
         self.assertEqual("0.22.4", published["postgrex"]["floor"])
         if "ash_onetime" in published:
