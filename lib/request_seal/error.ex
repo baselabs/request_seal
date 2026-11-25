@@ -88,7 +88,8 @@ defmodule RequestSeal.Error do
     `:invalid_binding` (missing, unknown, or invalid explicit mapping choices),
     `:unattributed` (caller rejects anonymous identity), `:actor_unbound` (actor
     callback faults, returns :error, malformed data, or a nil actor),
-    `:tenant_unbound` (tenant callback faults, returns :error, or malformed data).
+    `:tenant_unbound` (tenant callback faults, returns :error, or malformed data),
+    or `:scope_unbound` (the connection has no accepted signed-path scope).
   * `:replay`: `:missing_replay_identifier` (absent or empty authenticated nonce),
     `:retention_exceeded` (derived claim retention end above 253,402,300,799;
     rejected before commitment or storage),
@@ -152,6 +153,7 @@ defmodule RequestSeal.Error do
           | :store_timeout
           | :store_unavailable
           | :tenant_unbound
+          | :scope_unbound
           | :test_key_rejected
           | :too_old
           | :unattributed

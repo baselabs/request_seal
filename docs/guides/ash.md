@@ -123,6 +123,11 @@ end
 
 This ETS resource stores documents by tenant and permits reads by a reader actor. Replace it with your resource and your access rules.
 
+For a Plug connection with an accepted [signed-path binding](phoenix-and-plug.md),
+call `RequestSeal.Plug.Scope.ash_scope(conn, binding)` with the usual actor and
+unattributed choices. The tenant comes from the bound path and still flows through
+the resource's multitenancy and policy checks.
+
 ## 2. Map the trusted principal and run an authorized read
 
 ```elixir

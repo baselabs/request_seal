@@ -11,7 +11,7 @@ Use it to:
 - Verify signed webhooks and service-to-service calls.
 - Sign outgoing API requests.
 - Identify and verify AI agents and crawlers with Web Bot Auth.
-- Turn a verified caller into an Ash actor and tenant.
+- Turn a verified caller into an Ash actor and tenant, including tenant context from a signed Plug path.
 - Protect against replayed requests and migrate between replay stores.
 
 ## What RequestSeal does not do

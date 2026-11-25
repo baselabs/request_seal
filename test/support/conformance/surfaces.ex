@@ -47,10 +47,43 @@ defmodule RequestSeal.Conformance.Surfaces do
     "web_bot_auth.verify" => :web_bot_auth,
     "discovery.body" => :discovery_body,
     "replay.claim" => :replay_claim,
+    "plug.signed_path/v1" => :signed_path,
     "profile.name" => :profile_name
   }
   def run(root, case_),
     do: apply(__MODULE__, Map.fetch!(@registry, case_["surface"]), [root, case_])
+
+  def signed_path(_root, %{"inputs" => inputs}) do
+    alias RequestSeal.Plug.Scope
+
+    conn =
+      RequestSeal.SignedPathTestSupport.verified(
+        C.bytes(inputs["target"]),
+        inputs["components"]
+      )
+
+    conn =
+      Enum.reduce(inputs["headers"], conn, fn [name, value], conn ->
+        Plug.Conn.put_req_header(conn, name, C.bytes(value))
+      end)
+
+    conn = if inputs["body"] == nil, do: conn, else: %{conn | body_params: inputs["body"]}
+
+    options =
+      Scope.init(
+        template: inputs["template"],
+        tenant: inputs["capture"],
+        principal_tenant: fn _ -> {:ok, C.bytes(inputs["principal_tenant"])} end,
+        on_reject: :continue
+      )
+
+    conn = Scope.call(conn, options)
+
+    case conn.private.request_seal.scope do
+      {:ok, %{tenant: tenant}} -> {:ok, %{"tenant" => C.b64(tenant)}}
+      {:error, _} = error -> error
+    end
+  end
 
   def parse_signature_base(root, case_) do
     bytes = root |> C.load(case_["inputs"]["base"]) |> C.bytes()

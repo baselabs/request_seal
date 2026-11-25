@@ -2,6 +2,36 @@
 
 **What you will build:** A Phoenix webhook pipeline that captures request bytes, verifies a signature before the controller, and signs the buffered response. Install Phoenix (`>= 1.8.17 and < 2.0.0`), Plug (`>= 1.20.4 and < 2.0.0`), and Jason (`~> 1.4`) for JSON parsing. Your sender must implement [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html). This is not a verifier for every vendor-specific webhook format.
 
+## Bind a tenant from the signed path
+
+After Capture, the applicable body parsers, and Verify, apply a scope template
+to a route whose policy requires `"@path"`. The application supplies a tenant
+mapping backed by its trusted verification policy.
+
+    scope =
+      RequestSeal.Plug.Scope.init(
+        template: "/teams/:team/*",
+        tenant: :team,
+        principal_tenant: &MyApp.Trust.tenant_for/1,
+        on_reject: {:halt, 403}
+      )
+
+    conn = RequestSeal.Plug.Scope.call(conn, scope)
+    {:ok, %{tenant: tenant}} = RequestSeal.Plug.scope(conn)
+
+The callback returns `{:ok, tenant}` from trusted context or `:error`. Generic
+RFC 9421 verification returns `:unattributed`. For such policies, use a mapping
+closed over an independently established tenant for the trusted verifier; reject
+when the policy cannot establish one tenant. Never take that value from the
+route, headers, query, body, or sender-supplied key ID.
+
+Path captures are decoded once. The scope rejects competing selectors named
+`tenant`, `tenant_id`, or the nominated capture, and the `x-tenant` and
+`x-tenant-id` headers. Add application aliases to `:refuse_names` and
+`:refuse_headers`. To check a body, install its parser before Scope. The
+captured path is the source of tenant context; use the returned tenant in the
+data layer's authorization checks.
+
 ## 1. Configure the trusted policy
 
 Generate an example Ed25519 key. In your application, reuse a long-lived key handle and configure trust in its public key independently.

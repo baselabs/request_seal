@@ -16,6 +16,10 @@ defmodule RequestSeal.Adapter.Error do
   (verification failed).
   Plug also reports `:not_captured`, `:already_verified`, `:parser_order`,
   `:untrusted_proxy`, and `:request_rejected` (with a bounded core source error).
+  Scope reports `:unverified`, `:path_not_covered`, `:path_rewritten`,
+  `:ambiguous_path`, `:template_mismatch`, `:invalid_scope`, `:scope_in_header`,
+  `:scope_in_query`, `:invalid_query`, `:scope_in_body`, `:tenant_mismatch`, or
+  `:already_scoped` at stage `:scope`.
   Plug uses `:unsupported_component` when required or covered exact-target
   evidence is unavailable, including target-dependent related-request signing.
   `source` is a bounded core, custody, or message error, never a framework exception.
@@ -61,10 +65,22 @@ defmodule RequestSeal.Adapter.Error do
           | :parser_order
           | :untrusted_proxy
           | :request_rejected
+          | :unverified
+          | :path_not_covered
+          | :path_rewritten
+          | :ambiguous_path
+          | :template_mismatch
+          | :invalid_scope
+          | :scope_in_header
+          | :scope_in_query
+          | :invalid_query
+          | :scope_in_body
+          | :tenant_mismatch
+          | :already_scoped
   @type t :: %__MODULE__{
           reason: reason(),
           adapter: :req | :finch | :plug,
-          stage: :attach | :capture | :sign | :transport | :verify,
+          stage: :attach | :capture | :sign | :transport | :verify | :scope,
           attempt: non_neg_integer(),
           source:
             RequestSeal.Error.t()

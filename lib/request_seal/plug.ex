@@ -5,6 +5,7 @@ if Code.ensure_loaded?(Plug.Conn) do
     defstruct [
       :capture,
       :verification,
+      :scope,
       :error,
       :replay_id,
       :verified_by,
@@ -177,5 +178,22 @@ if Code.ensure_loaded?(Plug.Conn) do
       do: {:ok, result}
 
     def verification(_), do: :error
+
+    @doc """
+    Returns the signed-path binding from Scope while the connection remains verified.
+
+    An unverified connection or refused scope returns `:error`.
+    """
+    @spec scope(Plug.Conn.t()) :: {:ok, RequestSeal.Plug.Scope.result()} | :error
+    def scope(%Plug.Conn{} = conn) do
+      with {:ok, _} <- verification(conn),
+           %State{scope: {:ok, result}} <- State.get(conn) do
+        {:ok, result}
+      else
+        _ -> :error
+      end
+    end
+
+    def scope(_), do: :error
   end
 end
