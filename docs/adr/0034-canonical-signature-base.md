@@ -35,3 +35,9 @@ detail `:limit` before asking custody to sign.
 Byte-wrapped fields contain a comma-space-delimited sequence of canonical
 Base64 items. Validate each item's decoded field bytes and re-encode it
 before accepting the retained base.
+
+Ordinary fields use trimmed occurrences separated by a comma and one space.
+A final empty occurrence preserves that separator. Structured fields and
+dictionary member selections must round-trip through the canonical
+Structured Fields serializer. Component names and modifiers use the same
+registration rules for construction and validation.

@@ -95,21 +95,34 @@ defmodule RequestSeal.VerificationRecordTest do
     end
   end
 
-  test "retained byte sequences require canonical occurrence framing even with valid signatures" do
-    positive = manifest("verification_record", "multi-byte-sequence")
-    negative = manifest("verification_record", "noncanonical-byte-sequence")
-    valid = Conformance.bytes(positive["inputs"]["record"])
-    invalid = Conformance.bytes(negative["inputs"]["record"])
-    assert {:ok, _} = VerificationRecord.decode(valid)
-    assert :ok = VerificationRecord.reverify(valid)
+  test "retained fields require canonical occurrence framing even with valid signatures" do
+    for name <- ["multi-byte-sequence", "final-empty-occurrence"] do
+      positive = manifest("verification_record", name)
+      valid = Conformance.bytes(positive["inputs"]["record"])
+      assert {:ok, _} = VerificationRecord.decode(valid)
+      assert :ok = VerificationRecord.reverify(valid)
+    end
 
-    data = :json.decode(invalid)["record"]
-    {:ok, key} = PublicKey.import(data["key"], :jwk)
-    base = Base.url_decode64!(data["base"], padding: false)
-    signature = Base.url_decode64!(data["signature"], padding: false)
-    assert :ok = RequestSeal.Crypto.verify("ed25519", base, signature, key)
-    assert {:error, :invalid_record} = VerificationRecord.decode(invalid)
-    assert {:error, :invalid_record} = VerificationRecord.reverify(invalid)
+    for name <- ["noncanonical-byte-sequence", "noncanonical-leading-ows"] do
+      negative = manifest("verification_record", name)
+      invalid = Conformance.bytes(negative["inputs"]["record"])
+      %{"digest" => digest, "record" => data} = :json.decode(invalid)
+      %{"jwk" => jwk} = data["key"]
+      assert map_size(data["key"]) == 1
+      {:ok, key} = PublicKey.import(jwk, :jwk)
+      assert PublicKey.export(key, :jwk) == {:ok, jwk}
+      assert PublicKey.thumbprint(key) == {:ok, data["thumbprint"]}
+      [_, wrapped] = :binary.split(invalid, ~s[,"record":])
+      record_bytes = binary_part(wrapped, 0, byte_size(wrapped) - 1)
+      assert Base.url_encode64(:crypto.hash(:sha256, record_bytes), padding: false) == digest
+
+      base = Base.url_decode64!(data["base"], padding: false)
+      signature = Base.url_decode64!(data["signature"], padding: false)
+      assert :ok = RequestSeal.Crypto.verify("ed25519", base, signature, key)
+      assert {:error, %{reason: :malformed}} = RequestSeal.SignatureBase.parse(base)
+      assert {:error, :invalid_record} = VerificationRecord.decode(invalid)
+      assert {:error, :invalid_record} = VerificationRecord.reverify(invalid)
+    end
   end
 
   test "asymmetric custody capture works with or without a deny set" do

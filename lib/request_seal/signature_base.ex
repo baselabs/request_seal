@@ -54,25 +54,18 @@ defmodule RequestSeal.SignatureBase do
   `expires` require Integers, and `nonce`, `alg`, `keyid`, and `tag` require Strings.
   Successful construction establishes bytes only, not authentication.
   """
-  alias RequestSeal.Message
+  alias RequestSeal.{Message, SignatureFields}
   alias RequestSeal.Message.Validation
   alias RequestSeal.StructuredFields, as: SF
   alias RequestSeal.StructuredFields.{Schema, Value}
   alias RequestSeal.SignatureBase.Error
 
-  @derived ~w(@method @target-uri @authority @scheme @request-target @path @query @query-param @status)
+  @field_separator ", "
   @schema %Schema{
     revision: :rfc8941,
     type: :list,
     item_types: [:string],
     parameter_types: [:integer, :decimal, :string, :token, :bytes, :boolean],
-    inner_lists: true
-  }
-  @field_wire_schema %Schema{
-    revision: :rfc9651,
-    type: :list,
-    item_types: Schema.types(:rfc9651),
-    parameter_types: Schema.types(:rfc9651),
     inner_lists: true
   }
 
@@ -102,7 +95,7 @@ defmodule RequestSeal.SignatureBase do
       component in order, then the `"@signature-params"` line.
     * `{:error, %RequestSeal.SignatureBase.Error{}}` - reasons this function
       can return: `:invalid_message`, `:invalid_options`,
-      `:invalid_signature_parameters`, `:malformed`, `:limit`; component reasons
+      `:invalid_signature_parameters`, `:limit`; component reasons
       `:invalid_component`, `:unknown_component`, `:duplicate_component`,
       `:invalid_component_parameters`, `:incompatible_parameters`; context
       reasons `:wrong_message_kind`, `:missing_request_context`,
@@ -184,17 +177,19 @@ defmodule RequestSeal.SignatureBase do
   end
 
   @doc """
-  Parse and validate a canonical RFC 9421 Section 2.5 signature base.
+  Parse a serialized RFC 9421 Section 2.5 signature base for inspection.
 
-  Accepts at most 1,048,576 binary bytes and 256 component lines. The final
-  `"@signature-params"` line must contain a canonical RFC 8941 Inner List.
+  Accepts at most 1,048,576 binary bytes. Component values must be printable
+  ASCII or horizontal tabs. The final `"@signature-params"` line must contain a canonical RFC 8941
+  Inner List of strings with parameters, within Structured Fields ceilings.
   Its ordered items must exactly match the preceding serialized identifiers.
-  The builder's component, modifier, applicability and wire value rules apply.
-  Ordinary field values preserve interior horizontal tabs. LF separates lines.
+  At most 256 component lines are scanned. Duplicate identifiers, invalid
+  derived values, and a nonce over 1,024 bytes reject. LF separates lines.
   CRLF and a trailing LF reject.
 
-  The original message establishes field availability, schema selection,
-  request linkage and equality with the values derived from that message.
+  Contextual checks require the original message. These include the message
+  kind and related request, field availability, structured field schemas,
+  query occurrence counts, and equality with values derived from that message.
 
   Returns the ordered `components`, canonical `signature_params` bytes, and
   parsed `inner_list`. This performs no signature check and does not establish
@@ -234,416 +229,232 @@ defmodule RequestSeal.SignatureBase do
     <<"\"@signature-params\": ", serialized::binary>> = final
     {:ok, %Value{value: [%Value{type: :inner_list} = inner]}} = SF.parse(serialized, @schema)
     {:ok, ^serialized} = SF.serialize(%Value{type: :list, value: [inner]}, @schema)
-    metadata(inner.parameters)
+    true = SignatureFields.valid_inner?(inner) and consistent_context?(inner.value)
     true = SignatureFields.nonce_valid?(SignatureFields.parameters(inner)["nonce"])
-    true = length(lines) == length(inner.value)
-    identities = Enum.map(inner.value, &{&1.value, Enum.sort(&1.parameters)})
-    true = length(Enum.uniq(identities)) == length(identities)
+    {:ok, identifiers} = SignatureFields.identifiers(inner.value)
+    true = length(lines) == length(identifiers)
 
-    components =
-      Enum.zip_with(lines, inner.value, fn line, item ->
-        {name, params} = component(item)
-        {:ok, identifier} = SF.serialize(item, %{@schema | type: :item})
+    pairs =
+      Enum.zip_with([lines, identifiers, inner.value], fn [line, identifier, item] ->
         prefix = identifier <> ": "
         true = String.starts_with?(line, prefix)
         value = binary_part(line, byte_size(prefix), byte_size(line) - byte_size(prefix))
-        true = ascii?(value) and protocol_value?(name, params, value)
-        {identifier, name, params, value}
+        true = wire_value?(item, value)
+        {identifier, value}
       end)
 
-    facts = Enum.map(components, fn {_, name, params, value} -> {name, params, value} end)
-    true = Enum.any?([:request, :response], &matches_kind?(facts, &1))
-    true = consistent_components?(facts)
-    pairs = Enum.map(components, fn {identifier, _, _, value} -> {identifier, value} end)
     parts = %{components: pairs, signature_params: serialized}
     ^bytes = rebuild(parts)
     Map.put(parts, :inner_list, inner)
   end
 
-  defp base_lines(bytes, remaining, reversed) do
+  defp base_lines(bytes, remaining, acc) do
     case :binary.split(bytes, "\n") do
-      [final] -> {Enum.reverse(reversed), final}
-      [line, rest] when remaining > 0 -> base_lines(rest, remaining - 1, [line | reversed])
+      [final] -> {Enum.reverse(acc), final}
+      [line, rest] when remaining > 0 -> base_lines(rest, remaining - 1, [line | acc])
       _ -> fail(:malformed)
     end
   end
 
-  defp protocol_value?("@method", _, value), do: Validation.token?(value, 256)
-  defp protocol_value?("@status", _, value), do: Regex.match?(~r/\A[1-5][0-9]{2}\z/, value)
-
-  defp protocol_value?("@scheme", _, value),
-    do: Validation.scheme?(value) and value == String.downcase(value)
-
-  defp protocol_value?("@authority", _, value),
-    do: Validation.authority?(value) and value == String.downcase(value)
-
-  defp protocol_value?("@path", _, "/" <> _ = value),
-    do:
-      byte_size(value) <= 16_384 and path_query_bytes?(value) and
-        :binary.match(value, "?") == :nomatch
-
-  defp protocol_value?("@query", _, "?" <> value),
-    do: byte_size(value) <= 16_382 and path_query_bytes?(value)
-
-  defp protocol_value?("@query-param", %{"name" => {:string, name}}, value),
-    do: encode_query(decode_query(name)) == name and encode_query(decode_query(value)) == value
-
-  defp protocol_value?("@target-uri", _, value) do
-    absolute_target?(value) and
-      (byte_size(value) <= 16_384 or origin_form_tail?(absolute_tail(value)))
-  end
-
-  defp protocol_value?("@request-target", _, "/" <> _ = value),
-    do: byte_size(value) <= 16_384 and path_query_bytes?(value)
-  defp protocol_value?("@request-target", _, "*"), do: true
-
-  defp protocol_value?("@request-target", _, value),
-    do:
-      Validation.authority?(value, true) or
-        (byte_size(value) <= 16_384 and absolute_target?(value))
-
-  defp protocol_value?(name, _, _) when name in @derived, do: false
-
-  defp protocol_value?(_, params, value), do: field_wire?(field_kind(params), params, value)
-
-  defp origin_form_tail?("/" <> _ = tail), do: byte_size(tail) <= 16_384
-  defp origin_form_tail?(_), do: false
-
-  defp field_kind(%{"bs" => _}), do: :bytes
-  defp field_kind(%{"key" => _}), do: :member
-  defp field_kind(%{"sf" => _}), do: :structured
-  defp field_kind(_), do: :plain
-
-  defp field_wire?(:plain, _, value), do: is_integer(plain_occurrence_count(value, 0))
-
-  defp field_wire?(:bytes, _, value), do: match?({:ok, _}, byte_sequences(value))
-
-  defp field_wire?(:member, %{"key" => {:string, key}}, value),
-    do: structured_matches?(named_member({key, value}), nil, [{key, value}])
-
-  defp field_wire?(:structured, _, value), do: structured_matches?(value, value, [])
-
-  defp byte_sequences(value) do
-    members = :binary.split(value, ", ", [:global])
-
-    if length(members) <= 1_024 do
-      Enum.reduce_while(members, {:ok, []}, fn member, {:ok, reversed} ->
-        case decode_byte_sequence(member) do
-          {:ok, bytes} -> {:cont, {:ok, [bytes | reversed]}}
-          :error -> {:halt, :error}
-        end
+  defp consistent_context?(items) do
+    response? =
+      Enum.any?(items, fn item ->
+        item.value == {:string, "@status"} or List.keymember?(item.parameters, "req", 0)
       end)
-    else
-      :error
+
+    not response? or
+      Enum.all?(items, fn %Value{value: {:string, name}, parameters: params} ->
+        not SignatureFields.request_component?(name) or List.keymember?(params, "req", 0)
+      end)
+  end
+
+  defp wire_value?(%Value{value: {:string, name}, parameters: params}, value),
+    do: ascii?(value) and canonical_value?(name, Map.new(params), value)
+
+  defp canonical_value?(name, params, value) do
+    case name do
+      "@method" ->
+        Validation.token?(value, 256)
+
+      "@status" ->
+        case value do
+          <<a, b, c>> when a in ?0..?9 and b in ?0..?9 and c in ?0..?9 ->
+            Validation.status?(String.to_integer(value))
+
+          _ ->
+            false
+        end
+
+      "@scheme" ->
+        Validation.scheme?(value) and value == String.downcase(value)
+
+      "@authority" ->
+        Validation.authority?(value) and value == String.downcase(value)
+
+      "@path" ->
+        String.starts_with?(value, "/") and :binary.match(value, "?") == :nomatch and
+          uri_path_query?(value, 16_384)
+
+      "@query" ->
+        String.starts_with?(value, "?") and uri_path_query?(value, 16_383)
+
+      "@query-param" ->
+        {:string, name_param} = params["name"]
+        query_component_wire?(name_param, value)
+
+      "@target-uri" ->
+        target_uri_wire?(value)
+
+      "@request-target" ->
+        byte_size(value) in 1..16_384 and Validation.uri_bytes?(value) and
+          (value == "*" or
+             (String.starts_with?(value, "/") and Validation.path_query?(value)) or
+             Validation.absolute_form?(value) or Validation.authority?(value, true))
+
+      _ ->
+        field_wire?(params, value)
     end
   end
 
-  defp decode_byte_sequence(":" <> rest = wire) when byte_size(rest) > 0 do
-    with ?: <- :binary.last(rest),
-         {:ok, bytes} <- Base.decode64(binary_part(rest, 0, byte_size(rest) - 1)),
-         true <- Validation.field_value?(bytes) and byte_sequence(bytes) == wire do
-      {:ok, bytes}
+  defp target_uri_wire?(value) do
+    byte_size(value) <= 17_475 and Validation.uri_bytes?(value) and
+      Validation.absolute_form?(value) and
+      (byte_size(value) <= 16_384 or
+         case Regex.run(~r/\A[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/?]+(\/.*)\z/, value) do
+           [_, path] -> byte_size(path) <= 16_384
+           _ -> false
+         end)
+  end
+
+  defp query_component_wire?(name, value) do
+    # A shortest witness uses an origin-form target beginning with "/?".
+    # Nonempty names can omit "=" when the value is empty.
+    separator = if name == "" or value != "", do: 1, else: 0
+
+    canonical_query?(name) and canonical_query?(value) and
+      2 + separator + query_wire_size(name, false, 0) + query_wire_size(value, true, 0) <= 16_384
+  end
+
+  defp query_wire_size(<<>>, _, count), do: count
+
+  defp query_wire_size(<<?%, digits::binary-size(2), rest::binary>>, value?, count) do
+    byte = String.to_integer(digits, 16)
+    # A raw plus decodes to a space. Ampersand always separates members;
+    # equals separates the name but can appear literally in the value.
+    literal? = byte in ~c" ~:/?@!$'(),;" or (value? and byte == ?=)
+    query_wire_size(rest, value?, count + if(literal?, do: 1, else: 3))
+  end
+
+  defp query_wire_size(<<_, rest::binary>>, value?, count),
+    do: query_wire_size(rest, value?, count + 1)
+
+  defp field_wire?(%{"bs" => _}, value), do: byte_sequences?(value, 1024)
+
+  defp field_wire?(%{"key" => {:string, key}}, value) do
+    # A dictionary member is serialized through the same singleton List
+    # schema as live derivation. Parse the key separately so its length is
+    # independent of the serialized member's byte ceiling.
+    schema = wire_schema(:list)
+
+    with {:ok, %Value{value: [{^key, _}]}} <- SF.parse(key, %{schema | type: :dictionary}),
+         {:ok, %Value{value: [_]} = parsed} <- SF.parse(value, schema),
+         {:ok, ^value} <- SF.serialize(parsed, schema) do
+      true
     else
-      _ -> :error
+      _ -> false
     end
   end
 
-  defp decode_byte_sequence(_), do: :error
+  defp field_wire?(%{"sf" => _}, value) do
+    Enum.any?([:item, :list, :dictionary], fn type ->
+      schema = wire_schema(type)
 
-  defp structured_matches?(source, complete, members) do
-    types = if members == [], do: [:item, :list, :dictionary], else: [:dictionary]
-
-    Enum.any?(types, fn type ->
-      schema = %{@field_wire_schema | type: type}
-
-      with {:ok, parsed} <- SF.parse(source, schema) do
-        (complete == nil or SF.serialize(parsed, schema) == {:ok, complete}) and
-          Enum.all?(members, fn {key, value} ->
-            case member(parsed, key) do
-              nil -> false
-              selected -> SF.serialize(selected, @field_wire_schema) == {:ok, value}
-            end
-          end)
+      with {:ok, parsed} <- SF.parse(value, schema),
+           {:ok, ^value} <- SF.serialize(parsed, schema) do
+        true
       else
         _ -> false
       end
     end)
   end
 
-  defp field_facts?(components) do
-    fields =
-      components
-      |> Enum.reject(fn {name, _, _} -> name in @derived end)
-      |> Enum.group_by(fn {name, params, _} -> {name, Map.has_key?(params, "tr")} end)
+  defp field_wire?(_, value), do: combined_field?(value, 1024)
 
-    Enum.reduce_while(fields, {0, 0}, fn {{name, _}, field}, {count, bytes} ->
-      case field_group(field, byte_size(name)) do
-        {occurrences, minimum_bytes}
-        when count + occurrences <= 1_024 and bytes + minimum_bytes <= 1_048_576 ->
-          {:cont, {count + occurrences, bytes + minimum_bytes}}
+  defp wire_schema(type) do
+    types = Schema.types(:rfc9651)
 
-        _ ->
-          {:halt, false}
-      end
-    end) != false
+    %Schema{
+      revision: :rfc9651,
+      type: type,
+      item_types: types,
+      parameter_types: types,
+      inner_lists: type != :item
+    }
   end
 
-  defp field_group(field, name_bytes) do
-    values = Map.new(field, fn {_, params, value} -> {field_kind(params), value} end)
+  defp combined_field?(_, 0), do: false
+  defp combined_field?(<<byte, _::binary>>, _) when byte in [32, 9], do: false
 
-    members =
-      for {_, %{"key" => {:string, key}}, value} <- field, uniq: true, do: {key, value}
+  defp combined_field?(value, remaining) do
+    if canonical_occurrence?(value) do
+      true
+    else
+      # Use the last allowable separator to minimize the number of occurrences.
+      scope = {0, min(byte_size(value), 65_538)}
 
-    plain = values[:plain]
-    complete = values[:structured]
-    occurrences = byte_occurrences(values[:bytes])
-    combined = if occurrences != nil, do: Enum.join(occurrences, ", ")
-    source = combined || plain || complete
-
-    if matches_fact?(combined, plain) and consistent_structured_field?(source, complete, members) do
-      minimum_field_size(occurrences, plain, name_bytes)
-    end
-  end
-
-  defp consistent_structured_field?(_, nil, []), do: true
-
-  defp consistent_structured_field?(nil, nil, members) do
-    source = Enum.map_join(members, ", ", &named_member/1)
-    structured_matches?(source, nil, members)
-  end
-
-  defp consistent_structured_field?(source, complete, members),
-    do: structured_matches?(source, complete, members)
-
-  defp byte_occurrences(nil), do: nil
-
-  defp byte_occurrences(wire) do
-    {:ok, reversed} = byte_sequences(wire)
-    Enum.reverse(reversed)
-  end
-
-  defp minimum_field_size(nil, nil, name_bytes), do: {1, name_bytes}
-
-  defp minimum_field_size(nil, plain, name_bytes) do
-    count = plain_occurrence_count(plain, 0)
-    # Bound one-byte names conservatively because extra separators save bytes.
-    name_overhead = if name_bytes == 1, do: -1_024, else: count * (name_bytes - 2)
-    {count, max(name_bytes, byte_size(plain) + name_overhead + 2)}
-  end
-
-  defp minimum_field_size(occurrences, _, name_bytes) do
-    count = length(occurrences)
-    {count, count * name_bytes + IO.iodata_length(occurrences)}
-  end
-
-  defp named_member({key, "?1" <> parameters}), do: key <> parameters
-  defp named_member({key, value}), do: key <> "=" <> value
-
-  defp member(parsed, key) do
-    case List.keyfind(parsed.value, key, 0) do
-      {^key, value} -> %Value{type: :list, value: [value]}
-      nil -> nil
-    end
-  end
-
-  # An empty last occurrence leaves the separator's space at the end.
-  defp plain_occurrence_count(_, 1_024), do: nil
-
-  defp plain_occurrence_count(value, count) do
-    cond do
-      String.ends_with?(value, ", ") ->
-        plain_occurrence_count(binary_part(value, 0, byte_size(value) - 2), count + 1)
-
-      value != trim_ows(value) ->
-        nil
-
-      byte_size(value) <= 65_536 ->
-        count + 1
-
-      true ->
-        # Use the last legal separator within the field occurrence bound.
-        prefix = binary_part(value, 0, min(byte_size(value), 65_538))
-
-        case Enum.find(Enum.reverse(:binary.matches(prefix, ", ")), &ows_boundary?(value, &1)) do
-          {offset, 2} ->
-            rest = binary_part(value, offset + 2, byte_size(value) - offset - 2)
-            plain_occurrence_count(rest, count + 1)
-
-          nil ->
-            nil
-        end
-    end
-  end
-
-  defp ows_boundary?(value, {offset, 2}) do
-    (offset == 0 or :binary.at(value, offset - 1) not in [9, 32]) and
-      :binary.at(value, offset + 2) not in [9, 32]
-  end
-
-  defp matches_kind?(components, kind) do
-    Enum.all?(components, fn
-      {name, %{"req" => _}, _} -> kind == :response and source_kind?(name, :request)
-      {name, _, _} -> source_kind?(name, kind)
-    end)
-  end
-
-  defp consistent_components?(components) do
-    components
-    |> Enum.group_by(fn {_, params, _} -> source_key(params) end)
-    |> Enum.all?(fn {_, source} -> request_facts?(source) and field_facts?(source) end)
-  end
-
-  defp request_facts?(components) do
-    derived = Map.new(components, fn {name, _, value} -> {name, value} end)
-    target = derived["@request-target"]
-    uri = derived["@target-uri"]
-    method = derived["@method"]
-    declared_path = derived["@path"]
-    declared_query = derived["@query"]
-
-    with true <- compatible_target_method?(target, method),
-         true <- compatible_target_facts?(target, uri),
-         true <- compatible_origin?(target, uri, derived["@scheme"], derived["@authority"]),
-         {:ok, path, query} <- target_parts(target, uri, method) do
-      matches_fact?(path, declared_path) and matches_fact?(query, declared_query) and
-        query_parameters_match?(query || declared_query, path || declared_path || "/", components)
-    end
-  end
-
-  defp compatible_target_method?(nil, _), do: true
-  defp compatible_target_method?(_, nil), do: true
-  defp compatible_target_method?("*", method), do: method == "OPTIONS"
-
-  defp compatible_target_method?(target, method),
-    do: Validation.authority?(target, true) == (method == "CONNECT")
-
-  defp compatible_target_facts?(nil, _), do: true
-  defp compatible_target_facts?(_, nil), do: true
-
-  defp compatible_target_facts?("/" <> _ = target, uri), do: absolute_tail(uri) == target
-
-  defp compatible_target_facts?(target, uri) do
-    if absolute_target?(target), do: target == uri, else: absolute_tail(uri) == ""
-  end
-
-  defp compatible_origin?(target, uri, scheme, authority) do
-    origin = uri || if(is_binary(target) and absolute_target?(target), do: target)
-
-    cond do
-      is_binary(origin) ->
-        {actual_scheme, actual_authority} = origin(%{target_form: :absolute, raw_target: origin})
-
-        matches_fact?(String.downcase(actual_scheme), scheme) and
-          matches_fact?(canonical_authority(actual_scheme, actual_authority), authority) and
-          (not Validation.authority?(target, true) or target == actual_authority)
-
-      Validation.authority?(target, true) ->
-        Enum.any?([scheme || "http", scheme || "https", scheme || "other"], fn scheme ->
-          matches_fact?(canonical_authority(scheme, target), authority)
+      separator =
+        value
+        |> :binary.matches(@field_separator, scope: scope)
+        |> Enum.reverse()
+        |> Enum.find(fn {at, width} ->
+          left = at == 0 or :binary.at(value, at - 1) not in [32, 9]
+          right = at + width == byte_size(value) or :binary.at(value, at + width) not in [32, 9]
+          left and right
         end)
 
-      scheme != nil and authority != nil ->
-        canonical_authority(scheme, authority) == authority
+      case separator do
+        {at, width} ->
+          tail = binary_part(value, at + width, byte_size(value) - at - width)
+          combined_field?(tail, remaining - 1)
 
-      true ->
-        true
-    end
-  end
-
-  defp target_parts("/" <> _ = target, _, _), do: parts_from_tail(target)
-
-  defp target_parts(nil, nil, method) when method != "CONNECT", do: {:ok, nil, nil}
-
-  defp target_parts(target, uri, method) when target == "*" or method == "CONNECT" do
-    cond do
-      uri == nil ->
-        {:ok, "/", "?"}
-
-      absolute_tail(uri) != "" ->
-        :error
-
-      method != "CONNECT" ->
-        {:ok, "/", "?"}
-
-      true ->
-        {_, authority} = origin(%{target_form: :absolute, raw_target: uri})
-        if Validation.authority?(authority, true), do: {:ok, "/", "?"}, else: :error
-    end
-  end
-
-  defp target_parts(nil, uri, _), do: parts_from_tail(absolute_tail(uri))
-
-  defp target_parts(target, _, _) do
-    if absolute_target?(target), do: parts_from_tail(absolute_tail(target)), else: {:ok, "/", "?"}
-  end
-
-  defp parts_from_tail(tail) do
-    {path, query} = split_tail(tail)
-    {:ok, if(path == "", do: "/", else: path), "?" <> (query || "")}
-  end
-
-  defp matches_fact?(actual, declared), do: actual == nil or declared == nil or actual == declared
-
-  defp query_parameters_match?(nil, path, components) do
-    # Measure the shortest raw target that could produce these projected values.
-    projected =
-      for {"@query-param", %{"name" => {:string, name}}, value} <- components do
-        separator = if name == "" or value != "", do: 1, else: 0
-        raw_query_size(name, [?&, ?=]) + separator + raw_query_size(value, [?&])
+        nil ->
+          false
       end
-
-    projected == [] or byte_size(path) + length(projected) + Enum.sum(projected) <= 16_384
-  end
-
-  defp query_parameters_match?("?", _, components),
-    do: Enum.all?(components, fn {name, _, _} -> name != "@query-param" end)
-
-  defp query_parameters_match?("?" <> query, path, components) do
-    projections =
-      for {"@query-param", %{"name" => {:string, name}}, value} <- components, do: {name, value}
-
-    byte_size(path) + 1 + byte_size(query) <= 16_384 and
-      (projections == [] or query_values_match?(parse_query_values(query), projections))
-  end
-
-  defp query_values_match?(parsed, projections) do
-    Enum.all?(projections, fn {name, value} ->
-      case Map.get(parsed, name) do
-        [raw] -> encode_query(decode_query(raw)) == value
-        _ -> false
-      end
-    end)
-  end
-
-  defp raw_query_size(encoded, delimiters) do
-    for <<byte <- decode_query(encoded)>>, reduce: 0 do
-      size ->
-        width =
-          if byte == 32 or (byte not in [?+ | delimiters] and path_query_bytes?(<<byte>>)),
-            do: 1,
-            else: 3
-
-        size + width
     end
   end
 
-  defp source_kind?("@status", kind), do: kind == :response
-  defp source_kind?(name, kind) when name in @derived, do: kind == :request
-  defp source_kind?(_, _), do: true
+  defp canonical_occurrence?(value),
+    do: byte_size(value) <= 65_536 and trim_ows(value) == value
 
-  defp absolute_target?(value) do
-    case Regex.run(~r/\A([A-Za-z][A-Za-z0-9+.-]*):\/\/([^\/?]+)([\/?].*)?\z/, value) do
-      [_, scheme, authority | tail] ->
-        Validation.scheme?(scheme) and Validation.authority?(authority) and
-          Enum.all?(tail, &path_query_bytes?/1)
+  defp byte_sequence(value), do: ":" <> Base.encode64(trim_ows(value)) <> ":"
 
-      _ ->
-        false
+  defp byte_sequences?(_, 0), do: false
+
+  defp byte_sequences?(value, remaining) do
+    case :binary.split(value, @field_separator) do
+      [item] -> canonical_byte_sequence?(item)
+      [item, rest] -> canonical_byte_sequence?(item) and byte_sequences?(rest, remaining - 1)
     end
   end
 
-  defp path_query_bytes?(value),
-    do: Validation.uri_bytes?(value) and :binary.match(value, ["[", "]"]) == :nomatch
+  defp canonical_byte_sequence?(<<?:, rest::binary>>) when byte_size(rest) > 0 do
+    case rest do
+      <<encoded::binary-size(byte_size(rest) - 1), ?:>> ->
+        with {:ok, decoded} <- Base.decode64(encoded),
+             true <- Validation.field_value?(decoded) and canonical_occurrence?(decoded) do
+          byte_sequence(decoded) == ":" <> rest
+        else
+          _ -> false
+        end
+
+      _ -> false
+    end
+  end
+
+  defp canonical_byte_sequence?(_), do: false
+
+  defp uri_path_query?(value, max),
+    do: byte_size(value) <= max and Validation.uri_bytes?(value) and Validation.path_query?(value)
 
   defp rebuild(parts) do
     lines = Enum.map(parts.components, fn {id, value} -> [id, ": ", value, "\n"] end)
@@ -664,10 +475,12 @@ defmodule RequestSeal.SignatureBase do
         identity = {name, Enum.sort(component.parameters)}
         ensure(not MapSet.member?(seen, identity), :duplicate_component)
         source = context(message, params)
-        ensure(source_kind?(name, source.kind), :wrong_message_kind)
         {value, cache} = value(source, name, params, options, cache)
         ensure(ascii?(value), :non_ascii)
-        ensure(protocol_value?(name, params, value), :malformed)
+        if String.starts_with?(name, "@") and name != "@query-param" do
+          ensure(canonical_value?(name, params, value), :invalid_component_parameters)
+        end
+
         identifier = serialize(component, %{@schema | type: :item}, :invalid_signature_parameters)
         size = size + byte_size(identifier) + byte_size(value) + 3
         ensure(size <= options.max_bytes, :limit)
@@ -751,38 +564,19 @@ defmodule RequestSeal.SignatureBase do
 
   defp component(%Value{type: :item, value: {:string, name}, parameters: parameters}) do
     ensure(
-      name in @derived or field_name?(name),
+      SignatureFields.component_name?(name),
       if(String.starts_with?(name, "@"), do: :unknown_component, else: :invalid_component)
     )
 
-    allowed =
-      if name in @derived,
-        do: if(name == "@query-param", do: ["req", "name"], else: ["req"]),
-        else: ["sf", "key", "bs", "tr", "req"]
+    ensure(name != "@status" or parameters != [{"req", {:boolean, true}}], :wrong_message_kind)
+    ensure(SignatureFields.component_parameters?(name, parameters), :invalid_component_parameters)
+    ensure(not SignatureFields.incompatible_parameters?(parameters), :incompatible_parameters)
 
-    ensure(
-      Enum.all?(parameters, fn
-        {key, {:boolean, true}} -> key in allowed and key in ["sf", "bs", "tr", "req"]
-        {key, {:string, _}} -> key in allowed and key in ["key", "name"]
-        _ -> false
-      end),
-      :invalid_component_parameters
-    )
-
-    params = Map.new(parameters)
-    ensure(name != "@query-param" or Map.has_key?(params, "name"), :invalid_component_parameters)
-
-    ensure(
-      not (Map.has_key?(params, "bs") and
-             (Map.has_key?(params, "sf") or Map.has_key?(params, "key"))),
-      :incompatible_parameters
-    )
-
-    {name, params}
+    {name, Map.new(parameters)}
   end
 
   defp component(_), do: fail(:invalid_signature_parameters)
-  defp field_name?(name), do: Validation.token?(name, 256) and name == String.downcase(name)
+  defp field_name?(name), do: SignatureFields.field_name?(name)
 
   defp context(message, params) do
     if Map.has_key?(params, "req") do
@@ -795,14 +589,18 @@ defmodule RequestSeal.SignatureBase do
   end
 
   defp value(message, "@status", _, _, cache) do
+    ensure(message.kind == :response, :wrong_message_kind)
     {Integer.to_string(message.status), cache}
   end
 
   defp value(message, "@query-param", params, _, cache) do
+    ensure(message.kind == :request, :wrong_message_kind)
     query_parameter(message, params, cache)
   end
 
   defp value(message, "@" <> _ = name, _params, _, cache) do
+    ensure(message.kind == :request, :wrong_message_kind)
+
     value =
       case name do
         "@method" ->
@@ -840,21 +638,21 @@ defmodule RequestSeal.SignatureBase do
     occurrences = Enum.filter(fields, &(String.downcase(&1.name) == name))
     ensure(occurrences != [], :missing_field)
 
-    case field_kind(params) do
-      :bytes ->
-        value = Enum.map_join(occurrences, ", ", &byte_sequence(&1.value))
+    cond do
+      Map.has_key?(params, "bs") ->
+        value =
+          Enum.map_join(occurrences, @field_separator, &byte_sequence(&1.value))
+
         {value, cache}
 
-      kind when kind in [:structured, :member] ->
+      Map.has_key?(params, "sf") or Map.has_key?(params, "key") ->
         key = {section, name, source_key(params)}
         structured(occurrences, name, params, options.field_schemas, cache, key)
 
-      :plain ->
-        {Enum.map_join(occurrences, ", ", &trim_ows(&1.value)), cache}
+      true ->
+        {Enum.map_join(occurrences, @field_separator, &trim_ows(&1.value)), cache}
     end
   end
-
-  defp byte_sequence(value), do: ":" <> Base.encode64(trim_ows(value)) <> ":"
 
   defp source_key(params), do: if(Map.has_key?(params, "req"), do: :request, else: :self)
 
@@ -876,7 +674,7 @@ defmodule RequestSeal.SignatureBase do
 
     {parsed, cache} =
       cached(cache, key, fn ->
-        bytes = Enum.map_join(occurrences, ", ", &trim_ows(&1.value))
+        bytes = Enum.map_join(occurrences, @field_separator, &trim_ows(&1.value))
 
         case SF.parse(bytes, schema) do
           {:ok, value} -> value
@@ -888,10 +686,15 @@ defmodule RequestSeal.SignatureBase do
     value =
       if Map.has_key?(params, "key") do
         {:string, key} = params["key"]
-        selected = member(parsed, key)
-        ensure(selected != nil, :missing_dictionary_key)
+        member = List.keyfind(parsed.value, key, 0)
+        ensure(member != nil, :missing_dictionary_key)
+        {_, value} = member
         # SF top-level lists serialize Items and Inner Lists by the same member rule.
-        serialize(selected, %{schema | type: :list}, :invalid_structured_field)
+        serialize(
+          %Value{type: :list, value: [value]},
+          %{schema | type: :list},
+          :invalid_structured_field
+        )
       else
         serialize(parsed, schema, :invalid_structured_field)
       end
@@ -927,10 +730,6 @@ defmodule RequestSeal.SignatureBase do
 
   defp authority(message) do
     {scheme, authority} = origin(message)
-    canonical_authority(scheme, authority)
-  end
-
-  defp canonical_authority(scheme, authority) do
     [_, host | port] = Regex.run(~r/\A(\[[^\]]+\]|[^:]+)(?::([0-9]+))?\z/, authority)
     normalized = String.downcase(host)
 
@@ -957,18 +756,12 @@ defmodule RequestSeal.SignatureBase do
           message.raw_target
 
         :absolute ->
-          absolute_tail(message.raw_target)
+          Regex.replace(~r/\A[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/?]+/, message.raw_target, "")
 
         _ ->
           ""
       end
 
-    split_tail(tail)
-  end
-
-  defp absolute_tail(raw), do: Regex.replace(~r/\A[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/?]+/, raw, "")
-
-  defp split_tail(tail) do
     case :binary.split(tail, "?") do
       [path, query] -> {path, query}
       [path] -> {path, nil}
@@ -977,7 +770,7 @@ defmodule RequestSeal.SignatureBase do
 
   defp query_parameter(message, params, cache) do
     {:string, name} = params["name"]
-    ensure(encode_query(decode_query(name)) == name, :noncanonical_query_name)
+    ensure(canonical_query?(name), :noncanonical_query_name)
     {query, cache} = cached(cache, {:query, source_key(params)}, fn -> parse_query(message) end)
     matches = Map.get(query, name, [])
 
@@ -988,10 +781,7 @@ defmodule RequestSeal.SignatureBase do
 
   defp parse_query(message) do
     query = path_query(message) |> elem(1) || ""
-    parse_query_values(query)
-  end
 
-  defp parse_query_values(query) do
     query
     |> :binary.split("&", [:global])
     |> Enum.reject(&(&1 == ""))
@@ -1006,6 +796,8 @@ defmodule RequestSeal.SignatureBase do
       Map.update(parsed, name, [value], &[value | &1])
     end)
   end
+
+  defp canonical_query?(bytes), do: encode_query(decode_query(bytes)) == bytes
 
   defp decode_query(bytes) do
     # Message validation already rejects malformed percent escapes in the target.

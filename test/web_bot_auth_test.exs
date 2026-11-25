@@ -946,7 +946,8 @@ defmodule RequestSeal.WebBotAuthTest do
       nonce: "directory-proof-denial"
     }
 
-    {:ok, message} = WebBotAuth.sign(build("https://example.com/resource", []), spec, request_handle)
+    request = build("https://example.com/resource", [])
+    {:ok, message} = WebBotAuth.sign(request, spec, request_handle)
 
     p =
       policy(

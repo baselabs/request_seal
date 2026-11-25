@@ -289,7 +289,8 @@ defmodule RequestSeal.DiscoveryCacheTest do
               Peer.reply(socket, "", [{"Cache-Control", "max-age=90"}], 304)
 
             {3, :missing} ->
-              Peer.reply(socket, Peer.directory() <> "\n", [type, {"Cache-Control", "max-age=30"}])
+              fields = [type, {"Cache-Control", "max-age=30"}]
+              Peer.reply(socket, Peer.directory() <> "\n", fields)
           end
         end)
 
@@ -341,6 +342,100 @@ defmodule RequestSeal.DiscoveryCacheTest do
     assert accepts() == 0
     assert {:ok, _} = Cache.resolve(cache, source, kid, clock: fn -> 400 end)
     assert accepts() == 1
+  end
+
+  test "a redirected validator never reaches the configured URI even with equal tags" do
+    owner = self()
+    {:ok, redirected} = PublicKey.import(Peer.public_jwk(), :jwk)
+    {:ok, redirected_id} = PublicKey.thumbprint(redirected)
+    {:ok, direct} = PublicKey.import(File.read!("test/fixtures/crypto/ed25519_public.pem"), :pem)
+    {:ok, direct_jwk} = PublicKey.export(direct, :jwk)
+    {:ok, direct_id} = PublicKey.thumbprint(direct)
+    changed = :atomics.new(1, [])
+    tag = {"ETag", ~s("same")}
+    fields = [{"Content-Type", "application/jwk-set+json"}, {"Cache-Control", "max-age=60"}, tag]
+
+    p =
+      Peer.start(fn socket, request ->
+        conditional? = String.contains?(request, "If-None-Match:")
+
+        case {String.starts_with?(request, "GET /configured "), :atomics.get(changed, 1)} do
+          {true, 0} ->
+            Peer.reply(socket, "", [{"Location", "/redirected"}], 302)
+
+          {false, 0} ->
+            Peer.reply(socket, Peer.directory(), fields)
+
+          {true, 1} ->
+            send(owner, {:configured_request, conditional?})
+
+            if conditional?,
+              do: Peer.reply(socket, "", [tag], 304),
+              else: Peer.reply(socket, Peer.directory([direct_jwk]), fields)
+        end
+      end)
+
+    on_exit(fn -> Peer.stop(p) end)
+
+    {:ok, source} =
+      Source.new(%{
+        type: :jwks_uri,
+        location: "https://localhost:#{p.port}/configured",
+        max_redirects: 1,
+        cacerts: p.cacerts,
+        permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}]
+      })
+
+    {:ok, cache} = Cache.start_link(clock: fn -> 100 end)
+    assert {:ok, %{keys: %{^redirected_id => _}, validator_uri: uri}} =
+             Cache.refresh(cache, source)
+
+    assert String.ends_with?(uri, "/redirected")
+    :atomics.put(changed, 1, 1)
+    assert {:ok, %{keys: %{^direct_id => _}, validator_uri: configured}} =
+             Cache.refresh(cache, source)
+
+    assert configured == source.location
+    assert_receive {:configured_request, false}
+  end
+
+  test "an empty ETag permits recovery and a quoted empty tag revalidates" do
+    owner = self()
+    count = :atomics.new(1, [])
+    tag = {"ETag", ~s("")}
+    fields = [
+      {"Content-Type", "application/jwk-set+json"},
+      {"Cache-Control", "max-age=60"}
+    ]
+
+    p =
+      Peer.start(fn socket, request ->
+        send(owner, {:etag_request, String.contains?(request, ~s(If-None-Match: ""))})
+
+        case :atomics.add_get(count, 1, 1) do
+          1 -> Peer.reply(socket, Peer.directory(), fields ++ [{"ETag", ""}])
+          2 -> Peer.reply(socket, Peer.directory(), fields ++ [tag])
+          3 -> Peer.reply(socket, "", [tag], 304)
+        end
+      end)
+
+    on_exit(fn -> Peer.stop(p) end)
+
+    {:ok, source} =
+      Source.new(%{
+        type: :jwks_uri,
+        location: "https://localhost:#{p.port}/keys",
+        cacerts: p.cacerts,
+        permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}]
+      })
+
+    {:ok, cache} = Cache.start_link(clock: fn -> 100 end)
+    assert {:ok, %{etag: nil}} = Cache.refresh(cache, source)
+    assert_receive {:etag_request, false}
+    assert {:ok, %{etag: ~s(""), revision: revision}} = Cache.refresh(cache, source)
+    assert_receive {:etag_request, false}
+    assert {:ok, %{etag: ~s(""), revision: ^revision}} = Cache.refresh(cache, source)
+    assert_receive {:etag_request, true}
   end
 
   test "freshness refetches, rotation removes old keys and tombstones survive refresh/invalidation" do
@@ -547,7 +642,8 @@ defmodule RequestSeal.DiscoveryCacheTest do
             {"ETag", ~s("v1")}
           ])
         else
-          Peer.reply(socket, "", [media, {"Cache-Control", "max-age=60"}, {"ETag", ~s("v1")}], 304)
+          fields = [media, {"Cache-Control", "max-age=60"}, {"ETag", ~s("v1")}]
+          Peer.reply(socket, "", fields, 304)
         end
       end)
 

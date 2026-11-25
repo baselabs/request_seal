@@ -84,7 +84,10 @@ defmodule RequestSeal.DenySetTest do
     assert {:ok, _} = JWS.verify(compact, jws_policy)
 
     jws_handle = %{jws_signing | capabilities: [:verify]}
-    jws_policy = %{jws_policy | key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: jws_handle}} end}
+    jws_policy = %{
+      jws_policy
+      | key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: jws_handle}} end
+    }
 
     assert {:error, %{reason: :invalid_signature}} = JWS.verify(compact, jws_policy)
     assert :ok = Custody.release(jws_signing)

@@ -86,10 +86,11 @@ defmodule RequestSeal.SignatureBaseTest do
 
     suffix = "\n" <> ~s["@signature-params": ("x")]
     prefix = ~s["x": ]
-    value_bytes = 1_048_576 - byte_size(prefix <> suffix)
-    first = List.duplicate(:binary.copy("x", 65_536), 15)
-    last = :binary.copy("x", value_bytes - 15 * 65_538)
-    base = prefix <> Enum.join(first ++ [last], ", ") <> suffix
+    target = 1_048_576 - byte_size(prefix <> suffix)
+    last = target - 15 * 65_536 - 30
+    values = List.duplicate(:binary.copy("x", 65_536), 15) ++ [:binary.copy("x", last)]
+    message = request(%{fields: fields(Enum.map(values, &{"X", &1}))})
+    assert {:ok, base} = SignatureBase.build(message, ~s[("x")])
     assert byte_size(base) == 1_048_576
     assert {:ok, _} = SignatureBase.parse(base)
   end
@@ -105,6 +106,7 @@ defmodule RequestSeal.SignatureBaseTest do
           {~s["@path"], "/a?b"},
           {~s["@query"], "q=x"},
           {~s["@query-param";name="x"], "%2f"},
+          {~s["@query-param";name="x"], String.duplicate("a", 16_381)},
           {~s["@query-param";name="x+"], "y"},
           {~s["@target-uri"], "/relative"},
           {~s["@request-target"], "GET /x"}
@@ -153,6 +155,34 @@ defmodule RequestSeal.SignatureBaseTest do
     assert {:ok, base} = SignatureBase.build(message, params)
     assert {:ok, %{components: [{~s["example-header"], "left\tright"}]}} =
              SignatureBase.parse(base)
+  end
+
+  test "canonical inspection requires builder-compatible field framing and context" do
+    message =
+      request(%{fields: fields([{"Example-Header", "\tone\tinside "}, {"Example-Header", ""}])})
+
+    assert {:ok, base} = SignatureBase.build(message, ~s[("example-header")])
+    assert {:ok, %{components: [{_, "one\tinside, "}]}} = SignatureBase.parse(base)
+
+    for {id, bytes} <- [
+          {~s["example-header"], "\tone"},
+          {~s["example-header"], "one "},
+          {~s["example-header"], "one,\t"},
+          {~s["example-header";sf], "a=01"},
+          {~s["example-header";sf], "1,2"},
+          {~s["example-header";key="not a key"], "?1"},
+          {~s["example-header";key="ok"], "01"},
+          {~s["example-header";key="ok"], "a, b"}
+        ] do
+      base = id <> ": " <> bytes <> "\n" <> ~s["@signature-params": (#{id})]
+      assert {:error, %{reason: :malformed}} = SignatureBase.parse(base)
+    end
+
+    incompatible = ~s["@status": 200] <> "\n" <> ~s["@method": GET]
+    parameters = ~s["@signature-params": ("@status" "@method")]
+
+    assert {:error, %{reason: :malformed}} =
+             SignatureBase.parse(incompatible <> "\n" <> parameters)
   end
 
   test "inspection requires a canonical sequence for byte-wrapped field occurrences" do

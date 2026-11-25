@@ -494,7 +494,9 @@ defmodule RequestSeal.Authentication do
       :ok -> nil
       {:ok, public} -> public
       {:error, %{reason: :key_denied}} -> fail(:key_denied, :key)
-      {:error, %{reason: :key_fingerprint_unknown}} when deny == nil -> fail(:invalid_options, :input)
+      {:error, %{reason: :key_fingerprint_unknown}} when deny == nil ->
+        fail(:invalid_options, :input)
+
       {:error, %{reason: :key_fingerprint_unknown}} -> fail(:key_fingerprint_unknown, :key)
       {:error, %{reason: :invalid_signature}} -> fail(:invalid_signature, :crypto)
       _ -> fail(:verifier_failed, :crypto)

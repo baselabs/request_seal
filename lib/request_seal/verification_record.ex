@@ -218,7 +218,12 @@ defmodule RequestSeal.VerificationRecord do
     unrestricted = %{public | algorithm: nil, use: nil, operations: nil}
 
     with {:ok, der} <- PublicKey.export(unrestricted, :der) do
-      restrictions = [{"alg", public.algorithm}, {"use", public.use}, {"key_ops", public.operations}]
+      restrictions = [
+        {"alg", public.algorithm},
+        {"use", public.use},
+        {"key_ops", public.operations}
+      ]
+
       members = Map.new(Enum.reject(restrictions, fn {_, value} -> is_nil(value) end))
       {:ok, Map.put(members, "spki", b64(der))}
     end

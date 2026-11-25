@@ -2,6 +2,11 @@
 
 ## Unreleased 2.0.0
 
+- Use the same interval-aware key selection for directory proofs, body lookup,
+  and snapshots. Scope cached ETags to their response URI and skip unusable tags.
+- Check canonical combined and structured field values in retained signature
+  bases, including leading whitespace and empty final occurrences.
+- Support framed MAC-only custody for signing-permitted HS256 JWK imports.
 - Retain directory key validity windows across uncertain fetches. Reject
   directory IDs with overlapping eligible keys and use the original fetch
   time when a legacy resolution has no known start.

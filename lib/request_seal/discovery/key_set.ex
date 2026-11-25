@@ -7,7 +7,7 @@ defmodule RequestSeal.Discovery.KeySet do
   cryptographic identity or thumbprint revocation. Key restrictions remain
   enforced by `RequestSeal.PublicKey`. The cache's `:clock` supports
   caller-controlled time for resolution and fetching. `etag` is the source's
-  ETag validator, if it sent one; the cache revalidates conditionally with it.
+  ETag validator, if usable, and `validator_uri` identifies the URI that sent it.
   `freshness_fields` retains HTTP metadata for conditional revalidation.
   `expires_at` bounds snapshot reuse. Each key retains its own validity and
   proof bounds. Multiple candidates for an ID are kept together.
@@ -25,6 +25,7 @@ defmodule RequestSeal.Discovery.KeySet do
     :revision,
     :proof,
     :etag,
+    :validator_uri,
     :freshness_fields
   ]
 
@@ -37,6 +38,7 @@ defmodule RequestSeal.Discovery.KeySet do
           revision: binary(),
           proof: :signed | :unsigned | :not_applicable,
           etag: binary() | nil,
+          validator_uri: binary() | nil,
           freshness_fields: [RequestSeal.FieldOccurrence.t()] | nil
         }
   @doc """
@@ -123,12 +125,7 @@ defmodule RequestSeal.Discovery.KeySet do
              Enum.all?(algorithms, &SignatureFields.algorithm?/1),
          {:ok, {lower, upper}} <- RequestSeal.Freshness.interval(now),
          true <- is_integer(set.expires_at) and upper < set.expires_at,
-         [%Resolution{} = entry] <-
-           Enum.filter(List.wrap(set.keys[keyid]), fn entry ->
-             identity?(set.source, entry, keyid) and possible_time?(entry, lower, upper) and
-               not revoked?(entry, set.source.revoked)
-           end),
-         true <- valid_time?(entry, lower, upper),
+         {:ok, entry} <- select(set.keys[keyid], set.source, keyid, {lower, upper}),
          {:ok, thumbprint} <- PublicKey.thumbprint(entry.key),
          true <- thumbprint == entry.thumbprint,
          algorithm when algorithm != nil <- Enum.find(algorithms, &compatible?(entry, &1)) do
@@ -145,9 +142,24 @@ defmodule RequestSeal.Discovery.KeySet do
   def lookup_at(_, _, _, _), do: :error
 
   @doc false
-  def valid_time?(entry, lower, upper), do: within?(entry, lower, upper)
+  def select(entries, source, keyid, {lower, upper}) do
+    possible =
+      Enum.filter(List.wrap(entries), fn entry ->
+        identity?(source, entry, keyid) and within?(entry, upper, lower) and
+          not revoked?(entry, source.revoked)
+      end)
 
-  defp possible_time?(entry, lower, upper), do: within?(entry, upper, lower)
+    case possible do
+      [] ->
+        :unavailable
+
+      [entry] ->
+        if within?(entry, lower, upper), do: {:ok, entry}, else: :unavailable
+
+      entries ->
+        {:ambiguous, Enum.count(entries, &within?(&1, lower, upper)) > 1}
+    end
+  end
 
   defp within?(entry, start_check, expiry_check) do
     # Earlier snapshots establish validity only from their original observation.

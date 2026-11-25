@@ -31,6 +31,8 @@ starts or expirations fall inside the fetch interval. The lookup clock must
 establish one eligible key for the entire interval. Any competing candidate
 that could be valid during that interval makes the ID ambiguous. For an
 older entry with no known start, use its original fetch time.
+Directory proofs, response-body key selection, and snapshot lookups use
+the same rule to identify an unambiguous key.
 
 Fetch timestamps use the upper endpoint for reporting. Reuse deadlines for
 200 and 304 responses use the earliest possible request and response times
@@ -40,3 +42,8 @@ under [RFC 9111 Sections 3.2 and 4.3.4](https://www.rfc-editor.org/rfc/rfc9111.h
 A 304 without an ETag causes an unconditional fetch. Absolute Expires
 remains an absolute value. Negative cache deadlines use the earliest
 possible time of the failed fetch.
+
+An ETag identifies a representation at the exact URI that supplied it.
+If a response followed a redirect, refresh starts unconditionally at the
+configured URI. Malformed or empty tag fields provide no validator.
+A quoted tag with an empty opaque value is valid.

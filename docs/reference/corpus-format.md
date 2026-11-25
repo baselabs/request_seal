@@ -84,8 +84,9 @@ The capture surface can supply an optional verification resolver
 Signature-base inspection applies the 256-line ceiling and 1,024-byte nonce
 bound alongside context-independent derived component syntax checks. Cases
 with `;bs` cover ordered byte-wrapped occurrences and malformed framing.
-The retained-record rejection signs the malformed base and recomputes the
-digest to isolate the framing check.
+Ordinary field cases cover a final empty occurrence and leading whitespace.
+The retained-record rejections sign malformed bases and recompute their
+digests to isolate the framing checks.
 
 By default `discovery.body` returns the thumbprints valid at the evaluation clock.
 A case with `lookups` imports the body once at the scalar evaluation clock,

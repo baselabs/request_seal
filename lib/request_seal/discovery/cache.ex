@@ -455,15 +455,18 @@ defmodule RequestSeal.Discovery.Cache do
         # A stored validator makes the revalidation conditional: an unchanged
         # source answers 304 and its key set stays put. A CIMD document is not
         # the key set itself — its 304 says nothing about the nested JWKS it
-        # names — so CIMD sources always revalidate unconditionally.
+        # names — so CIMD sources always revalidate unconditionally. Redirected
+        # snapshots also revalidate unconditionally from the configured URI.
         {etag, freshness_fields} =
           case Map.get(state.entries, source) do
             {:positive, set} when source.type != :cimd ->
               now = Support.clock(clock)
 
               fields = Map.get(set, :freshness_fields)
+              uri = URI.to_string(Source.url!(source.location))
 
-              if set.etag != nil and is_list(fields) and keys_alive?(set, now) do
+              if Discovery.etag?(set.etag) and Map.get(set, :validator_uri) == uri and
+                   is_list(fields) and keys_alive?(set, now) do
                 {set.etag, fields}
               else
                 {nil, nil}

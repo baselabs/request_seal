@@ -170,7 +170,7 @@ defmodule RequestSeal.Discovery do
     Support.safe(fn ->
       Source.validate!(source)
       Support.options(opts, [:timeout, :clock])
-      ensure(etag == nil or (is_binary(etag) and byte_size(etag) in 1..512), :invalid_options)
+      ensure(etag == nil or etag?(etag), :invalid_options)
 
       ensure(etag == nil or is_list(stored_fields), :invalid_options)
 
@@ -321,7 +321,18 @@ defmodule RequestSeal.Discovery do
       interval = Support.interval(fn -> now end)
       document = body_document(bytes, source)
       origin = Source.origin(URI.parse(source.location))
-      {:ok, eligible_keys(keys(document, source, origin, source.location, interval), interval)}
+      keys = keys(document, source, origin, source.location, interval)
+
+      eligible =
+        Enum.reduce(keys, %{}, fn {id, entries}, acc ->
+          case KeySet.select(entries, source, id, interval) do
+            {:ok, entry} -> Map.put(acc, id, entry)
+            :unavailable -> acc
+            {:ambiguous, _} -> fail(:invalid_key_set)
+          end
+        end)
+
+      {:ok, eligible}
     end)
   end
 
@@ -345,11 +356,12 @@ defmodule RequestSeal.Discovery do
 
     case resource(uri, source, deadline, 0, etag) do
       {:not_modified, fields} ->
-        case HTTP1.value(fields, "etag") do
+        case response_etag(fields) do
           ^etag ->
             {_, now} = interval = Support.interval(clock)
             updates = freshness_fields(fields)
             updated_names = MapSet.new(updates, &String.downcase(&1.name))
+
             inherited =
               Enum.reject(stored_fields, &MapSet.member?(updated_names, String.downcase(&1.name)))
             merged = inherited ++ updates
@@ -374,6 +386,30 @@ defmodule RequestSeal.Discovery do
         fetched_set(fields, message, location, decoded, source, clock, deadline, requested_at)
     end
   end
+
+  defp response_etag(fields) do
+    tag = HTTP1.value(fields, "etag")
+    if etag?(tag), do: tag
+  end
+
+  @doc false
+  def etag?(tag) when is_binary(tag) and byte_size(tag) <= 512 do
+    case tag do
+      <<"W/\"", rest::binary>> -> etag_bytes?(rest)
+      <<?", rest::binary>> -> etag_bytes?(rest)
+      _ -> false
+    end
+  end
+
+  def etag?(_), do: false
+
+  defp etag_bytes?(<<?">>), do: true
+
+  defp etag_bytes?(<<byte, rest::binary>>)
+       when byte == 0x21 or byte in 0x23..0x7E or byte in 0x80..0xFF,
+       do: etag_bytes?(rest)
+
+  defp etag_bytes?(_), do: false
 
   defp freshness_fields(fields),
     do: Enum.filter(fields, &(String.downcase(&1.name) in ~w(cache-control date expires age)))
@@ -439,11 +475,13 @@ defmodule RequestSeal.Discovery do
     {_, now} = interval
     origin = Source.origin(URI.parse(location))
     keys = keys(document, source, origin, location, interval)
-    eligible = eligible_keys(keys, interval)
+    Enum.each(keys, fn {id, entries} ->
+      ensure(KeySet.select(entries, source, id, interval) != {:ambiguous, true}, :invalid_key_set)
+    end)
 
     {proof, proof_signers, proof_start, proof_expiry} =
       if source.type == :directory,
-        do: proof(key_message, key_fields, eligible, source, interval),
+        do: proof(key_message, key_fields, keys, source, interval),
         else: {:not_applicable, [], 0, now + source.max_ttl}
 
     expires = min(expires, proof_expiry)
@@ -461,8 +499,7 @@ defmodule RequestSeal.Discovery do
 
     Support.remaining(deadline)
 
-    stored_etag = HTTP1.value(fields, "etag")
-    ensure(stored_etag == nil or byte_size(stored_etag) <= 512, :invalid_response)
+    stored_etag = response_etag(fields)
 
     {:ok,
      %KeySet{
@@ -474,7 +511,8 @@ defmodule RequestSeal.Discovery do
        freshness_fields: freshness_fields(fields),
        revision: Base.url_encode64(:crypto.hash(:sha256, key_bytes), padding: false),
        proof: proof,
-       etag: stored_etag
+       etag: stored_etag,
+       validator_uri: if(stored_etag != nil, do: location)
      }}
   end
 
@@ -694,16 +732,6 @@ defmodule RequestSeal.Discovery do
 
   defp keys(_, _, _, _, _), do: fail(:invalid_key_set)
 
-  defp eligible_keys(keys, {lower, upper}) do
-    eligible =
-      KeySet.map_keys(keys, fn entry ->
-        if KeySet.valid_time?(entry, lower, upper), do: entry
-      end)
-
-    ensure(Enum.all?(eligible, fn {_, entry} -> is_struct(entry, Resolution) end), :invalid_key_set)
-    eligible
-  end
-
   # A key whose alg names an algorithm this verifier does not use — an
   # encryption key, or a signing name outside both registries — cannot satisfy
   # any signature policy: skip it and keep the rest of the set.
@@ -752,11 +780,12 @@ defmodule RequestSeal.Discovery do
       selected =
         Enum.filter(dictionary.value, fn {label, value} ->
           params = SignatureFields.parameters(value)
-          entry = Map.get(keys, params["keyid"])
+          id = params["keyid"]
+          selection = KeySet.select(keys[id], source, id, interval)
 
           label == "directory" or
             (params["tag"] == "http-message-signatures-directory" and
-               entry != nil and entry.not_before <= lower)
+               selection != :unavailable)
         end)
 
       ensure(selected != [], :directory_signature_invalid)
@@ -787,8 +816,10 @@ defmodule RequestSeal.Discovery do
             :directory_signature_invalid
           )
 
-          entry = Map.get(keys, params["keyid"])
-          ensure(entry != nil and entry.not_before <= lower, :directory_signature_invalid)
+          id = params["keyid"]
+          selection = KeySet.select(keys[id], source, id, interval)
+          ensure(match?({:ok, _}, selection), :directory_signature_invalid)
+          {:ok, entry} = selection
           # Verification-time expiry is checked separately from cache freshness;
           # max-age=0 still permits this fetch to validate its possession proof.
           candidates =
@@ -811,7 +842,12 @@ defmodule RequestSeal.Discovery do
                   algorithms: [algorithm],
                   components: "(\"@authority\";req \"content-digest\")",
                   key_resolver: resolver,
-                  freshness: %{clock: fn -> interval end, max_age: nil, skew: 0, require_expires: true},
+                  freshness: %{
+                    clock: fn -> interval end,
+                    max_age: nil,
+                    skew: 0,
+                    require_expires: true
+                  },
                   content: %{
                     kind: :content,
                     algorithms: ["sha-256", "sha-512"],

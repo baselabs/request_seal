@@ -254,7 +254,8 @@ defmodule RequestSeal.DiscoveryFetchTest do
           {start + 1, start, :unknown_key},
           {start, start + 1, :directory_signature_invalid}
         ] do
-      body = Peer.directory([Peer.public_jwk(), Map.merge(jwk, %{"nbf" => nbf, "exp" => start + 20})])
+      leaf = Map.merge(jwk, %{"nbf" => nbf, "exp" => start + 20})
+      body = Peer.directory([Peer.public_jwk(), leaf])
 
       p =
         peer(fn socket, req ->
@@ -312,6 +313,46 @@ defmodule RequestSeal.DiscoveryFetchTest do
       assert :error = KeySet.lookup_at(legacy, kid, ["ed25519"], {now - 1, now + 1})
       assert {:ok, _} = KeySet.lookup_at(legacy, kid, ["ed25519"], now)
       assert {:ok, _} = KeySet.lookup_at(legacy, kid, ["ed25519"], {now, now + 1})
+    end
+  end
+
+  test "proofs and body lookup refuse a partially overlapping signer in either order" do
+    now = System.system_time(:second)
+    interval = {now, now + 10}
+    signer = Peer.public_jwk()
+    {:ok, signer_key} = PublicKey.import(signer, :jwk)
+    {:ok, signer_id} = PublicKey.thumbprint(signer_key)
+    {:ok, leaf} = PublicKey.import(File.read!("test/fixtures/crypto/rsa_public.pem"), :pem)
+    {:ok, leaf_jwk} = PublicKey.export(leaf, :jwk)
+    {:ok, leaf_id} = PublicKey.thumbprint(leaf)
+
+    for offset <- [5, 11], reversed? <- [false, true] do
+      future = Map.put(signer, "nbf", now + offset)
+      signers = if reversed?, do: [future, signer], else: [signer, future]
+      body = Peer.directory([leaf_jwk | signers])
+
+      p =
+        peer(fn socket, request ->
+          Peer.signed(socket, request, body, nil, created: now, expires: now + 60)
+        end)
+
+      s = source(p)
+      unsigned = %{s | require_signed_directory: false}
+
+      if offset == 5 do
+        assert {:error, %{reason: :directory_signature_invalid}} =
+                 Discovery.fetch(s, clock: fn -> interval end)
+
+        assert {:error, %{reason: :invalid_key_set}} =
+                 Discovery.parse_body(body, unsigned, interval)
+      else
+        assert {:ok, set} = Discovery.fetch(s, clock: fn -> interval end)
+        assert {:ok, %{proof_signers: [^signer_id]}} =
+                 KeySet.lookup_at(set, leaf_id, ["rsa-pss-sha512"], interval)
+
+        assert {:ok, %{^signer_id => %{not_before: 0}}} =
+                 Discovery.parse_body(body, unsigned, interval)
+      end
     end
   end
 

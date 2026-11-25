@@ -68,6 +68,17 @@ defmodule RequestSeal.SignatureFields do
   def valid_inner?(_), do: false
 
   defp component?(%Value{type: :item, value: {:string, name}, parameters: params}) do
+    component_name?(name) and component_parameters?(name, params) and
+      not incompatible_parameters?(params)
+  end
+
+  defp component?(_), do: false
+
+  def component_name?(name), do: name in @derived or field_name?(name)
+
+  def request_component?(name), do: name in @derived and name != "@status"
+
+  def component_parameters?(name, params) do
     allowed =
       case name do
         "@status" -> []
@@ -76,17 +87,17 @@ defmodule RequestSeal.SignatureFields do
         _ -> ["sf", "key", "bs", "tr", "req"]
       end
 
-    (name in @derived or field_name?(name)) and
-      Enum.all?(params, fn
-        {key, {:boolean, true}} -> key in allowed and key in ["sf", "bs", "tr", "req"]
-        {key, {:string, _}} -> key in allowed and key in ["key", "name"]
-        _ -> false
-      end) and (name != "@query-param" or List.keymember?(params, "name", 0)) and
-      not (List.keymember?(params, "bs", 0) and
-             (List.keymember?(params, "sf", 0) or List.keymember?(params, "key", 0)))
+    Enum.all?(params, fn
+      {key, {:boolean, true}} -> key in allowed and key in ["sf", "bs", "tr", "req"]
+      {key, {:string, _}} -> key in allowed and key in ["key", "name"]
+      _ -> false
+    end) and (name != "@query-param" or List.keymember?(params, "name", 0))
   end
 
-  defp component?(_), do: false
+  def incompatible_parameters?(params) do
+    List.keymember?(params, "bs", 0) and
+      (List.keymember?(params, "sf", 0) or List.keymember?(params, "key", 0))
+  end
 
   def identities(items),
     do:
