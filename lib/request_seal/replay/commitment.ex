@@ -132,6 +132,12 @@ defmodule RequestSeal.Replay.Commitment do
        when is_binary(identity) and byte_size(identity) in 1..256,
        do: {:ok, IO.iodata_to_binary(["key", frame(["symmetric", identity])])}
 
+  defp scope_bytes(:namespace), do: {:ok, "namespace"}
+
+  defp scope_bytes({:principals, values}) do
+    {:ok, IO.iodata_to_binary(["principals", frame(values)])}
+  end
+
   defp scope_bytes(_), do: {:error, :ambiguous_replay_scope}
 
   defp identity_bytes({:nonce, nonce}) when is_binary(nonce) and byte_size(nonce) in 1..1024,

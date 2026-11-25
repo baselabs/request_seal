@@ -58,6 +58,7 @@ SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/w
         "0040-signed-path-tenant",
         "0041-custody-purpose-and-admission",
         "0042-stable-operation-identity",
+        "0043-quorum-replay-commitment",
     )
 }
 GIT_INSTALL = re.compile(

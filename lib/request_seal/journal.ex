@@ -43,12 +43,12 @@ defmodule RequestSeal.Journal do
   def start_link(_), do: {:error, :invalid_options}
 
   @doc """
-  Capture a validated unsigned request with a retained body of at most 1 MiB,
+  Capture a validated unsigned origin-form request with a retained body of at most 1 MiB,
   one valid Idempotency-Key, a matching header Content-Digest, and no trailers
   or credential fields.
   """
   @spec entry(binary(), Message.t()) :: {:ok, t()} | error()
-  def entry(namespace, %Message{kind: :request} = message) do
+  def entry(namespace, %Message{kind: :request, target_form: :origin} = message) do
     with true <- Claim.bounded?(namespace) and Message.validate(message) == :ok,
          true <- message.trailers in [[], :unavailable] and message.body.state == :retained,
          true <- byte_size(message.body.bytes) <= 1_048_576,
@@ -123,7 +123,19 @@ defmodule RequestSeal.Journal do
          {:ok, message} <-
            Message.request(recorded.method, recorded.target, recorded.fields, recorded.body),
          {:ok, ^recorded} <- entry(recorded.namespace, message) do
-      RequestSeal.sign(message, normalized, signer, opts)
+      case RequestSeal.sign(message, normalized, signer, opts) do
+        {:ok, signed} ->
+          fields =
+            Enum.reject(
+              signed.fields,
+              &(String.downcase(&1.name) in ["signature", "signature-input"])
+            )
+
+          if fields == message.fields, do: {:ok, signed}, else: {:error, :invalid_intent}
+
+        {:error, _} = error ->
+          error
+      end
     else
       {:error, :invalid_options} = error -> error
       _ -> {:error, :invalid_intent}

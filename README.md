@@ -576,6 +576,7 @@ and GitHub release.
 - [Sign outbound requests in a credential proxy](docs/guides/credential-proxy.md)
 - [Replay protection](docs/guides/replay-protection.md) with credential-scoped nonce and operation commitments
 - [Stored-response recovery and request journaling](docs/guides/idempotency.md)
+- [Signature quorum verification](docs/guides/quorum.md) with one operation replay claim
 - [Key discovery](docs/guides/key-discovery.md)
 - [JOSE: JWS and JWE](docs/guides/jose.md)
 - [Key custody](docs/guides/key-custody.md)

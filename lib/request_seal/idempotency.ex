@@ -302,11 +302,11 @@ defmodule RequestSeal.Idempotency do
 
   defp eligible(_, _), do: error(:invalid_response)
 
+  @doc false
+  def response?(response), do: match?({:ok, ^response}, eligible(response, :all))
+
   defp validate_stored(response) do
-    case eligible(response, :all) do
-      {:ok, ^response} -> {:stored, response}
-      _ -> error(:invalid_response)
-    end
+    if response?(response), do: {:stored, response}, else: error(:invalid_response)
   end
 
   defp header?({name, value}) when is_binary(value) and byte_size(value) <= 4096,
@@ -316,10 +316,11 @@ defmodule RequestSeal.Idempotency do
 
   defp header_name?(name), do: RequestSeal.SignatureFields.field_name?(name)
 
-  defp valid_reservation?(%Reservation{record: record, token: <<_::128>>} = reservation),
+  @doc false
+  def valid_reservation?(%Reservation{record: record, token: <<_::128>>} = reservation),
     do: map_size(reservation) == 3 and Record.valid?(record)
 
-  defp valid_reservation?(_), do: false
+  def valid_reservation?(_), do: false
 
   defp valid_options?(opts, keys) do
     Keyword.keyword?(opts) and length(opts) <= length(keys) and

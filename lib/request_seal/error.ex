@@ -23,7 +23,7 @@ defmodule RequestSeal.Error do
   Closed reasons by layer:
 
   * `:input`: `:invalid_message` (message validation), `:invalid_policy` (missing
-    choices or invalid policy), `:invalid_options` (invalid, duplicate, unknown,
+    choices or invalid policy), `:invalid_quorum` (invalid composite policy), `:invalid_options` (invalid, duplicate, unknown,
     or missing options/specification), `:algorithm_mismatch` (signing `alg` differs
     from the explicit algorithm or accompanies JWS), `:limit` (wire/member/component
     bounds, including a decoded `Signature` member or nonce exceeding 1,024 bytes).
@@ -83,6 +83,7 @@ defmodule RequestSeal.Error do
     `:exit` or `:throw`). Report the correlation token.
   * `:negotiation`: `:invalid_accept_signature` (malformed request or unsupported
     parameter), `:inapplicable_component` (wrong target context),
+    `:negotiation_unfulfilled` (the quorum failed a supplied signature request),
     `:negotiation_unfulfillable` (unavailable component, incompatible chooser,
     unfulfillable parameter, callback fault, or signing failure).
   * `:freshness`: `:invalid_clock` (fault or invalid clock second or interval),
@@ -95,7 +96,13 @@ defmodule RequestSeal.Error do
     callback faults, returns :error, malformed data, or a nil actor),
     `:tenant_unbound` (tenant callback faults, returns :error, or malformed data),
     or `:scope_unbound` (the connection has no accepted signed-path scope).
-  * `:replay`: `:ambiguous_replay_scope` (missing or invalid trusted scope),
+  * `:quorum`: `:deadline` (cooperative deadline elapsed), `:quorum_not_met`
+    (required slots or counting threshold unsatisfied), `:binding_unsatisfied`
+    (required slots can be filled but bindings cannot), `:nonqualifying_signature`
+    (selected label fails all eligible slots), `:unexpected_signature` (unselected label),
+    and `:ambiguous_key_identity` (required slot has only unknown key identities).
+  * `:replay`: `:replay_identity_mismatch` (qualifying candidates lack one shared identity),
+    `:ambiguous_replay_scope` (missing or invalid trusted scope),
     `:missing_replay_identifier` (absent or unusable authenticated nonce or operation),
     `:retention_exceeded` (derived claim retention end above 253,402,300,799;
     rejected before commitment or storage),
@@ -110,10 +117,13 @@ defmodule RequestSeal.Error do
           | :agent_unresolved
           | :algorithm_mismatch
           | :algorithm_not_permitted
+          | :ambiguous_key_identity
           | :ambiguous_replay_scope
+          | :binding_unsatisfied
           | :body_unavailable
           | :commitment_failed
           | :created_in_future
+          | :deadline
           | :digest_mismatch
           | :digest_not_covered
           | :digest_unsupported
@@ -130,6 +140,7 @@ defmodule RequestSeal.Error do
           | :invalid_options
           | :invalid_policy
           | :invalid_profile
+          | :invalid_quorum
           | :invalid_request
           | :invalid_signature
           | :invalid_signature_agent
@@ -149,9 +160,13 @@ defmodule RequestSeal.Error do
           | :missing_required_component
           | :missing_signature
           | :missing_signature_input
+          | :negotiation_unfulfilled
           | :negotiation_unfulfillable
           | :nested_coverage_incomplete
           | :no_web_bot_auth_signature
+          | :nonqualifying_signature
+          | :quorum_not_met
+          | :replay_identity_mismatch
           | :replayed
           | :retention_exceeded
           | :signature_base_failed
@@ -187,6 +202,7 @@ defmodule RequestSeal.Error do
             | :freshness
             | :binding
             | :replay
+            | :quorum
             | :negotiation
             | :internal,
           retryable: boolean(),

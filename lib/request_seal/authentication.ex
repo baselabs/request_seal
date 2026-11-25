@@ -94,7 +94,11 @@ defmodule RequestSeal.Authentication do
 
         if is_struct(key, PublicKey), do: check_public(deny, key)
 
-        screening = {deny, capture?, Map.get(policy, :require_issued_for)}
+        key_evidence? =
+          algorithm not in ["hmac-sha256", {:jws, "HS256"}] and
+            (match?(%{scope: :key}, policy.replay) or Map.has_key?(opts, :quorum_replay))
+
+        screening = {deny, capture? or key_evidence?, Map.get(policy, :require_issued_for)}
         {:ok, {algorithm, key, scope, screening, params, freshness}}
       end)
 
@@ -126,7 +130,7 @@ defmodule RequestSeal.Authentication do
                     algorithm,
                     freshness,
                     Map.get(opts, :profile, %{name: :rfc9421}),
-                    {scope, key, components}
+                    {scope, public || key, components}
                   )
 
                 covered =
@@ -135,34 +139,24 @@ defmodule RequestSeal.Authentication do
                     :error -> fail(:invalid_signature_input, :fields)
                   end
 
-                signature_facts = %{
-                  algorithm: algorithm,
-                  covered: covered,
-                  parameters: params,
-                  keyid: params["keyid"],
-                  crypto: :valid
+                verification = %Verification{
+                  label: label,
+                  profile: Map.get(opts, :profile, %{name: :rfc9421}),
+                  signature: signature_facts,
+                  content: content,
+                  freshness: freshness,
+                  replay: replay
                 }
 
-                signature_facts =
-                  if Map.get(opts, :capture, false) do
-                    Map.put(signature_facts, :record_material, %{
-                      key: public,
-                      base: bytes,
-                      signature: signature_bytes
-                    })
-                  else
-                    signature_facts
-                  end
+                case Map.fetch(opts, :quorum_replay) do
+                  {:ok, {quorum_scope, identifier}} ->
+                    identity = Commitment.select(identifier, params, components)
+                    digest = Commitment.derive("rfc9421/quorum", quorum_scope, identity)
+                    {:ok, {verification, Commitment.key_identity(public || key), digest}}
 
-                {:ok,
-                 %Verification{
-                   label: label,
-                   profile: Map.get(opts, :profile, %{name: :rfc9421}),
-                   signature: signature_facts,
-                   content: content,
-                   freshness: freshness,
-                   replay: replay
-                 }}
+                  :error ->
+                    {:ok, verification}
+                end
               end)
 
             error ->

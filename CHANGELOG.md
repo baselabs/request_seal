@@ -2,6 +2,9 @@
 
 ## Unreleased 2.0.0
 
+- Verify configurable signature quorums and atomically claim one replay key
+  derived independently of labels, signatures, and optional-signer selection.
+
 - Add library-built nonce and operation replay commitments, verified idempotency
   with stored responses, and a request journal for freshly signed retries.
 

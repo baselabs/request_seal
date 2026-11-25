@@ -2,6 +2,7 @@
   "RequestSeal": [
     "function sign/4",
     "function verify/3",
+    "function verify_quorum/3",
     "type parameterized_signing_spec/0",
     "type signature_spec/0",
     "type signing_spec/0"
@@ -210,6 +211,36 @@
     "function prefixed/1",
     "function read_prefixed/1",
     "function read_prefixed/2"
+
+  ],
+  "RequestSeal.Idempotency": [
+    "callback reserve/3",
+    "callback store/4",
+    "callback sweep/3",
+    "function fingerprint/4",
+    "function key/1",
+    "function prepare/4",
+    "function reserve/3",
+    "function store/4",
+    "function sweep/3",
+    "type response/0",
+    "type store/0",
+    "type store_fault/0"
+  ],
+  "RequestSeal.Idempotency.ETS": [
+    "function child_spec/1",
+    "function start_link/1",
+    "function store/1"
+  ],
+  "RequestSeal.Idempotency.Error": [
+    "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.Idempotency.Record": [
+    "type t/0"
+  ],
+  "RequestSeal.Idempotency.Reservation": [
+    "type t/0"
   ],
   "RequestSeal.JOSE": [
     "function decode_object/2",
@@ -245,6 +276,18 @@
   ],
   "RequestSeal.JOSE.Nested": [
     "function verify/4"
+  ],
+  "RequestSeal.Journal": [
+    "function child_spec/1",
+    "function entry/2",
+    "function forget/3",
+    "function load/3",
+    "function record/3",
+    "function reissue/4",
+    "function reissue/6",
+    "function start_link/1",
+    "type error/0",
+    "type t/0"
   ],
   "RequestSeal.KeyHandle": [
     "type family/0",
@@ -310,6 +353,13 @@
     "function thumbprint/1",
     "type t/0"
   ],
+  "RequestSeal.Quorum": [
+    "function new/1",
+    "type t/0"
+  ],
+  "RequestSeal.Quorum.Verification": [
+    "type t/0"
+  ],
   "RequestSeal.Replay": [
     "callback claim/3",
     "callback sweep/3",
@@ -324,6 +374,11 @@
   "RequestSeal.Replay.Claim": [
     "function valid?/1",
     "type t/0"
+  ],
+  "RequestSeal.Replay.Commitment": [
+    "function key/2",
+    "type identity/0",
+    "type scope/0"
   ],
   "RequestSeal.Replay.ETS": [
     "function child_spec/1",

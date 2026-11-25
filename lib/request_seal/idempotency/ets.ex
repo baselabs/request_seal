@@ -8,6 +8,8 @@ defmodule RequestSeal.Idempotency.ETS do
   use GenServer
   @behaviour RequestSeal.Idempotency
 
+  alias RequestSeal.Idempotency
+
   alias RequestSeal.Custody.Context
   alias RequestSeal.Idempotency.{Record, Reservation}
 
@@ -23,16 +25,24 @@ defmodule RequestSeal.Idempotency.ETS do
   def store(pid) when is_pid(pid), do: {__MODULE__, pid}
 
   @impl RequestSeal.Idempotency
-  def reserve(pid, record, context),
-    do: call(pid, {:reserve, record}, context)
+  def reserve(pid, record, context) do
+    if Record.valid?(record),
+      do: call(pid, {:reserve, record}, context),
+      else: {:error, :failure}
+  end
 
   @impl RequestSeal.Idempotency
-  def store(pid, reservation, response, context),
-    do: call(pid, {:store, reservation, response}, context)
+  def store(pid, reservation, response, context) do
+    if Idempotency.valid_reservation?(reservation) and Idempotency.response?(response),
+      do: call(pid, {:store, reservation, response}, context),
+      else: {:error, :failure}
+  end
 
   @impl RequestSeal.Idempotency
-  def sweep(pid, now, context),
+  def sweep(pid, now, context) when is_integer(now) and now in 0..253_402_300_799,
     do: call(pid, {:sweep, now}, context)
+
+  def sweep(_, _, _), do: {:error, :failure}
 
   @impl GenServer
   def init(max), do: {:ok, {:ets.new(__MODULE__, [:set, :private]), max}}
@@ -103,7 +113,8 @@ defmodule RequestSeal.Idempotency.ETS do
     {:reserved, token}
   end
 
-  defp call(pid, request, %Context{} = context) when is_pid(pid) do
+  defp call(pid, request, %Context{deadline: deadline, owner: owner} = context)
+       when is_pid(pid) and is_pid(owner) and node(owner) == node() and is_integer(deadline) do
     case Context.remaining(context) do
       0 -> {:error, :timeout}
       remaining -> GenServer.call(pid, {request, context}, remaining)

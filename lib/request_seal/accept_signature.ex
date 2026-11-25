@@ -405,4 +405,7 @@ defmodule RequestSeal.AcceptSignature do
   catch
     {:negotiation_error, error} -> {:error, error}
   end
+
+  @doc false
+  def validate_requests(requests, target), do: protect(fn -> validate!(requests, target) end)
 end

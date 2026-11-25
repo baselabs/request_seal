@@ -469,7 +469,8 @@ defmodule RequestSeal.Conformance do
           RequestSeal.Discovery.Error => "discovery",
           RequestSeal.JOSE.Error => "jose",
           RequestSeal.Replay.Error => "replay",
-          RequestSeal.Adapter.Error => "adapter"
+          RequestSeal.Adapter.Error => "adapter",
+          RequestSeal.Idempotency.Error => "idempotency"
         },
         struct
       )

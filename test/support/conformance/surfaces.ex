@@ -58,6 +58,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     "plug.signed_path/v1" => :signed_path,
     "replay.commitment/v1" => :replay_commitment,
     "idempotency.fingerprint/v1" => :idempotency_fingerprint,
+    "quorum.verify/v1" => :quorum_verify,
     "profile.name" => :profile_name
   }
   def run(root, case_),
@@ -1569,6 +1570,8 @@ defmodule RequestSeal.Conformance.Surfaces do
 
     {:ok, %{"found" => found}}
   end
+
+  def quorum_verify(root, case_), do: RequestSeal.Conformance.Quorum.verify(root, case_)
 
   def replay_commitment(_root, %{"inputs" => input}) do
     scope =

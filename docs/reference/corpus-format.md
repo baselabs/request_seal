@@ -109,7 +109,7 @@ encoded bytes or canonical results exactly. Verify-only cases validate published
 signatures or decrypt existing ciphertext; randomized output is never a golden
 signing expectation. Rejections compare `expected.rule_id`. Core and JOSE rules
 use `<kind>/<layer>.<reason>`; other errors use `<kind>/<reason>`. One consumer
-function maps each of the eleven error structs to its kind.
+function maps each supported error struct to its kind.
 
 Required replay on the `verify` surface uses a descriptor with `identifier: "nonce"`,
 `store: "ets"`, `commitment: "identifier"`, namespace bytes, and a tagged timeout.
@@ -377,6 +377,28 @@ or `operation` followed by the framed nonce or framed `identifier: value` lines.
 `content_digest`, and `body`. SHA-256 covers ASCII
 `request-seal idempotency v1` followed by those four length-prefixed entries.
 The output is `fingerprint` as a byte tag.
+
+### Quorum verdicts
+
+`quorum.verify/v1` takes an RFC 9421 `message` with captured Signature and
+Signature-Input fields, `components` (the mandatory Inner List), and `slots`
+with `id`, `keyid`, and `required`. The `keys` object references the public RFC
+9421 HMAC fixture as `published` or derives a test-only key by SHA-256 of the
+fixture bytes and the UTF-8 key ID as `derived`. These keys all have explicit
+opaque equivalence identities equal to their fixture ID. The policies use
+key counting with `mode` set to `all` or `{"threshold": tagged_integer}`.
+Each slot verifies finite freshness with a 120-second maximum age, zero
+skew and required expiration. The replay namespace is `corpus`, the scope
+is `namespace`, and `identifier` is `shared_nonce` or
+`{"operation": [serialized_ids]}`.
+
+Successful cases require tagged `count` and `retain_until`, sorted filled slot
+IDs, and a byte-tagged `commitment` from the actual claim. They require exactly
+one stored row. Use the replay v1 construction with profile `rfc9421/quorum`
+and scope bytes `namespace` for these cases. For a quorum scoped by trusted
+principals, scope bytes are ASCII `principals` followed by the individually
+framed, deduplicated principal bytes sorted lexicographically. A rejected
+case requires the specified rule ID and no stored claim.
 
 ## Publication and vendoring
 

@@ -146,6 +146,14 @@ defmodule RequestSeal.OperationIdentityTest do
     assert {:error, :invalid_intent} =
              Journal.reissue(%{entry | body: "different"}, spec("primary"), ctx.signer, [])
 
+    adds_length = %{
+      spec("primary")
+      | components:
+          ~s[("@method" "@target-uri" "content-digest" "idempotency-key" "content-length")]
+    }
+
+    assert {:error, :invalid_intent} = Journal.reissue(entry, adds_length, ctx.signer, [])
+
     {:ok, field} =
       RequestSeal.FieldOccurrence.new(%{
         name: "Authorization",
@@ -163,7 +171,9 @@ defmodule RequestSeal.OperationIdentityTest do
         "POST",
         "https://api.example.test/orders",
         [{"idempotency-key", ~s["create-1"]}],
-        body, digest: ["sha-256"])
+        body,
+        digest: ["sha-256"]
+      )
 
     request
   end

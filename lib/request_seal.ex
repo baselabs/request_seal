@@ -8,10 +8,10 @@ defmodule RequestSeal do
   with six explicit choices; no implicit label, algorithm, profile or trust
   association is selected. Success always reports principal `:unattributed`,
   replay `:not_required` or a `RequestSeal.Replay.Receipt`, and authorization
-  `:not_evaluated`. Required replay invokes the caller commitment only after
-  validation, then makes one atomic claim through the caller-owned store.
-  Each verification covers the one signature label you name; a message with
-  several signatures is verified once per label your application accepts.
+  `:not_evaluated`. Required replay derives a library commitment or invokes
+  the configured callback after validation, then makes one atomic claim.
+  Use `verify_quorum/3` for an explicit multi-signature verdict with one
+  assignment-independent replay claim.
 
   `RequestSeal.Custody` supplies algorithm-bound `RequestSeal.KeyHandle` capabilities,
   local OTP private-key import, symmetric-secret verification, and an optional
@@ -153,7 +153,7 @@ defmodule RequestSeal do
       * `:content` - `:digest_not_covered`, `:digest_unsupported`,
         `:digest_mismatch`, `:body_unavailable`.
       * `:replay` - `:missing_replay_identifier`, `:retention_exceeded`,
-        `:commitment_failed`, `:replayed`, `:store_unavailable`,
+        `:ambiguous_replay_scope`, `:commitment_failed`, `:replayed`, `:store_unavailable`,
         `:store_timeout`, `:store_failed`.
 
       Meanings: `RequestSeal.Error`.
@@ -207,6 +207,35 @@ defmodule RequestSeal do
 
     RequestSeal.Telemetry.emit(
       [:request_seal, :verify, :stop],
+      System.monotonic_time() - start,
+      RequestSeal.Telemetry.meta(result)
+    )
+
+    result
+  end
+
+  @doc """
+  Verify a configured RFC 9421 quorum, then atomically claim one replay key.
+
+  Each candidate passes its slot policy independently. The verdict counts
+  distinct configured units and enforces required slots and bindings. Every
+  verified candidate must agree on the composite replay identity. The claim
+  excludes signature labels, key IDs, signature bytes and the selected set.
+
+  Pass optional `:accept_signature` requests from `RequestSeal.AcceptSignature`
+  to check their label, coverage and signed parameters before claiming.
+  The optional `:deadline` is an absolute monotonic millisecond time. Candidate
+  verification and assignment check it cooperatively. Assignment has a
+  16,384-unit work cap. Results establish no application authorization.
+  """
+  @spec verify_quorum(Message.t(), RequestSeal.Quorum.t(), keyword()) ::
+          {:ok, RequestSeal.Quorum.Verification.t()} | {:error, Error.t()}
+  def verify_quorum(message, quorum, opts) do
+    start = System.monotonic_time()
+    result = RequestSeal.Quorum.Evaluation.verify(message, quorum, opts)
+
+    RequestSeal.Telemetry.emit(
+      [:request_seal, :verify_quorum, :stop],
       System.monotonic_time() - start,
       RequestSeal.Telemetry.meta(result)
     )

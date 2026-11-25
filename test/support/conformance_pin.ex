@@ -1,4 +1,4 @@
 defmodule RequestSeal.Conformance.Pin do
   @moduledoc false
-  def sha256, do: "1270a682d82789b99c63015da484de285b8a9b78c4d1d4a4389ffb1af6da3dd2"
+  def sha256, do: "df6ce804a401c9e368bc9cfdf034ded809585a05022a61b0c47d91da25245c52"
 end

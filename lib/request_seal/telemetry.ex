@@ -19,6 +19,7 @@ defmodule RequestSeal.Telemetry do
   | Event | Emitted by | Metadata |
   | --- | --- | --- |
   | `[:request_seal, :verify, :stop]` | `RequestSeal.verify/3` | `:outcome` (`:ok` or `:error`), `:reason` (atom or nil), `:layer` (atom or nil), `:detail` (atom or nil) |
+  | `[:request_seal, :verify_quorum, :stop]` | `RequestSeal.verify_quorum/3` | as above |
   | `[:request_seal, :web_bot_auth, :verify, :stop]` | `RequestSeal.WebBotAuth.verify/3` | as above |
   | `[:request_seal, :replay, :claim]` | the required-replay commit shared by every profile | `:outcome` (`:claimed`, `:already_claimed`, or `:error`), `:reason` (atom or nil) |
   | `[:request_seal, :replay, :pair]` | `RequestSeal.Replay.Pair` | `:operation` (`:claim` or `:sweep`), `:position` (`:destination` or `:retiring`), `:outcome` (`:claimed`, `:already_claimed`, `:ok`, or `:error`), `:reason` (bounded adapter reason or nil) |
@@ -70,6 +71,7 @@ defmodule RequestSeal.Telemetry do
 
   @events [
     [:request_seal, :verify, :stop],
+    [:request_seal, :verify_quorum, :stop],
     [:request_seal, :web_bot_auth, :verify, :stop],
     [:request_seal, :replay, :claim],
     [:request_seal, :replay, :pair],

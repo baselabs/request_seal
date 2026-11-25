@@ -33,6 +33,11 @@ relevant source when changing its surface. No linked example alone proves peer a
 
 ## Source-bound profile selection
 
+[RFC 9421 Sections 2.5 and 7.2.5](https://www.rfc-editor.org/rfc/rfc9421.html#section-7.2.5)
+define signature bases and label handling. RequestSeal quorum rules are local
+policy over independently verified signatures, with one assignment-independent
+replay claim. See the [quorum guide](../guides/quorum.md).
+
 Generic RFC 9421 requires caller-supplied coverage, algorithm, freshness, replay,
 and trust policy. Web Bot Auth protocol-00 selects its exact dictionary-member
 `Signature-Agent` representation, labels, tags, discovery types, and nested
