@@ -33,18 +33,25 @@ target and digest bytes. Wire status mapping and key expiration policy remain
 application choices. For example, applications can use 409 for in-progress and
 422 for a fingerprint conflict, as the draft describes.
 
-The store reads its trusted clock at the atomic transition. Admission requires
+The local store samples its trusted clock under the operation deadline before
+the serialized transition. A stalled sample is canceled so the owner can
+process later requests. Admission requires
 a live prepared lease and retention window, and renewal fences completion with
 a fresh token. Completion requires the current token and a live stored lease
 and retention window. A completed fingerprint match returns the recorded
-response and a mismatch fails. Adapter output is normalized to closed public
+response and a mismatch fails. Authentication-Info and
+Proxy-Authentication-Info belong to the corresponding HTTP authentication
+exchange under [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#section-11.6.3).
+Storage strips both, and recovery refuses adapter data that contains either.
+Adapter output is normalized to closed public
 results before it reaches the caller or telemetry.
 
 The client journal rebuilds each captured HTTP(S) intent before recording it,
 checking that method, target and retained content survive reconstruction.
 The unsigned fields must leave room in the HTTP message field budget for the
 largest supported Signature-Input and Signature occurrences. On reissue it
-generates a fresh nonce and uses caller-owned custody. The in-process journal
+validates the complete snapshot before signing, generates a fresh nonce, and
+uses caller-owned custody. The in-process journal
 and idempotency store validate their call arguments before accessing stored
 records, and reject unsupported calls without terminating the state owner.
 

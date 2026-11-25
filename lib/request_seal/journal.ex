@@ -122,11 +122,24 @@ defmodule RequestSeal.Journal do
   """
   @spec reissue(t(), map(), KeyHandle.t(), keyword()) ::
           {:ok, Message.t()} | error() | {:error, RequestSeal.Error.t()}
-  def reissue(%__MODULE__{} = recorded, spec, signer, opts) do
+  def reissue(
+        %__MODULE__{
+          namespace: namespace,
+          key: _,
+          method: method,
+          target: target,
+          fields: fields,
+          body: body,
+          digest: _
+        } = recorded,
+        spec,
+        signer,
+        opts
+      )
+      when map_size(recorded) == 8 do
     with {:ok, normalized} <- signing_spec(spec, opts),
-         {:ok, message} <-
-           rebuild(recorded.method, recorded.target, recorded.fields, recorded.body),
-         {:ok, ^recorded} <- entry(recorded.namespace, message) do
+         {:ok, message} <- rebuild(method, target, fields, body),
+         {:ok, ^recorded} <- entry(namespace, message) do
       case RequestSeal.sign(message, normalized, signer, opts) do
         {:ok, signed} ->
           fields =

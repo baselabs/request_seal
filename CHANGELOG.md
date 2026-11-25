@@ -2,6 +2,9 @@
 
 ## Unreleased 2.0.0
 
+- Bound idempotency clock callbacks, exclude exchange-specific HTTP
+  authentication fields from response recovery, and reject partial journal
+  snapshots before signing.
 - Evaluate quorum freshness at one trusted instant, reject policies whose
   mandatory verification exceeds the pair budget, and validate deadline
   intervals before starting workers.

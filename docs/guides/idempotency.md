@@ -94,7 +94,8 @@ retained, including after completion.
 A timeout may have committed a store operation. Reconcile the effect and
 response before repeating the effect. Use consistent clocks and retention
 settings across nodes. ETS defaults to the system Unix clock and accepts an
-explicit `:clock`. Pass a cutoff at or before the store's current time to
+explicit `:clock`. Each clock read runs under the operation deadline, so a
+stalled callback times out before any transition. Pass a cutoff at or before the store's current time to
 `Idempotency.sweep/3`.
 
 Reserve after authentication and authorization, then enforce the same unique
@@ -105,7 +106,9 @@ the same atomic reserve, token-fenced completion and sweep callbacks. Keep
 responses in storage only when repeating them to the same principal is safe.
 The API accepts complete terminal responses with retained bodies up to 1 MiB.
 It filters hop-by-hop fields, credentials, signatures, digests, and framing
-headers. Use an explicit allowlist for the other end-to-end headers. Generate
+headers. It also excludes Authentication-Info and Proxy-Authentication-Info,
+and refuses stored responses containing these exchange-specific fields.
+Use an explicit allowlist for the other end-to-end headers. Generate
 transport-specific response fields and any new response signature at delivery.
 
 For durable client recovery, persist the `Journal.entry/2` snapshot under its
@@ -113,7 +116,6 @@ unique namespace and key before sending. Before recording, it reconstructs
 the HTTP(S) request and checks the captured method, target, and retained
 body. It preserves the ordered field values and reserves enough room in the
 message field budget to append both signature fields. Reissue checks the
-loaded snapshot against its digest, which
-detects accidental changes. Protect the journal against unauthorized reads and
+complete snapshot and its digest before signing. Protect the journal against unauthorized reads and
 writes. Keep custom credential headers out of persisted intent. The caller
 controls retries and records send outcomes where needed.

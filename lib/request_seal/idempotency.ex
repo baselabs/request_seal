@@ -29,9 +29,9 @@ defmodule RequestSeal.Idempotency do
 
   @cover ~s[("@method" "@target-uri" "content-digest" "idempotency-key")]
   @max_body 1_048_576
-  @excluded_headers ~w(authorization connection content-digest content-length cookie date keep-alive
-    proxy-authenticate proxy-authorization proxy-connection repr-digest set-cookie set-cookie2 signature signature-input
-    te trailer transfer-encoding upgrade www-authenticate)
+  @excluded_headers ~w(authentication-info authorization connection content-digest
+    content-length cookie date keep-alive proxy-authenticate proxy-authentication-info
+    proxy-authorization proxy-connection repr-digest set-cookie set-cookie2 signature signature-input te trailer transfer-encoding upgrade www-authenticate)
 
   @doc """
   Atomically reserve the scoped key, renew a matching expired lease, or return

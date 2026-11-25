@@ -11,12 +11,14 @@ defmodule RequestSeal.Idempotency.ETS do
   alias RequestSeal.Custody.Context
   alias RequestSeal.Idempotency
   alias RequestSeal.Idempotency.{Record, Reservation}
+  alias RequestSeal.Replay
 
   @doc """
   Start a local store with required `:max_entries` capacity (1–10,000).
   The optional zero-arity `:clock` returns trusted Unix seconds from
   0 through 253,402,300,799. It defaults to the system Unix clock. The
-  store uses its latest observed time if the clock moves backward.
+  store uses its latest observed time if the clock moves backward. The clock
+  runs under the operation deadline before the serialized store transition.
   """
   @spec start_link(keyword()) :: GenServer.on_start() | {:error, :invalid_options}
   def start_link(opts) when is_list(opts) and length(opts) in 1..2 do
@@ -68,7 +70,7 @@ defmodule RequestSeal.Idempotency.ETS do
       when is_pid(owner) and node(owner) == node() and is_integer(deadline) do
     with true <- valid_request?(request),
          :ok <- check_live(context),
-         {:ok, now} <- read_clock(state) do
+         {:ok, now} <- read_clock(state.clock, context) do
       state = %{state | now: max(state.now, now)}
       reply = if check_live(context) == :ok, do: perform(request, state), else: {:error, :timeout}
       {:reply, reply, state}
@@ -94,15 +96,12 @@ defmodule RequestSeal.Idempotency.ETS do
       else: {:error, :timeout}
   end
 
-  defp read_clock(state) do
-    case state.clock.() do
-      now when is_integer(now) and now in 0..253_402_300_799 -> {:ok, now}
-      _ -> :error
+  defp read_clock(clock, context) do
+    case Replay.run(context, fn -> {:clock, clock.()} end) do
+      {:clock, now} when is_integer(now) and now in 0..253_402_300_799 -> {:ok, now}
+      {:error, %Replay.Error{reason: :store_timeout}} -> {:error, :timeout}
+      _ -> {:error, :failure}
     end
-  rescue
-    _ -> :error
-  catch
-    _, _ -> :error
   end
 
   defp perform({:reserve, record}, %{now: now})

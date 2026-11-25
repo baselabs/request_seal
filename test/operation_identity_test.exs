@@ -246,6 +246,120 @@ defmodule RequestSeal.OperationIdentityTest do
     assert {:error, :invalid_intent} = Journal.entry("orders", captured)
   end
 
+  test "a blocked clock times out and the owner accepts the next operation" do
+    owner = self()
+    reads = :atomics.new(1, [])
+
+    clock = fn ->
+      if :atomics.add_get(reads, 1, 1) == 1 do
+        send(owner, {:clock_read, self()})
+
+        receive do
+          :resume -> @now
+        end
+      else
+        @now
+      end
+    end
+
+    pid = start_supervised!({Idempotency.ETS, max_entries: 2, clock: clock})
+    store = Idempotency.ETS.store(pid)
+    record = record(@now, @now + 5, @now + 10)
+    task = Task.async(fn -> Idempotency.reserve(store, record, timeout: 1000) end)
+
+    assert_receive {:clock_read, worker}, 1000
+    assert {:error, %{reason: :store_timeout}} = Task.await(task, 3000)
+    assert {:reserved, _} = Idempotency.reserve(store, record, timeout: 1000)
+    refute Process.alive?(worker)
+    assert Process.alive?(pid)
+    assert :atomics.get(reads, 1) == 2
+  end
+
+  defmodule ResponseStore do
+    alias RequestSeal.Idempotency.Record
+
+    def reserve(pid, record, _) do
+      Agent.get_and_update(pid, fn rows ->
+        key = Record.key(record)
+
+        case Map.fetch(rows, key) do
+          {:ok, {:stored, _} = result} -> {result, rows}
+          {:ok, {:pending, _}} -> {:in_progress, rows}
+          :error ->
+            token = :crypto.strong_rand_bytes(16)
+            {{:reserved, token}, Map.put(rows, key, {:pending, token})}
+        end
+      end)
+    end
+
+    def store(pid, reservation, response, _) do
+      Agent.get_and_update(pid, fn rows ->
+        key = Record.key(reservation.record)
+        token = reservation.token
+
+        case Map.fetch(rows, key) do
+          {:ok, {:pending, ^token}} -> {:stored, Map.put(rows, key, {:stored, response})}
+          _ -> {:not_reserved, rows}
+        end
+      end)
+    end
+  end
+
+  test "response authentication fields are excluded at storage and rejected on legacy readback" do
+    pid = start_supervised!({Agent, fn -> %{} end})
+    store = {ResponseStore, pid}
+    record = record(@now, @now + 5, @now + 10)
+    assert {:reserved, reservation} = Idempotency.reserve(store, record, timeout: 1000)
+
+    transient = [
+      {"authentication-info", "nextnonce=example"},
+      {"proxy-authentication-info", "nextnonce=example"}
+    ]
+
+    clean = %{status: 200, headers: [{"content-type", "text/plain"}], body: "accepted"}
+    dirty = %{clean | headers: clean.headers ++ transient}
+    allow = Enum.map(dirty.headers, &elem(&1, 0))
+
+    assert :stored =
+             Idempotency.store(store, reservation, dirty, timeout: 1000, allow_headers: allow)
+
+    assert {:stored, ^clean} = Idempotency.reserve(store, record, timeout: 1000)
+    key = Idempotency.Record.key(record)
+    assert Agent.get(pid, &Map.fetch!(&1, key)) == {:stored, clean}
+
+    for field <- transient do
+      legacy = %{clean | headers: [field | clean.headers]}
+      :ok = Agent.update(pid, &Map.put(&1, key, {:stored, legacy}))
+
+      assert {:error, %{reason: :store_failed}} =
+               Idempotency.reserve(store, record, timeout: 1000)
+    end
+  end
+
+  test "a partial journal snapshot is rejected before signing", ctx do
+    assert {:ok, entry} = Journal.entry("orders", message("first"))
+    owner = self()
+
+    clock = fn ->
+      send(owner, :signing)
+      @now
+    end
+
+    for field <- [:namespace, :key, :method, :target, :fields, :body, :digest] do
+      partial = Map.delete(entry, field)
+      forged = Map.put(partial, :unknown, nil)
+
+      for snapshot <- [partial, forged] do
+        assert {:error, :invalid_intent} =
+                 Journal.reissue(snapshot, spec("primary"), ctx.signer, clock: clock)
+      end
+    end
+
+    refute_received :signing
+    assert {:ok, _} = Journal.reissue(entry, spec("primary"), ctx.signer, clock: clock)
+    assert_received :signing
+  end
+
   test "misrouted and malformed calls leave both stores and their records intact" do
     {{Idempotency.ETS, store_pid} = store, _} = timed_store()
     journal = start_supervised!({Journal, max_entries: 2})
