@@ -21,6 +21,7 @@ ALLOWED = {
     'lib/request_seal/custody/ssh_agent.ex': {'ref0': 1},
     'lib/request_seal/custody.ex': {'ref0': 1, 'handle.ref0': 1, 'callback0': 1},
     'lib/request_seal/discovery/support.ex': {'clock0': 1},
+    'lib/request_seal/idempotency/ets.ex': {'clock0': 1},  # Store clock under the operation deadline.
     'lib/request_seal/jose/jwe/bounds.ex': {'v': 1},
     'lib/request_seal/jose/jwe/codec.ex': {':erlang.map_get(:key_resolver,p)1': 1},
     'lib/request_seal/jose/support.ex': {'p.key_resolver1': 1},
