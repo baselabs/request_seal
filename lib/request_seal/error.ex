@@ -23,8 +23,9 @@ defmodule RequestSeal.Error do
   Closed reasons by layer:
 
   * `:input`: `:invalid_message` (message validation), `:invalid_policy` (missing
-    choices or invalid policy), `:invalid_quorum` (invalid composite policy), `:invalid_options` (invalid, duplicate, unknown,
-    or missing options/specification), `:algorithm_mismatch` (signing `alg` differs
+    choices or invalid policy), `:invalid_quorum` (invalid composite policy),
+    `:invalid_options` (invalid, duplicate, unknown, or missing options/specification),
+    `:algorithm_mismatch` (signing `alg` differs
     from the explicit algorithm or accompanies JWS), `:limit` (wire/member/component
     bounds, including a decoded `Signature` member or nonce exceeding 1,024 bytes).
     `:signer_algorithm_mismatch` means a KeyHandle's algorithm differs from the

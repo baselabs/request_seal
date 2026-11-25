@@ -106,7 +106,7 @@ signing and verification use these declaration reference fragments:
 `RequestSeal.verify/3` requires an explicit `RequestSeal.Policy` and a `:label`
 option selecting exactly one signature. `RequestSeal.Policy.new/1` requires
 algorithms, components, key resolver, freshness, content, and replay choices;
-replay is explicitly `:not_required` or a bounded nonce/namespace/commitment/store policy. The explicit-input form of `RequestSeal.sign/4` accepts one
+replay is explicitly `:not_required` or a bounded replay policy. The explicit-input form of `RequestSeal.sign/4` accepts one
 specification map with exactly `:label`, `:signature_input`, and `:algorithm`.
 Its signer is an algorithm-bound `KeyHandle` granting `:sign`. The signature input is a serialized
 Inner List or a `RequestSeal.StructuredFields.Value`. Signing returns the message
@@ -199,7 +199,12 @@ caller-owned cleanup capability, retried with `Custody.cleanup/2` until `:ok`.
 Neither operation exports raw generated or derived material.
 
 
-Replay protection is an optional but profile-required port where applicable. The caller supplies a bounded commitment function binding a verified nonce, challenge, or transaction identifier to a caller-defined scope. RequestSeal does not derive this commitment. The replay behaviour has these callback declaration reference fragments:
+Replay protection is an optional port where applicable. In callback-based
+nonce mode, the caller supplies the commitment function. In built-in nonce
+and operation modes, RequestSeal derives the commitment from trusted scope
+and authenticated values. See [stable operation identity](../adr/0042-stable-operation-identity.md)
+and [quorum replay](../adr/0043-quorum-replay-commitment.md). The replay behaviour
+has these callback declaration reference fragments.
 
 ```text
 # Implemented RequestSeal.Replay callbacks.
@@ -214,8 +219,10 @@ claim they implement is the canonical replay contract.
 The selected profile validates its required replay identifier. Only after validation
 does the caller commitment function receive the authenticated facts; missing or
 ambiguous required inputs fail closed. Retention metadata does not alter its result.
-The generic profile selects the authenticated nonce parameter. Required replay uses
-bounded freshness, one shared commitment/store deadline, and caller cancellation.
+The generic profile selects a nonempty authenticated nonce in nonce mode.
+Its operation mode selects the exact signed values of ordered mandatory
+components. Required replay uses bounded freshness, one shared commitment/store
+deadline, and caller cancellation.
 ETS is caller-supervised and local; Postgres uses a caller connection and explicit DDL. `Replay.AshOnetime` (Elixir 1.20, ash_onetime 1.9.2 or newer within 1.x) is the recommended durable store; its sweeping belongs to ash_onetime.
 Claims never evict, and explicit sweeps delete only at the exclusive retention end.
 Expiration is exclusive; max-age is inclusive. Thus retention ends at the minimum
@@ -247,7 +254,7 @@ it succeeds; more than one selected signature rejects with
 `:unexpected_signature`. A directory agent identifier is
 the resolved well-known URL; origin remains a separate principal field. Other
 named application profiles compose the implemented extension surface in separate
-packages; the generic and Web Bot Auth APIs use nonce. A policy rejection returns an error without a partial verification
+packages. A policy rejection returns an error without a partial verification
 value. The versioned `RequestSeal.Telemetry` contract emits
 `:telemetry` stop events for single-label and Web Bot Auth
 verification, plus replay-claim and custody-signing events, carrying only

@@ -87,7 +87,9 @@ defmodule RequestSeal.Quorum do
       mode?(quorum.mode, quorum.slots, quorum.max_signatures) and
       quorum.unexpected in [:ignore, :reject] and quorum.invalid in [:ignore, :reject] and
       bounded_list?(quorum.bindings, 0, 64) and unique?(quorum.bindings) and
-      Enum.all?(quorum.bindings, &binding?(&1, Enum.map(quorum.slots, fn slot -> slot.id end))) and
+      Enum.all?(quorum.bindings, fn binding ->
+        binding?(binding, Enum.map(quorum.slots, & &1.id))
+      end) and
       admission_possible?(quorum) and
       replay?(quorum.replay, quorum.slots)
   end
@@ -256,7 +258,9 @@ defmodule RequestSeal.Quorum do
   end
 
   defp slot?(%{id: id, policy: policy, required: required} = slot, unit) do
-    Enum.all?(Map.keys(slot), &(&1 in [:id, :policy, :required, :label, :tag, :principal, :role])) and
+    Enum.all?(Map.keys(slot), fn field ->
+      field in [:id, :policy, :required, :label, :tag, :principal, :role]
+    end) and
       name?(id) and is_boolean(required) and Policy.valid?(policy) and
       policy.replay == :not_required and finite?(policy.freshness) and
       (policy.content == :not_required or policy.content.kind == :content) and

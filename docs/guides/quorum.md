@@ -60,7 +60,8 @@ components = ~s[("@method" "@target-uri")]
   })
 
 {:ok, %Quorum.Verification{count: 2}} = RequestSeal.verify_quorum(signed, quorum, [])
-{:error, %RequestSeal.Error{reason: :replayed}} = RequestSeal.verify_quorum(signed, quorum, [])
+{:error, %RequestSeal.Error{reason: :replayed}} =
+  RequestSeal.verify_quorum(signed, quorum, [])
 Enum.each(handles, fn handle -> :ok = Custody.Local.release(handle) end)
 :ok = GenServer.stop(store)
 ```

@@ -87,6 +87,59 @@ defmodule RequestSeal.QuorumTest do
     assert {:ok, _} = RequestSeal.verify_quorum(match, quorum, [])
   end
 
+  test "nested binding requires both dictionary members of the assigned inner signature", ctx do
+    inner = sign(ctx.message, ctx.keys, "primary", "inner", "attempt")
+    decoy = sign(inner, ctx.keys, "third", "decoy", "attempt")
+
+    schemas = %{
+      "signature-input" => RequestSeal.SignatureFields.schema(:dictionary),
+      "signature" => RequestSeal.SignatureFields.schema(:dictionary, [:bytes], false)
+    }
+
+    primary = Map.put(slot(ctx, :inner, "primary", true), :label, "inner")
+    outer = Map.put(slot(ctx, :outer, "optional", true), :label, "outer")
+    outer = put_in(outer.policy.field_schemas, schemas)
+    policy = quorum(ctx, @operation, [primary, outer])
+    policy = %{policy | bindings: [{:nested, [outer: :outer, inner: :inner]}]}
+    {handle, _} = ctx.keys["optional"]
+
+    sign_outer = fn message, fields, label ->
+      covered = Enum.map_join(fields, " ", fn field -> ~s["#{field}";key="#{label}"] end)
+      components = ~s[("@method" "@target-uri" #{covered})]
+
+      spec = %{
+        label: "outer",
+        algorithm: "ed25519",
+        keyid: "optional",
+        components: components,
+        expires_in: 60,
+        field_schemas: schemas
+      }
+
+      {:ok, signed} = RequestSeal.sign(message, spec, handle, clock: fn -> @now end)
+      signed
+    end
+
+    both = ["signature-input", "signature"]
+    table = :sys.get_state(ctx.pid).table
+
+    for {message, fields, label} <- [
+          {inner, ["signature-input"], "inner"},
+          {inner, ["signature"], "inner"},
+          {decoy, both, "decoy"}
+        ] do
+      signed = sign_outer.(message, fields, label)
+      assert {:error, %{reason: :binding_unsatisfied}} =
+               RequestSeal.verify_quorum(signed, policy, [])
+
+      assert [{:count, 0}] = :ets.lookup(table, :count)
+    end
+
+    signed = sign_outer.(inner, both, "inner")
+    assert {:ok, %{count: 2}} = RequestSeal.verify_quorum(signed, policy, [])
+    assert [{:count, 1}] = :ets.lookup(table, :count)
+  end
+
   test "policy requires one composite claim, mandatory coverage, and a live deadline", ctx do
     slot = slot(ctx, :main, "primary", true)
     valid = quorum(ctx, @operation, [slot])
@@ -515,7 +568,9 @@ defmodule RequestSeal.QuorumTest do
       assert {:ok, _} = Quorum.new(Map.from_struct(%{policy | slots: [Map.put(slot, :tag, tag)]}))
     end
 
-    for tag <- ["café", <<0>>, <<255>>, "review\tpriority", "", String.duplicate("a", 257), :tag] do
+    malformed = ["café", <<0>>, <<255>>, "review\tpriority", "", String.duplicate("a", 257), :tag]
+
+    for tag <- malformed do
       assert {:error, %{reason: :invalid_quorum}} =
                Quorum.new(Map.from_struct(%{policy | slots: [Map.put(slot, :tag, tag)]}))
     end

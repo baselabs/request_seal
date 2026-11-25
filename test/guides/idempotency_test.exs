@@ -57,7 +57,11 @@ defmodule RequestSeal.GuideIdempotencyTest do
 
       # The application commits the effect under its durable unique operation key.
       response = %{status: 201, headers: [{"content-type", "text/plain"}], body: "created"}
-      :stored = Idempotency.store(responses, lease, response, timeout: 1_000, allow_headers: ["content-type"])
+      :stored =
+        Idempotency.store(responses, lease, response,
+          timeout: 1_000,
+          allow_headers: ["content-type"]
+        )
 
       {:ok, retry} = Journal.reissue(journal, "orders", "order-7", spec, signer, clock: clock)
       {:ok, record} = Idempotency.prepare(retry, policy, "sig", intent)

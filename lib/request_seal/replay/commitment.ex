@@ -34,7 +34,8 @@ defmodule RequestSeal.Replay.Commitment do
   def key(scope, identity), do: derive("rfc9421", scope_bytes(scope), identity)
 
   @doc false
-  def quorum_key(scope, identity), do: derive("rfc9421/quorum", quorum_scope_bytes(scope), identity)
+  def quorum_key(scope, identity),
+    do: derive("rfc9421/quorum", quorum_scope_bytes(scope), identity)
 
   defp derive(profile, scope, identity) do
     with {:ok, scoped} <- scope,

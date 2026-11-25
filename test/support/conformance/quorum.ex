@@ -38,6 +38,20 @@ defmodule RequestSeal.Conformance.Quorum do
   defp run(root, input, now, pid, handles) do
     clock = fn -> now end
 
+    bindings =
+      for [outer, inner] <- Map.get(input, "nested_bindings", []),
+          do: {:nested, [outer: slot_id(outer), inner: slot_id(inner)]}
+
+    nested_schemas =
+      if bindings == [] do
+        %{}
+      else
+        %{
+          "signature-input" => SignatureFields.schema(:dictionary),
+          "signature" => SignatureFields.schema(:dictionary, [:bytes], false)
+        }
+      end
+
     slots =
       Enum.map(input["slots"], fn slot ->
         %{"id" => id, "keyid" => keyid, "required" => required} = slot
@@ -54,7 +68,7 @@ defmodule RequestSeal.Conformance.Quorum do
                 :error
             end,
             content: :not_required,
-            field_schemas: schemas(slot["flags_schema"]),
+            field_schemas: Map.merge(schemas(slot["flags_schema"]), nested_schemas),
             freshness: %{clock: clock, max_age: 120, skew: 0, require_expires: true},
             replay: :not_required
           })
@@ -86,6 +100,7 @@ defmodule RequestSeal.Conformance.Quorum do
         mode: mode,
         unit: if(input["unit"] == "principal", do: :principal, else: :key),
         slots: slots,
+        bindings: bindings,
         unexpected: :reject,
         invalid: :reject,
         replay: %{

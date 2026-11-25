@@ -392,6 +392,10 @@ opaque equivalence identities equal to their fixture ID. The policies use
 key counting by default, or principal counting when `unit` is `principal`
 and each slot supplies a trusted `principal`. The `mode` is `all` or
 `{"threshold": tagged_integer}`.
+Each `nested_bindings` entry is an `[outer_slot_id, inner_slot_id]` pair.
+These fixtures supply the Signature-Input and Signature dictionary schemas.
+The outer signature must cover both dictionary members of the selected inner
+signature.
 Each slot verifies finite freshness with a 120-second maximum age, zero
 skew and required expiration. The fixture's `now` is the common decision
 instant for every slot. The replay namespace is `corpus`, the scope

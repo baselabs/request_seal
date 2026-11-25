@@ -161,8 +161,12 @@ defmodule RequestSeal.ReplayPostgresPropertyTest do
         assert Enum.sort(rows) == Enum.sort(expected)
         assert {:ok, 0} = Postgres.sweep(store.ref, retain_until - 1, context())
         assert {:ok, 65} = Postgres.sweep(store.ref, retain_until, context())
-        assert [[0]] =
-                 Postgrex.query!(pool, "SELECT count(*) FROM #{table} WHERE namespace <> ''::bytea", []).rows
+        assert %{rows: [[0]]} =
+                 Postgrex.query!(
+                   pool,
+                   "SELECT count(*) FROM #{table} WHERE namespace <> ''::bytea",
+                   []
+                 )
         # Real reclamation, including dead tuples and indexes; no synthetic allocator.
         Postgrex.query!(pool, "VACUUM #{table}", [])
 

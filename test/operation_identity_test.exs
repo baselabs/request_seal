@@ -392,7 +392,8 @@ defmodule RequestSeal.OperationIdentityTest do
     assert {:ok, ^entry} = Journal.load(journal, "orders", "create-1")
 
     response = %{status: 200, headers: [], body: "accepted"}
-    assert :stored = Idempotency.store(store, reservation, response, timeout: 1000, allow_headers: [])
+    assert :stored =
+             Idempotency.store(store, reservation, response, timeout: 1000, allow_headers: [])
   end
 
   test "journal admission reserves the complete signed field budget", ctx do
@@ -509,7 +510,11 @@ defmodule RequestSeal.OperationIdentityTest do
         components: @components,
         key_resolver: fn _ ->
           {:ok,
-           %{algorithm: "ed25519", key: key, replay_scope: {:credential, :orders, "credential-1"}}}
+           %{
+             algorithm: "ed25519",
+             key: key,
+             replay_scope: {:credential, :orders, "credential-1"}
+           }}
         end,
         freshness: %{clock: fn -> @now end, max_age: 120, skew: 0, require_expires: true},
         content: %{kind: :content, algorithms: ["sha-256"], section: :headers},
