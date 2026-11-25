@@ -235,6 +235,7 @@ defmodule RequestSeal.SignatureBase do
     {:ok, %Value{value: [%Value{type: :inner_list} = inner]}} = SF.parse(serialized, @schema)
     {:ok, ^serialized} = SF.serialize(%Value{type: :list, value: [inner]}, @schema)
     metadata(inner.parameters)
+    true = SignatureFields.nonce_valid?(SignatureFields.parameters(inner)["nonce"])
     true = length(lines) == length(inner.value)
     identities = Enum.map(inner.value, &{&1.value, Enum.sort(&1.parameters)})
     true = length(Enum.uniq(identities)) == length(identities)
@@ -653,6 +654,7 @@ defmodule RequestSeal.SignatureBase do
     options = options(opts)
     {parameters, serialized} = parameters(parameters)
     metadata(parameters.parameters)
+    ensure(SignatureFields.nonce_valid?(SignatureFields.parameters(parameters)["nonce"]), :limit)
     ensure(length(parameters.value) <= options.max_components, :limit)
 
     {output, size, _seen, _cache} =

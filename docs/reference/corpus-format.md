@@ -81,6 +81,9 @@ format itself is documented by `RequestSeal.VerificationRecord`.
 The capture surface can supply an optional verification resolver
 `restrictions` object with `alg`, `use`, and `key_ops` for a public key.
 
+Signature-base inspection applies the 256-line ceiling and 1,024-byte nonce
+bound alongside context-independent derived component syntax checks.
+
 Format `request-seal-conformance-case/1` requires `id`, `surface`, `class`,
 `evidence_class`, `source`, `inputs` and `expected`. Source identity contains
 `document`, `section` and `url`. Evidence is `published_vector` or

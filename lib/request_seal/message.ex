@@ -435,7 +435,7 @@ defmodule RequestSeal.Message do
          status: status,
          related_request: request
        }),
-       do: is_integer(status) and status in 100..599 and related_valid?(request)
+       do: Validation.status?(status) and related_valid?(request)
 
   defp kind_valid?(_), do: false
 
@@ -456,18 +456,8 @@ defmodule RequestSeal.Message do
   defp form_valid?(:authority, "CONNECT", raw), do: Validation.authority?(raw, true)
   defp form_valid?(_, "CONNECT", _), do: false
   defp form_valid?(:asterisk, "OPTIONS", "*"), do: true
-  defp form_valid?(:origin, _, "/" <> _ = raw), do: path_query_valid?(raw)
-
-  defp form_valid?(:absolute, _, raw) do
-    case Regex.run(~r/\A([A-Za-z][A-Za-z0-9+.-]*):\/\/([^\/?]+)((?:[\/?].*)?)\z/, raw) do
-      [_, scheme, authority, tail] ->
-        Validation.scheme?(scheme) and Validation.authority?(authority) and
-          path_query_valid?(tail)
-
-      _ ->
-        false
-    end
-  end
+  defp form_valid?(:origin, _, "/" <> _ = raw), do: Validation.path_query?(raw)
+  defp form_valid?(:absolute, _, raw), do: Validation.absolute_form?(raw)
 
   defp form_valid?(_, _, _), do: false
 
@@ -489,8 +479,6 @@ defmodule RequestSeal.Message do
   end
 
   defp target_origin_valid?(_), do: true
-
-  defp path_query_valid?(raw), do: :binary.match(raw, ["[", "]"]) == :nomatch
 
   defp fields([], _, count, bytes), do: {:ok, count, bytes}
 

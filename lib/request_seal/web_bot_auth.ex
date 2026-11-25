@@ -212,6 +212,7 @@ defmodule RequestSeal.WebBotAuth do
         Enum.map(selected, fn {label, input} ->
           ensure(SignatureFields.valid_inner?(input), :invalid_signature_input, :fields)
           params = SignatureFields.parameters(input)
+          ensure(SignatureFields.nonce_valid?(params["nonce"]), :limit, :input)
           ensure(Source.thumbprint?(params["keyid"]), :invalid_keyid, :policy)
 
           ensure(

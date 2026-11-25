@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Reject impossible derived component values and overlong nonces in retained
+  signature bases and stop scanning at the component ceiling.
 - Preserve custody verification when screening or capturing public keys, validate
   deny-set entries, and screen imported seeds before the possession probe.
 - Preserve established directory provenance and restricted PSS keys in records.

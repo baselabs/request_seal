@@ -28,6 +28,9 @@ defmodule RequestSeal.SignatureFields do
 
   def field_name?(name), do: Validation.token?(name, 256) and name == String.downcase(name)
 
+  def nonce_valid?(nil), do: true
+  def nonce_valid?(nonce), do: is_binary(nonce) and byte_size(nonce) <= 1024
+
   # Every rejection is {:error, %SF.Error{}}: wire-shaped inputs reject with
   # :syntax, hand-built values with :invalid_value, limits with :limit.
   def inner(bytes) when is_binary(bytes) do
@@ -66,9 +69,12 @@ defmodule RequestSeal.SignatureFields do
 
   defp component?(%Value{type: :item, value: {:string, name}, parameters: params}) do
     allowed =
-      if name in @derived,
-        do: if(name == "@query-param", do: ["req", "name"], else: ["req"]),
-        else: ["sf", "key", "bs", "tr", "req"]
+      case name do
+        "@status" -> []
+        "@query-param" -> ["req", "name"]
+        name when name in @derived -> ["req"]
+        _ -> ["sf", "key", "bs", "tr", "req"]
+      end
 
     (name in @derived or field_name?(name)) and
       Enum.all?(params, fn

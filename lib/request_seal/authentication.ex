@@ -63,7 +63,7 @@ defmodule RequestSeal.Authentication do
       protect(fn ->
         ensure(SignatureFields.valid_inner?(input), :invalid_signature_input, :fields)
         params = SignatureFields.parameters(input)
-        ensure(params["nonce"] == nil or byte_size(params["nonce"]) <= 1024, :limit, :input)
+        ensure(SignatureFields.nonce_valid?(params["nonce"]), :limit, :input)
         coverage(input, required(policy.components), policy.extra_components)
         freshness = freshness(params, policy.freshness)
 

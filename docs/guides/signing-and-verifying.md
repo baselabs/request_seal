@@ -272,3 +272,8 @@ key used for the signature and approve the operation. PSS-only keys preserve
 their SPKI and validated restrictions in the record. For Web Bot Auth, the
 record uses the established directory origin and fetch time. A supplied
 `directory: resolution` must agree with both facts.
+
+When inspecting a signature base, the parser checks derived value syntax and
+the 1,024-byte nonce limit. It stops at the first line beyond the 256-component
+ceiling. To check that the covered values match a particular message, verify
+that message with its related request and field schemas.

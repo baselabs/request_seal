@@ -929,13 +929,14 @@ defmodule RequestSeal.WebBotAuthTest do
       })
 
     cache = start_supervised!({Cache, clock: fn -> now end})
+    fresh = start_supervised!({Cache, clock: fn -> now end}, id: make_ref())
 
     spec = %{
       label: "agent",
       agent: %{location: origin, type: :directory},
       key: key,
       algorithm: "ed25519",
-      created: now,
+      created: now - 1,
       expires: now + 60,
       nonce: "directory-proof-denial"
     }
@@ -950,11 +951,24 @@ defmodule RequestSeal.WebBotAuthTest do
         freshness: %{clock: fn -> {now, now + 1} end, skew: 0, max_age: nil}
       )
 
-    assert_error(WebBotAuth.verify(message, p), :key_denied, :key)
+    broad_clock = %{p.freshness | clock: fn -> {now - 1, now + 1} end}
+    broad = %{p | cache: fresh, deny: empty, freshness: broad_clock}
+    assert_error(WebBotAuth.verify(message, broad), :agent_unresolved, :key, :source_unavailable)
     assert :atomics.get(fetches, 1) == 1
+
+    assert_error(WebBotAuth.verify(message, p), :key_denied, :key)
+    assert :atomics.get(fetches, 1) == 2
     assert {:ok, _} = WebBotAuth.verify(message, %{p | deny: empty})
     assert_error(WebBotAuth.verify(message, p), :key_denied, :key)
-    assert :atomics.get(fetches, 1) == 1
+
+    assert_error(
+      WebBotAuth.verify(message, %{broad | cache: cache}),
+      :agent_unresolved,
+      :key,
+      :unknown_key
+    )
+
+    assert :atomics.get(fetches, 1) == 2
     assert :ok = RequestSeal.Custody.release(request_handle)
   end
 

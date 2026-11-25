@@ -94,6 +94,46 @@ defmodule RequestSeal.SignatureBaseTest do
     assert {:ok, _} = SignatureBase.parse(base)
   end
 
+  test "inspection rejects impossible derived component forms and excessive nonce" do
+    for {identifier, value} <- [
+          {~s["@method"], "G\tET"},
+          {~s["@status"], "OK"},
+          {~s["@status"], "099"},
+          {~s["@status";req], "200"},
+          {~s["@scheme"], "HTTPS"},
+          {~s["@authority"], "EXAMPLE.COM"},
+          {~s["@path"], "/a?b"},
+          {~s["@query"], "q=x"},
+          {~s["@query-param";name="x"], "%2f"},
+          {~s["@query-param";name="x+"], "y"},
+          {~s["@target-uri"], "/relative"},
+          {~s["@request-target"], "GET /x"}
+        ] do
+      base = identifier <> ": " <> value <> "\n" <> ~s["@signature-params": (#{identifier})]
+      assert {:error, %{reason: :malformed}} = SignatureBase.parse(base)
+    end
+
+    prefix = ~s["@signature-params": ();nonce="]
+    allowed = prefix <> String.duplicate("n", 1024) <> ~s["]
+    above = prefix <> String.duplicate("n", 1025) <> ~s["]
+    assert {:ok, _} = SignatureBase.parse(allowed)
+    assert {:error, %{reason: :malformed}} = SignatureBase.parse(above)
+    assert {:error, %{reason: :limit}} =
+             SignatureBase.build(request(), String.trim_leading(above, ~s["@signature-params": ]))
+  end
+
+  test "delimiter-dense parsing stops after the first excess line" do
+    dense = String.duplicate("\n", 500_000) <> ~s["@signature-params": ()]
+
+    {result, calls} =
+      count_calls({SignatureBase, :base_lines, 3}, fn ->
+        SignatureBase.parse(dense)
+      end)
+
+    assert {:error, %{reason: :malformed}} = result
+    assert calls == 257
+  end
+
   test "inspection preserves internal horizontal tabs from a covered field" do
     message = request(%{fields: fields([{"Example-Header", "left\tright"}])})
     params = ~s[("example-header")]

@@ -61,6 +61,20 @@ defmodule RequestSeal.Message.Validation do
 
   def uri_bytes?(_), do: false
 
+  def status?(status), do: is_integer(status) and status in 100..599
+
+  def path_query?(raw), do: :binary.match(raw, ["[", "]"]) == :nomatch
+
+  def absolute_form?(raw) do
+    case Regex.run(~r/\A([A-Za-z][A-Za-z0-9+.-]*):\/\/([^\/?]+)((?:[\/?].*)?)\z/, raw) do
+      [_, scheme, authority, tail] ->
+        scheme?(scheme) and authority?(authority) and path_query?(tail)
+
+      _ ->
+        false
+    end
+  end
+
   def scheme?(scheme) when is_binary(scheme) and byte_size(scheme) in 1..64,
     do: Regex.match?(~r/\A[A-Za-z][A-Za-z0-9+.-]*\z/, scheme)
 

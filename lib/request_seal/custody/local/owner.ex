@@ -44,8 +44,8 @@ defmodule RequestSeal.Custody.Local.Owner do
           name: atom(),
           keys: [
             {atom(),
-             {"ed25519", source()}
-             | {"ed25519", source(),
+             {binary(), source()}
+             | {binary(), source(),
                 [deny: RequestSeal.DenySet.t() | nil, expected_thumbprint: binary()]}}
           ]
         ]
