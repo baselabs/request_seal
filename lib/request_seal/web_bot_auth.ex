@@ -54,7 +54,8 @@ defmodule RequestSeal.WebBotAuth do
   a member for the signature's label (otherwise `:agent_unresolved` with detail
   `:missing_member`), and the signature must cover
   `"signature-agent";key="<label>"`. Published RFC 9421 test keys reject unless
-  the policy sets `test_keys: :allow`. Each signature is then checked by
+  the policy sets `test_keys: :allow`, for both request and directory-proof
+  signers. Each signature is then checked by
   `RequestSeal.verify/3` with the resolved key, and nested signatures must be
   covered completely. With required replay, the message must carry exactly one
   selected signature, or verification returns `:unexpected_signature` at
@@ -507,7 +508,20 @@ defmodule RequestSeal.WebBotAuth do
     )
 
     if resolution.proof == :signed do
-      case RequestSeal.DenySet.check_proof(Map.get(policy, :deny), Map.get(resolution, :proof_signers)) do
+      signers = Map.get(resolution, :proof_signers)
+
+      if policy.test_keys == :reject do
+        ensure(
+          is_list(signers) and length(signers) in 1..64 and
+            Enum.all?(signers, &Source.thumbprint?/1),
+          :key_fingerprint_unknown,
+          :key
+        )
+
+        ensure(Enum.all?(signers, &(&1 not in @test_keys)), :test_key_rejected, :policy)
+      end
+
+      case RequestSeal.DenySet.check_proof(Map.get(policy, :deny), signers) do
         :ok -> :ok
         {:error, :key_denied} -> fail(:key_denied, :key)
         {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)

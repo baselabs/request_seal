@@ -54,7 +54,8 @@ defmodule RequestSeal.VerificationRecord do
   Optional `directory: resolution` records the origin and fetch time of a
   `RequestSeal.Discovery.Resolution` for the same public key. A Web Bot Auth
   agent already supplies these historical facts. An explicit resolution must
-  agree with them. Provenance describes the original verification and is
+  agree with them. A Web Bot Auth held-key principal rejects explicit
+  directory provenance. Provenance describes the original verification and is
   outside the HTTP signature.
 
   Returns `{:ok, record}` or `{:error, :not_accepted}` when the result lacks
@@ -88,7 +89,7 @@ defmodule RequestSeal.VerificationRecord do
          true <- is_binary(signature) and byte_size(signature) in 1..@max_signature,
          {:ok, public} <- export_key(key),
          {:ok, thumbprint} <- PublicKey.thumbprint(key),
-         {:ok, directory} <- directory(verification.principal, opts, thumbprint),
+         {:ok, directory} <- directory(verification, opts, thumbprint),
          {:ok, profile} <- export_profile(verification.profile) do
       data = %{
         "algorithm" => encode_algorithm(algorithm),
@@ -262,7 +263,11 @@ defmodule RequestSeal.VerificationRecord do
 
   defp profile?(_), do: false
 
-  defp directory(principal, opts, thumbprint) do
+  defp directory(%{profile: %{name: :web_bot_auth}, principal: %{kind: :key}}, opts, _) do
+    if opts == [], do: {:ok, nil}, else: :error
+  end
+
+  defp directory(%{principal: principal}, opts, thumbprint) do
     with {:ok, established} <- established_directory(principal, thumbprint),
          {:ok, supplied} <- supplied_directory(opts, thumbprint),
          true <- is_nil(established) or is_nil(supplied) or established == supplied do

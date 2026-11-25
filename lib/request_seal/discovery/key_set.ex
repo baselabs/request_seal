@@ -8,12 +8,24 @@ defmodule RequestSeal.Discovery.KeySet do
   enforced by `RequestSeal.PublicKey`. The cache's `:clock` supports
   caller-controlled time for resolution and fetching. `etag` is the source's
   ETag validator, if it sent one; the cache revalidates conditionally with it.
+  `freshness_lifetime` retains the HTTP lifetime for a 304 that omits freshness
+  directives. `expires_at` is the conservative absolute reuse deadline.
   """
   alias RequestSeal.{PublicKey, SignatureFields}
   alias RequestSeal.Crypto.Algorithm
   alias RequestSeal.Discovery.{Source, Resolution}
   @derive {Inspect, only: [:fetched_at, :expires_at, :proof]}
-  defstruct [:source, :origin, :keys, :fetched_at, :expires_at, :revision, :proof, :etag]
+  defstruct [
+    :source,
+    :origin,
+    :keys,
+    :fetched_at,
+    :expires_at,
+    :revision,
+    :proof,
+    :etag,
+    :freshness_lifetime
+  ]
 
   @type t :: %__MODULE__{
           source: Source.t(),
@@ -23,7 +35,8 @@ defmodule RequestSeal.Discovery.KeySet do
           expires_at: integer(),
           revision: binary(),
           proof: :signed | :unsigned | :not_applicable,
-          etag: binary() | nil
+          etag: binary() | nil,
+          freshness_lifetime: non_neg_integer() | nil
         }
   @doc """
   Find a fresh, nonrevoked key by its source-selected ID under an algorithm allowlist.
@@ -129,11 +142,11 @@ defmodule RequestSeal.Discovery.KeySet do
   def lookup_at(_, _, _, _), do: :error
 
   defp valid_time?(entry, lower, upper) do
-    # Earlier snapshots lacked start facts and cannot support uncertain time.
-    start = Map.get(entry, :not_before, if(lower == upper, do: 0))
+    # Earlier snapshots establish validity only from their original observation.
+    start = Map.get(entry, :not_before, entry.fetched_at)
 
-    is_integer(start) and start <= lower and is_integer(entry.expires_at) and
-      upper < entry.expires_at
+    is_integer(start) and start >= 0 and start <= lower and
+      is_integer(entry.expires_at) and upper < entry.expires_at
   end
 
   defp identity?(%Source{key_id: :thumbprint}, entry, keyid),

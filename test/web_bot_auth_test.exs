@@ -901,8 +901,12 @@ defmodule RequestSeal.WebBotAuthTest do
     {:ok, request_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
     {:ok, key} = RequestSeal.Custody.public_key(request_handle)
     {:ok, jwk} = PublicKey.export(key, :jwk)
-    {:ok, proof_key} = PublicKey.import(Peer.public_jwk(), :jwk)
+    proof_key = public("ed25519")
+    {:ok, proof_jwk} = PublicKey.export(proof_key, :jwk)
     {:ok, proof_id} = PublicKey.thumbprint(proof_key)
+    assert proof_id in WebBotAuth.published_test_key_thumbprints()
+    {:ok, request_id} = PublicKey.thumbprint(key)
+    refute request_id in WebBotAuth.published_test_key_thumbprints()
     {:ok, denied} = RequestSeal.DenySet.new([proof_id])
     {:ok, empty} = RequestSeal.DenySet.new([])
     fetches = :atomics.new(1, [])
@@ -911,7 +915,8 @@ defmodule RequestSeal.WebBotAuthTest do
       Peer.start(fn socket, req ->
         :atomics.add(fetches, 1, 1)
 
-        Peer.signed(socket, req, Peer.directory([Peer.public_jwk(), jwk]), nil,
+        Peer.signed(socket, req, Peer.directory([proof_jwk, jwk]), nil,
+          material: S.material("ed25519"),
           created: now,
           expires: now + 60
         )
@@ -969,6 +974,25 @@ defmodule RequestSeal.WebBotAuthTest do
     )
 
     assert :atomics.get(fetches, 1) == 2
+
+    for first <- [:reject, :allow] do
+      separate = start_supervised!({Cache, clock: fn -> now end}, id: make_ref())
+      test_policy = %{p | cache: separate, deny: nil}
+      before = :atomics.get(fetches, 1)
+      policies = [first, :reject, :allow]
+
+      for test_keys <- policies do
+        result = WebBotAuth.verify(message, %{test_policy | test_keys: test_keys})
+
+        case test_keys do
+          :reject -> assert_error(result, :test_key_rejected, :policy)
+          :allow -> assert {:ok, _} = result
+        end
+
+        assert :atomics.get(fetches, 1) == before + 1
+      end
+    end
+
     assert :ok = RequestSeal.Custody.release(request_handle)
   end
 
@@ -1236,11 +1260,44 @@ defmodule RequestSeal.WebBotAuthTest do
     legacy = Map.delete(policy(), :deny)
     assert {:ok, _} = WebBotAuth.verify(request("directory"), legacy)
 
-    forged = %RequestSeal.DenySet{entries: %{thumbprint => true}}
-    assert_error(WebBotAuth.verify(request("directory"), Map.put(legacy, :deny, forged)),
-      :invalid_policy,
-      :input
-    )
+    raw = Base.url_decode64!(thumbprint, padding: false)
+
+    for entries <- [%{thumbprint => true}, MapSet.new([{raw, true}]), %URI{}] do
+      forged = %RequestSeal.DenySet{entries: entries}
+
+      assert_error(
+        WebBotAuth.verify(request("directory"), Map.put(legacy, :deny, forged)),
+        :invalid_policy,
+        :input
+      )
+    end
+  end
+
+  test "captured held-key verification cannot acquire directory provenance" do
+    alias RequestSeal.VerificationRecord
+    key = public("ed25519")
+    {:ok, thumbprint} = PublicKey.thumbprint(key)
+    resolver = fn _ -> {:ok, %{algorithm: "ed25519", key: key}} end
+    p = policy(agents: fn _ -> :error end, unresolved: {:held_keys, resolver})
+
+    assert {:ok, envelope} = WebBotAuth.verify(request("held-key"), p, capture: true)
+    assert [%{principal: %{kind: :key, thumbprint: ^thumbprint}} = result] =
+             Map.values(envelope.signatures)
+
+    assert {:ok, record} = VerificationRecord.from_verification(result)
+    assert {:ok, encoded} = VerificationRecord.encode(record)
+    assert %{"record" => %{"directory" => nil}} = :json.decode(encoded)
+    assert :ok = VerificationRecord.reverify(encoded)
+
+    resolution = %Resolution{
+      key: key,
+      thumbprint: thumbprint,
+      origin: "https://agent.example",
+      fetched_at: @now
+    }
+
+    assert {:error, :not_accepted} =
+             VerificationRecord.from_verification(result, directory: resolution)
   end
 
   test "deny set applies to an otherwise trusted directory key" do

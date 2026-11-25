@@ -270,6 +270,14 @@ defmodule RequestSeal.DiscoveryFetchTest do
                  clock: fn -> {start, start + 2} end
                )
 
+      if reason == :unknown_key do
+        assert {:ok, entry} = Cache.resolve(cache, s, thumbprint, algorithms: algorithms)
+        assert entry.not_before == start + 1
+        assert entry.proof_signers == [proof_thumbprint]
+        assert_received {:accepted, _}
+        refute_received {:accepted, _}
+      end
+
       # Warm a different cache while both the key and proof are valid.
       ready = start_supervised!({Cache, clock: fn -> start + 2 end}, id: make_ref())
       assert {:ok, set} = Cache.refresh(ready, s)
@@ -286,6 +294,19 @@ defmodule RequestSeal.DiscoveryFetchTest do
       assert :error = KeySet.lookup_at(set, thumbprint, algorithms, {start + 1, start + 20})
       assert {:ok, _} = KeySet.lookup_at(set, thumbprint, algorithms, {start + 1, start + 3})
     end
+  end
+
+  test "a legacy resolution establishes no validity before its original fetch" do
+    now = System.system_time(:second)
+    p = peer(fn socket, req -> Peer.signed(socket, req, Peer.directory(), nil, created: now) end)
+    assert {:ok, set} = Discovery.fetch(source(p), clock: fn -> now end)
+    [{kid, entry}] = Map.to_list(set.keys)
+    legacy = put_in(set.keys[kid], Map.delete(entry, :not_before))
+
+    assert :error = KeySet.lookup_at(legacy, kid, ["ed25519"], now - 1)
+    assert :error = KeySet.lookup_at(legacy, kid, ["ed25519"], {now - 1, now + 1})
+    assert {:ok, _} = KeySet.lookup_at(legacy, kid, ["ed25519"], now)
+    assert {:ok, _} = KeySet.lookup_at(legacy, kid, ["ed25519"], {now, now + 1})
   end
 
   test "directory proof labels use the configured bound beyond the generic policy default" do

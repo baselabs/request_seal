@@ -200,18 +200,23 @@ defmodule RequestSeal.DiscoveryPeer do
     algorithm = Keyword.get(parameters, :algorithm, "ed25519")
 
     {:ok, handle} =
-      if algorithm == "ed25519" do
-        RequestSeal.Custody.Local.import(
-          algorithm,
-          :json.decode(File.read!("test/fixtures/custody/rfc8037.json")),
-          :jwk
-        )
-      else
-        RequestSeal.Custody.Local.import(
-          algorithm,
-          File.read!("test/fixtures/crypto/rsa_private.pem"),
-          :pem
-        )
+      case Keyword.fetch(parameters, :material) do
+        {:ok, material} ->
+          RequestSeal.Custody.Local.new(algorithm, material)
+
+        :error when algorithm == "ed25519" ->
+          RequestSeal.Custody.Local.import(
+            algorithm,
+            :json.decode(File.read!("test/fixtures/custody/rfc8037.json")),
+            :jwk
+          )
+
+        :error ->
+          RequestSeal.Custody.Local.import(
+            algorithm,
+            File.read!("test/fixtures/crypto/rsa_private.pem"),
+            :pem
+          )
       end
 
     {:ok, public} = RequestSeal.Custody.public_key(handle)
@@ -236,6 +241,7 @@ defmodule RequestSeal.DiscoveryPeer do
         handle
       )
 
+    :ok = RequestSeal.Custody.release(handle)
     signed
   end
 end

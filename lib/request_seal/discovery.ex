@@ -324,10 +324,11 @@ defmodule RequestSeal.Discovery do
 
       ensure(is_binary(bytes), :invalid_response)
       ensure(byte_size(bytes) <= source.max_bytes, :limit)
-      interval = Support.interval(fn -> now end)
+      {lower, upper} = Support.interval(fn -> now end)
       document = body_document(bytes, source)
       origin = Source.origin(URI.parse(source.location))
-      {:ok, keys(document, source, origin, source.location, interval)}
+      keys = keys(document, source, origin, source.location, upper)
+      {:ok, Map.filter(keys, fn {_, entry} -> entry.not_before <= lower end)}
     end)
   end
 
@@ -347,11 +348,11 @@ defmodule RequestSeal.Discovery do
     uri = Source.url!(source.location)
     # RFC 9111 Section 4.2.3: the request time bounds the response delay that
     # corrects a received Age.
-    requested_at = Support.clock(clock)
+    {requested_at, _} = Support.interval(clock)
 
     case resource(uri, source, deadline, 0, etag) do
       {:not_modified, fields} ->
-        now = Support.clock(clock)
+        {_, now} = interval = Support.interval(clock)
 
         # RFC 9111 Sections 3.2 and 4.3.4: a 304's own directives recalculate
         # freshness; without them the stored representation's lifetime
@@ -361,28 +362,15 @@ defmodule RequestSeal.Discovery do
         ensure(updated == nil or byte_size(updated) <= 512, :invalid_response)
         ensure(updated in [nil, etag], :invalid_response)
 
-        fresh =
-          if freshness_directives?(fields),
-            do: expiry(fields, source, requested_at, now),
-            else: now + (stored_lifetime || 0)
+        {expires, lifetime} = expiry(fields, source, requested_at, interval, stored_lifetime || 0)
 
-        {:ok, {:not_modified, %{etag: etag, fetched_at: now, expires_at: fresh}}}
+        {:ok,
+         {:not_modified,
+          %{etag: etag, fetched_at: now, expires_at: expires, freshness_lifetime: lifetime}}}
 
       {fields, message, location, decoded} ->
         fetched_set(fields, message, location, decoded, source, clock, deadline, requested_at)
     end
-  end
-
-  defp freshness_directives?(fields) do
-    controls = cache_controls(fields)
-
-    # Only freshness-changing names count: max-age, no-cache, no-store. A
-    # directive like `public` leaves the stored lifetime in force.
-    HTTP1.value(fields, "expires") != nil or
-      Enum.any?(controls, fn control ->
-        [name | _] = :binary.split(control, "=")
-        HTTP1.trim_ows(name) in ["no-store", "no-cache", "max-age"]
-      end)
   end
 
   defp cache_controls(fields) do
@@ -394,10 +382,10 @@ defmodule RequestSeal.Discovery do
   end
 
   defp fetched_set(fields, message, location, decoded, source, clock, deadline, requested_at) do
-    {_, now} = interval = Support.interval(clock)
-    expires = expiry(fields, source, requested_at, now)
+    interval = Support.interval(clock)
+    {expires, lifetime} = expiry(fields, source, requested_at, interval, source.min_ttl)
 
-    {document, key_message, key_fields, location, expires, key_bytes} =
+    {document, key_message, key_fields, location, expires, key_bytes, interval} =
       case source.type do
         :cimd ->
           doc = body_document(decoded, source)
@@ -410,7 +398,7 @@ defmodule RequestSeal.Discovery do
 
           cond do
             Map.has_key?(doc, "jwks") ->
-              {doc["jwks"], message, fields, location, expires, decoded}
+              {doc["jwks"], message, fields, location, expires, decoded, interval}
 
             Map.has_key?(doc, "jwks_uri") ->
               nested = Source.url!(doc["jwks_uri"])
@@ -423,27 +411,30 @@ defmodule RequestSeal.Discovery do
               )
 
               nested_source = %{source | type: :jwks_uri}
-              nested_requested_at = Support.clock(clock)
+              {nested_requested_at, _} = Support.interval(clock)
 
               {nested_fields, nested_message, nested_location, nested_bytes} =
                 resource(nested, nested_source, deadline, 0, nil)
 
-              nested_expires =
-                expiry(nested_fields, source, nested_requested_at, Support.clock(clock))
+              nested_interval = Support.interval(clock)
+
+              {nested_expires, _} =
+                expiry(nested_fields, source, nested_requested_at, nested_interval, source.min_ttl)
 
               {body_document(nested_bytes, nested_source), nested_message, nested_fields,
-               nested_location, min(expires, nested_expires), nested_bytes}
+               nested_location, min(expires, nested_expires), nested_bytes, nested_interval}
 
             true ->
               fail(:invalid_key_set)
           end
 
         _ ->
-          {body_document(decoded, source), message, fields, location, expires, decoded}
+          {body_document(decoded, source), message, fields, location, expires, decoded, interval}
       end
 
+    {_, now} = interval
     origin = Source.origin(URI.parse(location))
-    keys = keys(document, source, origin, location, interval)
+    keys = keys(document, source, origin, location, now)
 
     {proof, proof_signers, proof_start, proof_expiry} =
       if source.type == :directory,
@@ -477,6 +468,7 @@ defmodule RequestSeal.Discovery do
        keys: keys,
        fetched_at: now,
        expires_at: expires,
+       freshness_lifetime: lifetime,
        revision: Base.url_encode64(:crypto.hash(:sha256, key_bytes), padding: false),
        proof: proof,
        etag: stored_etag
@@ -597,7 +589,7 @@ defmodule RequestSeal.Discovery do
   defp json_depth(<<_, rest::binary>>, depth, string, escape),
     do: json_depth(rest, depth, string, escape)
 
-  defp keys(%{"keys" => jwks}, source, origin, location, {lower, upper}) when is_list(jwks) do
+  defp keys(%{"keys" => jwks}, source, origin, location, upper) when is_list(jwks) do
     ensure(length(jwks) <= source.max_keys, :limit)
 
     Enum.reduce(jwks, %{}, fn jwk, acc ->
@@ -669,9 +661,9 @@ defmodule RequestSeal.Discovery do
 
           not_before = jwk["nbf"] || 0
           expires_at = jwk["exp"] || upper + source.max_ttl
-          valid_time = not_before <= lower and (jwk["exp"] == nil or upper < expires_at)
+          valid_time = jwk["exp"] == nil or max(not_before, upper) < expires_at
 
-          # Temporal/operation restrictions exclude the key rather than changing it.
+          # Preserve future starts for callers whose lookup clock can establish them.
           if binding?(public, algorithm) and valid_time and thumbprint not in source.revoked do
             ensure(not Map.has_key?(acc, kid), :invalid_key_set)
 
@@ -749,10 +741,11 @@ defmodule RequestSeal.Discovery do
       selected =
         Enum.filter(dictionary.value, fn {label, value} ->
           params = SignatureFields.parameters(value)
+          entry = Map.get(keys, params["keyid"])
 
           label == "directory" or
             (params["tag"] == "http-message-signatures-directory" and
-               Map.has_key?(keys, params["keyid"]))
+               entry != nil and entry.not_before <= lower)
         end)
 
       ensure(selected != [], :directory_signature_invalid)
@@ -784,7 +777,7 @@ defmodule RequestSeal.Discovery do
           )
 
           entry = Map.get(keys, params["keyid"])
-          ensure(entry != nil, :directory_signature_invalid)
+          ensure(entry != nil and entry.not_before <= lower, :directory_signature_invalid)
           # Verification-time expiry is checked separately from cache freshness;
           # max-age=0 still permits this fetch to validate its possession proof.
           candidates =
@@ -852,7 +845,7 @@ defmodule RequestSeal.Discovery do
     %{message | fields: fields ++ selected_fields}
   end
 
-  defp expiry(fields, source, requested_at, now) do
+  defp expiry(fields, source, requested_at, {lower, upper}, default_lifetime) do
     controls = cache_controls(fields)
 
     # RFC 9111 Sections 5.2.2.4 and 5.2.2.5: no-cache and no-store also arrive
@@ -872,14 +865,18 @@ defmodule RequestSeal.Discovery do
 
     ensure(length(ages) <= 1, :invalid_response)
 
-    date = http_date(HTTP1.value(fields, "date"), now) || now
+    date = http_date(HTTP1.value(fields, "date"), upper)
 
     ttl =
       case ages do
         [] ->
           case HTTP1.value(fields, "expires") do
-            nil -> source.min_ttl
-            expires -> max((http_date(expires, now) || date) - date, 0)
+            nil ->
+              default_lifetime
+
+            expires ->
+              base = date || upper
+              max((http_date(expires, upper) || base) - base, 0)
           end
 
         [age] ->
@@ -889,11 +886,12 @@ defmodule RequestSeal.Discovery do
 
     age = HTTP1.value(fields, "age") || "0"
     ensure(byte_size(age) in 1..10 and Regex.match?(~r/\A[0-9]+\z/, age), :invalid_response)
-    # RFC 9111 Section 4.2.3: corrected_age_value = age_value + response_delay;
-    # the current age is the larger of it and the apparent age.
-    age = max(String.to_integer(age) + max(now - requested_at, 0), max(now - date, 0))
-    ttl = max(min(ttl, source.max_ttl) - age, 0)
-    now + if(no_cache, do: 0, else: ttl)
+    # RFC 9111 Section 4.2.3: express both age corrections as absolute
+    # deadlines. Use the earliest possible request and response times.
+    lifetime = if no_cache, do: 0, else: min(ttl, source.max_ttl)
+    corrected = min(lower, requested_at) + lifetime - String.to_integer(age)
+    apparent = min(lower, date || lower) + lifetime
+    {max(min(corrected, apparent), 0), lifetime}
   end
 
   # Parse RFC 9110 HTTP-date strictly, including both obsolete recipient formats.

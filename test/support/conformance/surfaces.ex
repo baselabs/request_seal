@@ -1533,8 +1533,39 @@ defmodule RequestSeal.Conformance.Surfaces do
              C.bytes(C.load(root, i["body"])),
              s,
              freshness_clock(c["now"])
-           ),
-         do: {:ok, %{"keys" => Map.values(keys) |> Enum.map(& &1.thumbprint) |> Enum.sort()}}
+           ) do
+      case i["lookups"] do
+        nil -> {:ok, %{"keys" => Map.values(keys) |> Enum.map(& &1.thumbprint) |> Enum.sort()}}
+        lookups -> discovery_lookups(keys, s, c, lookups)
+      end
+    end
+  end
+
+  defp discovery_lookups(keys, source, c, lookups) do
+    alias RequestSeal.Discovery.KeySet
+    i = c["inputs"]
+
+    keys =
+      if i["legacy"] == true,
+        do: Map.new(keys, fn {kid, entry} -> {kid, Map.delete(entry, :not_before)} end),
+        else: keys
+
+    set = %KeySet{
+      source: source,
+      keys: keys,
+      fetched_at: C.int(c["now"]),
+      expires_at: C.int(i["expires_at"])
+    }
+
+    found =
+      Enum.map(lookups, fn clock ->
+        match?(
+          {:ok, _},
+          KeySet.lookup_at(set, i["keyid"], ["ed25519"], freshness_clock(clock))
+        )
+      end)
+
+    {:ok, %{"found" => found}}
   end
 
   def replay_claim(root, c) do

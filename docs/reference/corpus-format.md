@@ -84,6 +84,12 @@ The capture surface can supply an optional verification resolver
 Signature-base inspection applies the 256-line ceiling and 1,024-byte nonce
 bound alongside context-independent derived component syntax checks.
 
+By default `discovery.body` returns the thumbprints valid at the evaluation clock.
+A case with `lookups` imports the body once at the scalar evaluation clock,
+then returns a `found` boolean per lookup clock for `keyid` under the snapshot's
+`expires_at`. A lookup clock can be a singleton or an interval. The `legacy`
+flag omits the entry's original start facts to exercise the fetch-time bound.
+
 Format `request-seal-conformance-case/1` requires `id`, `surface`, `class`,
 `evidence_class`, `source`, `inputs` and `expected`. Source identity contains
 `document`, `section` and `url`. Evidence is `published_vector` or
@@ -134,7 +140,7 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `key.import` | Public material and format | `{"valid":true,"public":{"thumbprint":"<RFC 7638 thumbprint>"}}` |
 | `jws.sign`, `jws.verify`, `jwe.decrypt`, `nested.decrypt` | Compact bytes or protected occurrence pairs, keys and pinned policy | Exact compact bytes or verified/decrypted `payload` |
 | `web_bot_auth.verify` | Message, injected directory body, trusted origins, explicit clock and policy | Per-label canonical verification facts |
-| `discovery.body` | Injected body, source kind/location, limits and evaluation clock | Public key thumbprints |
+| `discovery.body` | Injected body, source kind/location, limits and evaluation clock | Public key thumbprints or snapshot lookup verdicts |
 | `plug.signed_path/v1` | Origin-form target bytes, Signature-Input component list, route template and capture name, trusted principal tenant bytes, ordered header pairs and optional JSON body with a parser enabled by default | Tenant byte tag |
 | `replay.claim` | Namespace/key bytes, created/expires/max-age/skew, clock | Retention end and optional lowercase hexadecimal row |
 | `replay.pair/v1` | Namespace and key byte tags, exclusive retention as a tagged integer, booleans for destination and retiring pre-seeding and repeated store reference | Claim outcome and booleans for claim presence in each store, or a replay rule ID |

@@ -2,6 +2,16 @@
 
 ## Unreleased 2.0.0
 
+- Reject struct-valued deny-set containers at HTTP, Web Bot Auth, JWS, and custody admission.
+- Keep discovery cache deadlines conservative across clock intervals and 304
+  revalidation. Evaluate retained key starts at each lookup and use the
+  original fetch time for legacy entries that lack a start.
+- Invalidate dependent directory keys when a proof signer is removed from
+  the cache. Apply the Web Bot Auth test-key policy to directory proofs.
+- Reject explicit directory provenance on Web Bot Auth held-key records.
+- `RequestSeal.SignatureBase.build/3` and `components/3` return `:limit` for a
+  nonce over 1,024 bytes. Low-level `RequestSeal.sign/4` with `signature_input:`
+  returns `:signature_base_failed` with detail `:limit` before signing that input.
 - Reject impossible derived component values and overlong nonces in retained
   signature bases and stop scanning at the component ceiling.
 - Preserve custody verification when screening or capturing public keys, validate

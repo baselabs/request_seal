@@ -58,8 +58,9 @@ defmodule RequestSeal.DenySet do
   def valid?(nil), do: true
 
   def valid?(%__MODULE__{entries: entries} = set) do
-    map_size(set) == 2 and is_map(entries) and map_size(entries) <= @max_entries and
-      Enum.all?(entries, fn
+    map_size(set) == 2 and is_map(entries) and not is_struct(entries) and
+      map_size(entries) <= @max_entries and
+      Enum.all?(Map.to_list(entries), fn
         {<<_::256>>, true} -> true
         _ -> false
       end)

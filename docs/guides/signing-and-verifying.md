@@ -271,7 +271,9 @@ Capture also supports asymmetric verification handles that export the public
 key used for the signature and approve the operation. PSS-only keys preserve
 their SPKI and validated restrictions in the record. For Web Bot Auth, the
 record uses the established directory origin and fetch time. A supplied
-`directory: resolution` must agree with both facts.
+`directory: resolution` must agree with both facts. A Web Bot Auth held-key
+result rejects an explicit directory. Generic HTTP capture can use a supplied
+resolution for the same verified key.
 
 When inspecting a signature base, the parser checks derived value syntax and
 the 1,024-byte nonce limit. It stops at the first line beyond the 256-component

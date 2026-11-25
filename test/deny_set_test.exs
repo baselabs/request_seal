@@ -103,11 +103,20 @@ defmodule RequestSeal.DenySetTest do
     }
 
     raw = Base.url_decode64!(@thumbprint, padding: false)
+    seed = Base.url_decode64!(@jwk["d"], padding: false)
+    vector = V.fixture("rfc7515.json")["A.2"]
+    jws_policy = V.jws_policy(vector["key"], "RS256")
 
-    for entries <- [%{@thumbprint => true}, %{raw => false}] do
+    for entries <- [%{@thumbprint => true}, %{raw => false}, MapSet.new([{raw, true}]), %URI{}] do
       forged = %DenySet{entries: entries}
       assert {:error, %{reason: :invalid_policy}} =
                RequestSeal.Policy.new(Map.put(attrs, :deny, forged))
+
+      assert {:error, %{reason: :invalid_policy}} =
+               JWS.verify(vector["compact"], Map.put(jws_policy, :deny, forged))
+
+      assert {:error, %{reason: :invalid_options}} =
+               Local.new("ed25519", {:ed25519, seed}, deny: forged)
 
       assert {:error, :invalid_options} = DenySet.check(forged, public)
     end

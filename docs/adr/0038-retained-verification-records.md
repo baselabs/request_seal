@@ -32,4 +32,7 @@ Capture an asymmetric handle's verified public material under the same
 rules with or without a deny set. PSS-only keys retain the SPKI along with
 any validated algorithm, use, and operation restrictions. Established
 agent origin and fetch time take precedence and a supplied resolution must
-agree. Decode refuses duplicate and unknown members at every object boundary.
+agree. A Web Bot Auth held-key result retains its key-only provenance and
+rejects a supplied directory. Generic HTTP capture can still include a
+caller-supplied resolution for the verified key. Decode refuses duplicate and
+unknown members at every object boundary.

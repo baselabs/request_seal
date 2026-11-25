@@ -118,8 +118,21 @@ defmodule RequestSeal.SignatureBaseTest do
     above = prefix <> String.duplicate("n", 1025) <> ~s["]
     assert {:ok, _} = SignatureBase.parse(allowed)
     assert {:error, %{reason: :malformed}} = SignatureBase.parse(above)
-    assert {:error, %{reason: :limit}} =
-             SignatureBase.build(request(), String.trim_leading(above, ~s["@signature-params": ]))
+
+    message = request()
+    params = String.trim_leading(above, ~s["@signature-params": ])
+    assert {:error, %{reason: :limit}} = SignatureBase.build(message, params)
+    assert {:error, %{reason: :limit}} = SignatureBase.components(message, params)
+
+    {:ok, signer} = RequestSeal.Custody.Local.generate("ed25519", [])
+    spec = %{signature_input: params, label: "sig", algorithm: "ed25519"}
+
+    try do
+      assert {:error, %{reason: :signature_base_failed, layer: :crypto, detail: :limit}} =
+               RequestSeal.sign(message, spec, signer)
+    after
+      :ok = RequestSeal.Custody.release(signer)
+    end
   end
 
   test "delimiter-dense parsing stops after the first excess line" do

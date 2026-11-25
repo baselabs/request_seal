@@ -229,6 +229,8 @@ Module docs: `RequestSeal.WebBotAuth`, `RequestSeal.WebBotAuth.Policy`, `Request
 A freshness clock such as `fn -> {lower, upper} end` applies to the request,
 its resolved key, and any signed directory proof. Discovery checks starts
 against `lower` and expiration against `upper`, on fetch and cached lookup.
-When the policy supplies a `RequestSeal.DenySet`, the request signer and
-every signer of a relied-on directory proof must pass it. Previously stored
-signed snapshots need their proof signer identities to pass this check.
+A later lookup can use narrower bounds to establish a key's validity from
+the same snapshot. With the default `test_keys: :reject`, published test
+keys cannot sign a request or its relied-on directory proof. Both sets of
+signers must also pass any configured `RequestSeal.DenySet`. Previously
+stored signed snapshots need their proof signer identities for these checks.

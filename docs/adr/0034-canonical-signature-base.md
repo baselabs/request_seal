@@ -28,3 +28,6 @@ Apply the verifier's component syntax and nonce bound. Derived component values
 must have the form HTTP message validation and derivation would produce.
 Checking message context, field schemas, and derived value equality requires
 the original message.
+Building a base or inspecting derived components rejects a nonce over 1,024
+bytes with `:limit`. Low-level signing reports `:signature_base_failed` with
+detail `:limit` before asking custody to sign.

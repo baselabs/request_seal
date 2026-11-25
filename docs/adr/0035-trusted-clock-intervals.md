@@ -26,5 +26,12 @@ See [RFC 9421 Section 3.2.1](https://www.rfc-editor.org/rfc/rfc9421.html#section
 
 Discovery checks key and proof starts at the lower endpoint and expirations
 at the upper endpoint. Resolved entries retain the latest start and earliest
-expiration for lookup and conditional refresh. Fetch timestamps use the upper
-endpoint.
+expiration for lookup and conditional refresh. Keep future key starts in
+the snapshot so a later lookup can establish key validity using its own
+bounds. For an older entry without start facts, use its original fetch time.
+
+Fetch timestamps use the upper endpoint for reporting. Reuse deadlines for
+200 and 304 responses use the earliest possible request and response times
+when applying [RFC 9111 Section 4.2.3](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.2.3).
+A 304 without freshness directives inherits the stored HTTP lifetime and
+recomputes its deadline within the retained key and proof lifetimes.

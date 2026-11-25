@@ -25,9 +25,12 @@ starts no revocation service. See [RFC 7638 Section 3](https://www.rfc-editor.or
 
 A Web Bot Auth directory proof authenticates the directory body. The verified
 proof signer thumbprints travel with each resolved key. Every relied-on proof
-signer must pass an active deny policy, including on cache hits.
+signer must pass an active deny policy and the Web Bot Auth test-key policy,
+including on cache hits. A cache tombstone also drops every key whose
+relied-on directory proof used the removed signer, including when a fetch
+or revalidation is in progress.
 
-Validate the fixed-width digest entries before admitting a set. With a
-verification handle, screen its exported public key and require both any
+Validate fixed-width digest entries in a plain map before admitting a set.
+With a verification handle, screen its exported public key and require both any
 custodian verifier's approval and verification against that same public key.
 Seed screening runs before the private-key possession probe.

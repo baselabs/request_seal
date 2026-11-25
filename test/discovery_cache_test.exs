@@ -184,6 +184,60 @@ defmodule RequestSeal.DiscoveryCacheTest do
     assert accepts() == 1
   end
 
+  test "wide HTTP fetch and revalidation clocks cannot extend a relative deadline" do
+    for mode <- [:complete, :conditional, :inherited] do
+      owner = self()
+      responses = :atomics.new(1, [])
+      headers = [
+        {"Content-Type", "application/http-message-signatures-directory+json"},
+        {"Cache-Control", "max-age=10"},
+        {"ETag", ~s("v1")}
+      ]
+
+      p =
+        Peer.start(fn socket, request ->
+          send(owner, {:conditional, String.contains?(request, ~s(If-None-Match: "v1"))})
+
+          case {:atomics.add_get(responses, 1, 1), mode} do
+            {1, _} -> Peer.reply(socket, Peer.directory(), headers)
+            {2, :conditional} -> Peer.reply(socket, "", headers, 304)
+            {2, :inherited} -> Peer.reply(socket, "", [], 304)
+            _ -> Peer.reply(socket, "", [], 503)
+          end
+        end)
+
+      on_exit(fn -> Peer.stop(p) end)
+
+      {:ok, source} =
+        Source.new(%{
+          type: :directory,
+          location: "https://localhost:#{p.port}",
+          cacerts: p.cacerts,
+          permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}],
+          require_signed_directory: false
+        })
+
+      time = start_supervised!(Supervisor.child_spec({Agent, fn -> 90 end}, id: make_ref()))
+      {:ok, cache} = Cache.start_link(clock: fn -> Agent.get(time, & &1) end)
+      {:ok, key} = PublicKey.import(Peer.public_jwk(), :jwk)
+      {:ok, kid} = PublicKey.thumbprint(key)
+
+      if mode != :complete do
+        assert {:ok, %{expires_at: 100}} = Cache.refresh(cache, source)
+        assert_receive {:conditional, false}
+      end
+
+      Agent.update(time, fn _ -> {100, 110} end)
+      assert {:ok, %{fetched_at: 110, expires_at: 110}} = Cache.refresh(cache, source)
+      assert_receive {:conditional, conditional?}
+      assert conditional? == (mode != :complete)
+
+      Agent.update(time, fn _ -> 115 end)
+      assert {:error, %{reason: :unexpected_status}} = Cache.resolve(cache, source, kid, [])
+      assert_receive {:conditional, false}
+    end
+  end
+
   test "Expires keeps the directory cached only until its explicit expiry" do
     now = System.system_time(:second)
     clock = start_supervised!(Supervisor.child_spec({Agent, fn -> now end}, id: make_ref()))
@@ -248,6 +302,76 @@ defmodule RequestSeal.DiscoveryCacheTest do
     revoked = %{source | revoked: [kid]}
     assert {:error, %{reason: :revoked_key}} = Cache.resolve(cache, revoked, kid, [])
     assert accepts() == 0
+  end
+
+  test "a proof signer tombstone removes dependent keys on hits and during 200 and 304 fetches" do
+    {:ok, signer} = PublicKey.import(Peer.public_jwk(), :jwk)
+    {:ok, signer_id} = PublicKey.thumbprint(signer)
+    {:ok, key} = PublicKey.import(File.read!("test/fixtures/crypto/rsa_public.pem"), :pem)
+    {:ok, key_jwk} = PublicKey.export(key, :jwk)
+    {:ok, key_id} = PublicKey.thumbprint(key)
+    refute signer_id == key_id
+    body = Peer.directory([Peer.public_jwk(), key_jwk])
+    owner = self()
+
+    for mode <- [:cached, :fetching, :revalidating] do
+      p =
+        Peer.start(fn socket, request ->
+          send(owner, {:directory_request, self(), request})
+
+          receive do
+            :complete ->
+              message = Peer.signed_message(request, body, nil, created: 100, expires: 220)
+              fields = Enum.map(message.fields, &{&1.name, &1.value})
+              Peer.reply(socket, body, [{"ETag", ~s("v1")} | fields])
+
+            :unchanged ->
+              Peer.reply(socket, "", [{"Cache-Control", "max-age=30"}], 304)
+          after
+            5_000 -> :ok
+          end
+        end)
+
+      on_exit(fn -> Peer.stop(p) end)
+
+      {:ok, source} =
+        Source.new(%{
+          type: :directory,
+          location: "https://localhost:#{p.port}",
+          cacerts: p.cacerts,
+          permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}]
+        })
+
+      time = :atomics.new(1, [])
+      :atomics.put(time, 1, 100)
+      {:ok, cache} = Cache.start_link(clock: fn -> :atomics.get(time, 1) end)
+      resolve = fn -> Cache.resolve(cache, source, key_id, algorithms: ["rsa-pss-sha512"]) end
+
+      if mode != :fetching do
+        initial = Task.async(resolve)
+        assert_receive {:directory_request, connection, _}, 1_000
+        send(connection, :complete)
+        assert {:ok, %{proof_signers: [^signer_id]}} = Task.await(initial)
+        assert {:ok, %{thumbprint: ^key_id}} = resolve.()
+      end
+
+      if mode == :cached do
+        assert :ok = Cache.remove(cache, source, signer_id)
+      else
+        if mode == :revalidating, do: :atomics.put(time, 1, 131)
+        pending = Task.async(resolve)
+        assert_receive {:directory_request, connection, request}, 1_000
+        conditional? = mode == :revalidating
+        assert String.contains?(request, ~s(If-None-Match: "v1")) == conditional?
+        assert :ok = Cache.remove(cache, source, signer_id)
+        send(connection, if(conditional?, do: :unchanged, else: :complete))
+        assert {:error, %{reason: :unknown_key}} = Task.await(pending)
+      end
+
+      assert {:error, %{reason: :unknown_key}} = resolve.()
+      assert {:error, %{reason: :revoked_key}} = Cache.resolve(cache, source, signer_id, [])
+      refute_received {:directory_request, _, _}
+    end
   end
 
   test "no-store responses never enter the cache and unknown IDs do not trigger refetch floods" do

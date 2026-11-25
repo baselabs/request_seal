@@ -13,7 +13,8 @@ defmodule RequestSeal.Discovery.Cache do
   No-store/no-cache snapshots serve only current waiters and are never retained.
 
   Thumbprints denied with `remove/3` stay denied across refresh and
-  invalidation. Removing the source's denial requires a caller-created new
+  invalidation, including keys whose directory proof relied on them.
+  Removing the source's denial requires a caller-created new
   cache/configuration. Last-waiter cancellation kills the socket-owning fetcher;
   cache termination also cancels all fetches.
   """
@@ -229,7 +230,8 @@ defmodule RequestSeal.Discovery.Cache do
   @doc """
   Deny a thumbprint persistently for this cache and source.
 
-  The thumbprint is dropped from any held snapshot and from fetches completing later.
+  Any key matching the thumbprint or relying on it as a directory proof signer
+  is dropped from held snapshots and from fetches completing later.
 
   ## Parameters
 
@@ -397,7 +399,7 @@ defmodule RequestSeal.Discovery.Cache do
                     Map.put(
                       state.entries,
                       source,
-                      {:positive, %{set | keys: reject_removed(set.keys, MapSet.new([kid]))}}
+                      {:positive, %{set | keys: reject_removed(set.keys, removed[source])}}
                     )
 
                   _ ->
@@ -455,9 +457,14 @@ defmodule RequestSeal.Discovery.Cache do
             {:positive, set} when source.type != :cimd ->
               now = Support.clock(clock)
 
-              if set.etag != nil and keys_alive?(set, now),
-                do: {set.etag, max(set.expires_at - set.fetched_at, 0)},
-                else: {nil, nil}
+              if set.etag != nil and keys_alive?(set, now) do
+                lifetime =
+                  Map.get(set, :freshness_lifetime) || max(set.expires_at - set.fetched_at, 0)
+
+                {set.etag, lifetime}
+              else
+                {nil, nil}
+              end
 
             _ ->
               {nil, nil}
@@ -511,8 +518,25 @@ defmodule RequestSeal.Discovery.Cache do
   defp keys_alive?(set, now),
     do: set.keys != %{} and Enum.all?(set.keys, fn {_, entry} -> now < entry.expires_at end)
 
-  defp reject_removed(keys, tombstones),
-    do: Map.reject(keys, fn {_, entry} -> MapSet.member?(tombstones, entry.thumbprint) end)
+  defp reject_removed(keys, tombstones) do
+    if MapSet.size(tombstones) == 0 do
+      keys
+    else
+      Map.reject(keys, fn {_, entry} ->
+        MapSet.member?(tombstones, entry.thumbprint) or
+          (entry.proof == :signed and removed_proof?(entry, tombstones))
+      end)
+    end
+  end
+
+  defp removed_proof?(entry, tombstones) do
+    case Map.get(entry, :proof_signers) do
+      [_ | _] = signers when is_list(signers) ->
+        Enum.any?(signers, &MapSet.member?(tombstones, &1))
+
+      _ -> true
+    end
+  end
 
   defp removed?(state, source, kid),
     do: MapSet.member?(Map.get(state.removed, source, MapSet.new()), kid)
@@ -575,9 +599,10 @@ defmodule RequestSeal.Discovery.Cache do
              stored
              | etag: fresh.etag,
                fetched_at: fresh.fetched_at,
-               expires_at: min(fresh.expires_at, earliest),
+               expires_at: earliest,
                keys: keys
-           }}
+           }
+           |> Map.put(:freshness_lifetime, fresh.freshness_lifetime)}
 
         {{:ok, {:not_modified, _}}, _} ->
           # No stored representation survived (for example an invalidation that
@@ -620,7 +645,7 @@ defmodule RequestSeal.Discovery.Cache do
           case result do
             {:ok, set} ->
               entries =
-                if set.expires_at > now,
+                if set.expires_at > max(now, set.fetched_at),
                   do: Map.put(state.entries, source, {:positive, set}),
                   else: Map.delete(state.entries, source)
 
@@ -653,10 +678,10 @@ defmodule RequestSeal.Discovery.Cache do
       fn ->
         {_, now} = interval = Support.interval(clock)
         # This response serves only its current waiters, never a later cache
-        # hit. HTTP no-store/max-age=0 does not invalidate a newly fetched key;
+        # hit. A response requiring revalidation can serve newly fetched keys;
         # original key/proof expiry still applies, even across a clock tick.
         transient =
-          if set.expires_at == set.fetched_at,
+          if set.expires_at <= set.fetched_at,
             do: %{set | expires_at: now + 1},
             else: set
 
