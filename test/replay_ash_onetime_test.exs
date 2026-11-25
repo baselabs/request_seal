@@ -75,7 +75,41 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
         assert {:error, :failure} = AshOnetime.claim(store.ref, invalid, context)
       end
 
+      for malformed <- [
+            %{context | deadline: :infinity},
+            %{context | deadline: 1.5},
+            %{context | owner: nil},
+            Map.delete(context, :deadline)
+          ] do
+        assert {:error, :failure} = AshOnetime.claim(store.ref, claim(), malformed)
+      end
+
       assert {:error, :failure} = AshOnetime.claim({String, "invalid", prefix}, claim(), context)
+    end
+
+    test "direct claims refuse an enclosing repo transaction before its rollback",
+         %{prefix: prefix} do
+      store = AshOnetime.store(OwnedRepo, partition: "transaction-owner", prefix: prefix)
+      c = claim()
+      context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 5_000}
+
+      assert {:error, :outer_rollback} =
+               OwnedRepo.transaction(fn ->
+                 assert OwnedRepo.in_transaction?()
+                 assert {:error, :failure} = AshOnetime.claim(store.ref, c, context)
+                 OwnedRepo.rollback(:outer_rollback)
+               end)
+
+      assert %{rows: [[0]]} =
+               OwnedRepo.query!(
+                 """
+                 SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims
+                 WHERE logical_partition = 'transaction-owner'
+                 """
+               )
+
+      assert :claimed = Replay.claim(store, c, timeout: 5_000)
+      assert :already_claimed = Replay.claim(store, c, timeout: 5_000)
     end
 
     test "issuance uses the database transaction clock and retention survives immediate cleanup",
@@ -94,7 +128,10 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
       assert %{rows: [[issued, admitted, retention]]} =
                OwnedRepo.query!(
-                 "SELECT issued_at, admitted_at, retain_until FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'db-clock'"
+                 """
+                 SELECT issued_at, admitted_at, retain_until
+                 FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'db-clock'
+                 """
                )
 
       assert issued == admitted
@@ -140,7 +177,11 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
         assert database_now() < c.retain_until
 
         OwnedRepo.query!(
-          "SELECT pg_sleep(GREATEST($1::bigint - extract(epoch FROM clock_timestamp()), 0)::double precision)",
+          """
+          SELECT pg_sleep(
+            GREATEST($1::bigint - extract(epoch FROM clock_timestamp()), 0)::double precision
+          )
+          """,
           [c.retain_until]
         )
 
@@ -156,13 +197,17 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
         assert %{rows: [[0]]} =
                  OwnedRepo.query!(
-                   "SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'cleanup-race'"
+                   """
+                   SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims
+                   WHERE logical_partition = 'cleanup-race'
+                   """
                  )
       after
         :telemetry.detach(id)
       end
 
-      assert :claimed = Replay.claim(store, %{c | retain_until: database_now() + 120}, timeout: 5_000)
+      assert :claimed =
+               Replay.claim(store, %{c | retain_until: database_now() + 120}, timeout: 5_000)
     end
 
     def pause_admission(_event, _measurements, metadata, owner) do
@@ -232,7 +277,11 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     defp wait_for_cutoff_lock(prefix, deadline) do
       %{rows: [[waiting]]} =
         OwnedRepo.query!(
-          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE $1)",
+          """
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE $1
+          )
+          """,
           ["%#{prefix}%request_seal_replay_cutoff%FOR SHARE%"]
         )
 

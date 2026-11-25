@@ -160,6 +160,32 @@ defmodule RequestSeal.ReplayTest do
     assert {:error, :failure} = ETS.claim(ctx.pid, claim, context)
   end
 
+  test "live upgrade from the legacy state preserves claims and requires a trusted cutoff", ctx do
+    spent = claim("upgrade", "spent", 110)
+    stale = claim("upgrade", "stale", 100)
+    assert :claimed = ETS.claim(ctx.pid, spent, context())
+    %{table: table} = :sys.replace_state(ctx.pid, &Map.delete(&1, :swept_through))
+    assert {:error, :failure} = ETS.claim(ctx.pid, stale, context())
+    assert {:error, :failure} = ETS.sweep(ctx.pid, 100, context())
+    assert :ets.lookup(table, {:claim, spent.namespace, spent.key}) != []
+    assert :ok = :sys.suspend(ctx.pid)
+
+    try do
+      assert {:error, _} = :sys.change_code(ctx.pid, ETS, :legacy, [])
+      assert {:error, _} = :sys.change_code(ctx.pid, ETS, :legacy, {:swept_through, 100.0})
+      assert :ok = :sys.change_code(ctx.pid, ETS, :legacy, {:swept_through, 100})
+    after
+      assert :ok = :sys.resume(ctx.pid)
+    end
+
+    assert %{table: ^table, swept_through: 100} = :sys.get_state(ctx.pid)
+    assert :already_claimed = ETS.claim(ctx.pid, spent, context())
+    assert {:error, :failure} = ETS.claim(ctx.pid, stale, context())
+    assert {:ok, 0} = ETS.sweep(ctx.pid, 99, context())
+    assert {:error, :failure} = ETS.claim(ctx.pid, stale, context())
+    assert :claimed = ETS.claim(ctx.pid, %{stale | retain_until: 101}, context())
+  end
+
   test "direct claim rejects malformed claim and context before calling the owner", ctx do
     Process.unlink(ctx.pid)
     claim = claim("scope", "existing", 100)

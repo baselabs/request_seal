@@ -31,10 +31,16 @@ if Code.ensure_loaded?(Postgrex) do
     alias RequestSeal.Custody.Context
     alias RequestSeal.Replay.{Claim, Error, Store}
 
+    defguardp connection_ref?(conn) when is_pid(conn) or (is_atom(conn) and conn != nil)
+
+    @typep connection_ref :: pid() | atom()
+
     @doc """
     Reference an existing caller connection or pool and an explicit replay table.
 
     Building the reference does not contact the database or check that the table exists.
+    Checked-out transaction handles are refused. A connection or pool process
+    lets the adapter own the transaction through commit.
 
     ## Parameters
 
@@ -62,8 +68,8 @@ if Code.ensure_loaded?(Postgrex) do
         iex> RequestSeal.Replay.Postgres.store(:replay_db, table: "Replay-Claims")
         {:error, %RequestSeal.Replay.Error{reason: :invalid_store, retryable: false}}
     """
-    @spec store(term(), keyword()) :: Store.t() | {:error, Error.t()}
-    def store(conn, [{:table, name}]) do
+    @spec store(connection_ref(), keyword()) :: Store.t() | {:error, Error.t()}
+    def store(conn, [{:table, name}]) when connection_ref?(conn) do
       if table?(name), do: %Store{adapter: __MODULE__, ref: {conn, name}}, else: invalid()
     end
 
@@ -163,8 +169,9 @@ if Code.ensure_loaded?(Postgrex) do
 
     ## Examples
 
-        iex> RequestSeal.Replay.Postgres.ddl_index("replay_claims")
-        ~S|CREATE INDEX "replay_claims_retain_until_idx" ON "replay_claims" (retain_until) WHERE namespace <> ''::bytea|
+        iex> sql = RequestSeal.Replay.Postgres.ddl_index("replay_claims")
+        iex> String.ends_with?(sql, "WHERE namespace <> ''::bytea")
+        true
         iex> RequestSeal.Replay.Postgres.ddl_index("1_claims")
         {:error, %RequestSeal.Replay.Error{reason: :invalid_store, retryable: false}}
         iex> RequestSeal.Replay.Postgres.ddl_index(String.duplicate("x", 47))
@@ -173,7 +180,8 @@ if Code.ensure_loaded?(Postgrex) do
     @spec ddl_index(binary()) :: binary() | {:error, Error.t()}
     def ddl_index(name) do
       if table?(name) and byte_size(name) <= 46 do
-        "CREATE INDEX \"#{name}_retain_until_idx\" ON \"#{name}\" (retain_until) WHERE namespace <> ''::bytea"
+        "CREATE INDEX \"#{name}_retain_until_idx\" ON \"#{name}\" (retain_until) " <>
+          "WHERE namespace <> ''::bytea"
       else
         invalid()
       end
@@ -231,9 +239,9 @@ if Code.ensure_loaded?(Postgrex) do
         :already_claimed = RequestSeal.Replay.claim(store, claim, timeout: 2_000)
     """
     @impl RequestSeal.Replay
-    @spec claim({Postgrex.conn(), binary()}, Claim.t(), Context.t()) ::
+    @spec claim({connection_ref(), binary()}, Claim.t(), Context.t()) ::
             :claimed | :already_claimed | {:error, :failure | :timeout | :unavailable}
-    def claim({conn, table}, %Claim{} = claim, context) do
+    def claim({conn, table}, %Claim{} = claim, context) when connection_ref?(conn) do
       if table?(table) and Claim.valid?(claim) do
         transaction(conn, context, fn tx -> claim_row(tx, table, claim, context) end)
       else
@@ -321,9 +329,10 @@ if Code.ensure_loaded?(Postgrex) do
           RequestSeal.Replay.Postgres.sweep({conn, "replay_claims"}, trusted_now, context)
     """
     @impl RequestSeal.Replay
-    @spec sweep({Postgrex.conn(), binary()}, integer(), Context.t()) ::
+    @spec sweep({connection_ref(), binary()}, integer(), Context.t()) ::
             {:ok, non_neg_integer()} | {:error, :failure | :timeout | :unavailable}
-    def sweep({conn, table}, now, context) when is_integer(now) and now in 0..253_402_300_799 do
+    def sweep({conn, table}, now, context)
+        when connection_ref?(conn) and is_integer(now) and now in 0..253_402_300_799 do
       if table?(table) do
         transaction(conn, context, fn tx -> sweep_rows(tx, table, now, context) end)
       else

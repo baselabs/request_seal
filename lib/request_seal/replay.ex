@@ -9,6 +9,9 @@ defmodule RequestSeal.Replay do
   the adapter and `:store_failed` from the public API. This applies even after
   empty sweeps, older sweeps, and verification already in flight. An adapter
   that delegates cleanup enforces its delegate's cutoff at claim admission.
+  A durable adapter reports success only after its transaction commits.
+  Postgrex accepts a connection or pool process. AshOnetime refuses calls
+  from a transaction already open in the calling process for its repo.
   Generic and Web Bot Auth verification reject a derived retention end above
   253,402,300,799 Unix seconds with `RequestSeal.Error` reason
   `:retention_exceeded` at `:replay` before commitment or storage. Such claims

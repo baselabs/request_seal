@@ -181,11 +181,13 @@ durable_store = RequestSeal.Replay.AshOnetime.store(repo,
 durable_replay = %{replay | store: durable_store}
 {:ok, durable_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: durable_replay})
 {:ok, durable_signed} = RequestSeal.sign(message, signing, handle)
-{:ok, durable_accepted} = RequestSeal.verify(durable_signed, durable_policy, label: "sig")
+{:ok, durable_accepted} =
+  RequestSeal.verify(durable_signed, durable_policy, label: "sig")
 ```
 
 Each claim commits in its own READ COMMITTED repo transaction under the remaining
-deadline. Namespace and commitment bytes are base64url encoded. ash_onetime
+deadline. Direct adapter calls from an enclosing repo transaction fail.
+Namespace and commitment bytes are base64url encoded. ash_onetime
 enforces nonce uniqueness and uses its database clock and retention margin
 for cleanup eligibility. RequestSeal records the latest cutoff inside the
 delegate's cleanup transaction. A claim checks that persisted cutoff and
@@ -203,12 +205,20 @@ table, quiesce all writers and sweepers and run
 `RequestSeal.Replay.Postgres.cutoff_ddl(table, last_cutoff)`. Supply a trusted
 upper bound on all previous sweeps, including empty sweeps. Admission stays closed
 when the bound is unknown. Existing retention indexes can be reused.
+Use a connection or pool process for Postgrex. The adapter refuses checked-out
+transaction handles so its successful results confirm a committed transaction.
 
-For Web Bot Auth, give `RequestSeal.WebBotAuth.Policy` the same replay map. Its commitment receives the same facts map, with the signing agent as `agent` in place of `tag`; commit to `identifier`, `keyid`, and `agent[:identifier]`, as the [Web Bot Auth guide](web-bot-auth.md) shows in a runnable example. Required replay accepts exactly one selected Web Bot Auth signature per message and rejects more with `:unexpected_signature`; its claim follows that verified signature, and the facts never include the uncovered label. Generic single-label verification requires bounded freshness and a nonempty nonce.
+For Web Bot Auth, give `RequestSeal.WebBotAuth.Policy` the nonce replay map from
+the example. Its commitment receives the signing agent as `agent` in place of
+`tag`. The [Web Bot Auth guide](web-bot-auth.md) shows how to commit to the
+identifier, key ID, and agent. Required replay accepts exactly one selected Web
+Bot Auth signature per message. A generic single-label policy requires bounded
+freshness. Nonce modes also require a nonempty authenticated nonce. The built-in
+operation mode uses ordered mandatory signed component values as its identifier.
 
 ## Errors
 
-`:missing_replay_identifier` means the selected signature has no usable nonce. `:replayed` means a prior claim exists. `:commitment_failed` means your function failed or returned an invalid result. `:store_unavailable`, `:store_timeout`, and `:store_failed` reject authentication, including full stores. A single deadline covers commitment and atomic storage; caller cancellation stops work but cannot undo a committed claim. A timeout may already have committed, so no replay error permits automatic retry. `:retention_exceeded` rejects before the claim when a signature window extends past the configured retention end, or when the derived retention end exceeds 253,402,300,799. `RequestSeal.Policy.new/1` returns `:invalid_policy` when required replay lacks bounded freshness (`require_expires: true` or a `max_age`). The [errors guide](errors.md) reproduces `:replayed` and `:missing_replay_identifier`.
+`:missing_replay_identifier` means the policy has no usable authenticated replay identifier. `:replayed` means a prior claim exists. `:commitment_failed` means your function failed or returned an invalid result. `:store_unavailable`, `:store_timeout`, and `:store_failed` reject authentication, including full stores. A single deadline covers commitment and atomic storage; caller cancellation stops work but cannot undo a committed claim. A timeout may already have committed, so no replay error permits automatic retry. `:retention_exceeded` rejects before the claim when a signature window extends past the configured retention end, or when the derived retention end exceeds 253,402,300,799. `RequestSeal.Policy.new/1` returns `:invalid_policy` when required replay lacks bounded freshness (`require_expires: true` or a `max_age`). The [errors guide](errors.md) reproduces `:replayed` and `:missing_replay_identifier`.
 
 Module docs: `RequestSeal.Policy`, `RequestSeal.Replay`, `RequestSeal.Replay.ETS`, `RequestSeal.Replay.AshOnetime`, `RequestSeal.Replay.Postgres`, `RequestSeal.Replay.Store`, `RequestSeal.Replay.Receipt`, `RequestSeal.Error`.
 

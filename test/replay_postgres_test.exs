@@ -127,8 +127,12 @@ defmodule RequestSeal.ReplayPostgresTest do
       results = Enum.map(tasks ++ [peer_task], &Task.await(&1, 10_000))
       assert Enum.count(results, &(&1 == :claimed)) == 1
       assert Enum.count(results, &(&1 == :already_claimed)) == 64
-      assert [[1]] =
-               Postgrex.query!(ctx.admin, "SELECT count(*) FROM #{ctx.table} WHERE namespace <> ''::bytea", []).rows
+      assert %{rows: [[1]]} =
+               Postgrex.query!(
+                 ctx.admin,
+                 "SELECT count(*) FROM #{ctx.table} WHERE namespace <> ''::bytea",
+                 []
+               )
     after
       :peer.stop(peer)
     end
@@ -141,13 +145,18 @@ defmodule RequestSeal.ReplayPostgresTest do
     assert {:ok, 0} = Postgres.sweep(ctx.store.ref, 99, context())
     assert {:ok, 2} = Postgres.sweep(ctx.store.ref, 100, context())
     assert {:ok, 0} = Postgres.sweep({ctx.b, ctx.table}, 99, context())
-    assert {:error, :failure} = Postgres.claim({ctx.b, ctx.table}, claim("b", "nonce", 99), context())
+    assert {:error, :failure} =
+             Postgres.claim({ctx.b, ctx.table}, claim("b", "nonce", 99), context())
     assert {:error, %{reason: :store_failed}} =
              Replay.claim(ctx.store, claim("a", "nonce", 100), timeout: 2000)
 
     assert :claimed = Replay.claim(ctx.store, claim("a", "nonce", 101), timeout: 2000)
-    assert [[101]] =
-             Postgrex.query!(ctx.admin, "SELECT retain_until FROM #{ctx.table} WHERE namespace <> ''::bytea", []).rows
+    assert %{rows: [[101]]} =
+             Postgrex.query!(
+               ctx.admin,
+               "SELECT retain_until FROM #{ctx.table} WHERE namespace <> ''::bytea",
+               []
+             )
     rendered = inspect(ctx.store)
     refute rendered =~ ctx.table
 
@@ -193,8 +202,7 @@ defmodule RequestSeal.ReplayPostgresTest do
     try do
       sweeper =
         Task.async(fn ->
-          context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 10_000}
-          Postgres.sweep({sweep_pool, ctx.table}, original.retain_until, context)
+          Postgres.sweep({sweep_pool, ctx.table}, original.retain_until, context(10_000))
         end)
 
       wait_for_lock(ctx.admin, sweep_backend, System.monotonic_time(:millisecond) + 3000)
@@ -219,11 +227,14 @@ defmodule RequestSeal.ReplayPostgresTest do
   test "legacy tables require a trusted cutoff even after an empty sweep", ctx do
     table = ctx.table <> "_legacy"
 
-    Postgrex.query!(
-      ctx.admin,
-      ~s(CREATE TABLE "#{table}" (namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL, PRIMARY KEY (namespace, key))),
-      []
+    legacy_ddl = """
+    CREATE TABLE "#{table}" (
+      namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL,
+      PRIMARY KEY (namespace, key)
     )
+    """
+
+    Postgrex.query!(ctx.admin, legacy_ddl, [])
 
     try do
       store = Postgres.store(ctx.a, table: table)
@@ -257,6 +268,25 @@ defmodule RequestSeal.ReplayPostgresTest do
     end
   end
 
+  test "checked-out transaction handles cannot report durable claims or sweeps", ctx do
+    existing = claim("ownership", "old", 100)
+    pending = claim("ownership", "new", 101)
+    assert :claimed = Replay.claim(ctx.store, existing, timeout: 2000)
+
+    assert {:error, :outer_rollback} =
+             Postgrex.transaction(ctx.a, fn tx ->
+               assert {:error, :failure} = Postgres.sweep({tx, ctx.table}, 100, context())
+               assert {:error, :failure} = Postgres.claim({tx, ctx.table}, pending, context())
+               assert {:error, %{reason: :invalid_store}} = Postgres.store(tx, table: ctx.table)
+               Postgrex.rollback(tx, :outer_rollback)
+             end)
+
+    independent = Postgres.store(ctx.b, table: ctx.table)
+    assert :already_claimed = Replay.claim(independent, existing, timeout: 2000)
+    assert :claimed = Replay.claim(independent, pending, timeout: 2000)
+    assert {:ok, 1} = Postgres.sweep(independent.ref, 100, context())
+  end
+
   test "a sweep sees a nonce committed while it waits for the cutoff lock", ctx do
     assert {:ok, 0} = Postgres.sweep(ctx.store.ref, 99, context())
     {:ok, sweep_pool} = Postgrex.start_link(Keyword.put(ctx.options, :pool_size, 1))
@@ -269,7 +299,10 @@ defmodule RequestSeal.ReplayPostgresTest do
         Postgrex.transaction(ctx.b, fn tx ->
           Postgrex.query!(
             tx,
-            "SELECT retain_until FROM #{ctx.table} WHERE namespace = ''::bytea AND key = ''::bytea FOR SHARE",
+            """
+            SELECT retain_until FROM #{ctx.table}
+            WHERE namespace = ''::bytea AND key = ''::bytea FOR SHARE
+            """,
             []
           )
 
@@ -292,8 +325,7 @@ defmodule RequestSeal.ReplayPostgresTest do
     try do
       sweeper =
         Task.async(fn ->
-          context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 10_000}
-          Postgres.sweep({sweep_pool, ctx.table}, claim.retain_until, context)
+          Postgres.sweep({sweep_pool, ctx.table}, claim.retain_until, context(10_000))
         end)
 
       wait_for_lock(ctx.admin, backend, System.monotonic_time(:millisecond) + 3000)
@@ -451,7 +483,10 @@ defmodule RequestSeal.ReplayPostgresTest do
 
     Postgrex.query!(
       admin,
-      "CREATE TRIGGER #{table}_slow BEFORE INSERT ON #{table} FOR EACH ROW WHEN (NEW.namespace <> ''::bytea) EXECUTE FUNCTION #{table}_slow()",
+      """
+      CREATE TRIGGER #{table}_slow BEFORE INSERT ON #{table} FOR EACH ROW
+      WHEN (NEW.namespace <> ''::bytea) EXECUTE FUNCTION #{table}_slow()
+      """,
       []
     )
   end
@@ -550,8 +585,12 @@ defmodule RequestSeal.ReplayPostgresTest do
                  timeout: 2000
                )
 
-      assert [[100]] =
-               Postgrex.query!(ctx.admin, "SELECT retain_until FROM #{ctx.table} WHERE namespace <> ''::bytea", []).rows
+      assert %{rows: [[100]]} =
+               Postgrex.query!(
+                 ctx.admin,
+                 "SELECT retain_until FROM #{ctx.table} WHERE namespace <> ''::bytea",
+                 []
+               )
     after
       GenServer.stop(replacement)
     end
@@ -587,7 +626,8 @@ defmodule RequestSeal.ReplayPostgresTest do
 
   setup do: %{test_pid: self()}
   defp claim(ns, key, until), do: struct(Claim, namespace: ns, key: key, retain_until: until)
-  defp context, do: %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 2000}
+  defp context(timeout \\ 2000),
+    do: %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
 
   defp await_release(gate) do
     if :atomics.get(gate, 1) == 0 do

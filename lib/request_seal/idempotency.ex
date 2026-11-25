@@ -31,7 +31,8 @@ defmodule RequestSeal.Idempotency do
   @max_body 1_048_576
   @excluded_headers ~w(authentication-info authorization connection content-digest
     content-length cookie date keep-alive proxy-authenticate proxy-authentication-info
-    proxy-authorization proxy-connection repr-digest set-cookie set-cookie2 signature signature-input te trailer transfer-encoding upgrade www-authenticate)
+    proxy-authorization proxy-connection repr-digest set-cookie set-cookie2 signature
+    signature-input te trailer transfer-encoding upgrade www-authenticate)
 
   @doc """
   Atomically reserve the scoped key, renew a matching expired lease, or return
@@ -340,7 +341,8 @@ defmodule RequestSeal.Idempotency do
 
     arguments = [ref | args] ++ [context]
 
-    if Code.ensure_loaded?(adapter) and function_exported?(adapter, operation, length(arguments)) do
+    if Code.ensure_loaded?(adapter) and
+         function_exported?(adapter, operation, length(arguments)) do
       callback = fn -> invoke_adapter(adapter, operation, arguments) end
 
       case RequestSeal.Replay.run(context, callback) do

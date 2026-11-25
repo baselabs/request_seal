@@ -6,8 +6,9 @@ defmodule RequestSeal.Replay.Store do
   is that adapter's reference. Stores enforce a monotonic sweep cutoff within
   their storage authority, returning `{:error, :failure}` for a claim whose
   exclusive retention end is at or before that cutoff. The cutoff check and
-  claim admission are atomic with respect to sweeps. Build stores with `RequestSeal.Replay.ETS.store/1`,
-  `RequestSeal.Replay.Postgres.store/2` or `RequestSeal.Replay.AshOnetime.store/2`.
+  claim admission are atomic with respect to sweeps. Build stores with
+  `RequestSeal.Replay.ETS.store/1`, `RequestSeal.Replay.Postgres.store/2` or
+  `RequestSeal.Replay.AshOnetime.store/2`.
   Use `RequestSeal.Replay.Pair.store/2` during a migration.
   """
   @derive {Inspect, only: [:adapter]}

@@ -6,6 +6,8 @@
   Postgrex tables with `RequestSeal.Replay.Postgres.cutoff_ddl/2` and install
   the delegated cleanup guard with `RequestSeal.Replay.AshOnetime.cleanup_guard_ddl/2`.
   Existing stores require a trusted upper bound on prior sweeps or pruning.
+- Require durable replay adapters to own their commit and preserve the
+  claims of a running ETS owner when installing its trusted sweep cutoff.
 - Reject late replay claims at the local store's sweep cutoff and account for
   principals, roles, and selectors when checking quorum policy feasibility.
 - Bound idempotency clock callbacks, exclude exchange-specific HTTP

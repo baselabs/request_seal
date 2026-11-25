@@ -30,6 +30,29 @@ listed source and case before accepting results. See
 [release verification](verifying-releases.md). Corpus assets are separate from
 the Hex package.
 
+## Migrate replay stores
+
+Pause claim writers and cleanup before upgrading an existing durable store.
+Establish a trusted upper bound on all prior sweep or prune timestamps,
+including cleanup that removed zero entries. Keep admission closed if the
+bound is unknown. The current database clock alone cannot establish it
+after a clock rollback.
+
+- For Postgrex, execute `RequestSeal.Replay.Postgres.cutoff_ddl(table, last_cutoff)`
+  against the existing table. Open admission after the migration commits and
+  every writer and sweeper is upgraded. For a new table, `ddl/1` initializes
+  its cutoff.
+- For AshOnetime, execute the statements from
+  `RequestSeal.Replay.AshOnetime.cleanup_guard_ddl(prefix, last_cutoff)`
+  in order in a single migration transaction after the ash_onetime migrations.
+  Use `0` for a fresh schema with no prior pruning.
+
+For a running ETS owner, pause claims and sweeps and suspend the owner. Use
+`:sys.change_code/4` with `{:swept_through, last_cutoff}` to preserve its
+table and install the trusted cutoff before resuming.
+See [replay protection](replay-protection.md#choose-local-or-persistent-storage)
+for store setup and transaction ownership.
+
 ## Replace every key closure
 
 Resolver callbacks remain application functions that select trusted keys. They

@@ -6,10 +6,11 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     Requires optional ash_onetime 1.9.2 or newer within 1.x, and Elixir 1.20.
     The caller owns the existing Ecto repo, PostgreSQL database, and ash_onetime
     installation migrations. Install `cleanup_guard_ddl/2` in the same schema
-    after the ash_onetime migrations. Namespace and commitment bytes are base64url encoded into scope and key;
-    they never become SQL identifiers or logical partitions.
+    after the ash_onetime migrations. Namespace and commitment bytes are
+    base64url encoded into scope and key.
 
     Each claim owns a READ COMMITTED transaction under the remaining deadline.
+    Direct calls inside an already open transaction for the repo are refused.
     This transaction commits independently of the verifier's application effect.
     To spend a nonce together with an effect, verify with replay explicitly
     `:not_required`, then use ash_onetime in the application's transaction.
@@ -36,7 +37,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     Reference an existing repo with an explicit logical partition and optional schema prefix.
 
     Building the reference does not contact the database; the repo module must be
-    loaded and export `transaction/2`.
+    loaded and export `transaction/2` and `in_transaction?/0`.
 
     ## Parameters
 
@@ -75,8 +76,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       if Keyword.keyword?(opts) and
            length(Keyword.keys(opts)) == length(Enum.uniq(Keyword.keys(opts))) and
            Enum.all?(Keyword.keys(opts), &(&1 in [:partition, :prefix])) and
-           text?(opts[:partition], 255) and (opts[:prefix] == nil or text?(opts[:prefix], 63)) and
-           Code.ensure_loaded?(repo) and function_exported?(repo, :transaction, 2) do
+           valid_ref?(repo, opts[:partition], opts[:prefix]) do
         %Store{adapter: __MODULE__, ref: {repo, opts[:partition], opts[:prefix]}}
       else
         {:error, Error.new(:invalid_store)}
@@ -100,7 +100,8 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     the cutoff row.
     This function builds SQL and does not execute it.
     """
-    @spec cleanup_guard_ddl(binary() | nil, 0..253_402_300_799) :: [binary()] | {:error, Error.t()}
+    @spec cleanup_guard_ddl(binary() | nil, 0..253_402_300_799) ::
+            [binary()] | {:error, Error.t()}
     def cleanup_guard_ddl(prefix, swept_through)
         when is_integer(swept_through) and swept_through in 0..253_402_300_799 do
       if prefix == nil or text?(prefix, 63) do
@@ -116,8 +117,12 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
           )
           """,
           """
-          INSERT INTO #{cutoff} VALUES
-            (true, GREATEST(#{swept_through}, floor(extract(epoch FROM transaction_timestamp()))::bigint))
+          INSERT INTO #{cutoff} VALUES (
+            true,
+            GREATEST(
+              #{swept_through}, floor(extract(epoch FROM transaction_timestamp()))::bigint
+            )
+          )
           """,
           """
           CREATE FUNCTION #{function}() RETURNS trigger LANGUAGE plpgsql AS $cutoff$
@@ -172,8 +177,9 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
         may have committed.
       * `{:error, :unavailable}` - the repo is not running, a connection could not
         be checked out, or the database is shutting down or refusing connections.
-      * `{:error, :failure}` - an invalid claim or reference, a retention end at
-        or before the database clock or cleanup cutoff, or any other failure.
+      * `{:error, :failure}` - an invalid claim, reference or context, an enclosing
+        repo transaction, a retention end at or before the database clock or
+        cleanup cutoff, or any other failure.
 
     ## Examples
 
@@ -188,7 +194,12 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     @impl true
     @spec claim(ref(), Claim.t(), Context.t()) ::
             :claimed | :already_claimed | {:error, :unavailable | :timeout | :failure}
-    def claim({repo, partition, prefix} = ref, %Claim{} = claim, %Context{} = context) do
+    def claim(
+          {repo, partition, prefix} = ref,
+          %Claim{} = claim,
+          %Context{owner: owner, deadline: deadline} = context
+        )
+        when map_size(context) == 3 and is_pid(owner) and is_integer(deadline) do
       case attempt(ref, claim, context) do
         # A client timeout surfaces as a rolled-back transaction or a closed
         # connection with no timeout marker; the expired deadline that bounded
@@ -216,6 +227,9 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
         not running_repo?(repo) ->
           {:error, :unavailable}
+
+        repo.in_transaction?() ->
+          {:error, :failure}
 
         true ->
           key = Base.url_encode64(claim.key, padding: false)
@@ -306,6 +320,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
     defp valid_ref?(repo, partition, prefix) do
       is_atom(repo) and Code.ensure_loaded?(repo) and function_exported?(repo, :transaction, 2) and
+        function_exported?(repo, :in_transaction?, 0) and
         text?(partition, 255) and (prefix == nil or text?(prefix, 63))
     end
 

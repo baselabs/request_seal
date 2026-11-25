@@ -11,6 +11,12 @@ defmodule RequestSeal.Replay.ETS do
   Multi-node operators sweep at `now - max_internode_skew` to preserve claims
   while any verifier still accepts the authenticated input.
   One namespace should use one freshness bound because duplicates never extend retention.
+
+  A live upgrade from an owner without a cutoff requires a trusted upper bound
+  on its prior sweeps. Quiesce claims and sweeps, suspend the owner, and pass
+  `{:swept_through, cutoff}` as the extra argument to `:sys.change_code/4`
+  before resuming it. The migration retains the table. Until the cutoff is
+  installed, the upgraded owner refuses claims and sweeps.
   """
   use GenServer
   @spec child_spec(keyword()) :: Supervisor.child_spec()
@@ -237,6 +243,9 @@ defmodule RequestSeal.Replay.ETS do
   def sweep(_, _, _), do: {:error, :failure}
 
   @impl GenServer
+  def handle_call(_, _from, state) when not is_map_key(state, :swept_through),
+    do: {:reply, {:error, :failure}, state}
+
   def handle_call({:claim, %Claim{} = claim, %Context{owner: owner} = context}, {caller, _}, state)
       when valid_context?(context) do
     result =
@@ -291,6 +300,18 @@ defmodule RequestSeal.Replay.ETS do
   end
 
   def handle_call(_, _from, state), do: {:reply, {:error, :failure}, state}
+
+  @doc false
+  @impl GenServer
+  def code_change(_version, state, {:swept_through, cutoff})
+      when not is_map_key(state, :swept_through) and is_integer(cutoff) and
+             cutoff in 0..253_402_300_799,
+      do: {:ok, Map.put(state, :swept_through, cutoff)}
+
+  def code_change(_version, state, _extra) when not is_map_key(state, :swept_through),
+    do: {:error, :sweep_cutoff_required}
+
+  def code_change(_version, state, _extra), do: {:ok, state}
 
   defp live?(pid) when is_pid(pid) and node(pid) == node(), do: Process.alive?(pid)
   defp live?(pid), do: is_pid(pid) or is_nil(pid)
