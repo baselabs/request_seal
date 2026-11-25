@@ -165,9 +165,7 @@ defmodule RequestSeal.Custody.Local do
           {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
   def new(algorithm, material, opts \\ []) do
     Support.safe(fn ->
-      {_, family, capabilities} = selection(algorithm)
-      mac_only? = family == :hmac and Keyword.keyword?(opts) and opts[:capabilities] == [:mac]
-      capabilities = if mac_only?, do: [:mac], else: capabilities
+      {_, _, capabilities} = selection(algorithm)
       construct(algorithm, material, opts, nil, nil, capabilities)
     end)
   end
@@ -332,6 +330,9 @@ defmodule RequestSeal.Custody.Local do
   ## Options
 
     * `:capabilities` - as in `new/3`, additionally narrowed by JWK `key_ops`.
+      A signing-permitted HS256 `oct` JWK accepts `[:mac]` for framed MAC only.
+    * `:deny`, `:expected_thumbprint` - as in `new/3`, screen derived public
+      material before issuing a handle.
     * `:issued_for` - optional signing purpose atom or nil, as in `new/3`.
     * `:admission` - optional signing admission for an HTTP key, as in `new/3`.
     * `:equivalence` - as in `new/3`: a nonsecret binary of 1–256 bytes, accepted
@@ -402,6 +403,9 @@ defmodule RequestSeal.Custody.Local do
 
   defp prepare_state(algorithm, material, opts, type, expected, capabilities) do
     {jose, family, _} = selection(algorithm)
+
+    mac_only? = family == :hmac and Keyword.keyword?(opts) and opts[:capabilities] == [:mac]
+    capabilities = if mac_only?, do: [:mac], else: capabilities
 
     allowed =
       if capabilities == [:mac] or match?({:jwe, _}, algorithm) or match?({:derive, _}, algorithm),

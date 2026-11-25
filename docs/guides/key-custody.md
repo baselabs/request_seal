@@ -454,6 +454,9 @@ For screened handle verification, custody resolves the handle's own public
 key, applies the deny set and any custodian verifier, then verifies the
 signature with that key. HTTP capture retains the verified public material.
 
+Import a signing-permitted HS256 `oct` JWK with `capabilities: [:mac]` to
+produce a dedicated framed MAC handle, just as with raw HMAC material.
+
 Public-key screening at local import compares the derived thumbprint before a
 private-key possession probe. Once custody issues a handle, retire it by
 withdrawing it from callers and releasing it through its owner. To reject an

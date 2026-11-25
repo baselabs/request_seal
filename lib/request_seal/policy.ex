@@ -70,8 +70,8 @@ defmodule RequestSeal.Policy do
 
   ## Parameters
 
-    * `attrs` - map with all six required keys and any of the optional
-      keys. Unknown keys reject.
+    * `attrs` - map with all required keys and any optional keys below.
+      Unknown keys reject.
       * `:algorithms` - nonempty unique list of at most 64 exact
         `RequestSeal.Crypto` HTTP tokens or supported `{:jws, name}`
         selections. JWS requires sender `alg` to be absent.

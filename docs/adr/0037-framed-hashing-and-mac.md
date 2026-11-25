@@ -28,3 +28,6 @@ algorithms. The corpus publishes independently calculated framing vectors.
 
 Local import assesses admission before issuing capabilities. Applications
 withdraw and release an existing handle to retire it.
+An imported HS256 JWK can issue a dedicated MAC handle when its JWK
+restrictions permit signing. It follows the same admission and capability
+rules as the raw constructor.

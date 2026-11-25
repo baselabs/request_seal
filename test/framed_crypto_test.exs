@@ -95,4 +95,45 @@ defmodule RequestSeal.FramedCryptoTest do
     assert {:error, %{reason: :invalid_options}} =
              Local.generate("hmac-sha256", capabilities: [:sign, :mac])
   end
+
+  test "HS256 JWK import honors MAC-only custody and preserves signing restrictions" do
+    key = :binary.copy(<<37>>, 32)
+    jwk = %{
+      "kty" => "oct",
+      "alg" => "HS256",
+      "use" => "sig",
+      "key_ops" => ["sign"],
+      "k" => Base.url_encode64(key, padding: false)
+    }
+
+    for algorithm <- ["hmac-sha256", {:jws, "HS256"}] do
+      assert {:ok, raw} = Local.new(algorithm, {:hmac, key}, capabilities: [:mac])
+      assert {:ok, %{capabilities: [:mac]} = imported} =
+               Local.import(algorithm, jwk, :jwk, capabilities: [:mac])
+
+      try do
+        assert {:ok, tag} = Custody.mac(raw, "frame v1", ["one", "two"])
+        assert {:ok, ^tag} = Custody.mac(imported, "frame v1", ["one", "two"])
+        assert {:error, %{reason: :unsupported_operation}} = Custody.sign(imported, "bytes")
+      after
+        :ok = Local.release(raw)
+        :ok = Local.release(imported)
+      end
+
+      for {changed, reason} <- [
+            {%{jwk | "key_ops" => ["verify"]}, :key_mismatch},
+            {%{jwk | "key_ops" => ["sign", "sign"]}, :invalid_key},
+            {%{jwk | "use" => "enc"}, :key_mismatch},
+            {%{jwk | "alg" => "HS512"}, :key_mismatch},
+            {%{jwk | "k" => Base.url_encode64(binary_part(key, 0, 31), padding: false)},
+             :invalid_key}
+          ] do
+        assert {:error, %{reason: ^reason}} =
+                 Local.import(algorithm, changed, :jwk, capabilities: [:mac])
+      end
+
+      assert {:error, %{reason: :invalid_options}} =
+               Local.import(algorithm, jwk, :jwk, capabilities: [:mac, :sign])
+    end
+  end
 end
