@@ -113,6 +113,21 @@ defmodule RequestSeal.PlugScopeTest do
            )
   end
 
+  test "nested opaque and unfetched values fail closed, while uploads stay opaque" do
+    target = "/teams/alpha/items"
+    conn = verified(target, @covered, body: ~s({"items":[{"count":1}]}))
+
+    for value <- [%Plug.Conn.Unfetched{aspect: :body_params}, %URI{}] do
+      assert refused(%{conn | body_params: %{"items" => [%{"value" => value}]}}, :body_uninspected)
+      assert refused(%{conn | query_params: %{"items" => [value]}}, :invalid_query)
+    end
+
+    upload = %Plug.Upload{filename: "tenant_id", path: "/unused", content_type: "text/plain"}
+    conn = %{conn | body_params: %{"items" => [%{"file" => upload}]}}
+    assert {:ok, %{tenant: "alpha"}} = SealPlug.scope(Scope.call(conn, options()))
+    assert refused(%{conn | body_params: %{"items" => [%{"tenant_id" => upload}]}}, :scope_in_body)
+  end
+
   test "the principal lookup is cancelled at its configured deadline" do
     parent = self()
 
@@ -155,6 +170,15 @@ defmodule RequestSeal.PlugScopeTest do
     query = verified("/teams/alpha?%74enant%5Bid%5D=alpha", @covered)
     assert refused(%{query | query_params: %{}}, :scope_in_query)
     assert refused(%{query | query_string: ""}, :invalid_query)
+  end
+
+  test "refuses a captured competing header even when an intervening plug removes it" do
+    conn =
+      verified("/teams/alpha", @covered, headers: [{"x-tenant-id", "other"}])
+      |> Plug.Conn.delete_req_header("x-tenant-id")
+
+    assert Plug.Conn.get_req_header(conn, "x-tenant-id") == []
+    assert refused(conn, :scope_in_header)
   end
 
   test "requires exact principal agreement and removes scope on repeat" do

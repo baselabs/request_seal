@@ -107,8 +107,10 @@ if Code.ensure_loaded?(Plug.Conn) do
     Binds scope once using the captured path and the verified signature coverage.
 
     Nonempty bodies must have been fully read from Capture's retained adapter
-    and parsed into a map by a configured parser. Nested maps and lists are
-    inspected for selectors. Percent escapes and empty or dot segments refuse
+    and parsed into a map by a configured parser. Competing headers refuse
+    in both the captured and current headers. Nested maps and lists are
+    inspected for selectors. Unfetched and opaque nested values refuse,
+    except for uploads. Percent escapes and empty or dot segments refuse
     before any capture is bound.
 
     Refusals are stored as bounded adapter errors at stage `:scope`. With
@@ -162,7 +164,7 @@ if Code.ensure_loaded?(Plug.Conn) do
            {:ok, segments} <- segments(path, conn),
            {:ok, captures} <- match_template(opts.template, segments, %{}),
            :ok <- validate(captures, opts.validator),
-           :ok <- refuse_header(conn, opts.refuse_headers),
+           :ok <- refuse_header(conn, state.capture.message.fields, opts.refuse_headers),
            :ok <- refuse_query(conn, query, opts.refuse_names),
            :ok <- refuse_body(conn, state.capture.message.body.bytes, opts.refuse_names),
            tenant = Map.fetch!(captures, opts.tenant),
@@ -217,58 +219,95 @@ if Code.ensure_loaded?(Plug.Conn) do
         else: reject(:invalid_scope)
     end
 
-    defp refuse_header(conn, names) do
-      if Enum.any?(conn.req_headers, fn {name, _} -> String.downcase(name) in names end),
-        do: reject(:scope_in_header),
-        else: :ok
+    defp refuse_header(conn, captured, names) do
+      header? = fn name -> String.downcase(name) in names end
+
+      if Enum.any?(captured, &header?.(&1.name)) or
+           Enum.any?(conn.req_headers, fn {name, _} -> header?.(name) end) do
+        reject(:scope_in_header)
+      else
+        :ok
+      end
     end
 
-    defp refuse_query(conn, query, names) do
+    defp refuse_query(conn, query, names) when query == conn.query_string do
       fresh = %{conn | query_params: %Plug.Conn.Unfetched{aspect: :query_params}}
       parsed = Plug.Conn.fetch_query_params(fresh).query_params
 
-      cond do
-        query != conn.query_string -> reject(:invalid_query)
-        selector?(parsed, names) -> reject(:scope_in_query)
-        selector?(conn.query_params, names) -> reject(:scope_in_query)
-        true -> :ok
+      case combine(inspect_params(parsed, names), inspect_optional(conn.query_params, names)) do
+        :selector -> reject(:scope_in_query)
+        :indeterminate -> reject(:invalid_query)
+        :clean -> :ok
       end
     rescue
       _ in [Plug.Conn.InvalidQueryError] -> reject(:invalid_query)
     end
 
+    defp refuse_query(_, _, _), do: reject(:invalid_query)
+
     defp refuse_body(conn, bytes, names) do
       params = conn.body_params
 
-      cond do
-        bytes != "" and
-            (is_struct(params) or not is_map(params) or
-               not Delivery.replayed?(conn.adapter) or
-               not Delivery.replay_matches?(conn.adapter, bytes)) ->
-          reject(:body_uninspected)
-
-        selector?(params, names) ->
-          reject(:scope_in_body)
-
-        true ->
-          :ok
+      if bytes != "" and
+           (is_struct(params) or not is_map(params) or
+              not Delivery.replayed?(conn.adapter) or
+              not Delivery.replay_matches?(conn.adapter, bytes)) do
+        reject(:body_uninspected)
+      else
+        case inspect_optional(params, names) do
+          :selector -> reject(:scope_in_body)
+          :indeterminate -> reject(:body_uninspected)
+          :clean -> :ok
+        end
       end
     end
 
-    defp selector?(%Plug.Conn.Unfetched{}, _), do: false
-    defp selector?(%Plug.Upload{}, _), do: false
+    # The raw query was parsed separately, and a nonempty body is required
+    # to have top-level parse evidence before reaching this check.
+    defp inspect_optional(%Plug.Conn.Unfetched{}, _), do: :clean
+    defp inspect_optional(params, names), do: inspect_params(params, names)
 
-    defp selector?(params, names) when is_map(params) do
-      Enum.any?(params, fn {key, value} ->
+    defp inspect_params(%Plug.Upload{}, _), do: :clean
+    defp inspect_params(params, _) when is_struct(params), do: :indeterminate
+
+    defp inspect_params(params, names) when is_map(params) do
+      Enum.reduce_while(params, :clean, fn {key, value}, status ->
         name = if is_atom(key), do: Atom.to_string(key), else: key
-        name in names or selector?(value, names)
+
+        if name in names do
+          {:halt, :selector}
+        else
+          case combine(status, inspect_params(value, names)) do
+            :selector -> {:halt, :selector}
+            result -> {:cont, result}
+          end
+        end
       end)
     end
 
-    defp selector?(params, names) when is_list(params),
-      do: Enum.any?(params, &selector?(&1, names))
+    defp inspect_params([], _), do: :clean
+    defp inspect_params([_ | _] = params, names), do: inspect_list(params, names, :clean)
 
-    defp selector?(_, _), do: false
+    defp inspect_params(value, _) when is_binary(value) or is_number(value) or is_atom(value),
+      do: :clean
+
+    defp inspect_params(_, _), do: :indeterminate
+
+    defp inspect_list([], _, status), do: status
+
+    defp inspect_list([head | tail], names, status) do
+      case combine(status, inspect_params(head, names)) do
+        :selector -> :selector
+        result -> inspect_list(tail, names, result)
+      end
+    end
+
+    defp inspect_list(_, _, _), do: :indeterminate
+
+    defp combine(:selector, _), do: :selector
+    defp combine(_, :selector), do: :selector
+    defp combine(:indeterminate, _), do: :indeterminate
+    defp combine(:clean, result), do: result
 
     defp agree(opts, principal, tenant) do
       context = %Context{

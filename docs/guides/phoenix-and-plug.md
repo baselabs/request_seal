@@ -29,14 +29,17 @@ Use lowercase tokens or lowercase UUID text for tenant captures. Percent
 escapes, dot segments, empty segments and case variants of captures are
 refused. The scope rejects competing selectors named `tenant`, `tenant_id`,
 or the nominated capture in query or body maps and lists at any depth. It
-also refuses the `x-tenant` and `x-tenant-id` headers. Add application aliases
-with `:refuse_names` and `:refuse_headers`.
+also refuses the `x-tenant` and `x-tenant-id` headers in both the captured and
+current request. Removing a header after Capture does not erase the occurrence.
+Add application aliases with `:refuse_names` and `:refuse_headers`.
 
 Place the configured body parser between Capture and Verify. A nonempty body
 must be fully read through Capture's retained adapter and parsed into a plain
 map before Scope runs. A pass-through parser leaves the body indeterminate and
-Scope refuses it. Multipart uploads are opaque leaves. The trusted mapping
-uses a 1,000 ms deadline by default, selectable with `:lookup_timeout`.
+Scope refuses it. Nested unfetched values and opaque structs also make the
+query or body indeterminate. Multipart uploads are opaque leaves, and their
+parameter names remain subject to selector refusal. The trusted mapping uses
+a 1,000 ms deadline by default, selectable with `:lookup_timeout`.
 
 Tenant agreement supplies the data layer with routing context. Signer
 attribution comes from a trusted verification profile or independently

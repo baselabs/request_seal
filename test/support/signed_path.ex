@@ -8,7 +8,8 @@ defmodule RequestSeal.SignedPathTestSupport do
     url = "https://example.test" <> target
     body = Keyword.get(opts, :body, "")
     method = if body == "", do: :get, else: :post
-    headers = if body == "", do: [], else: [{"content-type", "application/json"}]
+    body_headers = if body == "", do: [], else: [{"content-type", "application/json"}]
+    headers = body_headers ++ Keyword.get(opts, :headers, [])
     {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
     {:ok, handle} = Local.new("ed25519", {:ed25519, seed})
 

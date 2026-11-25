@@ -14,7 +14,9 @@
   key handles and holders during upgrade. Previous HTTP policy structs continue
   to select unassigned keys.
 
-- Bind Plug tenant context to a verified path and pass it through to Ash scope mapping.
+- Bind Plug tenant context to a verified path and pass it through to Ash scope
+  mapping. Reject conflicting captured or current headers and indeterminate
+  nested request parameters.
 
 - Add paired replay stores for migrations that require both stores to admit each claim.
 

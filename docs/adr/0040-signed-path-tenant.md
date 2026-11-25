@@ -17,10 +17,13 @@ dot segments. Tenant captures use lowercase tokens or lowercase UUID text.
 [RFC 3986 Section 2](https://www.rfc-editor.org/rfc/rfc3986.html#section-2)
 defines percent encoding and unreserved characters.
 
-Reject competing headers and recursively inspect query and parsed body maps
-and lists. A nonempty body requires a configured parser that fully consumes
-the captured bytes before Scope runs. The principal lookup runs within a
-finite deadline and must return exactly the selected tenant.
+Reject competing headers in the captured fields and the current connection.
+Recursively inspect query and parsed body maps and lists. Nested unfetched
+values and opaque structs make inspection indeterminate. A multipart upload
+is an opaque leaf whose parameter name still participates in inspection.
+A nonempty body requires a configured parser that fully consumes the captured
+bytes before Scope runs. The principal lookup runs within a finite deadline
+and must return exactly the selected tenant.
 
 Pass the resulting tenant to the existing Ash scope construction. The resource's
 multitenancy strategy and policies decide which data operations may proceed.
