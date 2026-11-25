@@ -33,20 +33,13 @@ defmodule RequestSeal.Discovery.Support do
     opts
   end
 
-  def clock(clock) do
-    ensure(is_function(clock, 0), :invalid_options)
+  def clock(clock), do: elem(interval(clock), 1)
 
-    value =
-      try do
-        clock.()
-      rescue
-        _ -> fail(:invalid_options)
-      catch
-        _, _ -> fail(:invalid_options)
-      end
-
-    ensure(is_integer(value) and value in 0..253_402_300_799, :invalid_options)
-    value
+  def interval(clock) do
+    case RequestSeal.Freshness.read(clock) do
+      {:ok, bounds} -> bounds
+      {:error, :invalid_clock} -> fail(:invalid_options)
+    end
   end
 
   def remaining(deadline) do

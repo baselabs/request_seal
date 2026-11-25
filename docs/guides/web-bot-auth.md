@@ -223,3 +223,12 @@ Nested signatures cover the inner Signature-Input and all inner components indep
 Protocol-00 appendix examples contain member-label and lifetime contradictions. [Testing and evidence](testing.md#web-bot-auth-evidence) explains which published bytes verify generically and which profile checks reject them. Local examples establish construction and configured verification, not acceptance by a deployed agent provider.
 
 Module docs: `RequestSeal.WebBotAuth`, `RequestSeal.WebBotAuth.Policy`, `RequestSeal.WebBotAuth.Verification`, `RequestSeal.Discovery`, `RequestSeal.Error`.
+
+## Directory trust over clock intervals
+
+A freshness clock such as `fn -> {lower, upper} end` applies to the request,
+its resolved key, and any signed directory proof. Discovery checks starts
+against `lower` and expiration against `upper`, on fetch and cached lookup.
+When the policy supplies a `RequestSeal.DenySet`, the request signer and
+every signer of a relied-on directory proof must pass it. Previously stored
+signed snapshots need their proof signer identities to pass this check.

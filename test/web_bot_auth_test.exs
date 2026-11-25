@@ -896,6 +896,68 @@ defmodule RequestSeal.WebBotAuthTest do
     assert_error(WebBotAuth.verify(m, policy), :agent_unresolved, :key, :revoked_key)
   end
 
+  test "directory proof and request signer are screened independently on fetch and cache hits" do
+    now = System.system_time(:second)
+    {:ok, request_handle} = RequestSeal.Custody.Local.generate("ed25519", [])
+    {:ok, key} = RequestSeal.Custody.public_key(request_handle)
+    {:ok, jwk} = PublicKey.export(key, :jwk)
+    {:ok, proof_key} = PublicKey.import(Peer.public_jwk(), :jwk)
+    {:ok, proof_id} = PublicKey.thumbprint(proof_key)
+    {:ok, denied} = RequestSeal.DenySet.new([proof_id])
+    {:ok, empty} = RequestSeal.DenySet.new([])
+    fetches = :atomics.new(1, [])
+
+    peer =
+      Peer.start(fn socket, req ->
+        :atomics.add(fetches, 1, 1)
+
+        Peer.signed(socket, req, Peer.directory([Peer.public_jwk(), jwk]), nil,
+          created: now,
+          expires: now + 60
+        )
+      end)
+
+    on_exit(fn -> Peer.stop(peer) end)
+    origin = "https://localhost:#{peer.port}"
+
+    {:ok, source} =
+      Source.new(%{
+        type: :directory,
+        location: origin,
+        cacerts: peer.cacerts,
+        permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}]
+      })
+
+    cache = start_supervised!({Cache, clock: fn -> now end})
+
+    spec = %{
+      label: "agent",
+      agent: %{location: origin, type: :directory},
+      key: key,
+      algorithm: "ed25519",
+      created: now,
+      expires: now + 60,
+      nonce: "directory-proof-denial"
+    }
+
+    {:ok, message} = WebBotAuth.sign(build("https://example.com/resource", []), spec, request_handle)
+
+    p =
+      policy(
+        cache: cache,
+        agents: fn _ -> {:ok, source} end,
+        deny: denied,
+        freshness: %{clock: fn -> {now, now + 1} end, skew: 0, max_age: nil}
+      )
+
+    assert_error(WebBotAuth.verify(message, p), :key_denied, :key)
+    assert :atomics.get(fetches, 1) == 1
+    assert {:ok, _} = WebBotAuth.verify(message, %{p | deny: empty})
+    assert_error(WebBotAuth.verify(message, p), :key_denied, :key)
+    assert :atomics.get(fetches, 1) == 1
+    assert :ok = RequestSeal.Custody.release(request_handle)
+  end
+
   test "cache key from one directory cannot authenticate another directory" do
     draft_jwk =
       :json.decode(File.read!(Path.join(@root, "directory.json")))["body"]

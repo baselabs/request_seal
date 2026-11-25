@@ -1516,7 +1516,11 @@ defmodule RequestSeal.Conformance.Surfaces do
       )
 
     with {:ok, keys} <-
-           RequestSeal.Discovery.parse_body(C.bytes(C.load(root, i["body"])), s, C.int(c["now"])),
+           RequestSeal.Discovery.parse_body(
+             C.bytes(C.load(root, i["body"])),
+             s,
+             freshness_clock(c["now"])
+           ),
          do: {:ok, %{"keys" => Map.values(keys) |> Enum.map(& &1.thumbprint) |> Enum.sort()}}
   end
 

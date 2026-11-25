@@ -103,8 +103,8 @@ defmodule RequestSeal.Discovery do
 
     * `:timeout` - milliseconds, 1 through 300,000, capped by the source's
       `:timeout`. Default: the source's `:timeout`.
-    * `:clock` - arity-zero function returning Unix seconds from 0 through
-      253,402,300,799, used for freshness, key validity and directory signature
+    * `:clock` - arity-zero function returning a Unix second or ordered
+      `{lower, upper}` interval within 0 through 253,402,300,799, used for freshness, key validity and directory signature
       times. Default: system time.
 
   ## Returns
@@ -324,10 +324,10 @@ defmodule RequestSeal.Discovery do
 
       ensure(is_binary(bytes), :invalid_response)
       ensure(byte_size(bytes) <= source.max_bytes, :limit)
-      ensure(is_integer(now) and now in 0..253_402_300_799, :invalid_options)
+      interval = Support.interval(fn -> now end)
       document = body_document(bytes, source)
       origin = Source.origin(URI.parse(source.location))
-      {:ok, keys(document, source, origin, source.location, now)}
+      {:ok, keys(document, source, origin, source.location, interval)}
     end)
   end
 
@@ -394,7 +394,7 @@ defmodule RequestSeal.Discovery do
   end
 
   defp fetched_set(fields, message, location, decoded, source, clock, deadline, requested_at) do
-    now = Support.clock(clock)
+    {_, now} = interval = Support.interval(clock)
     expires = expiry(fields, source, requested_at, now)
 
     {document, key_message, key_fields, location, expires, key_bytes} =
@@ -443,18 +443,25 @@ defmodule RequestSeal.Discovery do
       end
 
     origin = Source.origin(URI.parse(location))
-    keys = keys(document, source, origin, location, now)
+    keys = keys(document, source, origin, location, interval)
 
-    {proof, proof_expiry} =
+    {proof, proof_signers, proof_start, proof_expiry} =
       if source.type == :directory,
-        do: proof(key_message, key_fields, keys, source, clock, now),
-        else: {:not_applicable, now + source.max_ttl}
+        do: proof(key_message, key_fields, keys, source, interval),
+        else: {:not_applicable, [], 0, now + source.max_ttl}
 
     expires = min(expires, proof_expiry)
 
     keys =
       Map.new(keys, fn {kid, resolution} ->
-        {kid, %{resolution | proof: proof, expires_at: min(resolution.expires_at, proof_expiry)}}
+        {kid,
+         %{
+           resolution
+           | proof: proof,
+             proof_signers: proof_signers,
+             not_before: max(resolution.not_before, proof_start),
+             expires_at: min(resolution.expires_at, proof_expiry)
+         }}
       end)
 
     expires = Enum.reduce(keys, expires, fn {_, key}, bound -> min(bound, key.expires_at) end)
@@ -590,7 +597,7 @@ defmodule RequestSeal.Discovery do
   defp json_depth(<<_, rest::binary>>, depth, string, escape),
     do: json_depth(rest, depth, string, escape)
 
-  defp keys(%{"keys" => jwks}, source, origin, location, now) when is_list(jwks) do
+  defp keys(%{"keys" => jwks}, source, origin, location, {lower, upper}) when is_list(jwks) do
     ensure(length(jwks) <= source.max_keys, :limit)
 
     Enum.reduce(jwks, %{}, fn jwk, acc ->
@@ -660,8 +667,9 @@ defmodule RequestSeal.Discovery do
 
           algorithm = asserted || default_algorithm(public)
 
-          valid_time =
-            (jwk["nbf"] == nil or now >= jwk["nbf"]) and (jwk["exp"] == nil or now < jwk["exp"])
+          not_before = jwk["nbf"] || 0
+          expires_at = jwk["exp"] || upper + source.max_ttl
+          valid_time = not_before <= lower and (jwk["exp"] == nil or upper < expires_at)
 
           # Temporal/operation restrictions exclude the key rather than changing it.
           if binding?(public, algorithm) and valid_time and thumbprint not in source.revoked do
@@ -676,8 +684,9 @@ defmodule RequestSeal.Discovery do
               origin: origin,
               source_type: source.type,
               location: location,
-              fetched_at: now,
-              expires_at: jwk["exp"] || now + source.max_ttl,
+              fetched_at: upper,
+              not_before: not_before,
+              expires_at: expires_at,
               proof: :not_applicable
             }
 
@@ -711,13 +720,13 @@ defmodule RequestSeal.Discovery do
     _, _ -> false
   end
 
-  defp proof(message, fields, keys, source, clock, now) do
+  defp proof(message, fields, keys, source, {lower, upper} = interval) do
     inputs = HTTP1.values(fields, "signature-input")
     signatures = HTTP1.values(fields, "signature")
 
     if inputs == [] and signatures == [] do
       ensure(not source.require_signed_directory, :directory_unsigned)
-      {:unsigned, now + source.max_ttl}
+      {:unsigned, [], 0, upper + source.max_ttl}
     else
       parsed =
         StructuredFields.parse(Enum.join(inputs, ", "), SignatureFields.schema(:dictionary))
@@ -748,7 +757,7 @@ defmodule RequestSeal.Discovery do
 
       ensure(selected != [], :directory_signature_invalid)
 
-      expirations =
+      proofs =
         Enum.map(selected, fn {label, value} ->
           signature = List.keyfind(signature_dictionary.value, label, 0)
           ensure(signature != nil, :directory_signature_invalid)
@@ -769,7 +778,7 @@ defmodule RequestSeal.Discovery do
           )
 
           ensure(
-            is_integer(params["created"]) and params["created"] <= now and
+            is_integer(params["created"]) and params["created"] <= lower and
               is_integer(params["expires"]),
             :directory_signature_invalid
           )
@@ -798,7 +807,7 @@ defmodule RequestSeal.Discovery do
                   algorithms: [algorithm],
                   components: "(\"@authority\";req \"content-digest\")",
                   key_resolver: resolver,
-                  freshness: %{clock: clock, max_age: nil, skew: 0, require_expires: true},
+                  freshness: %{clock: fn -> interval end, max_age: nil, skew: 0, require_expires: true},
                   content: %{
                     kind: :content,
                     algorithms: ["sha-256", "sha-512"],
@@ -813,10 +822,14 @@ defmodule RequestSeal.Discovery do
 
           ensure(valid, :directory_signature_invalid)
 
-          params["expires"]
+          {entry.thumbprint, max(params["created"], entry.not_before),
+           min(params["expires"], entry.expires_at)}
         end)
 
-      {:signed, Enum.min(expirations)}
+      signers = proofs |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
+      start = proofs |> Enum.map(&elem(&1, 1)) |> Enum.max()
+      expiration = proofs |> Enum.map(&elem(&1, 2)) |> Enum.min()
+      {:signed, signers, start, expiration}
     end
   end
 

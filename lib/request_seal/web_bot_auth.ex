@@ -266,7 +266,7 @@ defmodule RequestSeal.WebBotAuth do
             end
 
           {algorithm, key, principal} =
-            resolve(agent, label, params, policy, deadline, elem(interval, 1))
+            resolve(agent, label, params, policy, deadline, interval)
 
           components =
             required(
@@ -384,8 +384,8 @@ defmodule RequestSeal.WebBotAuth do
       not Regex.match?(~r/%(?![a-fA-F0-9]{2})/, location)
   end
 
-  defp resolve(agent, label, params, policy, deadline, now) do
-    association = protect(fn -> associated(agent, params, policy, deadline, now) end)
+  defp resolve(agent, label, params, policy, deadline, interval) do
+    association = protect(fn -> associated(agent, params, policy, deadline, interval) end)
 
     case association do
       {:ok, result} ->
@@ -411,7 +411,7 @@ defmodule RequestSeal.WebBotAuth do
   defp associated(%{type: :unsupported}, _, _, _, _),
     do: fail(:agent_unresolved, :key, :unsupported_type)
 
-  defp associated(agent, params, policy, deadline, now) do
+  defp associated(agent, params, policy, deadline, interval) do
     uri = URI.parse(agent.location)
 
     if agent.type == :directory do
@@ -462,7 +462,7 @@ defmodule RequestSeal.WebBotAuth do
     {resolution, revision} =
       case configured do
         {:ok, %KeySet{} = set} ->
-          case KeySet.lookup_at(set, params["keyid"], policy.algorithms, now) do
+          case KeySet.lookup_at(set, params["keyid"], policy.algorithms, interval) do
             {:ok, resolution} -> {resolution, set.revision}
             _ -> fail(:agent_unresolved, :key, :unknown_key)
           end
@@ -472,7 +472,7 @@ defmodule RequestSeal.WebBotAuth do
 
           case Cache.resolve(policy.cache, source, params["keyid"],
                  algorithms: policy.algorithms,
-                 clock: fn -> now end,
+                 clock: fn -> interval end,
                  timeout: remaining(deadline)
                ) do
             {:ok, resolution} -> {resolution, resolution.revision}
@@ -504,6 +504,14 @@ defmodule RequestSeal.WebBotAuth do
       :key,
       :source_unavailable
     )
+
+    if resolution.proof == :signed do
+      case RequestSeal.DenySet.check_proof(policy.deny, Map.get(resolution, :proof_signers)) do
+        :ok -> :ok
+        {:error, :key_denied} -> fail(:key_denied, :key)
+        {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)
+      end
+    end
 
     {:ok,
      {resolution.algorithm, resolution.key,

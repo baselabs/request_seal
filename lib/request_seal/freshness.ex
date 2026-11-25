@@ -4,21 +4,19 @@ defmodule RequestSeal.Freshness do
   @max_second 253_402_300_799
 
   def read(clock) do
-    case clock.() do
-      now when is_integer(now) and now in 0..@max_second ->
-        {:ok, {now, now}}
-
-      {lower, upper}
-      when is_integer(lower) and is_integer(upper) and lower >= 0 and upper <= @max_second and
-             lower <= upper ->
-        {:ok, {lower, upper}}
-
-      _ ->
-        {:error, :invalid_clock}
-    end
+    interval(clock.())
   catch
     _, _ -> {:error, :invalid_clock}
   end
+
+  def interval(now) when is_integer(now) and now in 0..@max_second, do: {:ok, {now, now}}
+
+  def interval({lower, upper} = bounds)
+      when is_integer(lower) and is_integer(upper) and lower >= 0 and upper <= @max_second and
+             lower <= upper,
+      do: {:ok, bounds}
+
+  def interval(_), do: {:error, :invalid_clock}
 
   def check(params, policy, {lower, upper}) do
     created = params["created"]

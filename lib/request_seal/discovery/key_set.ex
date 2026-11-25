@@ -107,9 +107,11 @@ defmodule RequestSeal.Discovery.KeySet do
          true <-
            is_list(algorithms) and length(algorithms) in 1..64 and
              Enum.all?(algorithms, &SignatureFields.algorithm?/1),
-         true <- is_integer(now) and is_integer(set.expires_at) and now < set.expires_at,
+         {:ok, {lower, upper}} <- RequestSeal.Freshness.interval(now),
+         true <- is_integer(set.expires_at) and upper < set.expires_at,
          {:ok, %Resolution{} = entry} <- Map.fetch(set.keys, keyid),
-         true <- identity?(set.source, entry, keyid) and now < entry.expires_at,
+         true <- identity?(set.source, entry, keyid),
+         true <- valid_time?(entry, lower, upper),
          false <- entry.thumbprint in set.source.revoked,
          {:ok, thumbprint} <- PublicKey.thumbprint(entry.key),
          true <- thumbprint == entry.thumbprint,
@@ -125,6 +127,14 @@ defmodule RequestSeal.Discovery.KeySet do
   end
 
   def lookup_at(_, _, _, _), do: :error
+
+  defp valid_time?(entry, lower, upper) do
+    # Earlier snapshots lacked start facts and cannot support uncertain time.
+    start = Map.get(entry, :not_before, if(lower == upper, do: 0))
+
+    is_integer(start) and start <= lower and is_integer(entry.expires_at) and
+      upper < entry.expires_at
+  end
 
   defp identity?(%Source{key_id: :thumbprint}, entry, keyid),
     do: entry.thumbprint == keyid and entry.key_id in [nil, keyid]

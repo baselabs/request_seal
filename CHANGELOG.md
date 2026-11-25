@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Check directory keys and proof lifetimes over the full trusted clock interval
+  and apply the Web Bot Auth deny set to every directory proof signer.
 - Support opt-in capture and offline checking of canonical public-key HTTP signature records.
 - Add framed SHA-256 and a dedicated framed HMAC-SHA256 custody operation with independent corpus vectors.
 - Screen public signatures against caller-owned deny sets and check expected public thumbprints on custody import.

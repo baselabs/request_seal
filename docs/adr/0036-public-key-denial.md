@@ -22,3 +22,7 @@ active set requires public identity, including when the set is empty.
 
 The caller owns distribution and freshness of its deny set. The library
 starts no revocation service. See [RFC 7638 Section 3](https://www.rfc-editor.org/rfc/rfc7638.html#section-3).
+
+A Web Bot Auth directory proof authenticates the directory body. The verified
+proof signer thumbprints travel with each resolved key. Every relied-on proof
+signer must pass an active deny policy, including on cache hits.

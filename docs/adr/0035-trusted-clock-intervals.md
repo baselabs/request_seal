@@ -23,3 +23,8 @@ in between and preserve the configured skew and boundary semantics.
 The caller supplies the clock and its uncertainty bounds. Discovery and replay
 store clocks retain their existing interfaces.
 See [RFC 9421 Section 3.2.1](https://www.rfc-editor.org/rfc/rfc9421.html#section-3.2.1).
+
+Discovery checks key and proof starts at the lower endpoint and expirations
+at the upper endpoint. Resolved entries retain the latest start and earliest
+expiration for lookup and conditional refresh. Fetch timestamps use the upper
+endpoint.

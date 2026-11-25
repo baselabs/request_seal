@@ -8,6 +8,8 @@ defmodule RequestSeal.Discovery.Resolution do
   `revision` is the resolved KeySet's SHA-256 revision, propagated by lookup.
   `expires_at` bounds the key/proof lifetime; KeySet separately bounds HTTP cache
   freshness. Access fields explicitly when applying caller trust policy.
+  `not_before` is the latest key or proof start. `proof_signers` lists
+  the RFC 7638 identities of all verified directory proof signers.
   """
   @derive {Inspect, only: [:algorithm, :source_type, :proof]}
   defstruct [
@@ -22,7 +24,9 @@ defmodule RequestSeal.Discovery.Resolution do
     :fetched_at,
     :expires_at,
     :proof,
-    :revision
+    :revision,
+    not_before: 0,
+    proof_signers: []
   ]
 
   @type t :: %__MODULE__{
@@ -35,8 +39,10 @@ defmodule RequestSeal.Discovery.Resolution do
           source_type: :directory | :jwks_uri | :cimd,
           location: binary(),
           fetched_at: integer(),
+          not_before: non_neg_integer(),
           expires_at: integer(),
           proof: :signed | :unsigned | :not_applicable,
+          proof_signers: [binary()],
           revision: binary() | nil
         }
 end

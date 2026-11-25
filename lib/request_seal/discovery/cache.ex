@@ -40,8 +40,8 @@ defmodule RequestSeal.Discovery.Cache do
       default 64. Calls for a further source return `:cache_overloaded`.
     * `:max_in_flight` - concurrent source fetches, 1 through 256; default 8.
       Pending waiters across all fetches are bounded to 32 per slot.
-    * `:clock` - arity-zero function returning Unix seconds from 0 through
-      253,402,300,799, called once at start to validate it. Default: system time.
+    * `:clock` - arity-zero function returning a Unix second or ordered
+      `{lower, upper}` interval within 0 through 253,402,300,799, called once at start to validate it. Default: system time.
 
   ## Returns
 
@@ -107,8 +107,8 @@ defmodule RequestSeal.Discovery.Cache do
       `RequestSeal.Crypto.algorithms/0`.
     * `:timeout` - milliseconds, 1 through 300,000, capped by the source's
       `:timeout`. Default: the source's `:timeout`.
-    * `:clock` - arity-zero function returning Unix seconds from 0 through
-      253,402,300,799, used for this call's freshness checks and any fetch it
+    * `:clock` - arity-zero function returning a Unix second or ordered
+      `{lower, upper}` interval within 0 through 253,402,300,799, used for this call's freshness checks and any fetch it
       starts. Default: the cache's clock.
 
   ## Returns
@@ -338,12 +338,12 @@ defmodule RequestSeal.Discovery.Cache do
       Support.safe(
         fn ->
           clock = clock || state.clock
-          now = Support.clock(clock)
+          {_, now} = interval = Support.interval(clock)
           ensure(source.key_id == :directory or not removed?(state, source, keyid), :revoked_key)
 
           case Map.get(state.entries, source) do
             {:positive, set} when now < set.expires_at ->
-              {:reply, lookup(set, keyid, algorithms, now), state}
+              {:reply, lookup(set, keyid, algorithms, interval), state}
 
             _ ->
               case Map.get(state.failures, source) do
@@ -453,7 +453,7 @@ defmodule RequestSeal.Discovery.Cache do
         {etag, lifetime} =
           case Map.get(state.entries, source) do
             {:positive, set} when source.type != :cimd ->
-              now = Support.clock(state.clock)
+              now = Support.clock(clock)
 
               if set.etag != nil and keys_alive?(set, now),
                 do: {set.etag, max(set.expires_at - set.fetched_at, 0)},
@@ -651,7 +651,7 @@ defmodule RequestSeal.Discovery.Cache do
   defp fresh_lookup(set, keyid, algorithms, clock) do
     Support.safe(
       fn ->
-        now = Support.clock(clock)
+        {_, now} = interval = Support.interval(clock)
         # This response serves only its current waiters, never a later cache
         # hit. HTTP no-store/max-age=0 does not invalidate a newly fetched key;
         # original key/proof expiry still applies, even across a clock tick.
@@ -660,7 +660,7 @@ defmodule RequestSeal.Discovery.Cache do
             do: %{set | expires_at: now + 1},
             else: set
 
-        case lookup(transient, keyid, algorithms, now) do
+        case lookup(transient, keyid, algorithms, interval) do
           {:ok, resolution} -> {:ok, %{resolution | expires_at: set.keys[keyid].expires_at}}
           error -> error
         end

@@ -4,7 +4,7 @@ defmodule RequestSeal.DiscoveryFetchTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
   alias RequestSeal.{Discovery, PublicKey}
-  alias RequestSeal.Discovery.{Source, KeySet}
+  alias RequestSeal.Discovery.{Cache, KeySet, Source}
   alias RequestSeal.DiscoveryPeer, as: Peer
 
   defp source(peer, attrs \\ %{}) do
@@ -239,6 +239,53 @@ defmodule RequestSeal.DiscoveryFetchTest do
     assert :error = KeySet.lookup(set, kid, ["rsa-pss-sha512"])
     refute inspect(set) =~ "localhost"
     refute inspect(resolution) =~ kid
+  end
+
+  test "fetch and cached lookup require key and proof validity across the interval" do
+    start = System.system_time(:second)
+    {:ok, proof_key} = PublicKey.import(Peer.public_jwk(), :jwk)
+    {:ok, proof_thumbprint} = PublicKey.thumbprint(proof_key)
+    {:ok, rsa} = PublicKey.import(File.read!("test/fixtures/crypto/rsa_public.pem"), :pem)
+    {:ok, jwk} = PublicKey.export(rsa, :jwk)
+    {:ok, thumbprint} = PublicKey.thumbprint(rsa)
+    algorithms = ["rsa-pss-sha512"]
+
+    for {nbf, created, reason} <- [
+          {start + 1, start, :unknown_key},
+          {start, start + 1, :directory_signature_invalid}
+        ] do
+      body = Peer.directory([Peer.public_jwk(), Map.merge(jwk, %{"nbf" => nbf, "exp" => start + 20})])
+
+      p =
+        peer(fn socket, req ->
+          Peer.signed(socket, req, body, nil, created: created, expires: start + 20)
+        end)
+
+      s = source(p)
+      cache = start_supervised!({Cache, clock: fn -> start + 2 end}, id: make_ref())
+
+      assert {:error, %{reason: ^reason}} =
+               Cache.resolve(cache, s, thumbprint,
+                 algorithms: algorithms,
+                 clock: fn -> {start, start + 2} end
+               )
+
+      # Warm a different cache while both the key and proof are valid.
+      ready = start_supervised!({Cache, clock: fn -> start + 2 end}, id: make_ref())
+      assert {:ok, set} = Cache.refresh(ready, s)
+      assert {:ok, entry} = KeySet.lookup_at(set, thumbprint, algorithms, start + 2)
+      assert entry.proof_signers == [proof_thumbprint]
+      assert entry.not_before == start + 1
+
+      assert {:error, %{reason: :unknown_key}} =
+               Cache.resolve(ready, s, thumbprint,
+                 algorithms: algorithms,
+                 clock: fn -> {start, start + 2} end
+               )
+
+      assert :error = KeySet.lookup_at(set, thumbprint, algorithms, {start + 1, start + 20})
+      assert {:ok, _} = KeySet.lookup_at(set, thumbprint, algorithms, {start + 1, start + 3})
+    end
   end
 
   test "directory proof labels use the configured bound beyond the generic policy default" do

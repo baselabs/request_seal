@@ -60,6 +60,7 @@ See [the upgrade guide](../guides/upgrading-to-2.0.md) for public call changes.
 
 For HTTP verification, `now` may be a tagged integer or a two-element array
 of tagged integers in lower-to-upper order. Success reports the upper endpoint.
+Discovery body parsing accepts the same clock form for key validity.
 
 HTTP verification policies can specify `deny` as a list of canonical RFC 7638
 thumbprints. The `custody.seed_check/v1` surface imports an Ed25519 JWK with a

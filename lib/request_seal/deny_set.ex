@@ -66,6 +66,25 @@ defmodule RequestSeal.DenySet do
   def thumbprint?(value), do: match?({:ok, _}, decode(value))
 
   @doc false
+  def check_proof(nil, _), do: :ok
+
+  def check_proof(set, signers) when is_list(signers) and length(signers) in 1..64 do
+    Enum.reduce_while(signers, :ok, fn signer, :ok ->
+      case decode(signer) do
+        {:ok, bytes} ->
+          if Map.has_key?(set.entries, bytes),
+            do: {:halt, {:error, :key_denied}},
+            else: {:cont, :ok}
+
+        :error ->
+          {:halt, {:error, :key_fingerprint_unknown}}
+      end
+    end)
+  end
+
+  def check_proof(_, _), do: {:error, :key_fingerprint_unknown}
+
+  @doc false
   def verification_key(nil, key), do: {:ok, key}
 
   def verification_key(set, %KeyHandle{} = handle) do
