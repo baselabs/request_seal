@@ -8,6 +8,7 @@ relevant source when changing its surface. No linked example alone proves peer a
 | [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) | HTTP message signatures, canonical bases, trusted freshness intervals, retained verification records, algorithms, responses, trailers, challenges, vectors, and replay defense. |
 | [HTTP signature registry](https://www.iana.org/assignments/http-message-signature) | Exact registered algorithm names and parameters. |
 | [RFC 8941](https://www.rfc-editor.org/rfc/rfc8941.html), [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651.html) | Structured Fields; apply the field's selected schema and referenced types. |
+| [Idempotency-Key draft-09](https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header-09) | Structured Field String operation keys, request fingerprints, completed retries, and conflicts. |
 | [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) | Content and representation digests and preference fields. |
 | [Web Bot Auth WG draft, protocol-00](https://datatracker.ietf.org/doc/html/draft-ietf-webbotauth-httpsig-protocol-00) | The supported, explicitly stamped draft revision for the profile and discovery. A newer revision (protocol-01) exists; it is not yet selectable, and protocol-00 stays selectable when it is. |
 | [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html), [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516.html) | Generic compact JWS and JWE, and one-level JWS-in-JWE nesting (`RequestSeal.JOSE`). |

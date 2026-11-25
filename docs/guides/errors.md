@@ -228,7 +228,7 @@ module's `reason` type. Each module documents their meanings.
 
 ### RequestSeal.Error
 
-`:actor_unbound`, `:agent_unresolved`, `:algorithm_mismatch`, `:algorithm_not_permitted`, `:body_unavailable`, `:commitment_failed`, `:created_in_future`, `:digest_mismatch`, `:digest_not_covered`, `:digest_unsupported`, `:duplicate_label`, `:duplicate_parameter`, `:expired`, `:inapplicable_component`, `:internal`, `:invalid_accept_signature`, `:invalid_binding`, `:invalid_clock`, `:invalid_keyid`, `:invalid_message`, `:invalid_options`, `:invalid_policy`, `:invalid_profile`, `:invalid_request`, `:invalid_signature`, `:invalid_signature_agent`, `:invalid_signature_field`, `:invalid_signature_input`, `:invalid_verification`, `:key_resolver_failed`, `:label_in_use`, `:label_mismatch`, `:lifetime_exceeded`, `:limit`, `:missing_created`, `:missing_expires`, `:missing_replay_identifier`, `:missing_required_component`, `:missing_signature`, `:missing_signature_input`, `:negotiation_unfulfillable`, `:nested_coverage_incomplete`, `:no_web_bot_auth_signature`, `:replayed`, `:retention_exceeded`, `:signature_base_failed`, `:signer_algorithm_mismatch`, `:signer_failed`, `:signing_failed`, `:store_failed`, `:store_timeout`, `:store_unavailable`, `:tenant_unbound`, `:test_key_rejected`, `:too_old`, `:unattributed`, `:unexpected_component`, `:unexpected_signature`, `:unknown_key`, `:unknown_label`, `:unsupported_component`, `:verifier_failed`, `:issued_for_mismatch`, `:key_issued_for_mismatch`, `:scope_unbound`, `:key_denied`, `:key_fingerprint_unknown`.
+`:actor_unbound`, `:agent_unresolved`, `:algorithm_mismatch`, `:algorithm_not_permitted`, `:ambiguous_replay_scope`, `:body_unavailable`, `:commitment_failed`, `:created_in_future`, `:digest_mismatch`, `:digest_not_covered`, `:digest_unsupported`, `:duplicate_label`, `:duplicate_parameter`, `:expired`, `:inapplicable_component`, `:internal`, `:invalid_accept_signature`, `:invalid_binding`, `:invalid_clock`, `:invalid_keyid`, `:invalid_message`, `:invalid_options`, `:invalid_policy`, `:invalid_profile`, `:invalid_request`, `:invalid_signature`, `:invalid_signature_agent`, `:invalid_signature_field`, `:invalid_signature_input`, `:invalid_verification`, `:key_resolver_failed`, `:label_in_use`, `:label_mismatch`, `:lifetime_exceeded`, `:limit`, `:missing_created`, `:missing_expires`, `:missing_replay_identifier`, `:missing_required_component`, `:missing_signature`, `:missing_signature_input`, `:negotiation_unfulfillable`, `:nested_coverage_incomplete`, `:no_web_bot_auth_signature`, `:replayed`, `:retention_exceeded`, `:signature_base_failed`, `:signer_algorithm_mismatch`, `:signer_failed`, `:signing_failed`, `:store_failed`, `:store_timeout`, `:store_unavailable`, `:tenant_unbound`, `:test_key_rejected`, `:too_old`, `:unattributed`, `:unexpected_component`, `:unexpected_signature`, `:unknown_key`, `:unknown_label`, `:unsupported_component`, `:verifier_failed`, `:issued_for_mismatch`, `:key_issued_for_mismatch`, `:scope_unbound`, `:key_denied`, `:key_fingerprint_unknown`.
 
 ### RequestSeal.SignatureBase.Error
 
@@ -269,3 +269,11 @@ module's `reason` type. Each module documents their meanings.
 ### RequestSeal.StructuredFields.Error
 
 `:duplicate_key`, `:duplicate_parameter`, `:invalid_field`, `:invalid_limits`, `:invalid_message`, `:invalid_schema`, `:invalid_value`, `:limit`, `:missing_field`, `:revision_type`, `:schema_type`, `:syntax`, `:unavailable_section`.
+
+
+### RequestSeal.Idempotency.Error
+
+`:invalid_options`, `:invalid_message`, `:missing_idempotency_key`,
+`:invalid_idempotency_key`, `:invalid_policy`, `:invalid_record`,
+`:invalid_response`, `:store_unavailable`, `:store_timeout`, `:store_full`,
+`:store_failed`.

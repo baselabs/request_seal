@@ -12,7 +12,7 @@ spec.loader.exec_module(reasons)
 
 
 class ErrorReasonDocumentationTest(unittest.TestCase):
-    def test_all_eleven_source_vocabularies_match_types_and_guide(self):
+    def test_all_source_vocabularies_match_types_and_guide(self):
         errors, emitted = reasons.check(ROOT)
         self.assertEqual([], errors)
         self.assertEqual(set(reasons.KINDS), set(emitted))

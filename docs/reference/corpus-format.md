@@ -359,6 +359,25 @@ compare exact output bytes; ECDSA and RSA-PSS use verification only. Positive
 key imports include the RFC 7638 public thumbprint. Per-item overrides and separate
 non-applicable counts supersede implicit adapter outcomes.
 
+## Operation identity surfaces
+
+`replay.commitment/v1` takes an `identity` object with `nonce` bytes or an
+`operation` array of ordered `[identifier, value bytes]` pairs. Its `scope`
+object is either `{"principal": bytes}` or
+`{"credential": bytes, "purpose": string or null}`. The output is
+`commitment` as a byte tag. The digest is SHA-256 of ASCII
+`request-seal replay v1` followed by three length-prefixed entries
+(`rfc9421`, scope, identity). A length prefix is a four-byte unsigned
+big-endian length. Scope starts with `principal` or `credential` followed by
+the framed principal or framed purpose and credential. Purpose is byte zero
+for null or byte one followed by its UTF-8 bytes. Identity starts with `nonce`
+or `operation` followed by the framed nonce or framed `identifier: value` lines.
+
+`idempotency.fingerprint/v1` takes four byte tags `method`, `target`,
+`content_digest`, and `body`. SHA-256 covers ASCII
+`request-seal idempotency v1` followed by those four length-prefixed entries.
+The output is `fingerprint` as a byte tag.
+
 ## Publication and vendoring
 
 The qualification run checks `elixir_release` against the package version and

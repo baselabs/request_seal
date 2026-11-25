@@ -2,6 +2,9 @@
 
 ## Unreleased 2.0.0
 
+- Add library-built nonce and operation replay commitments, verified idempotency
+  with stored responses, and a request journal for freshly signed retries.
+
 - Recheck cached directory proof signers at each lookup, using the same
   interval selector as the key lookup.
 - Keep CIMD refresh unconditional across the document and nested JWKS.

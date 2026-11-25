@@ -258,7 +258,8 @@ defmodule RequestSeal.Replay do
     _, _ -> {:error, Error.new(:store_failed)}
   end
 
-  defp run(context, callback) do
+  @doc false
+  def run(context, callback) do
     case Custody.run(context, fn -> {:ok, safe(callback)} end) do
       {:ok, result} -> result
       {:error, %{reason: :deadline_exceeded}} -> {:error, Error.new(:store_timeout)}

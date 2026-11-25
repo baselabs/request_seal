@@ -56,6 +56,8 @@ defmodule RequestSeal.Conformance.Surfaces do
     "replay.claim" => :replay_claim,
     "replay.pair/v1" => :replay_pair,
     "plug.signed_path/v1" => :signed_path,
+    "replay.commitment/v1" => :replay_commitment,
+    "idempotency.fingerprint/v1" => :idempotency_fingerprint,
     "profile.name" => :profile_name
   }
   def run(root, case_),
@@ -1566,6 +1568,35 @@ defmodule RequestSeal.Conformance.Surfaces do
       end)
 
     {:ok, %{"found" => found}}
+  end
+
+  def replay_commitment(_root, %{"inputs" => input}) do
+    scope =
+      case input["scope"] do
+        %{"principal" => bytes} -> {:principal, C.bytes(bytes)}
+        %{"credential" => bytes, "purpose" => nil} -> {:credential, nil, C.bytes(bytes)}
+        %{"credential" => bytes, "purpose" => "orders"} -> {:credential, :orders, C.bytes(bytes)}
+      end
+
+    identity =
+      case input["identity"] do
+        %{"nonce" => bytes} ->
+          {:nonce, C.bytes(bytes)}
+
+        %{"operation" => pairs} ->
+          {:operation, Enum.map(pairs, fn [id, bytes] -> {id, C.bytes(bytes)} end)}
+      end
+
+    {:ok, digest} = RequestSeal.Replay.Commitment.key(scope, identity)
+    {:ok, %{"commitment" => C.b64(digest)}}
+  end
+
+  def idempotency_fingerprint(_root, %{"inputs" => input}) do
+    [method, target, digest, body] =
+      Enum.map(~w(method target content_digest body), &C.bytes(input[&1]))
+
+    fingerprint = RequestSeal.Idempotency.fingerprint(method, target, digest, body)
+    {:ok, %{"fingerprint" => C.b64(fingerprint)}}
   end
 
   def replay_claim(root, c) do

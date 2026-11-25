@@ -12,7 +12,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 KINDS = ('core', 'signature_base', 'jose', 'custody', 'replay', 'discovery',
-         'digest', 'message', 'adapter', 'crypto', 'structured_fields')
+         'digest', 'message', 'adapter', 'crypto', 'structured_fields', 'idempotency')
 MODULES = {kind: 'RequestSeal.' + ('' if kind == 'core' else {
     'signature_base': 'SignatureBase', 'jose': 'JOSE', 'structured_fields': 'StructuredFields'
 }.get(kind, kind.title()) + '.') + 'Error' for kind in KINDS}
@@ -29,6 +29,7 @@ FAMILIES = {
     'jose': ['lib/request_seal/jose.ex', 'lib/request_seal/jose/**/*.ex', 'lib/request_seal/jose/*.ex'],
     'custody': ['lib/request_seal/custody.ex', 'lib/request_seal/custody/**/*.ex',
                 'lib/request_seal/custody/*.ex'],
+    'idempotency': ['lib/request_seal/idempotency.ex', 'lib/request_seal/idempotency/*.ex'],
     'replay': ['lib/request_seal/replay.ex', 'lib/request_seal/replay/*.ex'],
     'discovery': ['lib/request_seal/discovery.ex', 'lib/request_seal/discovery/*.ex'],
     'digest': ['lib/request_seal/digest.ex'],
@@ -261,4 +262,4 @@ if __name__ == '__main__':
     errors, _ = check()
     if errors:
         raise SystemExit('\n'.join(errors))
-    print('PASS: eleven error vocabularies match source, closed types, and guide exactly')
+    print('PASS: twelve error vocabularies match source, closed types, and guide exactly')

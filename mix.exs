@@ -26,6 +26,7 @@ defmodule RequestSeal.MixProject do
     "docs/guides/credential-proxy.md",
     "docs/guides/web-bot-auth.md",
     "docs/guides/replay-protection.md",
+    "docs/guides/idempotency.md",
     "docs/guides/key-discovery.md",
     "docs/guides/jose.md",
     "docs/guides/key-custody.md",
@@ -133,7 +134,7 @@ defmodule RequestSeal.MixProject do
             ~r/^RequestSeal\.Custody(\.|$)/
           ],
           Discovery: ~r/^RequestSeal\.Discovery(\.|$)/,
-          Replay: ~r/^RequestSeal\.Replay(\.|$)/,
+          Replay: ~r/^RequestSeal\.(Replay|Idempotency|Journal)(\.|$)/,
           JOSE: ~r/^RequestSeal\.JOSE(\.|$)/,
           "Web Bot Auth": ~r/^RequestSeal\.WebBotAuth(\.|$)/,
           Integrations: ~r/^RequestSeal\.(Req|Finch|Plug|Ash|AshHooks|Adapter)(\.|$)/,

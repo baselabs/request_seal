@@ -151,6 +151,13 @@ defmodule RequestSeal.SignatureBase do
     end
   end
 
+  @doc false
+  def build_with_components(message, parameters, opts) do
+    with {:ok, parts} <- derive(message, parameters, opts) do
+      {:ok, {rebuild(parts), parts.components}}
+    end
+  end
+
   @doc """
   Inspect the ordered component values used by `build/3`.
 

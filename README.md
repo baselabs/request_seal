@@ -574,7 +574,8 @@ and GitHub release.
 - [Webhooks with ash_hooks](docs/guides/ash-hooks.md)
 - [Sign a decision hook and its response](docs/guides/decision-hook.md)
 - [Sign outbound requests in a credential proxy](docs/guides/credential-proxy.md)
-- [Replay protection](docs/guides/replay-protection.md)
+- [Replay protection](docs/guides/replay-protection.md) with credential-scoped nonce and operation commitments
+- [Stored-response recovery and request journaling](docs/guides/idempotency.md)
 - [Key discovery](docs/guides/key-discovery.md)
 - [JOSE: JWS and JWE](docs/guides/jose.md)
 - [Key custody](docs/guides/key-custody.md)

@@ -22,6 +22,8 @@ defmodule RequestSeal.Telemetry do
   | `[:request_seal, :web_bot_auth, :verify, :stop]` | `RequestSeal.WebBotAuth.verify/3` | as above |
   | `[:request_seal, :replay, :claim]` | the required-replay commit shared by every profile | `:outcome` (`:claimed`, `:already_claimed`, or `:error`), `:reason` (atom or nil) |
   | `[:request_seal, :replay, :pair]` | `RequestSeal.Replay.Pair` | `:operation` (`:claim` or `:sweep`), `:position` (`:destination` or `:retiring`), `:outcome` (`:claimed`, `:already_claimed`, `:ok`, or `:error`), `:reason` (bounded adapter reason or nil) |
+  | `[:request_seal, :idempotency, :reserve]` | `RequestSeal.Idempotency.reserve/3` | `:outcome` (`:reserved`, `:stored`, `:in_progress`, `:conflict`, or `:error`), `:reason` (bounded recovery error or nil) |
+  | `[:request_seal, :idempotency, :store]` | `RequestSeal.Idempotency.store/4` | `:outcome` (`:stored`, `:not_reserved`, or `:error`), `:reason` (bounded recovery error or nil) |
   | `[:request_seal, :custody, :sign, :stop]` | the shared custody signing path of both `RequestSeal.sign/4` forms | `:outcome` (`:ok` or `:error`), `:reason` (a bounded `RequestSeal.Custody.Error` reason atom or nil) |
   | `[:request_seal, :custody, :wrap]` | `RequestSeal.Custody.wrap/3` | `:outcome` (`:ok` or `:failed`) only |
   | `[:request_seal, :custody, :unwrap]` | public and internal custody unwrap calls | empty; measurements are `:duration` and `:items`, no per-item outcome |
@@ -71,6 +73,8 @@ defmodule RequestSeal.Telemetry do
     [:request_seal, :web_bot_auth, :verify, :stop],
     [:request_seal, :replay, :claim],
     [:request_seal, :replay, :pair],
+    [:request_seal, :idempotency, :reserve],
+    [:request_seal, :idempotency, :store],
     [:request_seal, :custody, :sign, :stop],
     [:request_seal, :custody, :wrap],
     [:request_seal, :custody, :unwrap],

@@ -95,7 +95,8 @@ defmodule RequestSeal.Error do
     callback faults, returns :error, malformed data, or a nil actor),
     `:tenant_unbound` (tenant callback faults, returns :error, or malformed data),
     or `:scope_unbound` (the connection has no accepted signed-path scope).
-  * `:replay`: `:missing_replay_identifier` (absent or empty authenticated nonce),
+  * `:replay`: `:ambiguous_replay_scope` (missing or invalid trusted scope),
+    `:missing_replay_identifier` (absent or unusable authenticated nonce or operation),
     `:retention_exceeded` (derived claim retention end above 253,402,300,799;
     rejected before commitment or storage),
     `:commitment_failed` (callback fault, error, malformed or oversized key),
@@ -109,6 +110,7 @@ defmodule RequestSeal.Error do
           | :agent_unresolved
           | :algorithm_mismatch
           | :algorithm_not_permitted
+          | :ambiguous_replay_scope
           | :body_unavailable
           | :commitment_failed
           | :created_in_future

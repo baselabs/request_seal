@@ -196,3 +196,28 @@ For Web Bot Auth, give `RequestSeal.WebBotAuth.Policy` the same replay map. Its 
 `:missing_replay_identifier` means the selected signature has no usable nonce. `:replayed` means a prior claim exists. `:commitment_failed` means your function failed or returned an invalid result. `:store_unavailable`, `:store_timeout`, and `:store_failed` reject authentication, including full stores. A single deadline covers commitment and atomic storage; caller cancellation stops work but cannot undo a committed claim. A timeout may already have committed, so no replay error permits automatic retry. `:retention_exceeded` means the derived retention end is above 253,402,300,799 and rejects before commitment. `RequestSeal.Policy.new/1` returns `:invalid_policy` when required replay lacks bounded freshness (`require_expires: true` or a `max_age`). The [errors guide](errors.md) reproduces `:replayed` and `:missing_replay_identifier`.
 
 Module docs: `RequestSeal.Policy`, `RequestSeal.Replay`, `RequestSeal.Replay.ETS`, `RequestSeal.Replay.AshOnetime`, `RequestSeal.Replay.Postgres`, `RequestSeal.Replay.Store`, `RequestSeal.Replay.Receipt`, `RequestSeal.Error`.
+
+## Library-built nonce and operation commitments
+
+Set `replay` to a map with `:identifier`, `:scope`, `:namespace`, `:store`,
+`:timeout` and `:retain_until` in a generic `RequestSeal.Policy`.
+Choose `:nonce` for a fresh RFC 9421 attempt. Choose
+`{:operation, [~s["@method"], ~s["@target-uri"], ...]}` for single-use operation
+semantics, with exact identifiers from the policy's required coverage. Include
+every covered value that determines the operation and require verified content
+when it has a body. Choose a separate namespace for each distinct trust and
+freshness policy. Verification refuses a signature window extending past the
+fixed exclusive `:retain_until`. Keep the bound and namespace consistent
+across aliases and rotation, and allow for clock skew and in-flight verification
+when scheduling a sweep.
+
+With `:scope` set to `:credential` or `:principal`, the trusted key resolver
+adds `replay_scope: {:credential, purpose, id}` or
+`replay_scope: {:principal, id}`. A credential may use `nil` for the purpose.
+Choose `:key` when the identity should follow key material. Symmetric handles
+need a caller-supplied opaque key identity. Key IDs on the wire can locate keys
+but do not enter the commitment. Inspect the deterministic construction with
+`RequestSeal.Replay.Commitment.key/2`.
+
+Use nonce replay with [stored-response recovery](idempotency.md) when a fresh
+retry should retrieve a prior response.

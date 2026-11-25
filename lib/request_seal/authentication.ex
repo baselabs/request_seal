@@ -18,6 +18,7 @@ defmodule RequestSeal.Authentication do
     Verification
   }
 
+  alias RequestSeal.Replay.Commitment
   alias RequestSeal.StructuredFields, as: SF
   alias RequestSeal.StructuredFields.Value
 
@@ -73,7 +74,7 @@ defmodule RequestSeal.Authentication do
           :policy
         )
 
-        {algorithm, key} = resolve(policy, label, params)
+        {algorithm, key, scope} = resolve(policy, label, params)
         match_algorithm(params, algorithm, :policy)
         ensure(algorithm in policy.algorithms, :algorithm_not_permitted, :policy)
         capture? = Map.get(opts, :capture, false)
@@ -94,11 +95,11 @@ defmodule RequestSeal.Authentication do
         if is_struct(key, PublicKey), do: check_public(deny, key)
 
         screening = {deny, capture?, Map.get(policy, :require_issued_for)}
-        {:ok, {algorithm, key, screening, params, freshness}}
+        {:ok, {algorithm, key, scope, screening, params, freshness}}
       end)
 
     case prepared do
-      {:ok, {algorithm, key, screening, params, freshness}} ->
+      {:ok, {algorithm, key, scope, screening, params, freshness}} ->
         schemas = policy.field_schemas
         cache_key = {label, schemas}
 
@@ -112,7 +113,7 @@ defmodule RequestSeal.Authentication do
 
         result =
           case built do
-            {:ok, bytes} ->
+            {:ok, {bytes, components}} ->
               protect(fn ->
                 signature_bytes = elem(signature.value, 1)
                 public = verify_bytes(algorithm, bytes, signature_bytes, key, screening)
@@ -124,7 +125,8 @@ defmodule RequestSeal.Authentication do
                     params,
                     algorithm,
                     freshness,
-                    Map.get(opts, :profile, %{name: :rfc9421})
+                    Map.get(opts, :profile, %{name: :rfc9421}),
+                    {scope, key, components}
                   )
 
                 covered =
@@ -247,7 +249,7 @@ defmodule RequestSeal.Authentication do
       input = inner(spec.signature_input)
       params = SignatureFields.parameters(input)
       match_algorithm(params, spec.algorithm, :input)
-      bytes = build(message, input, schemas)
+      {bytes, _components} = build(message, input, schemas)
 
       signature = sign_bytes(signer, purpose, bytes, timeout)
 
@@ -432,8 +434,19 @@ defmodule RequestSeal.Authentication do
       :error ->
         fail(:unknown_key, :key)
 
-      {:ok, %{algorithm: algorithm, key: key} = result}
-      when map_size(result) == 2 or (map_size(result) == 3 and is_map_key(result, :issued_for)) ->
+      {:ok, %{algorithm: algorithm, key: key} = result} ->
+        scope = Map.get(result, :replay_scope)
+
+        accepts_scope =
+          match?(%{scope: kind} when kind in [:credential, :principal], policy.replay)
+
+        ensure(
+          map_size(result) == 2 or
+            (accepts_scope and map_size(result) == 3 and Map.has_key?(result, :replay_scope)),
+          :key_resolver_failed,
+          :key
+        )
+
         ensure(SignatureFields.algorithm?(algorithm), :key_resolver_failed, :key)
         ensure(match?(%PublicKey{}, key) or match?(%KeyHandle{}, key), :key_resolver_failed, :key)
         # Symmetric verification keeps the secret behind a custody handle.
@@ -460,7 +473,7 @@ defmodule RequestSeal.Authentication do
 
         ensure(purpose == nil or KeyHandle.family(algorithm) == :http, :algorithm_mismatch, :key)
 
-        {algorithm, key}
+        {algorithm, key, scope}
 
       _ ->
         fail(:key_resolver_failed, :key)
@@ -468,7 +481,7 @@ defmodule RequestSeal.Authentication do
   end
 
   defp build(message, input, schemas) do
-    case SignatureBase.build_validated(message, input, field_schemas: schemas) do
+    case SignatureBase.build_with_components(message, input, field_schemas: schemas) do
       {:ok, bytes} -> bytes
       {:error, %{reason: reason}} -> fail(:signature_base_failed, :crypto, reason)
     end
@@ -522,9 +535,39 @@ defmodule RequestSeal.Authentication do
     end
   end
 
-  defp replay(:not_required, _, _, _, _), do: :not_required
+  defp replay(:not_required, _, _, _, _, _), do: :not_required
 
-  defp replay(policy, params, algorithm, freshness, profile) do
+  defp replay(%{scope: kind} = policy, params, _, freshness, profile, {scope, key, components}) do
+    ensure(profile == %{name: :rfc9421}, :invalid_policy, :input)
+    ensure(retain_until(freshness) <= policy.retain_until, :retention_exceeded, :replay)
+
+    scope =
+      case {kind, scope} do
+        {:key, _} -> {:key, Commitment.key_identity(key)}
+        {:credential, {:credential, _, _}} -> scope
+        {:principal, {:principal, _}} -> scope
+        _ -> nil
+      end
+
+    identity = Commitment.select(policy.identifier, params, components)
+
+    case Commitment.key(scope, identity) do
+      {:ok, digest} ->
+        claim(
+          Map.put(policy, :commitment, fn _ -> {:ok, digest} end),
+          %{},
+          policy.retain_until
+        )
+
+      {:error, :ambiguous_replay_scope} ->
+        fail(:ambiguous_replay_scope, :replay)
+
+      {:error, :missing_replay_identifier} ->
+        fail(:missing_replay_identifier, :replay)
+    end
+  end
+
+  defp replay(policy, params, algorithm, freshness, profile, _) do
     identifier = params["nonce"]
 
     ensure(
@@ -543,6 +586,11 @@ defmodule RequestSeal.Authentication do
       profile: profile
     }
 
+    claim(policy, facts, retain_until(freshness))
+  end
+
+  @doc false
+  def retain_until(freshness) do
     # Expiration is exclusive; max-age accepts its final second.
     bounds = if freshness.expires, do: [freshness.expires + freshness.skew], else: []
 
@@ -551,7 +599,10 @@ defmodule RequestSeal.Authentication do
         do: [freshness.created + freshness.max_age + freshness.skew + 1 | bounds],
         else: bounds
 
-    retain_until = Enum.min(bounds)
+    Enum.min(bounds)
+  end
+
+  defp claim(policy, facts, retain_until) do
     ensure(retain_until <= 253_402_300_799, :retention_exceeded, :replay)
 
     case RequestSeal.Replay.commit(policy, facts, retain_until) do

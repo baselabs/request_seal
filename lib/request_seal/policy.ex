@@ -51,7 +51,8 @@ defmodule RequestSeal.Policy do
                             %{
                               required(:algorithm) => RequestSeal.Crypto.algorithm(),
                               required(:key) => RequestSeal.PublicKey.t() | RequestSeal.KeyHandle.t(),
-                              optional(:issued_for) => atom() | nil
+                              optional(:issued_for) => atom() | nil,
+                              optional(:replay_scope) => RequestSeal.Replay.Commitment.scope()
                             }}
                            | :error),
           freshness: :not_evaluated | map(),
@@ -86,6 +87,9 @@ defmodule RequestSeal.Policy do
         binding the returned algorithm and granting `:verify`. HMAC
         (`"hmac-sha256"`, `{:jws, "HS256"}`) requires a custody handle. Any other key in the
         result, or any other return, rejects with `:key_resolver_failed`.
+        With library-built credential or principal replay the resolver also
+        returns `:replay_scope` with `{:credential, purpose, credential_id}` or
+        `{:principal, principal_id}` respectively. These are trusted resolver facts.
       * `:deny` - a `RequestSeal.DenySet` or nil (default). An active set
         checks the public key used by verification. A handle must authorize
         verification and export the public key used to verify the same bytes.
@@ -115,7 +119,12 @@ defmodule RequestSeal.Policy do
         is claimed once under the caller namespace. A derived retention end above
         253,402,300,799 rejects with `:retention_exceeded` at `:replay` before
         commitment or storage, even if the authenticated wire timestamp is valid.
-        RequestSeal supplies no application commitment recipe. Nonce is an authenticated
+        Alternatively use the library-built policy documented in
+        [Replay protection](replay-protection.html). It has exactly six keys,
+        `:identifier` (`:nonce` or `{:operation, ordered_identifiers}`),
+        `:scope` (`:key`, `:credential` or `:principal`), `:namespace`,
+        `:store`, `:timeout` and a fixed exclusive `:retain_until`.
+        Nonce is an authenticated
         RFC 9421 signature parameter, limited to 1,024 bytes; absent/empty nonce rejects.
         Retention ends at the first rejected second: minimum of `expires + skew`
         and `created + max_age + skew + 1`, over present bounds.
@@ -183,9 +192,12 @@ defmodule RequestSeal.Policy do
       list?(p.algorithms, &SignatureFields.algorithm?/1) and
       is_binary(p.components) and valid_components?(p.components) and
       is_function(p.key_resolver, 1) and freshness?(p.freshness) and content?(p.content) and
-      RequestSeal.Replay.policy?(p.replay, p.freshness) and schemas?(p.field_schemas) and
-      RequestSeal.DenySet.valid?(p.deny) and p.extra_components in [:allow, :reject] and
-      is_integer(p.max_signatures) and p.max_signatures in 1..64 and KeyHandle.purpose?(p.require_issued_for)
+      (RequestSeal.Replay.policy?(p.replay, p.freshness) or
+         RequestSeal.Replay.Commitment.policy?(p.replay, p.components, p.freshness)) and
+      schemas?(p.field_schemas) and
+      RequestSeal.DenySet.valid?(p.deny) and p.extra_components in [:allow, :reject] and is_integer(p.max_signatures) and
+      p.max_signatures in 1..64 and
+      KeyHandle.purpose?(p.require_issued_for)
   end
 
   def valid?(_), do: false
