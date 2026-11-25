@@ -36,5 +36,6 @@ key-purpose, or address-selection mechanism requires explicit maintainer clearan
 
 ## Verification scope
 
-Public verification selects one signature label ([ADR 0025](0025-single-label-public-verification.md)).
-Opaque HMAC identity supports custody operations without adding public threshold policy.
+`RequestSeal.verify/3` selects one signature label. [ADR 0043](0043-quorum-replay-commitment.md)
+defines public quorum verification and the use of opaque HMAC equivalence
+identity when counting independent signers.

@@ -42,6 +42,7 @@ defmodule RequestSeal.Quorum do
   Each of 1–16 slots requires a unique atom `:id`, a generic `:policy`
   with finite freshness and `replay: :not_required`, and a Boolean
   `:required`. Optional `:label` and `:tag` limit matching signatures.
+  A tag selector is a Structured Fields String of 1–256 printable ASCII bytes.
   All slots must use the same trusted freshness clock function. Verification
   reads it once and applies each slot's freshness rules at that instant.
   `:principal` is a trusted binary for principal and role units, and
@@ -260,7 +261,7 @@ defmodule RequestSeal.Quorum do
       policy.replay == :not_required and finite?(policy.freshness) and
       (policy.content == :not_required or policy.content.kind == :content) and
       (slot[:label] == nil or SignatureFields.label?(slot.label)) and
-      (slot[:tag] == nil or Claim.bounded?(slot.tag)) and
+      tag?(slot[:tag]) and
       (slot[:principal] == nil or Claim.bounded?(slot.principal)) and
       (slot[:role] == nil or name?(slot.role)) and
       (unit == :key or Claim.bounded?(slot[:principal])) and
@@ -268,6 +269,9 @@ defmodule RequestSeal.Quorum do
   end
 
   defp slot?(_, _), do: false
+
+  defp tag?(nil), do: true
+  defp tag?(tag), do: Claim.bounded?(tag) and Regex.match?(~r/\A[ -~]+\z/, tag)
 
   defp finite?(%{require_expires: expires, max_age: age}), do: expires or age != nil
   defp finite?(_), do: false

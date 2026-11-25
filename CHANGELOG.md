@@ -14,6 +14,7 @@
 - Evaluate quorum freshness at one trusted instant, reject policies whose
   mandatory verification exceeds the pair budget, and validate deadline
   intervals before starting workers.
+- Validate quorum tag selectors as Structured Fields Strings.
 - Preserve journal and idempotency stores on misrouted calls and reserve
   signed field capacity when admitting unsigned journal entries.
 - Require known key identities and shared structured operation schemas for

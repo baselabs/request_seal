@@ -72,4 +72,5 @@ JWE accepts algorithm-matching unwrap handles.
 [ADR 0027](0027-key-handles-replace-closures.md) requires handle-only key resolution;
 [ADR 0026](0026-custody-key-generation-and-derivation.md) defines generation inside
 sensitive holders and atomic derivation with caller-owned cleanup capabilities.
-Public verification selects one label ([ADR 0025](0025-single-label-public-verification.md)).
+`RequestSeal.verify/3` selects one label. [ADR 0043](0043-quorum-replay-commitment.md)
+defines `RequestSeal.verify_quorum/3` for callers that require a joint verdict.

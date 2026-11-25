@@ -9,8 +9,7 @@ defmodule RequestSeal.GuideIdempotencyTest do
       ~S'''
       alias RequestSeal.{Custody, Idempotency, Journal, Message, Policy, Replay}
 
-      {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-      {:ok, signer} = Custody.Local.new("ed25519", {:ed25519, seed})
+      {:ok, signer} = Custody.Local.generate("ed25519", [])
       {:ok, key} = Custody.public_key(signer)
       {:ok, journal} = Journal.start_link(max_entries: 100)
       {:ok, nonce_pid} = Replay.ETS.start_link(max_entries: 100)

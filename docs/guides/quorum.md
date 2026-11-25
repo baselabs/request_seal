@@ -22,8 +22,7 @@ components = ~s[("@method" "@target-uri")]
 
 {signed, slots, handles} =
   Enum.reduce([:build, :review], {message, [], []}, fn id, {message, slots, handles} ->
-    {_public, seed} = :crypto.generate_key(:eddsa, :ed25519)
-    {:ok, handle} = Custody.Local.new("ed25519", {:ed25519, seed})
+    {:ok, handle} = Custody.Local.generate("ed25519", [])
     {:ok, key} = Custody.public_key(handle)
     label = Atom.to_string(id)
     spec = %{label: label, components: components, algorithm: "ed25519", expires_in: 60}

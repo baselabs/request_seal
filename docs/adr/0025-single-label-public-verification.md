@@ -13,20 +13,19 @@ distinct, how partial failures and deadlines combine, and how replay applies to 
 signatures. Those answers depend on deployment trust rules that a standards library cannot
 state for every user.
 
-## Decision
+## Original decision for 1.0
 
-1. Public verification selects one signature label and verifies it. Replay claims exactly
+1. Public verification selected one signature label and verified it. Replay claimed exactly
    that selected signature.
-2. Quorum verification, its policy, its telemetry event, the `:invalid_quorum` reason, the
-   `:quorum` layer and the retryable deadline error are not part of the public package.
-   Every RequestSeal.Error is nonretryable. Other public error types keep their documented retryability; RequestSeal.JOSE.Error marks :deadline_exceeded as retryable.
-3. Ash authorization scope stays public.
-4. Several signatures in one message remain verifiable; only their combination into a quorum
-   is removed. `RequestSeal.verify/3` always verifies one label. Web Bot Auth verifies every
-   selected signature, including nested ones, when replay is `:not_required`; with required
-   replay, more than one selected signature rejects as `:unexpected_signature` at `:policy`
-   after the signatures pass and before any claim ([ADR 0005](0005-atomic-replay-envelope.md)).
+2. The 1.0 package omitted quorum verification, its policy, telemetry event,
+   error reason and layer. All `RequestSeal.Error` values in 1.0 were nonretryable.
+3. Ash authorization scope stayed public.
+4. `RequestSeal.verify/3` could verify each label separately. Web Bot Auth verified every
+   selected signature, including nested ones, with `replay: :not_required`. With required replay,
+   it rejected multiple selected signatures as `:unexpected_signature` at `:policy`
+   after signature verification and before the claim ([ADR 0005](0005-atomic-replay-envelope.md)).
 
-## Consequences
+## Consequences for 1.0
 
-An application that requires several signatures composes independent single-label verifications under its own trust and replay policy. The first stable release shipped without quorum; this decision supersedes the earlier records’ quorum and threshold contracts.
+Applications that required several signatures composed independent single-label
+verifications under their own trust and replay policies.

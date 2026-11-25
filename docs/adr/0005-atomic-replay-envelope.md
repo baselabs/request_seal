@@ -25,8 +25,11 @@ Verification has a deliberate external commit point. A caller that retries after
 
 ## Selected-signature scope
 
-One claim covers one label's authenticated components and parameters; labels do not enter identity.
-Required replay therefore accepts exactly one selected signature: a Web Bot Auth message with
+For single-label verification, one claim covers the selected signature's
+authenticated components and parameters. Labels do not enter identity.
+Required Web Bot Auth replay accepts exactly one selected signature. A message with
 several, nested or not, rejects as `:unexpected_signature` at `:policy` before any claim, and
 verifies only with `replay: :not_required`.
-[RFC 9421 Section 7.2.2](https://www.rfc-editor.org/rfc/rfc9421.html#section-7.2.2) and [ADR 0025](0025-single-label-public-verification.md) define the boundary.
+[RFC 9421 Section 7.2.2](https://www.rfc-editor.org/rfc/rfc9421.html#section-7.2.2)
+defines the nonce boundary. [ADR 0043](0043-quorum-replay-commitment.md)
+defines the composite claim for `RequestSeal.verify_quorum/3`.

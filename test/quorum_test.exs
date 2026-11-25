@@ -507,6 +507,20 @@ defmodule RequestSeal.QuorumTest do
     assert {:ok, _} = Quorum.new(Map.from_struct(compatible))
   end
 
+  test "tag selectors must fit a printable Structured Fields String", ctx do
+    slot = slot(ctx, :main, "primary", true)
+    policy = quorum(ctx, @operation, [slot])
+
+    for tag <- ["review priority", <<34, 32, 92>>, String.duplicate("a", 256)] do
+      assert {:ok, _} = Quorum.new(Map.from_struct(%{policy | slots: [Map.put(slot, :tag, tag)]}))
+    end
+
+    for tag <- ["café", <<0>>, <<255>>, "review\tpriority", "", String.duplicate("a", 257), :tag] do
+      assert {:error, %{reason: :invalid_quorum}} =
+               Quorum.new(Map.from_struct(%{policy | slots: [Map.put(slot, :tag, tag)]}))
+    end
+  end
+
   test "a blocked resolver is joined at the caller deadline", ctx do
     owner = self()
     signed = sign(ctx.message, ctx.keys, "primary", "main", "attempt")
