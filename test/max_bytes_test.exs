@@ -1,7 +1,7 @@
 defmodule RequestSeal.MaxBytesTest do
   use ExUnit.Case, async: true
 
-  alias RequestSeal.{Crypto, Custody}
+  alias RequestSeal.{Crypto, Custody, DenySet, PublicKey}
   alias RequestSeal.Custody.{Context, Local, Support}
 
   # A real Local custodian with only the required callbacks: verification must
@@ -18,6 +18,29 @@ defmodule RequestSeal.MaxBytesTest do
     {:ok, handle} = Local.new("ed25519", {:ed25519, seed})
     on_exit(fn -> Local.release(handle) end)
     {:ok, handle: handle, seed: seed}
+  end
+
+  test "bound verification uses the handle's key without a verification callback", %{handle: h} do
+    {:ok, key} = Custody.public_key(h)
+    {:ok, thumbprint} = PublicKey.thumbprint(key)
+    {:ok, deny} = DenySet.new([thumbprint])
+    {:ok, empty} = DenySet.new([])
+    {:ok, signature} = Custody.sign(h, "message")
+    handle = %{h | custodian: PublicKeyFallback}
+    {:ok, other} = Local.generate("ed25519", [])
+    on_exit(fn -> Local.release(other) end)
+    wrong = %{other | custodian: PublicKeyFallback}
+
+    assert {:ok, ^key} = Custody.verify_bound(handle, "message", signature, empty, [])
+
+    assert {:error, %{reason: :key_denied}} =
+             Custody.verify_bound(handle, "message", signature, deny, [])
+
+    assert {:error, %{reason: :invalid_signature}} =
+             Custody.verify_bound(wrong, "message", signature, empty, [])
+
+    assert {:error, %{reason: :invalid_options}} =
+             Custody.verify_bound(wrong, "message", signature, key, [])
   end
 
   test "one public ceiling names the inclusive 16 MiB bound" do

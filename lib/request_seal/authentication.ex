@@ -85,19 +85,20 @@ defmodule RequestSeal.Authentication do
           :input
         )
 
-        if is_struct(key, PublicKey) do
-          case DenySet.check(deny, key) do
-            :ok -> :ok
-            {:error, :key_denied} -> fail(:key_denied, :key)
-            {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)
-          end
-        end
+        ensure(
+          deny == nil or algorithm not in ["hmac-sha256", {:jws, "HS256"}],
+          :key_fingerprint_unknown,
+          :key
+        )
 
-        {:ok, {algorithm, key, deny, capture?, Map.get(policy, :require_issued_for), params, freshness}}
+        if is_struct(key, PublicKey), do: check_public(deny, key)
+
+        screening = {deny, capture?, Map.get(policy, :require_issued_for)}
+        {:ok, {algorithm, key, screening, params, freshness}}
       end)
 
     case prepared do
-      {:ok, {algorithm, key, deny, capture?, purpose, params, freshness}} ->
+      {:ok, {algorithm, key, screening, params, freshness}} ->
         schemas = policy.field_schemas
         cache_key = {label, schemas}
 
@@ -114,7 +115,7 @@ defmodule RequestSeal.Authentication do
             {:ok, bytes} ->
               protect(fn ->
                 signature_bytes = elem(signature.value, 1)
-                public = verify_bytes(algorithm, bytes, signature_bytes, key, {deny, capture?, purpose})
+                public = verify_bytes(algorithm, bytes, signature_bytes, key, screening)
                 content = content(message, input, policy.content, opts)
 
                 replay =
@@ -470,6 +471,14 @@ defmodule RequestSeal.Authentication do
     case SignatureBase.build_validated(message, input, field_schemas: schemas) do
       {:ok, bytes} -> bytes
       {:error, %{reason: reason}} -> fail(:signature_base_failed, :crypto, reason)
+    end
+  end
+
+  defp check_public(deny, key) do
+    case DenySet.check(deny, key) do
+      :ok -> :ok
+      {:error, :key_denied} -> fail(:key_denied, :key)
+      {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)
     end
   end
 

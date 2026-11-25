@@ -993,6 +993,33 @@ defmodule RequestSeal.WebBotAuthTest do
       end
     end
 
+    assert {:ok, snapshot} = Cache.refresh(cache, source)
+    snapshot_policy = %{p | deny: nil, agents: fn _ -> {:ok, snapshot} end}
+    assert {:ok, result} = WebBotAuth.verify(message, snapshot_policy)
+    assert result.signatures["agent"].principal.kind == :agent
+
+    revoked = %{snapshot | source: %{source | revoked: [proof_id]}}
+    assert :error = KeySet.lookup_at(revoked, request_id, ["ed25519"], now)
+
+    assert_error(
+      WebBotAuth.verify(message, %{snapshot_policy | agents: fn _ -> {:ok, revoked} end}),
+      :agent_unresolved,
+      :key,
+      :unknown_key
+    )
+
+    unknown = update_in(snapshot.keys[request_id], &Map.delete(&1, :proof_signers))
+    assert {:ok, _} = KeySet.lookup_at(unknown, request_id, ["ed25519"], now)
+    unknown = %{unknown | source: %{source | revoked: [proof_id]}}
+    assert :error = KeySet.lookup_at(unknown, request_id, ["ed25519"], now)
+
+    assert_error(
+      WebBotAuth.verify(message, %{snapshot_policy | agents: fn _ -> {:ok, unknown} end}),
+      :agent_unresolved,
+      :key,
+      :unknown_key
+    )
+
     assert :ok = RequestSeal.Custody.release(request_handle)
   end
 

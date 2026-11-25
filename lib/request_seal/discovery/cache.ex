@@ -340,28 +340,32 @@ defmodule RequestSeal.Discovery.Cache do
       Support.safe(
         fn ->
           clock = clock || state.clock
-          {_, now} = interval = Support.interval(clock)
+          {lower, now} = interval = Support.interval(clock)
           ensure(source.key_id == :directory or not removed?(state, source, keyid), :revoked_key)
 
-          case Map.get(state.entries, source) do
-            {:positive, set} when now < set.expires_at ->
-              {:reply, lookup(set, keyid, algorithms, interval), state}
+          snapshot =
+            case Map.get(state.entries, source) do
+              {:positive, set} when now < set.expires_at -> set
+              _ -> nil
+            end
 
-            _ ->
-              case Map.get(state.failures, source) do
-                expires when is_integer(expires) and now < expires ->
-                  {:reply, {:error, Error.new(:source_unavailable)}, state}
+          if snapshot != nil and not KeySet.expired?(snapshot, keyid, lower) do
+            {:reply, lookup(snapshot, keyid, algorithms, interval), state}
+          else
+            case Map.get(state.failures, source) do
+              expires when is_integer(expires) and now < expires ->
+                {:reply, {:error, Error.new(:source_unavailable)}, state}
 
-                _ ->
-                  pending(
-                    source,
-                    {:resolve, keyid, algorithms, clock},
-                    clock,
-                    timeout,
-                    from,
-                    state
-                  )
-              end
+              _ ->
+                pending(
+                  source,
+                  {:resolve, keyid, algorithms, clock},
+                  clock,
+                  timeout,
+                  from,
+                  state
+                )
+            end
           end
         end,
         :source_unavailable
@@ -452,16 +456,15 @@ defmodule RequestSeal.Discovery.Cache do
         # source answers 304 and its key set stays put. A CIMD document is not
         # the key set itself — its 304 says nothing about the nested JWKS it
         # names — so CIMD sources always revalidate unconditionally.
-        {etag, lifetime} =
+        {etag, freshness_fields} =
           case Map.get(state.entries, source) do
             {:positive, set} when source.type != :cimd ->
               now = Support.clock(clock)
 
-              if set.etag != nil and keys_alive?(set, now) do
-                lifetime =
-                  Map.get(set, :freshness_lifetime) || max(set.expires_at - set.fetched_at, 0)
+              fields = Map.get(set, :freshness_fields)
 
-                {set.etag, lifetime}
+              if set.etag != nil and is_list(fields) and keys_alive?(set, now) do
+                {set.etag, fields}
               else
                 {nil, nil}
               end
@@ -474,7 +477,7 @@ defmodule RequestSeal.Discovery.Cache do
           :erlang.spawn_opt(
             fn ->
               result =
-                Discovery.fetch_with_validators(source, etag, lifetime,
+                Discovery.fetch_with_validators(source, etag, freshness_fields,
                   clock: clock,
                   timeout: timeout
                 )
@@ -516,15 +519,20 @@ defmodule RequestSeal.Discovery.Cache do
   # A 304 keeps the stored keys, so it can only renew a set whose every key
   # is still inside its own expiry; any dead key forces a full fetch.
   defp keys_alive?(set, now),
-    do: set.keys != %{} and Enum.all?(set.keys, fn {_, entry} -> now < entry.expires_at end)
+    do:
+      set.keys != %{} and
+        Enum.all?(set.keys, fn {_, entries} ->
+          Enum.all?(List.wrap(entries), &(now < &1.expires_at))
+        end)
 
   defp reject_removed(keys, tombstones) do
     if MapSet.size(tombstones) == 0 do
       keys
     else
-      Map.reject(keys, fn {_, entry} ->
-        MapSet.member?(tombstones, entry.thumbprint) or
-          (entry.proof == :signed and removed_proof?(entry, tombstones))
+      KeySet.map_keys(keys, fn entry ->
+        if not MapSet.member?(tombstones, entry.thumbprint) and
+             not (entry.proof == :signed and removed_proof?(entry, tombstones)),
+           do: entry
       end)
     end
   end
@@ -586,23 +594,18 @@ defmodule RequestSeal.Discovery.Cache do
         {{:ok, {:not_modified, fresh}}, {:positive, stored}} ->
           # RFC 9111 Section 4.3.4: the stored representation stays; the 304's
           # own freshness directives and validator replace the stored ones. The
-          # set never claims freshness beyond its earliest still-live key.
+          # retained keys still carry their original validity intervals.
           keys = reject_removed(stored.keys, Map.get(state.removed, source, MapSet.new()))
-
-          earliest =
-            Enum.reduce(keys, fresh.expires_at, fn {_, entry}, bound ->
-              min(bound, entry.expires_at)
-            end)
 
           {:ok,
            %{
              stored
              | etag: fresh.etag,
                fetched_at: fresh.fetched_at,
-               expires_at: earliest,
+               expires_at: fresh.expires_at,
+               freshness_fields: fresh.freshness_fields,
                keys: keys
-           }
-           |> Map.put(:freshness_lifetime, fresh.freshness_lifetime)}
+           }}
 
         {{:ok, {:not_modified, _}}, _} ->
           # No stored representation survived (for example an invalidation that
@@ -640,7 +643,7 @@ defmodule RequestSeal.Discovery.Cache do
     stored =
       Support.safe(
         fn ->
-          now = Support.clock(flight.clock)
+          {lower, now} = Support.interval(flight.clock)
 
           case result do
             {:ok, set} ->
@@ -654,7 +657,7 @@ defmodule RequestSeal.Discovery.Cache do
             _ ->
               failures =
                 if source.type != :cimd and source.negative_ttl > 0,
-                  do: Map.put(state.failures, source, now + source.negative_ttl),
+                  do: Map.put(state.failures, source, lower + source.negative_ttl),
                   else: Map.delete(state.failures, source)
 
               {state.entries, failures}
@@ -685,10 +688,7 @@ defmodule RequestSeal.Discovery.Cache do
             do: %{set | expires_at: now + 1},
             else: set
 
-        case lookup(transient, keyid, algorithms, interval) do
-          {:ok, resolution} -> {:ok, %{resolution | expires_at: set.keys[keyid].expires_at}}
-          error -> error
-        end
+        lookup(transient, keyid, algorithms, interval)
       end,
       :invalid_options
     )

@@ -155,6 +155,30 @@ defmodule RequestSeal.SignatureBaseTest do
              SignatureBase.parse(base)
   end
 
+  test "inspection requires a canonical sequence for byte-wrapped field occurrences" do
+    message = request(%{fields: fields([{"Example-Header", "one"}, {"Example-Header", "two"}])})
+    assert {:ok, base} = SignatureBase.build(message, ~s[("example-header";bs)])
+    assert {:ok, %{components: [{~s["example-header";bs], ":b25l:, :dHdv:"}]}} =
+             SignatureBase.parse(base)
+
+    for invalid <- [
+          "one, two",
+          ":b25l:,:dHdv:",
+          ":b25l:,  :dHdv:",
+          ":b25l:,",
+          ":Zg:",
+          ":Zh==:",
+          ":IGY=:"
+        ] do
+      assert {:error, %{reason: :malformed}} =
+               SignatureBase.parse(String.replace(base, ":b25l:, :dHdv:", invalid))
+    end
+
+    empty = request(%{fields: fields([{"Example-Header", ""}])})
+    assert {:ok, empty_base} = SignatureBase.build(empty, ~s[("example-header";bs)])
+    assert {:ok, %{components: [{_, "::"}]}} = SignatureBase.parse(empty_base)
+  end
+
   test "components shares build errors, schemas and resource accounting" do
     message = request(%{fields: fields([{"Example-Dict", "a=1, b=2"}])})
     opts = [field_schemas: %{"example-dict" => dictionary_schema()}]

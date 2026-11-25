@@ -95,6 +95,23 @@ defmodule RequestSeal.VerificationRecordTest do
     end
   end
 
+  test "retained byte sequences require canonical occurrence framing even with valid signatures" do
+    positive = manifest("verification_record", "multi-byte-sequence")
+    negative = manifest("verification_record", "noncanonical-byte-sequence")
+    valid = Conformance.bytes(positive["inputs"]["record"])
+    invalid = Conformance.bytes(negative["inputs"]["record"])
+    assert {:ok, _} = VerificationRecord.decode(valid)
+    assert :ok = VerificationRecord.reverify(valid)
+
+    data = :json.decode(invalid)["record"]
+    {:ok, key} = PublicKey.import(data["key"], :jwk)
+    base = Base.url_decode64!(data["base"], padding: false)
+    signature = Base.url_decode64!(data["signature"], padding: false)
+    assert :ok = RequestSeal.Crypto.verify("ed25519", base, signature, key)
+    assert {:error, :invalid_record} = VerificationRecord.decode(invalid)
+    assert {:error, :invalid_record} = VerificationRecord.reverify(invalid)
+  end
+
   test "asymmetric custody capture works with or without a deny set" do
     {:ok, handle} = Custody.Local.generate("ed25519", [])
     {:ok, key} = Custody.public_key(handle)

@@ -82,7 +82,10 @@ The capture surface can supply an optional verification resolver
 `restrictions` object with `alg`, `use`, and `key_ops` for a public key.
 
 Signature-base inspection applies the 256-line ceiling and 1,024-byte nonce
-bound alongside context-independent derived component syntax checks.
+bound alongside context-independent derived component syntax checks. Cases
+with `;bs` cover ordered byte-wrapped occurrences and malformed framing.
+The retained-record rejection signs the malformed base and recomputes the
+digest to isolate the framing check.
 
 By default `discovery.body` returns the thumbprints valid at the evaluation clock.
 A case with `lookups` imports the body once at the scalar evaluation clock,

@@ -5,7 +5,7 @@ defmodule RequestSeal.DenySet do
   configured set, even if empty, requires a verifiable public-key identity.
   """
 
-  alias RequestSeal.{Custody, Error, KeyHandle, PublicKey}
+  alias RequestSeal.{Error, PublicKey}
 
   @max_entries 65_536
   @derive {Inspect, only: []}
@@ -89,21 +89,6 @@ defmodule RequestSeal.DenySet do
   end
 
   def check_proof(_, _), do: {:error, :key_fingerprint_unknown}
-
-  @doc false
-  def public_for_verification(nil, _key, false), do: {:ok, nil}
-
-  def public_for_verification(set, %KeyHandle{} = handle, capture?) do
-    with {:ok, public} <- Custody.public_key(handle) do
-      public_for_verification(set, public, capture?)
-    else
-      _ -> {:error, :key_fingerprint_unknown}
-    end
-  end
-
-  def public_for_verification(set, %PublicKey{} = key, _) do
-    with :ok <- check(set, key), do: {:ok, key}
-  end
 
   @doc false
   def valid_admission_options?(opts) do

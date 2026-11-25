@@ -275,7 +275,9 @@ record uses the established directory origin and fetch time. A supplied
 result rejects an explicit directory. Generic HTTP capture can use a supplied
 resolution for the same verified key.
 
-When inspecting a signature base, the parser checks derived value syntax and
-the 1,024-byte nonce limit. It stops at the first line beyond the 256-component
-ceiling. To check that the covered values match a particular message, verify
-that message with its related request and field schemas.
+When inspecting a signature base, the parser checks derived value syntax,
+canonical framing of byte-wrapped occurrences, and the 1,024-byte nonce
+limit. It stops at the first line beyond the 256-component ceiling. Explicit
+signing also applies the nonce limit before custody signs. To check that
+the covered values match a particular message, verify that message with its
+related request and field schemas.

@@ -19,7 +19,8 @@ format. Offline checking validates the encoding and verifies the signature.
 A deterministic record supports reproducible storage and byte comparison.
 Canonical signature-base parsing checks the covered identifiers and their
 order. Retaining the actual key preserves public restrictions and permits
-mathematical verification after rotation.
+mathematical verification after rotation. Rechecking a byte-wrapped field
+requires the same canonical occurrence framing as live construction.
 
 ## Consequences
 

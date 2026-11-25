@@ -292,6 +292,7 @@ defmodule RequestSeal.DiscoveryTest do
       key_id: "directory-assigned",
       thumbprint: thumbprint,
       algorithm: "ed25519",
+      fetched_at: now,
       expires_at: now + 3600
     }
 
@@ -553,6 +554,67 @@ defmodule RequestSeal.DiscoveryTest do
                Cache.resolve(cache, source, first_thumbprint, algorithms: ["ed25519"])
     after
       Peer.stop(peer)
+    end
+  end
+
+  test "one directory fetch resolves either side of rotation and refuses overlap" do
+    alias RequestSeal.Discovery.{Cache, KeySet}
+    alias RequestSeal.DiscoveryPeer, as: Peer
+    now = System.system_time(:second)
+    {:ok, first} = PublicKey.import(Peer.public_jwk(), :jwk)
+    {:ok, first_id} = PublicKey.thumbprint(first)
+    {:ok, second} = PublicKey.import(File.read!("test/fixtures/crypto/ed25519_public.pem"), :pem)
+    {:ok, second_id} = PublicKey.thumbprint(second)
+    {:ok, second_jwk} = PublicKey.export(second, :jwk)
+    first_jwk = Map.merge(Peer.public_jwk(), %{"kid" => "rotation", "exp" => now + 5})
+    owner = self()
+
+    for start <- [now + 3, now + 5], reversed? <- [false, true] do
+      next = Map.merge(second_jwk, %{"kid" => "rotation", "nbf" => start})
+      keys = if reversed?, do: [next, first_jwk], else: [first_jwk, next]
+
+      peer =
+        Peer.start(fn socket, _ ->
+          send(owner, :rotation_fetch)
+
+          Peer.reply(socket, Peer.directory(keys), [
+            {"Content-Type", "application/jwk-set+json"},
+            {"Cache-Control", "max-age=60"}
+          ])
+        end)
+
+      on_exit(fn -> Peer.stop(peer) end)
+
+      {:ok, source} =
+        Source.new(%{
+          type: :jwks_uri,
+          location: "https://localhost:#{peer.port}/keys",
+          key_id: :directory,
+          cacerts: peer.cacerts,
+          permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}]
+        })
+
+      cache = start_supervised!({Cache, clock: fn -> {now, now + 10} end}, id: make_ref())
+      assert {:ok, set} = Cache.refresh(cache, source)
+      assert_receive :rotation_fetch
+      assert :error = KeySet.lookup_at(set, "rotation", ["ed25519"], {now, now + 10})
+
+      resolve = fn time ->
+        Cache.resolve(cache, source, "rotation", algorithms: ["ed25519"], clock: fn -> time end)
+      end
+
+      assert {:ok, %{thumbprint: ^first_id, not_before: 0}} = resolve.(now + 1)
+      assert {:ok, %{thumbprint: ^second_id}} = resolve.(now + 8)
+
+      if start == now + 3 do
+        assert {:error, %{reason: :unknown_key}} = resolve.(now + 4)
+        assert {:error, %{reason: :unknown_key}} = resolve.({now + 1, now + 3})
+      else
+        assert {:ok, %{thumbprint: ^first_id}} = resolve.(now + 4)
+        assert {:ok, %{thumbprint: ^second_id}} = resolve.(now + 5)
+      end
+
+      refute_received :rotation_fetch
     end
   end
 

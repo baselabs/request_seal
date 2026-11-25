@@ -234,3 +234,6 @@ the same snapshot. With the default `test_keys: :reject`, published test
 keys cannot sign a request or its relied-on directory proof. Both sets of
 signers must also pass any configured `RequestSeal.DenySet`. Previously
 stored signed snapshots need their proof signer identities for these checks.
+Source revocations apply to those proof signers even on an explicitly supplied
+snapshot. A signed snapshot with unknown proof signers rejects when source
+revocations are configured.

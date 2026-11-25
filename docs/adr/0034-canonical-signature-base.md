@@ -31,3 +31,7 @@ the original message.
 Building a base or inspecting derived components rejects a nonce over 1,024
 bytes with `:limit`. Low-level signing reports `:signature_base_failed` with
 detail `:limit` before asking custody to sign.
+
+Byte-wrapped fields contain a comma-space-delimited sequence of canonical
+Base64 items. Validate each item's decoded field bytes and re-encode it
+before accepting the retained base.

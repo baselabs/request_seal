@@ -26,12 +26,17 @@ See [RFC 9421 Section 3.2.1](https://www.rfc-editor.org/rfc/rfc9421.html#section
 
 Discovery checks key and proof starts at the lower endpoint and expirations
 at the upper endpoint. Resolved entries retain the latest start and earliest
-expiration for lookup and conditional refresh. Keep future key starts in
-the snapshot so a later lookup can establish key validity using its own
-bounds. For an older entry without start facts, use its original fetch time.
+expiration for lookup and conditional refresh. Keep key candidates whose
+starts or expirations fall inside the fetch interval. The lookup clock must
+establish one eligible key for the entire interval. Any competing candidate
+that could be valid during that interval makes the ID ambiguous. For an
+older entry with no known start, use its original fetch time.
 
 Fetch timestamps use the upper endpoint for reporting. Reuse deadlines for
 200 and 304 responses use the earliest possible request and response times
 when applying [RFC 9111 Section 4.2.3](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.2.3).
-A 304 without freshness directives inherits the stored HTTP lifetime and
-recomputes its deadline within the retained key and proof lifetimes.
+A 304 with the stored ETag replaces only the freshness fields it supplies,
+under [RFC 9111 Sections 3.2 and 4.3.4](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.3.4).
+A 304 without an ETag causes an unconditional fetch. Absolute Expires
+remains an absolute value. Negative cache deadlines use the earliest
+possible time of the failed fetch.

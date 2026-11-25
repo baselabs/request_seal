@@ -301,12 +301,18 @@ defmodule RequestSeal.DiscoveryFetchTest do
     p = peer(fn socket, req -> Peer.signed(socket, req, Peer.directory(), nil, created: now) end)
     assert {:ok, set} = Discovery.fetch(source(p), clock: fn -> now end)
     [{kid, entry}] = Map.to_list(set.keys)
-    legacy = put_in(set.keys[kid], Map.delete(entry, :not_before))
+    persisted = Map.delete(entry, :not_before)
+    reconstructed = struct(RequestSeal.Discovery.Resolution, Map.from_struct(persisted))
+    assert reconstructed.not_before == nil
+    assert entry.not_before == now
 
-    assert :error = KeySet.lookup_at(legacy, kid, ["ed25519"], now - 1)
-    assert :error = KeySet.lookup_at(legacy, kid, ["ed25519"], {now - 1, now + 1})
-    assert {:ok, _} = KeySet.lookup_at(legacy, kid, ["ed25519"], now)
-    assert {:ok, _} = KeySet.lookup_at(legacy, kid, ["ed25519"], {now, now + 1})
+    for old <- [persisted, reconstructed] do
+      legacy = put_in(set.keys[kid], old)
+      assert :error = KeySet.lookup_at(legacy, kid, ["ed25519"], now - 1)
+      assert :error = KeySet.lookup_at(legacy, kid, ["ed25519"], {now - 1, now + 1})
+      assert {:ok, _} = KeySet.lookup_at(legacy, kid, ["ed25519"], now)
+      assert {:ok, _} = KeySet.lookup_at(legacy, kid, ["ed25519"], {now, now + 1})
+    end
   end
 
   test "directory proof labels use the configured bound beyond the generic policy default" do

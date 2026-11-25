@@ -201,7 +201,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
           case {:atomics.add_get(responses, 1, 1), mode} do
             {1, _} -> Peer.reply(socket, Peer.directory(), headers)
             {2, :conditional} -> Peer.reply(socket, "", headers, 304)
-            {2, :inherited} -> Peer.reply(socket, "", [], 304)
+            {2, :inherited} -> Peer.reply(socket, "", [{"ETag", ~s("v1")}], 304)
             _ -> Peer.reply(socket, "", [], 503)
           end
         end)
@@ -260,6 +260,87 @@ defmodule RequestSeal.DiscoveryCacheTest do
     assert accepts() == 1
     assert {:error, %{reason: :source_unavailable}} = Cache.resolve(cache, source, kid, [])
     assert accepts() == 0
+  end
+
+  test "matching 304 preserves absolute Expires and an unidentified 304 refetches" do
+    owner = self()
+    type = {"Content-Type", "application/http-message-signatures-directory+json"}
+    tag = {"ETag", ~s("v1")}
+    date = fn seconds ->
+      Calendar.strftime(DateTime.from_unix!(seconds), "%a, %d %b %Y %H:%M:%S GMT")
+    end
+
+    for mode <- [:matching, :missing] do
+      requests = :atomics.new(1, [])
+
+      p =
+        Peer.start(fn socket, request ->
+          send(owner, {:refresh_request, String.contains?(request, "If-None-Match:")})
+
+          case {:atomics.add_get(requests, 1, 1), mode} do
+            {1, _} ->
+              fields = [type, tag, {"Date", date.(100)}, {"Expires", date.(110)}]
+              Peer.reply(socket, Peer.directory(), fields)
+
+            {2, :matching} ->
+              Peer.reply(socket, "", [tag, {"Date", date.(110)}], 304)
+
+            {2, :missing} ->
+              Peer.reply(socket, "", [{"Cache-Control", "max-age=90"}], 304)
+
+            {3, :missing} ->
+              Peer.reply(socket, Peer.directory() <> "\n", [type, {"Cache-Control", "max-age=30"}])
+          end
+        end)
+
+      on_exit(fn -> Peer.stop(p) end)
+
+      {:ok, source} =
+        Source.new(%{
+          type: :directory,
+          location: "https://localhost:#{p.port}",
+          cacerts: p.cacerts,
+          permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}],
+          require_signed_directory: false
+        })
+
+      time = start_supervised!(Supervisor.child_spec({Agent, fn -> 100 end}, id: make_ref()))
+      {:ok, cache} = Cache.start_link(clock: fn -> Agent.get(time, & &1) end)
+      assert {:ok, %{expires_at: 110} = first} = Cache.refresh(cache, source)
+      assert_receive {:refresh_request, false}
+      Agent.update(time, fn _ -> 110 end)
+      assert {:ok, next} = Cache.refresh(cache, source)
+      assert_receive {:refresh_request, true}
+
+      if mode == :matching do
+        assert next.revision == first.revision
+        assert next.fetched_at == 110 and next.expires_at == 110
+        refute Map.has_key?(:sys.get_state(cache).entries, source)
+        refute_received {:refresh_request, _}
+      else
+        assert_receive {:refresh_request, false}
+        assert next.revision != first.revision
+        assert next.expires_at == 140
+      end
+    end
+  end
+
+  test "a wide failure interval starts negative freshness at its lower endpoint" do
+    {_, publisher, source, cache, kid} = setup_cache(%{negative_ttl: 300})
+    Agent.update(publisher, &%{&1 | status: 503})
+
+    assert {:error, %{reason: :unexpected_status}} =
+             Cache.resolve(cache, source, kid, clock: fn -> {100, 200} end)
+
+    assert accepts() == 1
+    Agent.update(publisher, &%{&1 | status: 200})
+
+    assert {:error, %{reason: :source_unavailable}} =
+             Cache.resolve(cache, source, kid, clock: fn -> 399 end)
+
+    assert accepts() == 0
+    assert {:ok, _} = Cache.resolve(cache, source, kid, clock: fn -> 400 end)
+    assert accepts() == 1
   end
 
   test "freshness refetches, rotation removes old keys and tombstones survive refresh/invalidation" do
@@ -326,7 +407,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
               Peer.reply(socket, body, [{"ETag", ~s("v1")} | fields])
 
             :unchanged ->
-              Peer.reply(socket, "", [{"Cache-Control", "max-age=30"}], 304)
+              Peer.reply(socket, "", [{"Cache-Control", "max-age=30"}, {"ETag", ~s("v1")}], 304)
           after
             5_000 -> :ok
           end
@@ -466,7 +547,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
             {"ETag", ~s("v1")}
           ])
         else
-          Peer.reply(socket, "", [media, {"Cache-Control", "max-age=60"}], 304)
+          Peer.reply(socket, "", [media, {"Cache-Control", "max-age=60"}, {"ETag", ~s("v1")}], 304)
         end
       end)
 

@@ -2,6 +2,16 @@
 
 ## Unreleased 2.0.0
 
+- Retain directory key validity windows across uncertain fetches. Reject
+  directory IDs with overlapping eligible keys and use the original fetch
+  time when a legacy resolution has no known start.
+- Merge matching 304 freshness fields with the stored response, preserving
+  absolute expiration. Refetch without a validator when a 304 omits its ETag.
+  Start negative freshness at the lower end of the failure interval.
+- Apply source revocations to retained directory proof signers. Resolve,
+  screen, and verify handle-bound public keys inside custody before capture.
+- Require canonical byte-sequence framing for `;bs` fields in signature
+  bases and retained verification records.
 - Reject struct-valued deny-set containers at HTTP, Web Bot Auth, JWS, and custody admission.
 - Keep discovery cache deadlines conservative across clock intervals and 304
   revalidation. Evaluate retained key starts at each lookup and use the

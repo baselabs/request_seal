@@ -29,8 +29,11 @@ signer must pass an active deny policy and the Web Bot Auth test-key policy,
 including on cache hits. A cache tombstone also drops every key whose
 relied-on directory proof used the removed signer, including when a fetch
 or revalidation is in progress.
+Source revocations also apply to proof signers on snapshot lookup. When a
+source has revocations, a signed resolution needs known signer identities.
 
 Validate fixed-width digest entries in a plain map before admitting a set.
-With a verification handle, screen its exported public key and require both any
-custodian verifier's approval and verification against that same public key.
+For a verification handle, custody resolves and screens the handle's public
+key in one operation, checks any custodian verifier's verdict, and verifies
+against that public key before returning it for capture.
 Seed screening runs before the private-key possession probe.

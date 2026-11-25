@@ -8,8 +8,9 @@ defmodule RequestSeal.Discovery.KeySet do
   enforced by `RequestSeal.PublicKey`. The cache's `:clock` supports
   caller-controlled time for resolution and fetching. `etag` is the source's
   ETag validator, if it sent one; the cache revalidates conditionally with it.
-  `freshness_lifetime` retains the HTTP lifetime for a 304 that omits freshness
-  directives. `expires_at` is the conservative absolute reuse deadline.
+  `freshness_fields` retains HTTP metadata for conditional revalidation.
+  `expires_at` bounds snapshot reuse. Each key retains its own validity and
+  proof bounds. Multiple candidates for an ID are kept together.
   """
   alias RequestSeal.{PublicKey, SignatureFields}
   alias RequestSeal.Crypto.Algorithm
@@ -24,19 +25,19 @@ defmodule RequestSeal.Discovery.KeySet do
     :revision,
     :proof,
     :etag,
-    :freshness_lifetime
+    :freshness_fields
   ]
 
   @type t :: %__MODULE__{
           source: Source.t(),
           origin: binary(),
-          keys: %{binary() => Resolution.t()},
+          keys: %{binary() => Resolution.t() | [Resolution.t()]},
           fetched_at: integer(),
           expires_at: integer(),
           revision: binary(),
           proof: :signed | :unsigned | :not_applicable,
           etag: binary() | nil,
-          freshness_lifetime: non_neg_integer() | nil
+          freshness_fields: [RequestSeal.FieldOccurrence.t()] | nil
         }
   @doc """
   Find a fresh, nonrevoked key by its source-selected ID under an algorithm allowlist.
@@ -122,10 +123,12 @@ defmodule RequestSeal.Discovery.KeySet do
              Enum.all?(algorithms, &SignatureFields.algorithm?/1),
          {:ok, {lower, upper}} <- RequestSeal.Freshness.interval(now),
          true <- is_integer(set.expires_at) and upper < set.expires_at,
-         {:ok, %Resolution{} = entry} <- Map.fetch(set.keys, keyid),
-         true <- identity?(set.source, entry, keyid),
+         [%Resolution{} = entry] <-
+           Enum.filter(List.wrap(set.keys[keyid]), fn entry ->
+             identity?(set.source, entry, keyid) and possible_time?(entry, lower, upper) and
+               not revoked?(entry, set.source.revoked)
+           end),
          true <- valid_time?(entry, lower, upper),
-         false <- entry.thumbprint in set.source.revoked,
          {:ok, thumbprint} <- PublicKey.thumbprint(entry.key),
          true <- thumbprint == entry.thumbprint,
          algorithm when algorithm != nil <- Enum.find(algorithms, &compatible?(entry, &1)) do
@@ -141,13 +144,49 @@ defmodule RequestSeal.Discovery.KeySet do
 
   def lookup_at(_, _, _, _), do: :error
 
-  defp valid_time?(entry, lower, upper) do
-    # Earlier snapshots establish validity only from their original observation.
-    start = Map.get(entry, :not_before, entry.fetched_at)
+  @doc false
+  def valid_time?(entry, lower, upper), do: within?(entry, lower, upper)
 
-    is_integer(start) and start >= 0 and start <= lower and
-      is_integer(entry.expires_at) and upper < entry.expires_at
+  defp possible_time?(entry, lower, upper), do: within?(entry, upper, lower)
+
+  defp within?(entry, start_check, expiry_check) do
+    # Earlier snapshots establish validity only from their original observation.
+    start = Map.get(entry, :not_before) || entry.fetched_at
+
+    is_integer(start) and start >= 0 and start <= start_check and
+      is_integer(entry.expires_at) and expiry_check < entry.expires_at
   end
+
+  @doc false
+  def expired?(set, keyid, now) do
+    case List.wrap(set.keys[keyid]) do
+      [] -> false
+      entries -> Enum.all?(entries, &(now >= &1.expires_at))
+    end
+  end
+
+  @doc false
+  def map_keys(keys, fun) do
+    Map.new(keys, fn {id, entries} ->
+      case entries |> List.wrap() |> Enum.map(fun) |> Enum.reject(&is_nil/1) do
+        [entry] -> {id, entry}
+        entries -> {id, entries}
+      end
+    end)
+    |> Map.reject(fn {_, entries} -> entries == [] end)
+  end
+
+  defp revoked?(_, []), do: false
+
+  defp revoked?(entry, revoked) do
+    entry.thumbprint in revoked or
+      (entry.proof == :signed and revoked_proof?(Map.get(entry, :proof_signers), revoked))
+  end
+
+  defp revoked_proof?(signers, revoked) when is_list(signers) and length(signers) in 1..64,
+    do: Enum.any?(signers, &(not Source.thumbprint?(&1) or &1 in revoked))
+
+  defp revoked_proof?(_, _), do: true
 
   defp identity?(%Source{key_id: :thumbprint}, entry, keyid),
     do: entry.thumbprint == keyid and entry.key_id in [nil, keyid]
