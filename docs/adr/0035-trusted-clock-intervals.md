@@ -34,6 +34,31 @@ older entry with no known start, use its original fetch time.
 Directory proofs, response-body key selection, and snapshot lookups use
 the same rule to identify an unambiguous key.
 
+A directory proof is valid at a lookup instant `t` only when its signer is
+the unique eligible candidate at `t`, using the same selector as snapshot
+lookup. The snapshot retains the signed time and verified algorithm along
+with the signer ID and key candidates. Each lookup reselects the signer
+and checks the proof lifetime and algorithm against that selection. An
+interval requires the same unique signer throughout. Revalidation preserves
+these proof facts and applies the same checks.
+
+The TLS regression runs both publication orders for every row below. The
+proof spans the signer overlap and authenticates a distinct leaf.
+
+| Fetch and lookup | Signer boundary | Expected |
+|---|---|---|
+| Fetch at 100, lookup at 104 | Before competing `nbf=105` | Signer and leaf resolve |
+| Same snapshot, lookup at 105 and 109 | From competing `nbf` until its `exp` | Both refuse ambiguity |
+| Same snapshot, lookup at 110 | Competing `exp=110` reached | Both resolve again |
+| Revalidate at 106, lookup at 104 and 110 | Earlier side of `nbf` and later side of `exp` | Leaf resolves using the retained proof |
+| Unconditional fetch at 106 | Both candidates eligible | Fetch refuses the set |
+| Fresh fetch at 110, lookup at 109 | Earlier side of competing `exp` | Leaf refuses ambiguity |
+
+A matching 304 at 101 runs between the fetch and lookup rows for the first
+snapshot. A 304 at 106 preserves the prior proof and leaves its eligibility
+to the lookup. A new proof whose observation interval includes an ambiguous
+signer cannot be verified.
+
 Fetch timestamps use the upper endpoint for reporting. Reuse deadlines for
 200 and 304 responses use the earliest possible request and response times
 when applying [RFC 9111 Section 4.2.3](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.2.3).
@@ -47,3 +72,8 @@ An ETag identifies a representation at the exact URI that supplied it.
 If a response followed a redirect, refresh starts unconditionally at the
 configured URI. Malformed or empty tag fields provide no validator.
 A quoted tag with an empty opaque value is valid.
+
+CIMD refresh fetches the document and any nested JWKS unconditionally. The
+composite snapshot exposes no ETag pair. Clock callbacks run inside their
+operation deadline in workers outside the cache server, including samples
+before the request, after the response, and before delivering a fetched key.

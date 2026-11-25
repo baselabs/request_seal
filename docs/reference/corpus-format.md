@@ -87,6 +87,8 @@ with `;bs` cover ordered byte-wrapped occurrences and malformed framing.
 Ordinary field cases cover a final empty occurrence and leading whitespace.
 The retained-record rejections sign malformed bases and recompute their
 digests to isolate the framing checks.
+Other signed records exercise joint target, query, field and dictionary
+consistency and the 1,024-occurrence message ceiling.
 
 By default `discovery.body` returns the thumbprints valid at the evaluation clock.
 A case with `lookups` imports the body once at the scalar evaluation clock,

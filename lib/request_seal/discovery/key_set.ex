@@ -10,7 +10,8 @@ defmodule RequestSeal.Discovery.KeySet do
   ETag validator, if usable, and `validator_uri` identifies the URI that sent it.
   `freshness_fields` retains HTTP metadata for conditional revalidation.
   `expires_at` bounds snapshot reuse. Each key retains its own validity and
-  proof bounds. Multiple candidates for an ID are kept together.
+  multiple candidates for an ID are kept together. `proof_facts` retains
+  verified signature facts for interval-aware signer selection at lookup.
   """
   alias RequestSeal.{PublicKey, SignatureFields}
   alias RequestSeal.Crypto.Algorithm
@@ -24,6 +25,7 @@ defmodule RequestSeal.Discovery.KeySet do
     :expires_at,
     :revision,
     :proof,
+    :proof_facts,
     :etag,
     :validator_uri,
     :freshness_fields
@@ -37,6 +39,7 @@ defmodule RequestSeal.Discovery.KeySet do
           expires_at: integer(),
           revision: binary(),
           proof: :signed | :unsigned | :not_applicable,
+          proof_facts: [{binary(), RequestSeal.Crypto.algorithm(), integer(), integer()}] | nil,
           etag: binary() | nil,
           validator_uri: binary() | nil,
           freshness_fields: [RequestSeal.FieldOccurrence.t()] | nil
@@ -126,6 +129,7 @@ defmodule RequestSeal.Discovery.KeySet do
          {:ok, {lower, upper}} <- RequestSeal.Freshness.interval(now),
          true <- is_integer(set.expires_at) and upper < set.expires_at,
          {:ok, entry} <- select(set.keys[keyid], set.source, keyid, {lower, upper}),
+         {:ok, entry} <- check_proofs(set, entry, {lower, upper}),
          {:ok, thumbprint} <- PublicKey.thumbprint(entry.key),
          true <- thumbprint == entry.thumbprint,
          algorithm when algorithm != nil <- Enum.find(algorithms, &compatible?(entry, &1)) do
@@ -140,6 +144,35 @@ defmodule RequestSeal.Discovery.KeySet do
   end
 
   def lookup_at(_, _, _, _), do: :error
+
+  defp check_proofs(set, %Resolution{proof: :signed} = entry, {lower, upper} = interval) do
+    case Map.get(set, :proof_facts) do
+      [_ | _] = facts ->
+        Enum.reduce_while(facts, {:ok, entry}, fn {id, algorithm, created, expires}, {:ok, key} ->
+          with true <- is_integer(created) and created <= lower,
+               true <- is_integer(expires) and upper < expires,
+               {:ok, signer} <- select(set.keys[id], set.source, id, interval),
+               {:ok, ^id} <- PublicKey.thumbprint(signer.key),
+               true <- compatible?(signer, algorithm) do
+            start = max(created, Map.get(signer, :not_before) || signer.fetched_at)
+
+            bounded =
+              key
+              |> Map.put(:not_before, max(Map.get(key, :not_before) || key.fetched_at, start))
+              |> Map.put(:expires_at, min(key.expires_at, min(expires, signer.expires_at)))
+
+            {:cont, {:ok, bounded}}
+          else
+            _ -> {:halt, :error}
+          end
+        end)
+
+      _ ->
+        :error
+    end
+  end
+
+  defp check_proofs(_, entry, _), do: {:ok, entry}
 
   @doc false
   def select(entries, source, keyid, {lower, upper}) do
@@ -173,7 +206,10 @@ defmodule RequestSeal.Discovery.KeySet do
   def expired?(set, keyid, now) do
     case List.wrap(set.keys[keyid]) do
       [] -> false
-      entries -> Enum.all?(entries, &(now >= &1.expires_at))
+
+      entries ->
+        Enum.any?(entries, &(&1.fetched_at < &1.expires_at)) and
+          Enum.all?(entries, &(now >= &1.expires_at))
     end
   end
 

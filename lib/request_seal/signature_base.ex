@@ -243,6 +243,7 @@ defmodule RequestSeal.SignatureBase do
         {identifier, value}
       end)
 
+    true = joint_wire?(inner.value, pairs)
     parts = %{components: pairs, signature_params: serialized}
     ^bytes = rebuild(parts)
     Map.put(parts, :inner_list, inner)
@@ -264,8 +265,303 @@ defmodule RequestSeal.SignatureBase do
 
     not response? or
       Enum.all?(items, fn %Value{value: {:string, name}, parameters: params} ->
-        not SignatureFields.request_component?(name) or List.keymember?(params, "req", 0)
+        related? = List.keymember?(params, "req", 0)
+        (name != "@status" or not related?) and
+          (not SignatureFields.request_component?(name) or related?)
       end)
+  end
+
+  defp joint_wire?(items, pairs) do
+    components =
+      Enum.zip_with(items, pairs, fn item, {_, wire} ->
+        {:string, name} = item.value
+        {name, Map.new(item.parameters), wire}
+      end)
+
+    {derived, fields} =
+      Enum.split_with(components, fn {name, _, _} -> String.starts_with?(name, "@") end)
+
+    requests =
+      derived
+      |> Enum.reject(fn {name, _, _} -> name == "@status" end)
+      |> Enum.group_by(fn {_, params, _} -> source_key(params) end)
+
+    Enum.all?(requests, fn {_, components} -> request_wire?(components) end) and
+      fields_wire?(fields)
+  end
+
+  defp request_wire?([]), do: true
+
+  defp request_wire?(components) do
+    covered = Map.new(components, fn {name, _, value} -> {name, value} end)
+    scheme = covered["@scheme"] || "x"
+    authority = covered["@authority"] || "example.test"
+    {scheme, authority, targets} = request_witnesses(covered, components, scheme, authority)
+
+    Enum.any?(targets, fn raw ->
+      form = target_form(raw)
+      method = covered["@method"] || default_method(form)
+      {scheme, authority} = request_origin(form, raw, covered, scheme, authority)
+
+      message = %{
+        kind: :request,
+        raw_target: raw,
+        target_form: form,
+        method: method,
+        scheme: scheme,
+        authority: authority
+      }
+
+      Message.target_valid?(message) and request_values?(components, message)
+    end)
+  end
+
+  defp request_witnesses(covered, components, scheme, authority) do
+    case covered["@target-uri"] do
+      nil ->
+        members =
+          for {"@query-param", %{"name" => {:string, name}}, value} <- components do
+            name_wire = query_source(name, false)
+
+            if name == "" or value != "",
+              do: name_wire <> "=" <> query_source(value, true),
+              else: name_wire
+          end
+
+        query =
+          case covered["@query"] do
+            "?" when members == [] -> ""
+            nil when members == [] -> ""
+            nil -> "?" <> Enum.join(members, "&")
+            wire -> wire
+          end
+
+        origin = (covered["@path"] || "/") <> query
+        target = covered["@request-target"]
+
+        authority_targets = Enum.map([":1", ":80", ":443"], &(authority <> &1))
+        targets = if target, do: [target], else: [origin, "*", authority | authority_targets]
+
+        {scheme, authority, targets}
+
+      uri ->
+        [_, scheme, authority, tail] =
+          Regex.run(~r/\A([A-Za-z][A-Za-z0-9+.-]*):\/\/([^\/?]+)(.*)\z/, uri)
+
+        targets =
+          case {covered["@request-target"], tail} do
+            {target, _} when is_binary(target) -> [target]
+            {nil, "/" <> _} -> [uri, tail]
+            {nil, ""} -> [uri, "*", authority]
+            _ -> [uri]
+          end
+
+        {scheme, authority, targets}
+    end
+  end
+
+  defp request_origin(:absolute, raw, _, _, _),
+    do: origin(%{target_form: :absolute, raw_target: raw})
+
+  defp request_origin(:authority, raw, covered, scheme, _) do
+    scheme =
+      if covered["@scheme"] == nil and covered["@target-uri"] == nil do
+        case Regex.run(~r/\A(.*):([0-9]+)\z/, raw) do
+          [_, host, port] ->
+            if String.downcase(host) == covered["@authority"] do
+              case String.to_integer(port) do
+                80 -> "http"
+                443 -> "https"
+                _ -> scheme
+              end
+            else
+              scheme
+            end
+
+          _ ->
+            scheme
+        end
+      else
+        scheme
+      end
+
+    {scheme, raw}
+  end
+
+  defp request_origin(_, _, _, scheme, authority), do: {scheme, authority}
+
+  defp target_form("*"), do: :asterisk
+  defp target_form("/" <> _), do: :origin
+  defp target_form(raw), do: if(Validation.absolute_form?(raw), do: :absolute, else: :authority)
+
+  defp default_method(:asterisk), do: "OPTIONS"
+  defp default_method(:authority), do: "CONNECT"
+  defp default_method(_), do: "GET"
+
+  defp request_values?(components, message) do
+    Enum.reduce_while(components, %{}, fn {name, params, expected}, cache ->
+      case value(message, name, params, nil, cache) do
+        {^expected, next} -> {:cont, next}
+        _ -> {:halt, false}
+      end
+    end) != false
+  catch
+    {:signature_base, _} -> false
+  end
+
+  defp query_source(bytes, value?) do
+    Regex.replace(~r/%[0-9A-F]{2}/, bytes, fn <<?%, digits::binary>> = escaped ->
+      byte = String.to_integer(digits, 16)
+
+      cond do
+        byte == 32 -> "+"
+        query_literal?(byte, value?) -> <<byte>>
+        true -> escaped
+      end
+    end)
+  end
+
+  defp fields_wire?(fields) do
+    fields
+    |> Enum.group_by(fn {name, _, _} -> name end)
+    |> Enum.reduce_while(%{}, fn {name, components}, budgets ->
+      case field_sources(components) do
+        {:ok, sources} ->
+          budgets =
+            Enum.reduce(sources, budgets, fn {context, occurrences}, acc ->
+              bytes = Enum.reduce(occurrences, 0, &(&2 + byte_size(name) + byte_size(&1)))
+              count = length(occurrences)
+              Map.update(acc, context, {count, bytes}, fn {c, b} -> {c + count, b + bytes} end)
+            end)
+
+          within_limits? =
+            Enum.all?(budgets, fn {_, {count, bytes}} -> count <= 1024 and bytes <= 1_048_576 end)
+
+          if within_limits?, do: {:cont, budgets}, else: {:halt, false}
+
+        _ ->
+          {:halt, false}
+      end
+    end) != false
+  end
+
+  defp field_sources(components) do
+    sections =
+      Enum.group_by(components, fn {_, params, _} ->
+        {source_key(params), Map.has_key?(params, "tr")}
+      end)
+
+    facts =
+      Enum.map(sections, fn {{context, _}, section} ->
+        {:ok, facts} = field_facts(section)
+        {context, facts}
+      end)
+
+    # The builder receives one schema per field name for all sections and messages.
+    types = Enum.map(facts, fn {_, values} -> structured_types(values) end)
+
+    schemas =
+      cond do
+        [:dictionary] in types -> [wire_schema(:dictionary)]
+        Enum.any?(types, &(&1 != [])) -> Enum.map([:item, :list, :dictionary], &wire_schema/1)
+        true -> [nil]
+      end
+
+    Enum.find_value(schemas, :error, fn schema ->
+      Enum.reduce_while(facts, {:ok, []}, fn {context, values}, {:ok, sources} ->
+        case field_occurrences(values, schema) do
+          {:ok, occurrences} -> {:cont, {:ok, [{context, occurrences} | sources]}}
+          _ -> {:halt, false}
+        end
+      end)
+    end)
+  end
+
+  defp field_facts(components) do
+    Enum.reduce_while(components, {:ok, %{}}, fn {_, params, value}, {:ok, facts} ->
+      representation =
+        case params do
+          %{"bs" => _} -> :bytes
+          %{"key" => {:string, key}} -> {:key, key}
+          %{"sf" => _} -> :structured
+          _ -> :plain
+        end
+
+      case Map.fetch(facts, representation) do
+        {:ok, other} when other != value -> {:halt, :error}
+        _ -> {:cont, {:ok, Map.put(facts, representation, value)}}
+      end
+    end)
+  end
+
+  defp field_occurrences(%{bytes: bytes} = facts, schema) do
+    occurrences =
+      for <<?:, wire::binary>> <- :binary.split(bytes, @field_separator, [:global]) do
+        Base.decode64!(binary_part(wire, 0, byte_size(wire) - 1))
+      end
+
+    combined = Enum.join(occurrences, @field_separator)
+    if matches_field?(facts, combined, schema), do: {:ok, occurrences}, else: :error
+  end
+
+  defp field_occurrences(%{plain: plain} = facts, schema) do
+    with true <- matches_field?(facts, plain, schema), do: combined_field(plain, 1024)
+  end
+
+  defp field_occurrences(facts, schema) do
+    with {:ok, parsed} <- structured_witness(facts, schema),
+         true <- structured_facts?(facts, parsed, schema),
+         {:ok, source} <- SF.source_wire(parsed, schema),
+         do: {:ok, [source]}
+  end
+
+  defp matches_field?(facts, combined, schema) do
+    Map.get(facts, :plain, combined) == combined and
+      (structured_types(facts) == [] or
+         case SF.parse(combined, schema) do
+           {:ok, parsed} -> structured_facts?(facts, parsed, schema)
+           _ -> false
+         end)
+  end
+
+  defp structured_types(facts) do
+    cond do
+      Enum.any?(Map.keys(facts), &match?({:key, _}, &1)) -> [:dictionary]
+      Map.has_key?(facts, :structured) -> [:item, :list, :dictionary]
+      true -> []
+    end
+  end
+
+  defp structured_witness(%{structured: wire}, schema), do: SF.parse(wire, schema)
+
+  defp structured_witness(facts, %{type: :dictionary} = schema) do
+    entries =
+      for {{:key, key}, wire} <- facts do
+        {:ok, %Value{value: [member]}} = SF.parse(wire, %{schema | type: :list})
+        {key, member}
+      end
+
+    {:ok, %Value{type: :dictionary, value: Enum.sort_by(entries, &elem(&1, 0))}}
+  end
+
+  defp structured_facts?(facts, parsed, schema) do
+    Enum.all?(facts, fn
+      {:structured, wire} ->
+        SF.serialize(parsed, schema) == {:ok, wire}
+
+      {{:key, key}, wire} ->
+        case List.keyfind(parsed.value, key, 0) do
+          {^key, member} ->
+            list = %Value{type: :list, value: [member]}
+            SF.serialize(list, %{schema | type: :list}) == {:ok, wire}
+
+          nil ->
+            false
+        end
+
+      _ ->
+        true
+    end)
   end
 
   defp wire_value?(%Value{value: {:string, name}, parameters: params}, value),
@@ -341,12 +637,13 @@ defmodule RequestSeal.SignatureBase do
     byte = String.to_integer(digits, 16)
     # A raw plus decodes to a space. Ampersand always separates members;
     # equals separates the name but can appear literally in the value.
-    literal? = byte in ~c" ~:/?@!$'(),;" or (value? and byte == ?=)
-    query_wire_size(rest, value?, count + if(literal?, do: 1, else: 3))
+    query_wire_size(rest, value?, count + if(query_literal?(byte, value?), do: 1, else: 3))
   end
 
   defp query_wire_size(<<_, rest::binary>>, value?, count),
     do: query_wire_size(rest, value?, count + 1)
+
+  defp query_literal?(byte, value?), do: byte in ~c" ~:/?@!$'(),;" or (value? and byte == ?=)
 
   defp field_wire?(%{"bs" => _}, value), do: byte_sequences?(value, 1024)
 
@@ -378,7 +675,7 @@ defmodule RequestSeal.SignatureBase do
     end)
   end
 
-  defp field_wire?(_, value), do: combined_field?(value, 1024)
+  defp field_wire?(_, _), do: true
 
   defp wire_schema(type) do
     types = Schema.types(:rfc9651)
@@ -392,12 +689,13 @@ defmodule RequestSeal.SignatureBase do
     }
   end
 
-  defp combined_field?(_, 0), do: false
-  defp combined_field?(<<byte, _::binary>>, _) when byte in [32, 9], do: false
+  defp combined_field(value, remaining), do: combined_field(value, remaining, [])
+  defp combined_field(_, 0, _), do: :error
+  defp combined_field(<<byte, _::binary>>, _, _) when byte in [32, 9], do: :error
 
-  defp combined_field?(value, remaining) do
+  defp combined_field(value, remaining, acc) do
     if canonical_occurrence?(value) do
-      true
+      {:ok, Enum.reverse([value | acc])}
     else
       # Use the last allowable separator to minimize the number of occurrences.
       scope = {0, min(byte_size(value), 65_538)}
@@ -415,10 +713,10 @@ defmodule RequestSeal.SignatureBase do
       case separator do
         {at, width} ->
           tail = binary_part(value, at + width, byte_size(value) - at - width)
-          combined_field?(tail, remaining - 1)
+          combined_field(tail, remaining - 1, [binary_part(value, 0, at) | acc])
 
         nil ->
-          false
+          :error
       end
     end
   end

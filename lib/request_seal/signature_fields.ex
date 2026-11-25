@@ -81,7 +81,6 @@ defmodule RequestSeal.SignatureFields do
   def component_parameters?(name, params) do
     allowed =
       case name do
-        "@status" -> []
         "@query-param" -> ["req", "name"]
         name when name in @derived -> ["req"]
         _ -> ["sf", "key", "bs", "tr", "req"]

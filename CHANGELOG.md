@@ -2,6 +2,14 @@
 
 ## Unreleased 2.0.0
 
+- Recheck cached directory proof signers at each lookup, using the same
+  interval selector as the key lookup.
+- Keep CIMD refresh unconditional across the document and nested JWKS.
+  Respect quoted Cache-Control arguments and bound clock callbacks by the
+  operation deadline.
+- Validate covered request facts and field representations together, enforce
+  aggregate occurrence limits, and check dictionary member source overhead.
+  Preserve the negotiation error for inapplicable `@status;req`.
 - Use the same interval-aware key selection for directory proofs, body lookup,
   and snapshots. Scope cached ETags to their response URI and skip unusable tags.
 - Check canonical combined and structured field values in retained signature

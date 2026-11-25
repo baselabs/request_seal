@@ -153,8 +153,6 @@ defmodule RequestSeal.Discovery do
       timeout = Keyword.get(opts, :timeout, source.timeout)
       ensure(is_integer(timeout) and timeout in 1..300_000, :invalid_options)
       clock = Keyword.get(opts, :clock, fn -> System.system_time(:second) end)
-      Support.clock(clock)
-
       Support.run(min(timeout, source.timeout), fn deadline ->
         fetch_source(source, clock, deadline, nil, nil)
       end)
@@ -166,22 +164,10 @@ defmodule RequestSeal.Discovery do
   # 304's updated freshness fields. RFC 9111 Section 3.2 keeps stored fields
   # that the 304 omits. No public option exposes this path.
   @doc false
-  def fetch_with_validators(source, etag, stored_fields, opts) do
+  def fetch_with_validators(source, etag, stored_fields, clock, deadline) do
     Support.safe(fn ->
-      Source.validate!(source)
-      Support.options(opts, [:timeout, :clock])
-      ensure(etag == nil or etag?(etag), :invalid_options)
-
-      ensure(etag == nil or is_list(stored_fields), :invalid_options)
-
-      timeout = Keyword.get(opts, :timeout, source.timeout)
-      ensure(is_integer(timeout) and timeout in 1..300_000, :invalid_options)
-      clock = Keyword.get(opts, :clock, fn -> System.system_time(:second) end)
-      Support.clock(clock)
-
-      Support.run(min(timeout, source.timeout), fn deadline ->
-        fetch_source(source, clock, deadline, etag, stored_fields)
-      end)
+      ensure(etag == nil or (etag?(etag) and is_list(stored_fields)), :invalid_options)
+      fetch_source(source, clock, deadline, etag, stored_fields)
     end)
   end
 
@@ -352,13 +338,13 @@ defmodule RequestSeal.Discovery do
     uri = Source.url!(source.location)
     # RFC 9111 Section 4.2.3: the request time bounds the response delay that
     # corrects a received Age.
-    {requested_at, _} = Support.interval(clock)
+    {requested_at, _} = Support.interval(clock, deadline)
 
     case resource(uri, source, deadline, 0, etag) do
       {:not_modified, fields} ->
         case response_etag(fields) do
           ^etag ->
-            {_, now} = interval = Support.interval(clock)
+            {_, now} = interval = Support.interval(clock, deadline)
             updates = freshness_fields(fields)
             updated_names = MapSet.new(updates, &String.downcase(&1.name))
 
@@ -415,15 +401,61 @@ defmodule RequestSeal.Discovery do
     do: Enum.filter(fields, &(String.downcase(&1.name) in ~w(cache-control date expires age)))
 
   defp cache_controls(fields) do
-    HTTP1.values(fields, "cache-control")
-    |> Enum.join(",")
-    |> String.downcase()
-    |> String.split(",")
-    |> Enum.map(&HTTP1.trim_ows/1)
+    for field <- HTTP1.values(fields, "cache-control"),
+        wire <- cache_directives(field, field, 0, :plain, []),
+        directive = HTTP1.trim_ows(wire),
+        directive != "" do
+      [name | argument] = :binary.split(directive, "=")
+      name = HTTP1.trim_ows(name)
+      ensure(RequestSeal.Message.Validation.token?(name, 65_536), :invalid_response)
+      {String.downcase(name), cache_argument(argument)}
+    end
   end
 
+  # A comma delimiting a list member is significant only outside quoted-string.
+  # RFC 9111 Section 5.2 and RFC 9110 Section 5.6.4.
+  defp cache_directives(<<>>, field, _, :plain, acc), do: [field | acc]
+  defp cache_directives(<<>>, _, _, :quoted, _), do: fail(:invalid_response)
+
+  defp cache_directives(<<?,, rest::binary>>, field, offset, :plain, acc) do
+    directive = binary_part(field, 0, offset)
+    cache_directives(rest, rest, 0, :plain, [directive | acc])
+  end
+
+  defp cache_directives(<<?\\, _, rest::binary>>, field, offset, :quoted, acc),
+    do: cache_directives(rest, field, offset + 2, :quoted, acc)
+
+  defp cache_directives(<<?", rest::binary>>, field, offset, state, acc) do
+    state = if state == :plain, do: :quoted, else: :plain
+    cache_directives(rest, field, offset + 1, state, acc)
+  end
+
+  defp cache_directives(<<_, rest::binary>>, field, offset, state, acc),
+    do: cache_directives(rest, field, offset + 1, state, acc)
+
+  defp cache_argument([]), do: nil
+
+  defp cache_argument([wire]) do
+    case HTTP1.trim_ows(wire) do
+      <<?", rest::binary>> ->
+        cache_quoted(rest, [])
+
+      token ->
+        ensure(RequestSeal.Message.Validation.token?(token, 65_536), :invalid_response)
+        token
+    end
+  end
+
+  defp cache_quoted(<<?">>, acc), do: acc |> Enum.reverse() |> :erlang.list_to_binary()
+  defp cache_quoted(<<?\\, byte, rest::binary>>, acc), do: cache_quoted(rest, [byte | acc])
+
+  defp cache_quoted(<<byte, rest::binary>>, acc) when byte not in [?", ?\\],
+    do: cache_quoted(rest, [byte | acc])
+
+  defp cache_quoted(_, _), do: fail(:invalid_response)
+
   defp fetched_set(fields, message, location, decoded, source, clock, deadline, requested_at) do
-    interval = Support.interval(clock)
+    interval = Support.interval(clock, deadline)
     expires = expiry(fields, source, requested_at, interval)
 
     {document, key_message, key_fields, location, expires, key_bytes, interval} =
@@ -452,12 +484,12 @@ defmodule RequestSeal.Discovery do
               )
 
               nested_source = %{source | type: :jwks_uri}
-              {nested_requested_at, _} = Support.interval(clock)
+              {nested_requested_at, _} = Support.interval(clock, deadline)
 
               {nested_fields, nested_message, nested_location, nested_bytes} =
                 resource(nested, nested_source, deadline, 0, nil)
 
-              nested_interval = Support.interval(clock)
+              nested_interval = Support.interval(clock, deadline)
 
               nested_expires = expiry(nested_fields, source, nested_requested_at, nested_interval)
 
@@ -479,27 +511,25 @@ defmodule RequestSeal.Discovery do
       ensure(KeySet.select(entries, source, id, interval) != {:ambiguous, true}, :invalid_key_set)
     end)
 
-    {proof, proof_signers, proof_start, proof_expiry} =
+    {proof, proof_facts} =
       if source.type == :directory,
         do: proof(key_message, key_fields, keys, source, interval),
-        else: {:not_applicable, [], 0, now + source.max_ttl}
+        else: {:not_applicable, []}
 
-    expires = min(expires, proof_expiry)
+    proof_signers = proof_facts |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
+    expires =
+      Enum.reduce(proof_facts, expires, fn {_, _, _, deadline}, acc -> min(acc, deadline) end)
 
     keys =
       KeySet.map_keys(keys, fn resolution ->
-        %{
-          resolution
-          | proof: proof,
-            proof_signers: proof_signers,
-            not_before: max(resolution.not_before, proof_start),
-            expires_at: min(resolution.expires_at, proof_expiry)
-        }
+        %{resolution | proof: proof, proof_signers: proof_signers}
       end)
 
     Support.remaining(deadline)
 
-    stored_etag = response_etag(fields)
+    # CIMD fetches the entire resource chain on every refresh. Publishing a
+    # single validator for the composite would misidentify the representation.
+    stored_etag = if source.type != :cimd, do: response_etag(fields)
 
     {:ok,
      %KeySet{
@@ -508,9 +538,10 @@ defmodule RequestSeal.Discovery do
        keys: keys,
        fetched_at: now,
        expires_at: expires,
-       freshness_fields: freshness_fields(fields),
+       freshness_fields: if(stored_etag != nil, do: freshness_fields(fields)),
        revision: Base.url_encode64(:crypto.hash(:sha256, key_bytes), padding: false),
        proof: proof,
+       proof_facts: proof_facts,
        etag: stored_etag,
        validator_uri: if(stored_etag != nil, do: location)
      }}
@@ -630,7 +661,7 @@ defmodule RequestSeal.Discovery do
   defp json_depth(<<_, rest::binary>>, depth, string, escape),
     do: json_depth(rest, depth, string, escape)
 
-  defp keys(%{"keys" => jwks}, source, origin, location, {lower, upper}) when is_list(jwks) do
+  defp keys(%{"keys" => jwks}, source, origin, location, {_, upper}) when is_list(jwks) do
     ensure(length(jwks) <= source.max_keys, :limit)
 
     Enum.reduce(jwks, %{}, fn jwk, acc ->
@@ -702,7 +733,7 @@ defmodule RequestSeal.Discovery do
 
           not_before = jwk["nbf"] || 0
           expires_at = jwk["exp"] || upper + source.max_ttl
-          valid_time = jwk["exp"] == nil or max(not_before, lower) < expires_at
+          valid_time = not_before < expires_at
 
           # Preserve future starts for callers whose lookup clock can establish them.
           if binding?(public, algorithm) and valid_time and thumbprint not in source.revoked do
@@ -751,13 +782,13 @@ defmodule RequestSeal.Discovery do
     _, _ -> false
   end
 
-  defp proof(message, fields, keys, source, {lower, upper} = interval) do
+  defp proof(message, fields, keys, source, {lower, _} = interval) do
     inputs = HTTP1.values(fields, "signature-input")
     signatures = HTTP1.values(fields, "signature")
 
     if inputs == [] and signatures == [] do
       ensure(not source.require_signed_directory, :directory_unsigned)
-      {:unsigned, [], 0, upper + source.max_ttl}
+      {:unsigned, []}
     else
       parsed =
         StructuredFields.parse(Enum.join(inputs, ", "), SignatureFields.schema(:dictionary))
@@ -829,8 +860,8 @@ defmodule RequestSeal.Discovery do
                 binding?(entry.key, algorithm)
             end)
 
-          valid =
-            Enum.any?(candidates, fn algorithm ->
+          algorithm =
+            Enum.find(candidates, fn algorithm ->
               resolver = fn %{keyid: kid} ->
                 if kid == entry.thumbprint,
                   do: {:ok, %{algorithm: algorithm, key: entry.key}},
@@ -860,16 +891,11 @@ defmodule RequestSeal.Discovery do
               match?({:ok, _}, RequestSeal.verify(selected_message, policy, label: label))
             end)
 
-          ensure(valid, :directory_signature_invalid)
-
-          {entry.thumbprint, max(params["created"], entry.not_before),
-           min(params["expires"], entry.expires_at)}
+          ensure(algorithm != nil, :directory_signature_invalid)
+          {entry.thumbprint, algorithm, params["created"], params["expires"]}
         end)
 
-      signers = proofs |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
-      start = proofs |> Enum.map(&elem(&1, 1)) |> Enum.max()
-      expiration = proofs |> Enum.map(&elem(&1, 2)) |> Enum.min()
-      {:signed, signers, start, expiration}
+      {:signed, proofs}
     end
   end
 
@@ -899,16 +925,8 @@ defmodule RequestSeal.Discovery do
     # qualified, as in `no-cache="content-type"` (and the RFC 7234 `#field-name`
     # form, whose quoted member can itself contain commas). Match the directive
     # name before any "=", so every spelling still forces revalidation.
-    no_cache =
-      Enum.any?(controls, fn control ->
-        [name | _] = :binary.split(control, "=")
-        HTTP1.trim_ows(name) in ["no-store", "no-cache"]
-      end)
-
-    ages =
-      for control <- controls,
-          String.starts_with?(control, "max-age="),
-          do: String.replace_prefix(control, "max-age=", "") |> String.trim("\"")
+    no_cache = Enum.any?(controls, fn {name, _} -> name in ["no-store", "no-cache"] end)
+    ages = for {"max-age", age} <- controls, do: age
 
     ensure(length(ages) <= 1, :invalid_response)
 
@@ -927,7 +945,10 @@ defmodule RequestSeal.Discovery do
           end
 
         [age] ->
-          ensure(byte_size(age) in 1..10 and Regex.match?(~r/\A[0-9]+\z/, age), :invalid_response)
+          ensure(
+            is_binary(age) and byte_size(age) in 1..10 and Regex.match?(~r/\A[0-9]+\z/, age),
+            :invalid_response
+          )
           String.to_integer(age)
       end
 

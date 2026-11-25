@@ -86,7 +86,17 @@ Default key IDs are SHA-256 RFC 7638/8037 thumbprints. JWKS and CIMD may explici
 
 HTTP freshness honors Cache-Control max-age before Expires, adjusted by Date, Age, and source bounds. Both 200 and 304 responses use the earliest possible request and response times for cache freshness under RFC 9111 Section 4.2.3. The reported fetch time remains the upper end of the response interval. Without explicit freshness, the fallback defaults to 300 seconds. No-cache and no-store responses serve only the current fetch, including qualified directives such as `no-cache="content-type"`. A well-formed `ETag` enables conditional revalidation at the exact URI that returned it. Redirected snapshots refresh unconditionally at the configured URI. An empty ETag field is ignored. A quoted empty tag remains usable. A 304 with the stored ETag keeps the stored keys and replaces the freshness fields it supplies. Stored fields such as an absolute Expires still apply if omitted. A 304 without an ETag causes an unconditional fetch. Key and proof expiry still bound reuse. Negative caching is at most 300 seconds from the lower endpoint of the failure interval. CIMD failures are never cached. Discovery and custody workers terminate on deadlines or caller death.
 
-The HTTP parser skips at most four interim 1xx responses. Field values are trimmed of space and horizontal tab under RFC 9110 Section 5.6.3. A malformed content length, transfer encoding, content encoding, or media type rejects with `:invalid_response`.
+Each lookup reselects the signer of every directory proof under the same
+clock interval as the requested key. If another candidate overlaps that
+interval for a proof signer, dependent keys cannot resolve. This also
+applies after a matching 304.
+
+CIMD refresh fetches the document and any nested JWKS unconditionally.
+The composite snapshot exposes no ETag pair. Clock callbacks, including
+later samples after a response, run inside the operation deadline and
+outside the shared cache server.
+
+The HTTP parser skips at most four interim 1xx responses. Field values are trimmed of space and horizontal tab under RFC 9110 Section 5.6.3. Cache-Control honors quoted strings and escapes under [RFC 9110 Section 5.6.4](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.4) and [RFC 9111 Section 5.2](https://www.rfc-editor.org/rfc/rfc9111.html#section-5.2). A malformed content length, transfer encoding, content encoding, or media type rejects with `:invalid_response`.
 
 ## Errors
 

@@ -96,14 +96,27 @@ defmodule RequestSeal.VerificationRecordTest do
   end
 
   test "retained fields require canonical occurrence framing even with valid signatures" do
-    for name <- ["multi-byte-sequence", "final-empty-occurrence"] do
+    for name <- [
+          "multi-byte-sequence",
+          "final-empty-occurrence",
+          "joint-covered-values",
+          "maximum-occurrences"
+        ] do
       positive = manifest("verification_record", name)
       valid = Conformance.bytes(positive["inputs"]["record"])
       assert {:ok, _} = VerificationRecord.decode(valid)
       assert :ok = VerificationRecord.reverify(valid)
     end
 
-    for name <- ["noncanonical-byte-sequence", "noncanonical-leading-ows"] do
+    for name <- [
+          "noncanonical-byte-sequence",
+          "noncanonical-leading-ows",
+          "contradictory-target",
+          "contradictory-query",
+          "contradictory-field",
+          "contradictory-dictionary",
+          "excess-occurrences"
+        ] do
       negative = manifest("verification_record", name)
       invalid = Conformance.bytes(negative["inputs"]["record"])
       %{"digest" => digest, "record" => data} = :json.decode(invalid)

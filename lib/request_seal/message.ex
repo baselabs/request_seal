@@ -447,12 +447,13 @@ defmodule RequestSeal.Message do
   defp origin_valid?(scheme, authority),
     do: Validation.scheme?(scheme) and Validation.authority?(authority)
 
-  defp target_valid?(%{raw_target: raw} = m) when is_binary(raw) and byte_size(raw) in 1..16_384,
+  @doc false
+  def target_valid?(%{raw_target: raw} = m) when is_binary(raw) and byte_size(raw) in 1..16_384,
     do:
       Validation.uri_bytes?(raw) and form_valid?(m.target_form, m.method, raw) and
         target_origin_valid?(m)
 
-  defp target_valid?(_), do: false
+  def target_valid?(_), do: false
   defp form_valid?(:authority, "CONNECT", raw), do: Validation.authority?(raw, true)
   defp form_valid?(_, "CONNECT", _), do: false
   defp form_valid?(:asterisk, "OPTIONS", "*"), do: true

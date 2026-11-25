@@ -322,7 +322,8 @@ defmodule RequestSeal.VerificationRecord do
 
   defp directory?(_), do: false
 
-  defp ascii?(value, max) when is_binary(value) and byte_size(value) in 1..max,
+  defp ascii?(value, max)
+       when is_binary(value) and byte_size(value) >= 1 and byte_size(value) <= max,
     do: Enum.all?(:binary.bin_to_list(value), &(&1 in 32..126))
 
   defp ascii?(_, _), do: false
@@ -336,7 +337,8 @@ defmodule RequestSeal.VerificationRecord do
   defp b64(bytes), do: Base.url_encode64(bytes, padding: false)
 
   defp unb64(wire, limit)
-       when is_binary(wire) and byte_size(wire) in 1..div(limit * 4 + 2, 3) do
+       when is_binary(wire) and byte_size(wire) >= 1 and
+              byte_size(wire) <= div(limit * 4 + 2, 3) do
     with {:ok, bytes} <- Base.url_decode64(wire, padding: false),
          true <- b64(bytes) == wire,
          do: {:ok, bytes}

@@ -209,6 +209,80 @@ defmodule RequestSeal.SignatureBaseTest do
     assert {:ok, %{components: [{_, "::"}]}} = SignatureBase.parse(empty_base)
   end
 
+  test "one base must agree about its target query field representations and occurrence budget" do
+    message =
+      request(%{raw_target: "/?x=a", fields: fields([{"X", "one"}, {"D", "a=1"}])})
+
+    target = ~s["@method" "@request-target" "@query" "@query-param";name="x"]
+    params = ~s[(#{target} "x" "x";bs "d";sf "d";key="a")]
+
+    assert {:ok, base} =
+             SignatureBase.build(message, params, field_schemas: %{"d" => dictionary_schema()})
+
+    assert {:ok, _} = SignatureBase.parse(base)
+
+    for {original, changed} <- [
+          {~s["@request-target": /?x=a], ~s["@request-target": *]},
+          {~s["@query-param";name="x": a], ~s["@query-param";name="x": b]},
+          {~s["x": one], ~s["x": two]},
+          {~s["d";key="a": 1], ~s["d";key="a": 2]}
+        ] do
+      malformed = String.replace(base, original, changed)
+      refute malformed == base
+      assert {:error, %{reason: :malformed}} = SignatureBase.parse(malformed)
+    end
+
+    occurrences = List.duplicate({"X", ""}, 512) ++ List.duplicate({"Y", ""}, 512)
+    message = request(%{fields: fields(occurrences)})
+    assert {:ok, base} = SignatureBase.build(message, ~s[("x";bs "y";bs)])
+    assert {:ok, _} = SignatureBase.parse(base)
+    malformed = String.replace(base, ~s["y";bs: ], ~s["y";bs: ::, ])
+    assert {:error, %{reason: :malformed}} = SignatureBase.parse(malformed)
+  end
+
+  test "structured field schemas agree across sections and related messages" do
+    related = request(%{fields: fields([{"D", "a=1"}])})
+
+    message =
+      response(%{
+        related_request: related,
+        fields: fields([{"D", "b=2"}]),
+        trailers: fields([{"D", "c=3"}], :trailers)
+      })
+
+    for trailer <- [~s["d";tr;sf], ~s["d";tr;key="c"]] do
+      params = ~s[("d";sf;req "d";sf #{trailer})]
+      opts = [field_schemas: %{"d" => dictionary_schema()}]
+      assert {:ok, base} = SignatureBase.build(message, params, opts)
+      assert {:ok, _} = SignatureBase.parse(base)
+
+      malformed = String.replace(base, ~s["d";sf;req: a=1], ~s["d";sf;req: 42])
+      assert {:error, %{reason: :malformed}} = SignatureBase.parse(malformed)
+    end
+  end
+
+  test "dictionary member inspection accounts for compact source and assignment overhead" do
+    prefix = "(" <> Enum.map_join(1..3, " ", fn _ -> String.duplicate("a", 16_383) end) <> " "
+    params = ~s[("d";key="k")]
+    invalid = prefix <> String.duplicate("a", 16_382) <> ")"
+    assert byte_size(invalid) == 65_536
+
+    invalid_base = ~s["d";key="k": #{invalid}] <> "\n" <> ~s["@signature-params": #{params}]
+    assert {:error, %{reason: :malformed}} = SignatureBase.parse(invalid_base)
+
+    short = prefix <> String.duplicate("a", 16_380) <> ")"
+    compact_bytes = Base.encode64(:binary.copy("a", 12_283), padding: false)
+    compact = prefix <> ":" <> compact_bytes <> ":)"
+
+    for source <- [short, compact] do
+      assert byte_size(source) + 2 == 65_536
+      message = request(%{fields: fields([{"D", "k=" <> source}])})
+      opts = [field_schemas: %{"d" => dictionary_schema()}]
+      assert {:ok, wire} = SignatureBase.build(message, params, opts)
+      assert {:ok, _} = SignatureBase.parse(wire)
+    end
+  end
+
   test "components shares build errors, schemas and resource accounting" do
     message = request(%{fields: fields([{"Example-Dict", "a=1, b=2"}])})
     opts = [field_schemas: %{"example-dict" => dictionary_schema()}]
@@ -902,6 +976,7 @@ defmodule RequestSeal.SignatureBaseTest do
     assert first_base == second_base
     assert first_base == Enum.join(lines ++ [~s["@signature-params": #{parameters}]], "\n")
     assert parses == 10, "two parameters parses plus four distinct field parses per build"
+    assert {:ok, _} = SignatureBase.parse(first_base)
 
     item = request(%{fields: fields([{"X-D", "1"}])})
 

@@ -42,7 +42,8 @@ defmodule RequestSeal.Discovery.Cache do
     * `:max_in_flight` - concurrent source fetches, 1 through 256; default 8.
       Pending waiters across all fetches are bounded to 32 per slot.
     * `:clock` - arity-zero function returning a Unix second or ordered
-      `{lower, upper}` interval within 0 through 253,402,300,799, called once at start to validate it. Default: system time.
+      `{lower, upper}` interval within 0 through 253,402,300,799. The cache
+      samples the clock within each operation's deadline. Default: system time.
 
   ## Returns
 
@@ -75,7 +76,7 @@ defmodule RequestSeal.Discovery.Cache do
         )
 
         clock = Keyword.get(opts, :clock, fn -> System.system_time(:second) end)
-        Support.clock(clock)
+        Support.validate_clock!(clock)
         name = Keyword.take(opts, [:name])
         GenServer.start_link(__MODULE__, {sources, flight, clock}, name)
       end,
@@ -166,13 +167,20 @@ defmodule RequestSeal.Discovery.Cache do
         ensure(source.key_id == :directory or keyid not in source.revoked, :revoked_key)
         timeout = Keyword.get(opts, :timeout, source.timeout)
         ensure(is_integer(timeout) and timeout in 1..300_000, :invalid_options)
-        if Keyword.has_key?(opts, :clock), do: Support.clock(opts[:clock])
+        Support.run(min(timeout, source.timeout), fn deadline ->
+          clock = Keyword.get_lazy(opts, :clock, fn -> call(cache, :clock, :infinity) end)
+          interval = Support.interval(clock, deadline)
+          request = {:resolve, source, keyid, algorithms, clock, deadline, interval}
 
-        request =
-          {:resolve, source, keyid, algorithms, Keyword.get(opts, :clock),
-           min(timeout, source.timeout)}
+          case call(cache, request, :infinity) do
+            {:fresh, set, generation} ->
+              current = Support.interval(clock, deadline)
+              call(cache, {:fresh, set, keyid, algorithms, current, generation}, :infinity)
 
-        Support.run(min(timeout, source.timeout), fn _ -> call(cache, request, :infinity) end)
+            result ->
+              result
+          end
+        end)
       end,
       :source_unavailable
     )
@@ -221,7 +229,11 @@ defmodule RequestSeal.Discovery.Cache do
       fn ->
         Source.validate!(source)
 
-        Support.run(source.timeout, fn _ -> call(cache, {:refresh, source}, :infinity) end)
+        Support.run(source.timeout, fn deadline ->
+          clock = call(cache, :clock, :infinity)
+          interval = Support.interval(clock, deadline)
+          call(cache, {:refresh, source, clock, deadline, interval}, :infinity)
+        end)
       end,
       :source_unavailable
     )
@@ -330,17 +342,23 @@ defmodule RequestSeal.Discovery.Cache do
        failures: %{},
        pending: %{},
        removed: %{},
+       invalidations: %{},
        enrolled: MapSet.new()
      }}
   end
 
   @impl true
-  def handle_call({:resolve, source, keyid, algorithms, clock, timeout}, from, state) do
+  def handle_call(:clock, _, state), do: {:reply, state.clock, state}
+
+  def handle_call(
+        {:resolve, source, keyid, algorithms, clock, deadline, interval},
+        from,
+        state
+      ) do
     result =
       Support.safe(
         fn ->
-          clock = clock || state.clock
-          {lower, now} = interval = Support.interval(clock)
+          {lower, now} = interval
           ensure(source.key_id == :directory or not removed?(state, source, keyid), :revoked_key)
 
           snapshot =
@@ -357,14 +375,7 @@ defmodule RequestSeal.Discovery.Cache do
                 {:reply, {:error, Error.new(:source_unavailable)}, state}
 
               _ ->
-                pending(
-                  source,
-                  {:resolve, keyid, algorithms, clock},
-                  clock,
-                  timeout,
-                  from,
-                  state
-                )
+                pending(source, :resolve, clock, deadline, now, from, state)
             end
           end
         end,
@@ -374,11 +385,28 @@ defmodule RequestSeal.Discovery.Cache do
     finish_call(result, state)
   end
 
-  def handle_call({:refresh, source}, from, state) do
+  def handle_call({:fresh, set, keyid, algorithms, interval, generation}, _, state) do
+    source = set.source
+
     result =
       Support.safe(
         fn ->
-          pending(source, :refresh, state.clock, source.timeout, from, state)
+          ensure(Map.get(state.invalidations, source) == generation, :source_unavailable)
+          ensure(source.key_id == :directory or not removed?(state, source, keyid), :revoked_key)
+          keys = reject_removed(set.keys, Map.get(state.removed, source, MapSet.new()))
+          fresh_lookup(%{set | keys: keys}, keyid, algorithms, interval)
+        end,
+        :source_unavailable
+      )
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:refresh, source, clock, deadline, {_, now}}, from, state) do
+    result =
+      Support.safe(
+        fn ->
+          pending(source, :refresh, clock, deadline, now, from, state)
         end,
         :source_unavailable
       )
@@ -419,7 +447,8 @@ defmodule RequestSeal.Discovery.Cache do
                %{
                  state
                  | entries: Map.delete(state.entries, source),
-                   failures: Map.delete(state.failures, source)
+                   failures: Map.delete(state.failures, source),
+                   invalidations: Map.put(state.invalidations, source, make_ref())
                }}
           end
         end,
@@ -432,7 +461,7 @@ defmodule RequestSeal.Discovery.Cache do
   defp finish_call({:error, _} = error, state), do: {:reply, error, state}
   defp finish_call(result, _), do: result
 
-  defp pending(source, request, clock, timeout, from, state) do
+  defp pending(source, request, clock, deadline, now, from, state) do
     state = enroll(source, state)
 
     waiters =
@@ -460,8 +489,6 @@ defmodule RequestSeal.Discovery.Cache do
         {etag, freshness_fields} =
           case Map.get(state.entries, source) do
             {:positive, set} when source.type != :cimd ->
-              now = Support.clock(clock)
-
               fields = Map.get(set, :freshness_fields)
               uri = URI.to_string(Source.url!(source.location))
 
@@ -479,13 +506,26 @@ defmodule RequestSeal.Discovery.Cache do
         {pid, monitor} =
           :erlang.spawn_opt(
             fn ->
-              result =
-                Discovery.fetch_with_validators(source, etag, freshness_fields,
-                  clock: clock,
-                  timeout: timeout
+              observed =
+                Support.safe(
+                  fn ->
+                    Support.run_until(deadline, fn absolute ->
+                      result =
+                        Discovery.fetch_with_validators(
+                          source,
+                          etag,
+                          freshness_fields,
+                          clock,
+                          absolute
+                        )
+
+                      {result, Support.interval(clock, absolute)}
+                    end)
+                  end,
+                  :invalid_options
                 )
 
-              send(owner, {:fetched, source, token, result})
+              send(owner, {:fetched, source, token, observed})
             end,
             [:link, :monitor]
           )
@@ -494,8 +534,7 @@ defmodule RequestSeal.Discovery.Cache do
           pid: pid,
           monitor: monitor,
           token: token,
-          waiters: %{ref => waiter},
-          clock: clock
+          waiters: %{ref => waiter}
         }
 
         {:noreply,
@@ -555,15 +594,24 @@ defmodule RequestSeal.Discovery.Cache do
   @impl true
   def handle_info({:fetched, source, token, result}, state) do
     case Map.get(state.pending, source) do
-      %{token: ^token} = flight -> complete(source, flight, result, state)
-      _ -> {:noreply, state}
+      %{token: ^token} = flight ->
+        case result do
+          {fetch_result, {lower, upper}} ->
+            complete(source, flight, fetch_result, {lower, upper}, state)
+
+          {:error, _} = error ->
+            complete(source, flight, error, nil, state)
+        end
+
+      _ ->
+        {:noreply, state}
     end
   end
 
   def handle_info({:DOWN, ref, :process, _, _}, state) do
     case Enum.find(state.pending, fn {_, flight} -> flight.monitor == ref end) do
       {source, flight} ->
-        complete(source, flight, {:error, Error.new(:source_unavailable)}, state)
+        complete(source, flight, {:error, Error.new(:source_unavailable)}, nil, state)
 
       nil ->
         pending =
@@ -588,7 +636,7 @@ defmodule RequestSeal.Discovery.Cache do
 
   def handle_info({:EXIT, _, _}, state), do: {:noreply, state}
 
-  defp complete(source, flight, result, state) do
+  defp complete(source, flight, result, observed, state) do
     Process.demonitor(flight.monitor, [:flush])
     # Removal is applied at completion too, so in-flight snapshots cannot
     # resurrect a key removed after this fetch started.
@@ -631,10 +679,8 @@ defmodule RequestSeal.Discovery.Cache do
 
       reply =
         case {result, request} do
-          {{:ok, set}, {:resolve, keyid, algorithms, clock}} ->
-            if source.key_id == :thumbprint and removed?(state, source, keyid),
-              do: {:error, Error.new(:revoked_key)},
-              else: fresh_lookup(set, keyid, algorithms, clock)
+          {{:ok, set}, :resolve} ->
+            {:fresh, set, Map.get(state.invalidations, source)}
 
           {result, _} ->
             result
@@ -643,58 +689,36 @@ defmodule RequestSeal.Discovery.Cache do
       GenServer.reply(from, reply)
     end)
 
-    stored =
-      Support.safe(
-        fn ->
-          {lower, now} = Support.interval(flight.clock)
-
-          case result do
-            {:ok, set} ->
-              entries =
-                if set.expires_at > max(now, set.fetched_at),
-                  do: Map.put(state.entries, source, {:positive, set}),
-                  else: Map.delete(state.entries, source)
-
-              {entries, Map.delete(state.failures, source)}
-
-            _ ->
-              failures =
-                if source.type != :cimd and source.negative_ttl > 0,
-                  do: Map.put(state.failures, source, lower + source.negative_ttl),
-                  else: Map.delete(state.failures, source)
-
-              {state.entries, failures}
-          end
-        end,
-        :invalid_options
-      )
-
     {entries, failures} =
-      case stored do
-        {entries, failures} when is_map(entries) and is_map(failures) -> {entries, failures}
-        _ -> {state.entries, Map.delete(state.failures, source)}
+      case {result, observed} do
+        {{:ok, set}, {_, now}} ->
+          entries =
+            if set.expires_at > max(now, set.fetched_at),
+              do: Map.put(state.entries, source, {:positive, set}),
+              else: Map.delete(state.entries, source)
+
+          {entries, Map.delete(state.failures, source)}
+
+        {_, {lower, _}} when source.type != :cimd and source.negative_ttl > 0 ->
+          {state.entries, Map.put(state.failures, source, lower + source.negative_ttl)}
+
+        _ ->
+          {state.entries, Map.delete(state.failures, source)}
       end
 
     {:noreply,
      %{state | entries: entries, failures: failures, pending: Map.delete(state.pending, source)}}
   end
 
-  defp fresh_lookup(set, keyid, algorithms, clock) do
-    Support.safe(
-      fn ->
-        {_, now} = interval = Support.interval(clock)
-        # This response serves only its current waiters, never a later cache
-        # hit. A response requiring revalidation can serve newly fetched keys;
-        # original key/proof expiry still applies, even across a clock tick.
-        transient =
-          if set.expires_at <= set.fetched_at,
-            do: %{set | expires_at: now + 1},
-            else: set
+  defp fresh_lookup(set, keyid, algorithms, {_, now} = interval) do
+    # This response serves this fetch's waiters, even when HTTP freshness
+    # requires immediate revalidation. The key and proof still have to be live.
+    transient =
+      if set.expires_at <= set.fetched_at,
+        do: %{set | expires_at: now + 1},
+        else: set
 
-        lookup(transient, keyid, algorithms, interval)
-      end,
-      :invalid_options
-    )
+    lookup(transient, keyid, algorithms, interval)
   end
 
   defp lookup(set, keyid, algorithms, now) do

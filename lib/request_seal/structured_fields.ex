@@ -155,9 +155,14 @@ defmodule RequestSeal.StructuredFields do
       {:error, %RequestSeal.StructuredFields.Error{reason: :invalid_value}}
   """
   @spec serialize(Value.t(), Schema.t(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
-  def serialize(value, schema, opts \\ []) do
+  def serialize(value, schema, opts \\ []), do: encode_wire(value, schema, opts, false)
+
+  @doc false
+  def source_wire(value, schema), do: encode_wire(value, schema, [], true)
+
+  defp encode_wire(value, schema, opts, compact?) do
     protect(fn ->
-      state = setup(schema, opts) |> Map.merge(%{output: [], bytes: 0})
+      state = setup(schema, opts) |> Map.merge(%{output: [], bytes: 0, compact?: compact?})
       ensure(valid_shape?(value), :invalid_value)
       ensure(value.type == schema.type, :schema_type)
       state = write_top(value, schema, consume_node(state))
@@ -662,7 +667,8 @@ defmodule RequestSeal.StructuredFields do
 
   defp write_members([entry | rest], type, schema, state, count, keys) do
     ensure(count < state.limits.max_members, :limit)
-    state = if count > 0, do: emit(state, ", "), else: state
+    separator = if state.compact?, do: ",", else: ", "
+    state = if count > 0, do: emit(state, separator), else: state
 
     {state, keys} =
       if type == :dictionary do
@@ -815,7 +821,7 @@ defmodule RequestSeal.StructuredFields do
 
     case type do
       :bytes ->
-        [":", Base.encode64(bytes), ":"]
+        [":", Base.encode64(bytes, padding: not state.compact?), ":"]
 
       :string ->
         ensure(String.match?(bytes, ~r/\A[\x20-\x7e]*\z/), :invalid_value)

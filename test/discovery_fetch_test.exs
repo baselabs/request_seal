@@ -664,7 +664,9 @@ defmodule RequestSeal.DiscoveryFetchTest do
         end)
 
       assert {:ok, set} = Discovery.fetch(source(p, %{require_signed_directory: false}), [])
-      assert set.keys == %{}
+      {:ok, key} = PublicKey.import(Peer.public_jwk(), :jwk)
+      {:ok, kid} = PublicKey.thumbprint(key)
+      assert :error = KeySet.lookup(set, kid, ["ed25519"])
     end
   end
 
@@ -799,6 +801,66 @@ defmodule RequestSeal.DiscoveryFetchTest do
     reason(source(p, %{cacerts: alien.cacerts}), :tls_failed)
     Peer.stop(p)
     reason(source(p), :connect_failed)
+  end
+
+  test "nested CIMD responses never expose or replay a composite validator" do
+    owner = self()
+    media = {"Content-Type", "application/json"}
+
+    for mode <- [:distinct, :outer_only, :redirected] do
+      p =
+        peer(fn socket, request ->
+          [_, path] = Regex.run(~r/\AGET (\S+) /, request)
+          [_, host] = Regex.run(~r/\r\nHost: ([^\r]+)\r\n/, request)
+          send(owner, {:cimd_request, path, String.contains?(request, "If-None-Match:")})
+          root = "https://" <> host
+
+          case path do
+            "/card" ->
+              body = :json.encode(%{"client_id" => root <> path, "jwks_uri" => root <> "/keys"})
+              Peer.reply(socket, IO.iodata_to_binary(body), [media, {"ETag", ~s("card")}])
+
+            "/keys" when mode == :redirected ->
+              Peer.reply(socket, "", [{"Location", "/published"}, {"ETag", ~s("hop")}], 302)
+
+            _ ->
+              fields = if mode == :outer_only, do: [media], else: [media, {"ETag", ~s("keys")}]
+              Peer.reply(socket, Peer.directory(), fields)
+          end
+        end)
+
+      location = "https://localhost:#{p.port}/card"
+      s = source(p, %{type: :cimd, location: location, max_redirects: 1})
+      cache = start_supervised!({Cache, clock: fn -> 100 end}, id: make_ref())
+
+      for _ <- 1..2 do
+        assert {:ok, %{etag: nil, validator_uri: nil, freshness_fields: nil}} =
+                 Cache.refresh(cache, s)
+
+        assert_receive {:cimd_request, "/card", false}
+        assert_receive {:cimd_request, "/keys", false}
+        if mode == :redirected, do: assert_received({:cimd_request, "/published", false})
+      end
+    end
+  end
+
+  test "unresponsive request and response clocks obey the fetch timeout" do
+    p = peer(&unsigned/2)
+    s = source(p, %{require_signed_directory: false})
+
+    for blocked_sample <- [1, 2] do
+      calls = :atomics.new(1, [])
+
+      clock = fn ->
+        if :atomics.add_get(calls, 1, 1) == blocked_sample, do: Process.sleep(:infinity)
+        100
+      end
+
+      assert {:error, %{reason: :deadline_exceeded}} =
+               Discovery.fetch(s, timeout: 1_000, clock: clock)
+
+      assert :atomics.get(calls, 1) == blocked_sample
+    end
   end
 
   test "deadline and caller cancellation close the owned TLS socket" do

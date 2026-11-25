@@ -33,7 +33,14 @@ defmodule RequestSeal.Discovery.Support do
     opts
   end
 
-  def clock(clock), do: elem(interval(clock), 1)
+  def validate_clock!(clock), do: ensure(is_function(clock, 0), :invalid_options)
+
+  def interval(clock, deadline) do
+    remaining(deadline)
+    bounds = interval(clock)
+    remaining(deadline)
+    bounds
+  end
 
   def interval(clock) do
     case RequestSeal.Freshness.read(clock) do
@@ -48,10 +55,13 @@ defmodule RequestSeal.Discovery.Support do
     left
   end
 
-  def run(timeout, fun) do
+  def run(timeout, fun),
+    do: run_until(System.monotonic_time(:millisecond) + timeout, fun)
+
+  def run_until(deadline, fun) do
+    timeout = remaining(deadline)
     owner = self()
     tag = make_ref()
-    deadline = System.monotonic_time(:millisecond) + timeout
 
     {worker, ref} =
       spawn_monitor(fn -> watch(owner, tag, fn -> safe(fn -> fun.(deadline) end) end) end)

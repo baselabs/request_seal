@@ -49,6 +49,12 @@ defmodule RequestSeal.AcceptSignatureTest do
     end
 
     error(
+      AcceptSignature.parse(~s[s=("@status";req)], target: :response),
+      :inapplicable_component,
+      :negotiation
+    )
+
+    error(
       AcceptSignature.parse(~s[s=("@method")], target: :response),
       :inapplicable_component,
       :negotiation

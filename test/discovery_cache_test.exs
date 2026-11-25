@@ -438,6 +438,158 @@ defmodule RequestSeal.DiscoveryCacheTest do
     assert_receive {:etag_request, true}
   end
 
+  test "quoted Cache-Control commas and escapes cannot extend absolute expiry on 200 or 304" do
+    tag = {"ETag", ~s("v1")}
+    date = fn seconds ->
+      Calendar.strftime(DateTime.from_unix!(seconds), "%a, %d %b %Y %H:%M:%S GMT")
+    end
+
+    control = {"Cache-Control", ~S(extension="x\",max-age=600", public)}
+    owner = self()
+
+    p =
+      Peer.start(fn socket, request ->
+        if String.contains?(request, "If-None-Match:") do
+          send(owner, :quoted_304)
+          Peer.reply(socket, "", [tag, control, {"Date", date.(105)}], 304)
+        else
+          Peer.reply(socket, Peer.directory(), [
+            tag,
+            control,
+            {"Date", date.(100)},
+            {"Expires", date.(110)},
+            {"Content-Type", "application/http-message-signatures-directory+json"}
+          ])
+        end
+      end)
+
+    on_exit(fn -> Peer.stop(p) end)
+    source = test_source(p)
+    time = :atomics.new(1, [])
+    :atomics.put(time, 1, 100)
+    {:ok, cache} = Cache.start_link(clock: fn -> :atomics.get(time, 1) end)
+    assert {:ok, %{expires_at: 110}} = Cache.refresh(cache, source)
+    :atomics.put(time, 1, 105)
+    assert {:ok, %{expires_at: 110}} = Cache.refresh(cache, source)
+    assert_receive :quoted_304
+  end
+
+  test "cached proofs reselect both sides of overlapping signer windows after 304" do
+    {:ok, signer} = PublicKey.import(Peer.public_jwk(), :jwk)
+    {:ok, signer_id} = PublicKey.thumbprint(signer)
+    {:ok, leaf} = PublicKey.import(File.read!("test/fixtures/crypto/rsa_public.pem"), :pem)
+    {:ok, leaf_jwk} = PublicKey.export(leaf, :jwk)
+    {:ok, leaf_id} = PublicKey.thumbprint(leaf)
+    owner = self()
+
+    for reversed? <- [false, true] do
+      stable = Map.merge(Peer.public_jwk(), %{"nbf" => 95, "exp" => 130})
+      overlap = Map.merge(Peer.public_jwk(), %{"nbf" => 105, "exp" => 110})
+      signers = if reversed?, do: [overlap, stable], else: [stable, overlap]
+      body = Peer.directory([leaf_jwk | signers])
+      tag = {"ETag", ~s("signed")}
+
+      p =
+        Peer.start(fn socket, request ->
+          if String.contains?(request, "If-None-Match:") do
+            send(owner, :proof_304)
+            Peer.reply(socket, "", [tag], 304)
+          else
+            send(owner, :proof_200)
+            signed = Peer.signed_message(request, body, nil, created: 95, expires: 125)
+            fields = Enum.map(signed.fields, &{&1.name, &1.value})
+            Peer.reply(socket, body, [tag | fields])
+          end
+        end)
+
+      on_exit(fn -> Peer.stop(p) end)
+      source = %{test_source(p) | require_signed_directory: true}
+      time = :atomics.new(1, [])
+      :atomics.put(time, 1, 100)
+      {:ok, cache} = Cache.start_link(clock: fn -> :atomics.get(time, 1) end)
+      assert {:ok, _} = Cache.refresh(cache, source)
+      assert_receive :proof_200
+      :atomics.put(time, 1, 101)
+      assert {:ok, _} = Cache.refresh(cache, source)
+      assert_receive :proof_304
+
+      for {instant, valid?} <- [{104, true}, {105, false}, {109, false}, {110, true}],
+          {kid, algorithm} <- [{signer_id, "ed25519"}, {leaf_id, "rsa-pss-sha512"}] do
+        opts = [algorithms: [algorithm], clock: fn -> instant end]
+        result = Cache.resolve(cache, source, kid, opts)
+
+        if valid?,
+          do: assert(match?({:ok, _}, result)),
+          else: assert(match?({:error, %{reason: :unknown_key}}, result))
+      end
+
+      refute_received :proof_200
+      refute_received :proof_304
+
+      :atomics.put(time, 1, 106)
+      assert {:ok, revalidated} = Cache.refresh(cache, source)
+      assert_receive :proof_304
+      assert :error = Discovery.KeySet.lookup_at(revalidated, leaf_id, ["rsa-pss-sha512"], 106)
+
+      for instant <- [104, 110] do
+        assert {:ok, _} =
+                 Discovery.KeySet.lookup_at(revalidated, leaf_id, ["rsa-pss-sha512"], instant)
+      end
+
+      assert {:error, %{reason: :invalid_key_set}} =
+               Discovery.fetch(source, clock: fn -> 106 end)
+
+      assert_receive :proof_200
+
+      :atomics.put(time, 1, 110)
+      assert {:ok, later} = Cache.refresh(cache, source)
+      assert_receive :proof_200
+      assert :error =
+               Discovery.KeySet.lookup_at(later, leaf_id, ["rsa-pss-sha512"], 109)
+    end
+  end
+
+  test "stalled caller clocks never delay another source in the same cache" do
+    {_, publisher, slow, cache, kid} = setup_cache()
+    Agent.update(publisher, &%{&1 | cache: "max-age=60"})
+    fast = %{slow | negative_ttl: 19}
+    assert {:ok, _} = Cache.resolve(cache, fast, kid, [])
+    owner = self()
+
+    for sample <- [1, 4, 5] do
+      assert :ok = Cache.invalidate(cache, slow)
+      count = :atomics.new(1, [])
+
+      clock = fn ->
+        if :atomics.add_get(count, 1, 1) == sample do
+          send(owner, {:clock_blocked, sample})
+          Process.sleep(:infinity)
+        end
+
+        System.system_time(:second)
+      end
+
+      opts = [timeout: 2_000, clock: clock]
+      waiting = Task.async(fn -> Cache.resolve(cache, slow, kid, opts) end)
+      assert_receive {:clock_blocked, ^sample}, 1_500
+      assert {:ok, _} = Cache.resolve(cache, fast, kid, timeout: 500)
+      assert {:error, %{reason: :deadline_exceeded}} = Task.await(waiting)
+    end
+  end
+
+  defp test_source(peer) do
+    {:ok, source} =
+      Source.new(%{
+        type: :directory,
+        location: "https://localhost:#{peer.port}",
+        cacerts: peer.cacerts,
+        permitted_addresses: [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}],
+        require_signed_directory: false
+      })
+
+    source
+  end
+
   test "freshness refetches, rotation removes old keys and tombstones survive refresh/invalidation" do
     clock =
       start_supervised!(
