@@ -10,7 +10,7 @@ defmodule RequestSeal.Replay.Pair do
   @behaviour RequestSeal.Replay
 
   alias RequestSeal.Custody.Context
-  alias RequestSeal.Replay.{Claim, Error, Store}
+  alias RequestSeal.Replay.{Claim, Error, ETS, Store}
 
   @max_clock 253_402_300_799
 
@@ -18,8 +18,10 @@ defmodule RequestSeal.Replay.Pair do
   Returns a replay store with the destination first and retiring store second.
 
   Rejects invalid handles, identical handles, and nested pairs with
-  `:invalid_store`. The caller must configure two distinct storage namespaces
-  even when two handles point at different clients.
+  `:invalid_store`. An ETS destination also refuses a retiring adapter other
+  than ETS. Both ETS stores must serve the same single verifier and keep their
+  history for the full retention window. For a distributed verifier the
+  destination must share each claim across all possible recipients.
   """
   @spec store(Store.t(), Store.t()) :: {:ok, Store.t()} | {:error, Error.t()}
   def store(destination, retiring) do
@@ -62,13 +64,16 @@ defmodule RequestSeal.Replay.Pair do
     if distinct?(destination, retiring) do
       first = invoke(:sweep, :destination, destination, now, context)
       second = invoke(:sweep, :retiring, retiring, now, context)
-      sweep_result(first, second)
+      if Context.remaining(context) > 0, do: sweep_result(first, second), else: {:error, :timeout}
     else
       {:error, :failure}
     end
   end
 
   def sweep(_, _, _), do: {:error, :failure}
+
+  defp distinct?(%Store{adapter: ETS}, %Store{adapter: retiring}) when retiring != ETS,
+    do: false
 
   defp distinct?(%Store{adapter: left} = destination, %Store{adapter: right} = retiring)
        when left != __MODULE__ and right != __MODULE__ and destination != retiring,
@@ -81,7 +86,11 @@ defmodule RequestSeal.Replay.Pair do
 
     result =
       if Context.remaining(context) > 0 do
-        normalize(operation, call(operation, store, input, context))
+        reply = call(operation, store, input, context)
+
+        if Context.remaining(context) > 0,
+          do: normalize(operation, reply),
+          else: {:error, :timeout}
       else
         {:error, :timeout}
       end
@@ -99,7 +108,7 @@ defmodule RequestSeal.Replay.Pair do
       %{operation: operation, position: position, outcome: outcome, reason: reason}
     )
 
-    result
+    if Context.remaining(context) > 0, do: result, else: {:error, :timeout}
   end
 
   defp call(operation, store, input, context) do

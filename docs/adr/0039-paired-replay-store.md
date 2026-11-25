@@ -12,8 +12,14 @@ refusal of nonces already recorded anywhere in the verification boundary.
 
 Claim the destination first and consult the retiring store only when the
 destination inserted the claim. Supply the same absolute deadline to both
-operations. Return success after two insertions and leave completed writes in
-place on every failure. Sweep each store with the same clock and deadline.
+operations. Require completion inside that deadline, including direct adapter
+calls. Leave completed writes in place on every failure. Sweep each store with
+the same clock and deadline.
+
+The destination must preserve and share each claim across every verifier that
+may receive it throughout retention, including across restarts and routing
+changes. An ETS destination is refused with a retiring adapter other than ETS.
+Two ETS stores are suitable only within one verifier with continuous state.
 
 Deploy the pair to all writers before switching any writer to destination only.
 Keep the retiring store in use until its last possible retiring-only claim has

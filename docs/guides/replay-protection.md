@@ -147,8 +147,16 @@ For Web Bot Auth, give `RequestSeal.WebBotAuth.Policy` the same replay map. Its 
 
 ## Move replay claims to a new store
 
-Use `RequestSeal.Replay.Pair.store/2` to move between independently configured
-ETS, PostgreSQL or AshOnetime stores while retained claims are still in use.
+Use `RequestSeal.Replay.Pair.store/2` while moving live claims to a destination
+that can see every attempt at the same claim. For a distributed verifier, use a
+shared durable destination such as PostgreSQL or AshOnetime. Every verifier
+that may receive a claim, including after routing changes or restarts, must see
+entries already written at the destination until their retention ends.
+Independent node-local ETS destinations cannot satisfy this: after cutover a
+retry routed to another node could find an empty destination there. The pair
+refuses an ETS destination when the retiring adapter is anything other than
+ETS. The two-ETS example applies to one verifier whose state remains live.
+
 Put the destination first and use the returned handle as the policy's `store`.
 
     alias RequestSeal.Replay.{ETS, Pair}
@@ -168,7 +176,8 @@ history, so keep it alive across the switch to paired operation.
 
 A claim succeeds after two new writes. A retirement-side refusal leaves the
 destination entry spent. Budget the policy timeout for two sequential operations
-and continue sweeping both stores under their existing retention rules.
+and continue sweeping both stores under their existing retention rules. A
+reply after the shared deadline reports timeout. A completed write stays spent.
 `RequestSeal.Replay.Pair.sweep/3` handles stores whose cleanup is external.
 The receipt names the pair during migration. The `[:request_seal, :replay, :pair]`
 event identifies the attempted position without logging claim data.

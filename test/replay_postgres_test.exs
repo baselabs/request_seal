@@ -64,6 +64,25 @@ defmodule RequestSeal.ReplayPostgresTest do
     assert :already_claimed = Replay.claim(retiring, fresh, timeout: 5_000)
   end
 
+  test "independent ETS destinations cannot cut over from a shared replay store", ctx do
+    {:ok, left} = ETS.start_link(max_entries: 10)
+    {:ok, right} = ETS.start_link(max_entries: 10)
+    one = ETS.store(left)
+    two = ETS.store(right)
+    c = claim("migration", "cross-node", 100)
+
+    assert :claimed = Replay.claim(one, c, timeout: 5_000)
+    assert :claimed = Replay.claim(ctx.store, c, timeout: 5_000)
+    assert :already_claimed = Replay.claim(ctx.store, c, timeout: 5_000)
+    # Dropping the shared history would make this same claim new at the other verifier.
+    assert :claimed = Replay.claim(two, c, timeout: 5_000)
+
+    for destination <- [one, two] do
+      assert {:error, %RequestSeal.Replay.Error{reason: :invalid_store}} =
+               Pair.store(destination, ctx.store)
+    end
+  end
+
   test "64 tasks across independent pools and a peer node produce one winner", ctx do
     {:ok, peer, _} = :peer.start_link(%{connection: :standard_io, args: [~c"+S", ~c"2"]})
 

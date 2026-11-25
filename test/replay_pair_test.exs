@@ -5,6 +5,27 @@ defmodule RequestSeal.ReplayPairTest do
   alias RequestSeal.Replay
   alias RequestSeal.Replay.{Claim, ETS, Error, Pair}
 
+  # The adapter delegates each operation to a real store and delays only its
+  # reply. This preserves the committed state across the boundary being tested.
+  defmodule LateETS do
+    @moduledoc false
+    @behaviour RequestSeal.Replay
+
+    @impl true
+    def claim(pid, claim, context) do
+      result = ETS.claim(pid, claim, context)
+      Process.sleep(Context.remaining(context) + 5)
+      result
+    end
+
+    @impl true
+    def sweep(pid, now, context) do
+      result = ETS.sweep(pid, now, context)
+      Process.sleep(Context.remaining(context) + 5)
+      result
+    end
+  end
+
   setup do
     {:ok, destination} = ETS.start_link(max_entries: 100)
     {:ok, retiring} = ETS.start_link(max_entries: 100)
@@ -82,6 +103,28 @@ defmodule RequestSeal.ReplayPairTest do
     assert {:error, :timeout} = Pair.claim(ctx.pair.ref, ctx.claim, context(-1))
     assert {:error, :timeout} = Pair.sweep(ctx.pair.ref, 2_000, context(-1))
     assert :claimed = claim(ctx.destination, ctx.claim)
+  end
+
+  test "expiry between writes leaves the first claim spent", ctx do
+    late = %{ctx.destination | adapter: LateETS}
+    {:ok, pair} = Pair.store(late, ctx.retiring)
+
+    assert {:error, :timeout} = Pair.claim(pair.ref, ctx.claim, context(100))
+    assert :already_claimed = claim(ctx.destination, ctx.claim)
+    assert :claimed = claim(ctx.retiring, ctx.claim)
+  end
+
+  test "late final claim and sweep replies cannot report success", ctx do
+    late = %{ctx.retiring | adapter: LateETS}
+    {:ok, pair} = Pair.store(ctx.destination, late)
+
+    assert {:error, :timeout} = Pair.claim(pair.ref, ctx.claim, context(100))
+    assert :already_claimed = claim(ctx.destination, ctx.claim)
+    assert :already_claimed = claim(ctx.retiring, ctx.claim)
+
+    assert {:error, :timeout} = Pair.sweep(pair.ref, 2_000, context(100))
+    assert :claimed = claim(ctx.destination, ctx.claim)
+    assert :claimed = claim(ctx.retiring, ctx.claim)
   end
 
   defp claim(store, claim), do: Replay.claim(store, claim, timeout: 1_000)
