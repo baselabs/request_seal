@@ -647,10 +647,14 @@ class ReleaseWorkflowTest(unittest.TestCase):
             release.verify_published_destinations(
                 "[Source](https://github.com/baselabs/request_seal/blob/v1.0.0/README.md)", "1.0.0", event="push")
         self.assertIn("HTTP 200 https://github.com/baselabs/request_seal/blob/v1.0.0/README.md", output.getvalue())
-        with self.assertRaisesRegex(ValueError, "HTTP 404"):
+        missing = "https://request-seal.hexdocs.pm/1.0.0/no-such-release-page.html"
+        missing_output = io.StringIO()
+        with redirect_stdout(missing_output), self.assertRaises(ValueError) as failure:
             release.verify_published_destinations(
-                "[Missing](https://request-seal.hexdocs.pm/1.0.0/no-such-release-page.html)",
-                "1.0.0", deadline_seconds=15)
+                f"[Missing]({missing})", "1.0.0", deadline_seconds=15)
+        # The last retry can time out after the server has returned a 404.
+        self.assertIn(f"HTTP 404 {missing}", missing_output.getvalue().splitlines())
+        self.assertIn(f"\n{missing}: ", str(failure.exception))
 
     def test_only_canonical_first_party_forms_pass_the_offline_gate(self):
         for target in ("https://request-seal.hexdocs.pm/2.3.4/RequestSeal.html",
