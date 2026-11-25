@@ -66,7 +66,11 @@ defmodule RequestSeal.Authentication do
         params = SignatureFields.parameters(input)
         ensure(SignatureFields.nonce_valid?(params["nonce"]), :limit, :input)
         coverage(input, required(policy.components), policy.extra_components)
-        freshness = freshness(params, policy.freshness)
+        freshness =
+          case opts do
+            %{quorum_now: now} -> freshness(params, policy.freshness, now)
+            _ -> freshness(params, policy.freshness)
+          end
 
         ensure(
           not Map.has_key?(params, "alg") or params["alg"] in policy.algorithms,
@@ -527,11 +531,21 @@ defmodule RequestSeal.Authentication do
 
   defp freshness(_, :not_evaluated), do: :not_evaluated
 
-  defp freshness(params, policy) do
-    with {:ok, interval} <- Freshness.read(policy.clock),
-         {:ok, facts} <- Freshness.check(params, policy, interval) do
-      facts
-    else
+  defp freshness(params, policy), do: freshness(params, policy, freshness_time!(policy))
+
+  @doc false
+  def freshness_time(policy), do: protect(fn -> {:ok, freshness_time!(policy)} end)
+
+  defp freshness_time!(policy) do
+    case Freshness.read(policy.clock) do
+      {:ok, interval} -> interval
+      {:error, reason} -> fail(reason, :freshness)
+    end
+  end
+
+  defp freshness(params, policy, interval) do
+    case Freshness.check(params, policy, interval) do
+      {:ok, facts} -> facts
       {:error, reason} -> fail(reason, :freshness)
     end
   end

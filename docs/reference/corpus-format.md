@@ -384,13 +384,15 @@ The output is `fingerprint` as a byte tag.
 
 `quorum.verify/v1` takes an RFC 9421 `message` with captured Signature and
 Signature-Input fields, `components` (the mandatory Inner List), and `slots`
-with `id`, `keyid`, and `required`. The `keys` object references the public RFC
+with `id`, `keyid`, and `required`. A slot can include a `label` selector.
+The `keys` object references the public RFC
 9421 HMAC fixture as `published` or derives a test-only key by SHA-256 of the
 fixture bytes and the UTF-8 key ID as `derived`. These keys all have explicit
 opaque equivalence identities equal to their fixture ID. The policies use
 key counting with `mode` set to `all` or `{"threshold": tagged_integer}`.
 Each slot verifies finite freshness with a 120-second maximum age, zero
-skew and required expiration. The replay namespace is `corpus`, the scope
+skew and required expiration. The fixture's `now` is the common decision
+instant for every slot. The replay namespace is `corpus`, the scope
 is `namespace`, and `identifier` is `shared_nonce` or
 `{"operation": [serialized_ids]}`.
 

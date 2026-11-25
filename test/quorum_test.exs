@@ -117,6 +117,43 @@ defmodule RequestSeal.QuorumTest do
     assert {:ok, _} = RequestSeal.verify_quorum(signed, policy, [])
   end
 
+  test "required signatures must be fresh at the same trusted instant", ctx do
+    clock_reads = :atomics.new(1, [])
+    clock = fn -> @now + 10 * :atomics.add_get(clock_reads, 1, 1) - 5 end
+
+    slots =
+      Enum.map([{:one, "primary"}, {:two, "optional"}], fn {id, keyid} ->
+        slot = slot(ctx, id, keyid, true)
+        slot = put_in(slot.policy.freshness.clock, clock)
+        Map.put(slot, :label, Atom.to_string(id))
+      end)
+
+    policy = quorum(ctx, @operation, slots)
+    first = sign(ctx.message, ctx.keys, "primary", "one", "first", {@now, @now + 10})
+    disjoint = sign(first, ctx.keys, "optional", "two", "second", {@now + 10, @now + 25})
+    intersecting = sign(first, ctx.keys, "optional", "two", "second", {@now + 4, @now + 25})
+
+    assert {:error, %{reason: :quorum_not_met}} =
+             RequestSeal.verify_quorum(disjoint, policy, [])
+
+    assert :atomics.get(clock_reads, 1) == 1
+    assert {:ok, 0} = Replay.ETS.sweep(ctx.pid, @now + 120)
+    :atomics.put(clock_reads, 1, 0)
+
+    assert {:ok, %{assignments: assignments, count: 2}} =
+             RequestSeal.verify_quorum(intersecting, policy, [])
+
+    assert assignments.one.freshness.now == @now + 5
+    assert assignments.two.freshness.now == @now + 5
+    assert :atomics.get(clock_reads, 1) == 1
+
+    [slot | rest] = slots
+    other_clock = put_in(slot.policy.freshness.clock, fn -> @now end)
+
+    assert {:error, %{reason: :invalid_quorum}} =
+             Quorum.new(Map.from_struct(%{policy | slots: [other_clock | rest]}))
+  end
+
   test "principal scope comes from all configured slots and role counts obey principal sharing",
        ctx do
     request = sign(ctx.message, ctx.keys, "primary", "one", "attempt")
@@ -260,10 +297,38 @@ defmodule RequestSeal.QuorumTest do
     slots = [slot(ctx, :first, nil, false), slot(ctx, :second, nil, false)]
     policy = quorum(ctx, @operation, slots, {:threshold, 2})
 
-    results =
-      [two, four]
-      |> Task.async_stream(&RequestSeal.verify_quorum(&1, policy, []), max_concurrency: 2)
-      |> Enum.map(fn {:ok, result} -> result end)
+    owner = self()
+    barrier = make_ref()
+    [first | rest] = slots
+    resolve = first.policy.key_resolver
+
+    synchronized = fn facts ->
+      if Process.put(barrier, true) == nil do
+        send(owner, {barrier, self()})
+
+        receive do
+          ^barrier -> :ok
+        end
+      end
+
+      resolve.(facts)
+    end
+
+    race_policy = %{policy | slots: [put_in(first.policy.key_resolver, synchronized) | rest]}
+    reversed = %{four | fields: Enum.reverse(four.fields)}
+
+    tasks =
+      Enum.map([two, reversed], fn message ->
+        Task.async(fn -> RequestSeal.verify_quorum(message, race_policy, []) end)
+      end)
+
+    for task <- tasks do
+      pid = task.pid
+      assert_receive {^barrier, ^pid}, 1000
+    end
+
+    Enum.each(tasks, &send(&1.pid, barrier))
+    results = Task.await_many(tasks, 3000)
 
     assert Enum.count(results, &match?({:ok, %{count: 2}}, &1)) == 1
     assert Enum.count(results, &match?({:error, %{reason: :replayed}}, &1)) == 1
@@ -330,15 +395,16 @@ defmodule RequestSeal.QuorumTest do
   end
 
   test "aggregate admission refuses too many eligible signature checks before resolution", ctx do
-    message =
-      Enum.reduce(1..9, ctx.message, fn i, message ->
+    at_limit =
+      Enum.reduce(1..8, ctx.message, fn i, message ->
         sign(message, ctx.keys, "primary", "sig-#{i}", "attempt")
       end)
 
+    over_limit = sign(at_limit, ctx.keys, "primary", "sig-9", "attempt")
     owner = self()
 
     slots =
-      Enum.map(1..15, fn i ->
+      Enum.map(1..16, fn i ->
         slot = slot(ctx, :main, nil, false)
 
         resolver = fn _ ->
@@ -351,8 +417,40 @@ defmodule RequestSeal.QuorumTest do
       end)
 
     policy = quorum(ctx, @operation, slots, :any)
-    assert {:error, %{reason: :limit}} = RequestSeal.verify_quorum(message, policy, [])
+    assert {:error, %{reason: :limit}} = RequestSeal.verify_quorum(over_limit, policy, [])
     refute_received :resolved
+
+    assert {:error, %{reason: :quorum_not_met}} = RequestSeal.verify_quorum(at_limit, policy, [])
+
+    for _ <- 1..128 do
+      assert_received :resolved
+    end
+
+    refute_received :resolved
+  end
+
+  test "policy construction rejects mandatory pairs above 128", ctx do
+    slots =
+      for i <- 1..16 do
+        slot(ctx, String.to_atom("budget-slot-#{i}"), nil, i <= 8)
+      end
+
+    policy = quorum(ctx, @operation, slots)
+    assert {:ok, _} = Quorum.new(Map.from_struct(policy))
+
+    assert {:error, %{reason: :invalid_quorum}} =
+             Quorum.new(Map.from_struct(%{policy | mode: {:threshold, 9}}))
+
+    all_required = slots |> Enum.take(12) |> Enum.map(&%{&1 | required: true})
+    assert {:ok, _} = Quorum.new(Map.from_struct(%{policy | slots: Enum.take(all_required, 11)}))
+
+    assert {:error, %{reason: :invalid_quorum}} =
+             Quorum.new(Map.from_struct(%{policy | slots: all_required}))
+
+    selected =
+      Enum.map(all_required, &Map.put(&1, :label, Atom.to_string(&1.id)))
+
+    assert {:ok, _} = Quorum.new(Map.from_struct(%{policy | slots: selected}))
   end
 
   test "a blocked resolver is joined at the caller deadline", ctx do
@@ -370,6 +468,12 @@ defmodule RequestSeal.QuorumTest do
 
     slot = %{slot | policy: %{slot.policy | key_resolver: resolver}}
     policy = quorum(ctx, @operation, [slot])
+    oversized = System.monotonic_time(:millisecond) + 1_000_000_000_000
+
+    assert {:error, %{reason: :invalid_options, layer: :input}} =
+             RequestSeal.verify_quorum(signed, policy, deadline: oversized)
+
+    refute_receive {:resolver, _}
 
     result =
       Task.async(fn ->
@@ -378,8 +482,10 @@ defmodule RequestSeal.QuorumTest do
       end)
 
     assert_receive {:resolver, pid}, 1000
+    {:links, [worker]} = Process.info(pid, :links)
     assert {:error, %{reason: :deadline}} = Task.await(result, 3000)
     refute Process.alive?(pid)
+    refute Process.alive?(worker)
     assert {:ok, 0} = Replay.ETS.sweep(ctx.pid, @now + 120)
   end
 
@@ -454,7 +560,7 @@ defmodule RequestSeal.QuorumTest do
     end
   end
 
-  defp sign(message, keys, keyid, label, nonce) do
+  defp sign(message, keys, keyid, label, nonce, {created, expires} \\ {@now, @now + 60}) do
     {handle, _} = Map.fetch!(keys, keyid)
 
     {:ok, signed} =
@@ -465,7 +571,7 @@ defmodule RequestSeal.QuorumTest do
           algorithm: "ed25519",
           signature_input:
             @components <>
-              ~s(;created=#{@now};expires=#{@now + 60};nonce="#{nonce}";keyid="#{keyid}")
+              ~s(;created=#{created};expires=#{expires};nonce="#{nonce}";keyid="#{keyid}")
         },
         handle
       )

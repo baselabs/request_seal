@@ -263,6 +263,14 @@ defmodule RequestSeal.Replay do
 
   @doc false
   def run(context, callback) do
+    case Context.remaining(context) do
+      0 -> {:error, Error.new(:store_timeout)}
+      remaining when remaining <= 4_294_967_295 -> run_monitored(context, callback)
+      _ -> {:error, Error.new(:invalid_options)}
+    end
+  end
+
+  defp run_monitored(context, callback) do
     case Custody.run(context, fn -> {:ok, safe(callback)} end) do
       {:ok, result} -> result
       {:error, %{reason: :deadline_exceeded}} -> {:error, Error.new(:store_timeout)}

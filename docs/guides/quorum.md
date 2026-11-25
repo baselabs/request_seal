@@ -90,8 +90,16 @@ replay, require the same complete operation-defining coverage in every slot,
 including a checked Content-Digest for requests with bodies. Set the same
 schema in every slot for each structured operation field. Adding an optional
 signer cannot change the replay key of an otherwise accepted request.
-Verification admits up to 128 eligible label-slot pairs. A supplied absolute
-monotonic deadline bounds callbacks and assignment, and caps the replay
-store deadline.
+Give every slot the same trusted clock function. The verifier reads it once,
+after wire admission, and applies each slot's freshness rules at that instant.
+Any two signatures assigned together must be fresh at that instant under
+their slot policies.
+
+Verification admits up to 128 eligible label-slot pairs. Construction refuses
+policies whose mandatory checks exceed that limit. Extra signatures on the
+wire can exhaust it even when the policy is valid. Use label or tag selectors
+to constrain matching. A supplied absolute monotonic deadline bounds
+callbacks and assignment, and caps the replay store deadline. A remaining
+interval above 4,294,967,295 milliseconds is invalid.
 The verifier returns a replay receipt after the quorum verdict. Application
 authorization and effect uniqueness remain separate decisions.

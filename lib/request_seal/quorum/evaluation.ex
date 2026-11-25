@@ -15,7 +15,6 @@ defmodule RequestSeal.Quorum.Evaluation do
   alias RequestSeal.Custody.Context
   alias RequestSeal.Quorum.Verification
 
-  @verification_budget 128
   @work_budget 16_384
 
   def verify(message, quorum, opts) do
@@ -68,6 +67,7 @@ defmodule RequestSeal.Quorum.Evaluation do
 
       case Replay.run(context, callback) do
         {:error, %Replay.Error{reason: :store_timeout}} -> fail(:deadline, :quorum)
+        {:error, %Replay.Error{reason: :invalid_options}} -> fail(:invalid_options, :input)
         {:error, %Replay.Error{}} -> {:error, Error.new(:internal, :internal, :exit)}
         result -> result
       end
@@ -123,13 +123,10 @@ defmodule RequestSeal.Quorum.Evaluation do
       |> Enum.map_reduce(0, fn {label, input}, count ->
         tag = SignatureFields.parameters(input)["tag"]
 
-        eligible =
-          Enum.filter(slots, fn slot ->
-            slot[:label] in [nil, label] and slot[:tag] in [nil, tag]
-          end)
+        eligible = Enum.filter(slots, &Quorum.selector_matches?(&1, label, tag))
 
         count = count + length(eligible)
-        ensure(count <= @verification_budget, :limit, :input)
+        ensure(count <= Quorum.verification_budget(), :limit, :input)
         {{label, input, eligible}, count}
       end)
 
@@ -137,7 +134,13 @@ defmodule RequestSeal.Quorum.Evaluation do
   end
 
   defp qualify(eligible, signatures, message, quorum, deadline) do
-    context = %{quorum_replay: {scope(quorum), identifier(quorum.replay.identifier)}}
+    [first | _] = quorum.slots
+    now = unwrap(Authentication.freshness_time(first.policy.freshness))
+
+    context = %{
+      quorum_now: now,
+      quorum_replay: {scope(quorum), identifier(quorum.replay.identifier)}
+    }
 
     {groups, _} =
       Enum.map_reduce(eligible, %{}, fn {label, input, slots}, digest_cache ->

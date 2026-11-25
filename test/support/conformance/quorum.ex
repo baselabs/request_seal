@@ -4,6 +4,10 @@ defmodule RequestSeal.Conformance.Quorum do
   alias RequestSeal.Conformance.Surfaces
   alias RequestSeal.SignatureFields
 
+  @slots ~w(
+    primary optional third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth
+  )a
+
   def verify(root, %{"inputs" => input, "now" => now}) do
     {:ok, pid} = Replay.ETS.start_link(max_entries: 8)
     now = Conformance.int(now)
@@ -31,6 +35,8 @@ defmodule RequestSeal.Conformance.Quorum do
   end
 
   defp run(root, input, now, pid, handles) do
+    clock = fn -> now end
+
     slots =
       Enum.map(input["slots"], fn slot ->
         %{"id" => id, "keyid" => keyid, "required" => required} = slot
@@ -48,11 +54,12 @@ defmodule RequestSeal.Conformance.Quorum do
             end,
             content: :not_required,
             field_schemas: schemas(slot["flags_schema"]),
-            freshness: %{clock: fn -> now end, max_age: 120, skew: 0, require_expires: true},
+            freshness: %{clock: clock, max_age: 120, skew: 0, require_expires: true},
             replay: :not_required
           })
 
-        %{id: slot_id(id), required: required, policy: policy}
+        attrs = %{id: slot_id(id), required: required, policy: policy}
+        if Map.has_key?(slot, "label"), do: Map.put(attrs, :label, slot["label"]), else: attrs
       end)
 
     identifier =
@@ -135,8 +142,5 @@ defmodule RequestSeal.Conformance.Quorum do
   defp schemas("dictionary"),
     do: %{"flags" => SignatureFields.schema(:dictionary, [:token, :boolean])}
 
-  defp slot_id("primary"), do: :primary
-  defp slot_id("optional"), do: :optional
-  defp slot_id("third"), do: :third
-  defp slot_id("fourth"), do: :fourth
+  defp slot_id(id), do: Enum.find(@slots, &(Atom.to_string(&1) == id))
 end

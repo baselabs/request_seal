@@ -217,7 +217,7 @@ defmodule RequestSeal do
   @doc """
   Verify a configured RFC 9421 quorum, then atomically claim one replay key.
 
-  Each candidate passes its slot policy independently. The verdict counts
+  Each candidate passes its slot policy at the same trusted freshness instant. The verdict counts
   distinct configured units and enforces required slots and bindings. Every
   verified candidate must agree on the composite replay identity. The claim
   excludes signature labels, key IDs, signature bytes and the selected set.
@@ -226,6 +226,7 @@ defmodule RequestSeal do
   to check their label, coverage and signed parameters before claiming.
   The optional `:deadline` is an absolute monotonic millisecond time. It
   bounds verification, including callbacks, assignment, and the store call.
+  A remaining interval above 4,294,967,295 milliseconds returns `:invalid_options`.
   Verification admits at most 128 eligible label-slot checks. Assignment has
   a 16,384-unit work cap. Results establish no application authorization.
   """

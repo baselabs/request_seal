@@ -15,7 +15,10 @@ and subset changes as ways to bypass a commitment over signature facts.
 ## Decision
 
 Require a finite freshness policy and explicit trust resolution in each slot.
-Verify every selector-eligible label against its complete slot policy. Build
+All slots share one trusted clock function. After wire admission and before
+resolving keys, sample it once and apply each slot's freshness rules at that
+instant. Two signatures with disjoint effective validity windows cannot fill
+one assignment. Verify every selector-eligible label against its complete slot policy. Build
 key identity classes from verified observations and merge known aliases.
 Only affirmative key identity evidence can fill a slot, including for
 principal and role verdicts. A failed custody lookup rejects that candidate.
@@ -57,6 +60,9 @@ boundary. The single post-verdict claim avoids both failure modes.
 ## Consequences
 
 Admission limits verification to 128 selector-eligible label-slot pairs.
+Construction rejects policies whose minimum required verification already
+exceeds the budget. Extra signatures or selectors on received messages can
+exhaust the budget of an otherwise valid policy.
 Identical digest policies reuse one body check while each signature proves
 digest coverage independently. The 16,384-unit assignment budget covers
 identity traversal, search nodes, candidate scans, binding checks and role
@@ -64,7 +70,9 @@ matching. A completed satisfying assignment may be returned at the work
 bound. If none has been found, the verdict fails closed.
 
 When supplied, the absolute monotonic deadline bounds the evaluation worker,
-including caller callbacks. The replay claim receives the earlier of the
+including caller callbacks. Refuse remaining intervals above the VM receive
+limit of 4,294,967,295 milliseconds before spawning the worker. A deadline
+expiry cancels and joins the worker before returning. The replay claim receives the earlier of the
 same deadline and the store timeout. A store timeout may leave a committed
 claim. Callers control clock agreement, safe sweep timing, and consistent
 policy across verifiers.

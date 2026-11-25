@@ -11,6 +11,7 @@ defmodule RequestSeal.Quorum do
   alias RequestSeal.Replay.{Claim, Commitment}
   alias RequestSeal.StructuredFields.{Schema, Value}
 
+  @verification_budget 128
   @derive {Inspect, only: [:mode, :unit, :max_signatures]}
   @enforce_keys [:mode, :unit, :slots, :unexpected, :invalid, :replay]
   defstruct @enforce_keys ++ [bindings: [], max_signatures: 16]
@@ -40,6 +41,8 @@ defmodule RequestSeal.Quorum do
   Each of 1–16 slots requires a unique atom `:id`, a generic `:policy`
   with finite freshness and `replay: :not_required`, and a Boolean
   `:required`. Optional `:label` and `:tag` limit matching signatures.
+  All slots must use the same trusted freshness clock function. Verification
+  reads it once and applies each slot's freshness rules at that instant.
   `:principal` is a trusted binary for principal and role units, and
   `:role` is a trusted atom for role units.
 
@@ -56,6 +59,8 @@ defmodule RequestSeal.Quorum do
   `{:same_parameter, name, slot_ids}` constraints. Names are `"nonce"`,
   `"tag"` or `"created"`. Both kinds require every referenced slot.
   `:max_signatures` defaults to 16 and may be 1–64.
+  Policies whose mandatory work already exceeds 128 label-slot checks are
+  refused. Additional signatures on the wire can exhaust that budget.
   """
   @spec new(map()) :: {:ok, t()} | {:error, Error.t()}
   def new(attrs) when is_map(attrs) and not is_struct(attrs) do
@@ -76,14 +81,61 @@ defmodule RequestSeal.Quorum do
       bounded_list?(quorum.slots, 1, 16) and unit?(quorum.unit) and
       Enum.all?(quorum.slots, &slot?(&1, quorum.unit)) and
       unique?(Enum.map(quorum.slots, & &1.id)) and
+      common_clock?(quorum.slots) and
       mode?(quorum.mode, quorum.slots, quorum.max_signatures) and
       quorum.unexpected in [:ignore, :reject] and quorum.invalid in [:ignore, :reject] and
       bounded_list?(quorum.bindings, 0, 64) and unique?(quorum.bindings) and
       Enum.all?(quorum.bindings, &binding?(&1, Enum.map(quorum.slots, fn slot -> slot.id end))) and
+      admission_possible?(quorum) and
       replay?(quorum.replay, quorum.slots)
   end
 
   def valid?(_), do: false
+
+  @doc false
+  def verification_budget, do: @verification_budget
+
+  @doc false
+  def selector_matches?(slot, label, tag),
+    do: slot[:label] in [nil, label] and slot[:tag] in [nil, tag]
+
+  defp common_clock?([first | rest]),
+    do: Enum.all?(rest, &(&1.policy.freshness.clock == first.policy.freshness.clock))
+
+  defp admission_possible?(quorum) do
+    bound_slots =
+      Enum.flat_map(quorum.bindings, fn
+        {:nested, [outer: outer, inner: inner]} -> [outer, inner]
+        {:same_parameter, _, ids} -> ids
+      end)
+
+    {required, optional} =
+      Enum.split_with(quorum.slots, &(&1.required or &1.id in bound_slots))
+
+    threshold =
+      case quorum.mode do
+        {:threshold, count} -> count
+        _ -> 1
+      end
+
+    min_signatures = max(length(required), threshold)
+
+    max_signatures =
+      Enum.min([quorum.max_signatures | Enum.map(quorum.slots, & &1.policy.max_signatures)])
+
+    # A signature for a slot also matches every selector that subsumes that slot.
+    cost = fn slot ->
+      Enum.count(quorum.slots, &selector_matches?(&1, slot[:label], slot[:tag]))
+    end
+
+    optional_costs =
+      optional |> Enum.map(cost) |> Enum.sort() |> Enum.take(min_signatures - length(required))
+
+    required_labels = for slot <- required, slot[:label] != nil, do: slot.label
+
+    min_signatures <= max_signatures and unique?(required_labels) and
+      Enum.sum(Enum.map(required, cost)) + Enum.sum(optional_costs) <= @verification_budget
+  end
 
   defp replay?(replay, slots) do
     Commitment.settings?(replay) and
