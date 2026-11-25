@@ -8,17 +8,32 @@ defmodule RequestSeal.Idempotency.ETS do
   use GenServer
   @behaviour RequestSeal.Idempotency
 
-  alias RequestSeal.Idempotency
-
   alias RequestSeal.Custody.Context
+  alias RequestSeal.Idempotency
   alias RequestSeal.Idempotency.{Record, Reservation}
 
-  @doc "Start a local store with the required `:max_entries` capacity (1–10,000)."
+  @doc """
+  Start a local store with required `:max_entries` capacity (1–10,000).
+  The optional zero-arity `:clock` returns trusted Unix seconds from
+  0 through 253,402,300,799. It defaults to the system Unix clock. The
+  store uses its latest observed time if the clock moves backward.
+  """
   @spec start_link(keyword()) :: GenServer.on_start() | {:error, :invalid_options}
-  def start_link(max_entries: max) when is_integer(max) and max in 1..10_000,
-    do: GenServer.start_link(__MODULE__, max)
+  def start_link(opts) when is_list(opts) and length(opts) in 1..2 do
+    with true <- Keyword.keyword?(opts),
+         keys = Enum.sort(Keyword.keys(opts)),
+         true <- keys in [[:max_entries], [:clock, :max_entries]],
+         max when is_integer(max) and max in 1..10_000 <- opts[:max_entries],
+         clock when is_function(clock, 0) <- Keyword.get(opts, :clock, &system_clock/0) do
+      GenServer.start_link(__MODULE__, {max, clock})
+    else
+      _ -> {:error, :invalid_options}
+    end
+  end
 
   def start_link(_), do: {:error, :invalid_options}
+
+  defp system_clock, do: System.system_time(:second)
 
   @doc "Build the store reference for `RequestSeal.Idempotency`."
   @spec store(pid()) :: RequestSeal.Idempotency.store()
@@ -45,37 +60,59 @@ defmodule RequestSeal.Idempotency.ETS do
   def sweep(_, _, _), do: {:error, :failure}
 
   @impl GenServer
-  def init(max), do: {:ok, {:ets.new(__MODULE__, [:set, :private]), max}}
+  def init({max, clock}),
+    do: {:ok, %{table: :ets.new(__MODULE__, [:set, :private]), max: max, clock: clock, now: 0}}
 
   @impl GenServer
   def handle_call({request, context}, _from, state) do
-    reply =
-      if Context.remaining(context) > 0 and Process.alive?(context.owner),
-        do: perform(request, state),
-        else: {:error, :timeout}
+    if live?(context) do
+      case read_clock(state) do
+        {:ok, now} ->
+          state = %{state | now: max(state.now, now)}
+          reply = if live?(context), do: perform(request, state), else: {:error, :timeout}
+          {:reply, reply, state}
 
-    {:reply, reply, state}
+        :error ->
+          {:reply, {:error, :failure}, state}
+      end
+    else
+      {:reply, {:error, :timeout}, state}
+    end
   end
 
-  defp perform({:reserve, %Record{} = record}, {table, max}) do
+  defp live?(context), do: Context.remaining(context) > 0 and Process.alive?(context.owner)
+
+  defp read_clock(state) do
+    case state.clock.() do
+      now when is_integer(now) and now in 0..253_402_300_799 -> {:ok, now}
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
+  end
+
+  defp perform({:reserve, record}, %{now: now})
+       when record.now > now or record.lease_until <= now or record.retain_until <= now,
+       do: :expired
+
+  defp perform({:reserve, %Record{} = record}, %{table: table, max: max, now: now}) do
     key = Record.key(record)
     fingerprint = record.fingerprint
 
-    case :ets.lookup(table, key) do
+    case live_row(table, key, now) do
       [{^key, _, other, _, _}] when other != fingerprint ->
         :conflict
 
       [{^key, _, ^fingerprint, _, {:stored, response}}] ->
         {:stored, response}
 
-      [{^key, _, ^fingerprint, lease_end, _}] when lease_end > record.now ->
+      [{^key, _, ^fingerprint, lease_end, _}] when lease_end > now ->
         :in_progress
 
-      [{^key, retain_until, ^fingerprint, _, _}] when record.now < retain_until ->
+      [{^key, retain_until, ^fingerprint, _, _}] ->
         insert(table, record, key, max(retain_until, record.retain_until))
-
-      [_] ->
-        :in_progress
 
       [] ->
         if :ets.info(table, :size) < max,
@@ -84,12 +121,16 @@ defmodule RequestSeal.Idempotency.ETS do
     end
   end
 
-  defp perform({:store, %Reservation{record: record, token: token}, response}, {table, _}) do
+  defp perform(
+         {:store, %Reservation{record: record, token: token}, response},
+         %{table: table, now: now}
+       ) do
     key = Record.key(record)
     fingerprint = record.fingerprint
 
     case :ets.lookup(table, key) do
-      [{^key, retention, ^fingerprint, lease_end, {:pending, ^token}}] ->
+      [{^key, retention, ^fingerprint, lease_end, {:pending, ^token}}]
+      when now < retention and now < lease_end ->
         :ets.insert(table, {key, retention, fingerprint, lease_end, {:stored, response}})
         :stored
 
@@ -98,9 +139,23 @@ defmodule RequestSeal.Idempotency.ETS do
     end
   end
 
-  defp perform({:sweep, now}, {table, _}),
-    do:
-      {:ok, :ets.select_delete(table, [{{:_, :"$1", :_, :_, :_}, [{:"=<", :"$1", now}], [true]}])}
+  defp perform({:sweep, cutoff}, %{table: table, now: now}) when cutoff <= now do
+    {:ok,
+     :ets.select_delete(table, [{{:_, :"$1", :_, :_, :_}, [{:"=<", :"$1", cutoff}], [true]}])}
+  end
+
+  defp perform({:sweep, _}, _), do: {:error, :failure}
+
+  defp live_row(table, key, now) do
+    case :ets.lookup(table, key) do
+      [{^key, retention, _, _, _}] when retention <= now ->
+        :ets.delete(table, key)
+        []
+
+      row ->
+        row
+    end
+  end
 
   defp insert(table, record, key, retention) do
     token = :crypto.strong_rand_bytes(16)

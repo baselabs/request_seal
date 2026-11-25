@@ -82,13 +82,20 @@ including content type, content encoding, and response negotiation. The
 [Idempotency-Key Internet-Draft, revision 09](https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header-09)
 describes retry outcomes and recommended HTTP status codes.
 
-A live reservation yields `:in_progress`. An expired matching reservation may
-be renewed before the record is swept. A renewed lease invalidates the old
-completion token. A mismatched fingerprint always yields `:conflict`, even for
-a completed record. A timeout may have committed a store operation. The caller
-must reconcile its own effect and response before repeating an effect.
-Use consistent clocks and retention settings across nodes. Sweep through
-`Idempotency.sweep/3` after the documented retry window has ended.
+A live reservation yields `:in_progress`. At admission the store checks the
+prepared lease and retention bounds against its trusted clock. A delayed
+record outside that window returns `:record_expired`. Prepare a new
+authenticated attempt before retrying admission. An expired matching lease
+may be renewed while its row is retained. Renewal invalidates the old token,
+and completion requires the current token and an unexpired stored lease and
+retention window. A different fingerprint conflicts while the row is
+retained, including after completion.
+
+A timeout may have committed a store operation. Reconcile the effect and
+response before repeating the effect. Use consistent clocks and retention
+settings across nodes. ETS defaults to the system Unix clock and accepts an
+explicit `:clock`. Pass a cutoff at or before the store's current time to
+`Idempotency.sweep/3`.
 
 Reserve after authentication and authorization, then enforce the same unique
 operation key in the transaction or service that commits the effect. If that
@@ -102,8 +109,9 @@ headers. Use an explicit allowlist for the other end-to-end headers. Generate
 transport-specific response fields and any new response signature at delivery.
 
 For durable client recovery, persist the `Journal.entry/2` snapshot under its
-unique namespace and key before sending. It preserves ordered fields, target,
-method and body. Reissue checks the loaded snapshot against its digest, which
+unique namespace and key before sending. Before recording, it reconstructs
+the HTTP(S) request and checks the captured method, target, and retained
+body. It preserves the ordered field values. Reissue checks the loaded snapshot against its digest, which
 detects accidental changes. Protect the journal against unauthorized reads and
 writes. Keep custom credential headers out of persisted intent. The caller
 controls retries and records send outcomes where needed.

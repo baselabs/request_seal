@@ -275,5 +275,5 @@ module's `reason` type. Each module documents their meanings.
 
 `:invalid_options`, `:invalid_message`, `:missing_idempotency_key`,
 `:invalid_idempotency_key`, `:invalid_policy`, `:invalid_record`,
-`:invalid_response`, `:store_unavailable`, `:store_timeout`, `:store_full`,
-`:store_failed`.
+`:invalid_response`, `:record_expired`, `:store_unavailable`, `:store_timeout`,
+`:store_full`, `:store_failed`.

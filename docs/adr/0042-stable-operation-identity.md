@@ -31,11 +31,16 @@ target and digest bytes. Wire status mapping and key expiration policy remain
 application choices. For example, applications can use 409 for in-progress and
 422 for a fingerprint conflict, as the draft describes.
 
-The store reserves atomically, renews an expired matching lease, and fences
-completion with a fresh token. A completed fingerprint match returns the
-recorded response. A mismatch never returns it. The client journal records
-unsigned intent and generates a fresh nonce whenever it signs that intent
-again. It uses caller-owned custody at reissue time.
+The store reads its trusted clock at the atomic transition. Admission requires
+a live prepared lease and retention window, and renewal fences completion with
+a fresh token. Completion requires the current token and a live stored lease
+and retention window. A completed fingerprint match returns the recorded
+response and a mismatch fails. Adapter output is normalized to closed public
+results before it reaches the caller or telemetry.
+
+The client journal rebuilds each captured HTTP(S) intent before recording it,
+checking that method, target and retained content survive reconstruction. On
+reissue it generates a fresh nonce and uses caller-owned custody.
 
 ## Reasons
 

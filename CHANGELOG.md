@@ -2,6 +2,9 @@
 
 ## Unreleased 2.0.0
 
+- Check idempotency admission and completion against the store clock, normalize
+  adapter returns, and validate journal reconstruction before recording.
+
 - Verify configurable signature quorums and atomically claim one replay key
   derived independently of labels, signatures, and optional-signer selection.
 

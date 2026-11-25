@@ -36,19 +36,24 @@ defmodule RequestSeal.Idempotency do
   @doc """
   Atomically reserve the scoped key, renew a matching expired lease, or return
   the existing outcome. An active lease yields `:in_progress`. A different
-  fingerprint yields `:conflict` regardless of the row's state. A reserved
-  token must be unique across renewals and row lifetimes.
+  fingerprint yields `:conflict` while the row is retained. A reserved
+  token must be unique across renewals and row lifetimes. Evaluate the record
+  and any existing lease and retention ends against the store's trusted clock
+  at the atomic transition. Return `:expired` when the prepared record is
+  outside its admission window.
   """
   @callback reserve(term(), Record.t(), Context.t()) ::
               {:reserved, <<_::128>>}
               | {:stored, response()}
               | :in_progress
               | :conflict
+              | :expired
               | store_fault()
 
   @doc """
   Complete the current matching reservation once, atomically. A missing,
-  replaced, completed, or different reservation returns `:not_reserved`.
+  replaced, completed, expired, or different reservation returns `:not_reserved`.
+  Compare both exclusive ends to the store's trusted clock at completion.
   """
   @callback store(term(), Reservation.t(), response(), Context.t()) ::
               :stored | :not_reserved | store_fault()
@@ -140,7 +145,9 @@ defmodule RequestSeal.Idempotency do
   @doc """
   Reserve a record, or return `{:stored, response}`, `:in_progress` or
   `:conflict`. Only `{:reserved, reservation}` admits the caller to its
-  effect boundary. The only option is `:timeout` in milliseconds (1–300,000).
+  effect boundary. Its prepared lease and retention must still be live on the
+  store's clock. Otherwise it returns `:record_expired`. The only option is
+  `:timeout` in milliseconds (1–300,000).
   """
   @spec reserve(store(), Record.t(), keyword()) ::
           {:reserved, Reservation.t()}
@@ -156,14 +163,17 @@ defmodule RequestSeal.Idempotency do
           {:reserved, <<_::128>> = token} ->
             {:reserved, %Reservation{record: record, token: token}}
 
-          {:stored, response} ->
-            validate_stored(response)
+          {:stored, _} = stored ->
+            stored
+
+          :expired ->
+            error(:record_expired)
 
           state when state in [:conflict, :in_progress] ->
             state
 
-          other ->
-            store_error(other)
+          {:error, _} = error ->
+            error
         end
       else
         false -> error(:invalid_record)
@@ -187,7 +197,7 @@ defmodule RequestSeal.Idempotency do
            {:ok, clean} <- eligible(response, allow) do
         case call(store, :store, [reservation, clean], timeout: timeout) do
           state when state in [:stored, :not_reserved] -> state
-          other -> store_error(other)
+          {:error, _} = error -> error
         end
       else
         false -> error(:invalid_record)
@@ -202,7 +212,7 @@ defmodule RequestSeal.Idempotency do
   def sweep(store, now, opts) when is_integer(now) and now in 0..253_402_300_799 do
     case call(store, :sweep, [now], opts) do
       {:ok, count} when is_integer(count) and count >= 0 -> {:ok, count}
-      other -> store_error(other)
+      {:error, _} = error -> error
     end
   end
 
@@ -305,10 +315,6 @@ defmodule RequestSeal.Idempotency do
   @doc false
   def response?(response), do: match?({:ok, ^response}, eligible(response, :all))
 
-  defp validate_stored(response) do
-    if response?(response), do: {:stored, response}, else: error(:invalid_response)
-  end
-
   defp header?({name, value}) when is_binary(value) and byte_size(value) <= 4096,
     do: header_name?(name) and RequestSeal.Message.Validation.field_value?(value)
 
@@ -332,15 +338,48 @@ defmodule RequestSeal.Idempotency do
        when is_atom(adapter) and is_integer(timeout) and timeout in 1..300_000 do
     context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
 
-    if Code.ensure_loaded?(adapter) and function_exported?(adapter, operation, length(args) + 2),
-      do:
-        RequestSeal.Replay.run(context, fn ->
-          apply(adapter, operation, [ref | args] ++ [context])
-        end),
-      else: error(:store_failed)
+    arguments = [ref | args] ++ [context]
+
+    if Code.ensure_loaded?(adapter) and function_exported?(adapter, operation, length(arguments)) do
+      callback = fn -> invoke_adapter(adapter, operation, arguments) end
+
+      case RequestSeal.Replay.run(context, callback) do
+        {:adapter_result, {:error, reason}} -> store_error(reason)
+        {:adapter_result, result} -> result
+        {:error, %RequestSeal.Replay.Error{reason: :store_timeout}} -> error(:store_timeout)
+        _ -> error(:store_failed)
+      end
+    else
+      error(:store_failed)
+    end
   end
 
   defp call(_, _, _, _), do: error(:invalid_options)
+
+  defp invoke_adapter(adapter, operation, arguments) do
+    {:adapter_result, normalize(operation, apply(adapter, operation, arguments))}
+  rescue
+    _ -> {:adapter_result, {:error, :failure}}
+  catch
+    _, _ -> {:adapter_result, {:error, :failure}}
+  end
+
+  defp normalize(:reserve, {:reserved, <<_::128>>} = result), do: result
+
+  defp normalize(:reserve, {:stored, response} = result) do
+    if response?(response), do: result, else: {:error, :failure}
+  end
+
+  defp normalize(:reserve, result) when result in [:in_progress, :conflict, :expired], do: result
+  defp normalize(:store, result) when result in [:stored, :not_reserved], do: result
+
+  defp normalize(:sweep, {:ok, count} = result) when is_integer(count) and count >= 0,
+    do: result
+
+  defp normalize(_, {:error, reason} = result) when reason in [:timeout, :unavailable, :full],
+    do: result
+
+  defp normalize(_, _), do: {:error, :failure}
 
   defp observed(operation, fun) do
     start = System.monotonic_time()
@@ -362,14 +401,9 @@ defmodule RequestSeal.Idempotency do
     result
   end
 
-  defp store_error({:error, %Error{} = error}), do: {:error, error}
-
-  defp store_error({:error, %RequestSeal.Replay.Error{reason: :store_timeout}}),
-    do: error(:store_timeout)
-
-  defp store_error({:error, :timeout}), do: error(:store_timeout)
-  defp store_error({:error, :unavailable}), do: error(:store_unavailable)
-  defp store_error({:error, :full}), do: error(:store_full)
+  defp store_error(:timeout), do: error(:store_timeout)
+  defp store_error(:unavailable), do: error(:store_unavailable)
+  defp store_error(:full), do: error(:store_full)
   defp store_error(_), do: error(:store_failed)
   defp error(reason), do: {:error, %Error{reason: reason}}
 end

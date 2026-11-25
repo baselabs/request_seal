@@ -12,6 +12,7 @@ defmodule RequestSeal.Idempotency.Error do
           | :invalid_idempotency_key
           | :invalid_policy
           | :invalid_record
+          | :record_expired
           | :invalid_response
           | :store_unavailable
           | :store_timeout

@@ -43,7 +43,7 @@ defmodule RequestSeal.Journal do
   def start_link(_), do: {:error, :invalid_options}
 
   @doc """
-  Capture a validated unsigned origin-form request with a retained body of at most 1 MiB,
+  Capture a validated unsigned HTTP(S) origin-form request with a retained body of at most 1 MiB,
   one valid Idempotency-Key, a matching header Content-Digest, and no trailers
   or credential fields.
   """
@@ -61,9 +61,10 @@ defmodule RequestSeal.Journal do
              Enum.all?(fields, fn {name, _} -> String.downcase(name) not in @excluded end),
          [digest] <-
            for({name, value} <- fields, String.downcase(name) == "content-digest", do: value),
-         {:ok, _} <- RequestSeal.Digest.check(message, :content, section: :headers) do
-      body = message.body.bytes
-
+         body = message.body.bytes,
+         {:ok, rebuilt} <- rebuild(message.method, target, fields, body),
+         true <- valid_length?(fields, body),
+         {:ok, _} <- RequestSeal.Digest.check(rebuilt, :content, section: :headers) do
       {:ok,
        %__MODULE__{
          namespace: namespace,
@@ -121,7 +122,7 @@ defmodule RequestSeal.Journal do
   def reissue(%__MODULE__{} = recorded, spec, signer, opts) do
     with {:ok, normalized} <- signing_spec(spec, opts),
          {:ok, message} <-
-           Message.request(recorded.method, recorded.target, recorded.fields, recorded.body),
+           rebuild(recorded.method, recorded.target, recorded.fields, recorded.body),
          {:ok, ^recorded} <- entry(recorded.namespace, message) do
       case RequestSeal.sign(message, normalized, signer, opts) do
         {:ok, signed} ->
@@ -215,6 +216,25 @@ defmodule RequestSeal.Journal do
   end
 
   defp signing_spec(_, _), do: {:error, :invalid_options}
+
+  defp rebuild(method, target, fields, body) do
+    with {:ok, message} <- Message.request(method, target, fields, body),
+         true <- message.method == method,
+         {:ok, %{components: [{_, ^target}]}} <-
+           SignatureBase.components(message, ~s[("@target-uri")]) do
+      {:ok, message}
+    else
+      _ -> {:error, :invalid_intent}
+    end
+  end
+
+  defp valid_length?(fields, body) do
+    case for({name, value} <- fields, String.downcase(name) == "content-length", do: value) do
+      [] -> true
+      [value] -> value == Integer.to_string(byte_size(body))
+      _ -> false
+    end
+  end
 
   defp intent_digest(namespace, key, method, target, fields, body, digest) do
     field_bytes =

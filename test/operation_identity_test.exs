@@ -16,7 +16,7 @@ defmodule RequestSeal.OperationIdentityTest do
 
   test "a new signed attempt recovers the response and a changed body conflicts", ctx do
     journal = start_supervised!({Journal, max_entries: 2})
-    store = start_supervised!({Idempotency.ETS, max_entries: 2})
+    store = start_supervised!({Idempotency.ETS, max_entries: 2, clock: fn -> @now end})
     replay = start_supervised!({Replay.ETS, max_entries: 8})
     opts = [namespace: "orders", principal: "account", now: @now, retention: 120]
 
@@ -107,20 +107,11 @@ defmodule RequestSeal.OperationIdentityTest do
   end
 
   test "a replaced lease cannot complete and forbidden response shapes are refused" do
-    pid = start_supervised!({Idempotency.ETS, max_entries: 1})
-    store = Idempotency.ETS.store(pid)
-
-    record = %Idempotency.Record{
-      namespace: "orders",
-      principal: "account",
-      key: "request",
-      fingerprint: <<0::256>>,
-      now: @now,
-      lease_until: @now + 5,
-      retain_until: @now + 120
-    }
+    {store, clock} = timed_store()
+    record = record(@now, @now + 5, @now + 120)
 
     assert {:reserved, first} = Idempotency.reserve(store, record, timeout: 1000)
+    :ok = :atomics.put(clock, 1, @now + 5)
     renewed = %{record | now: @now + 5, lease_until: @now + 10}
     assert {:reserved, second} = Idempotency.reserve(store, renewed, timeout: 1000)
     opts = [timeout: 1000, allow_headers: []]
@@ -132,7 +123,9 @@ defmodule RequestSeal.OperationIdentityTest do
     assert :not_reserved = Idempotency.store(store, first, response, opts)
     assert :stored = Idempotency.store(store, second, response, opts)
     assert :not_reserved = Idempotency.store(store, second, response, opts)
+    :ok = :atomics.put(clock, 1, @now + 119)
     assert {:ok, 0} = Idempotency.sweep(store, @now + 119, timeout: 1000)
+    :ok = :atomics.put(clock, 1, @now + 120)
     assert {:ok, 1} = Idempotency.sweep(store, @now + 120, timeout: 1000)
   end
 
@@ -163,6 +156,138 @@ defmodule RequestSeal.OperationIdentityTest do
 
     assert {:error, :invalid_intent} =
              Journal.entry("orders", %{signed_intent | fields: signed_intent.fields ++ [field]})
+  end
+
+  test "late admission, renewal, completion, and sweep share the store clock" do
+    {store, clock} = timed_store()
+    record = record(@now, @now + 5, @now + 10)
+    opts = [timeout: 1000]
+    write_opts = [timeout: 1000, allow_headers: []]
+    response = %{status: 200, headers: [], body: "accepted"}
+
+    reserve = fn -> Idempotency.reserve(store, record, opts) end
+
+    assert [in_progress: 1, reserved: 1] =
+             [reserve, reserve]
+             |> concurrently()
+             |> Enum.frequencies_by(fn
+               {:reserved, _} -> :reserved
+               :in_progress -> :in_progress
+             end)
+             |> Enum.sort()
+
+    assert {:ok, 0} = Idempotency.sweep(store, @now, opts)
+    :ok = :atomics.put(clock, 1, @now + 5)
+
+    assert {:error, %Idempotency.Error{reason: :record_expired}} =
+             Idempotency.reserve(store, %{record | key: "late-new-key"}, opts)
+
+    # Produce a token for the other key with a live lease before renewal.
+    original = record(@now + 5, @now + 6, @now + 10)
+    assert {:reserved, previous} = Idempotency.reserve(store, %{original | key: "race"}, opts)
+    :ok = :atomics.put(clock, 1, @now + 6)
+    renewed = %{original | key: "race", now: @now + 6, lease_until: @now + 9}
+
+    assert [{:reserved, current}, :not_reserved, {:ok, 0}] =
+             concurrently([
+               fn -> Idempotency.reserve(store, renewed, opts) end,
+               fn -> Idempotency.store(store, previous, response, write_opts) end,
+               fn -> Idempotency.sweep(store, @now + 6, opts) end
+             ])
+
+    :ok = :atomics.put(clock, 1, @now + 10)
+    fresh = %{renewed | now: @now + 10, lease_until: @now + 13, retain_until: @now + 20}
+
+    assert [{:reserved, next}, :not_reserved, {:ok, swept}] =
+             concurrently([
+               fn -> Idempotency.reserve(store, fresh, opts) end,
+               fn -> Idempotency.store(store, current, response, write_opts) end,
+               fn -> Idempotency.sweep(store, @now + 10, opts) end
+             ])
+
+    assert swept in [1, 2]
+    assert :stored = Idempotency.store(store, next, response, write_opts)
+    assert {:stored, ^response} = Idempotency.reserve(store, fresh, opts)
+  end
+
+  defmodule InvalidAdapter do
+    def reserve(:error, _, _) do
+      {:error, %RequestSeal.Idempotency.Error{reason: {:wire, "canary"}}}
+    end
+
+    def reserve(:throw, _, _), do: throw({:replay_error, :store_timeout})
+  end
+
+  test "undeclared adapter returns cannot set the caller error or telemetry reason" do
+    event = [:request_seal, :idempotency, :reserve]
+    handler = {__MODULE__, make_ref()}
+    forward = fn event, _, data, owner ->
+      if self() == owner, do: send(owner, {event, data})
+    end
+
+    :ok = :telemetry.attach(handler, event, forward, self())
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    record = record(@now, @now + 5, @now + 10)
+
+    for form <- [:error, :throw] do
+      assert {:error, %Idempotency.Error{reason: :store_failed}} =
+               Idempotency.reserve({InvalidAdapter, form}, record, timeout: 1000)
+
+      assert_received {^event, %{outcome: :error, reason: :store_failed}}
+      refute_received {^event, _}
+    end
+  end
+
+  test "the journal refuses a captured scheme its request builder cannot reissue" do
+    original = message("first")
+    captured = %{original | scheme: "ftp"}
+    assert :ok = Message.validate(captured)
+    assert {:error, :invalid_intent} = Journal.entry("orders", captured)
+  end
+
+  defp timed_store do
+    clock = :atomics.new(1, [])
+    :ok = :atomics.put(clock, 1, @now)
+    read_clock = fn -> :atomics.get(clock, 1) end
+    pid = start_supervised!({Idempotency.ETS, max_entries: 2, clock: read_clock})
+    {Idempotency.ETS.store(pid), clock}
+  end
+
+  defp record(now, lease_until, retain_until) do
+    %Idempotency.Record{
+      namespace: "orders",
+      principal: "account",
+      key: "request",
+      fingerprint: <<0::256>>,
+      now: now,
+      lease_until: lease_until,
+      retain_until: retain_until
+    }
+  end
+
+  defp concurrently(calls) do
+    owner = self()
+    tag = make_ref()
+
+    tasks =
+      for call <- calls do
+        Task.async(fn ->
+          send(owner, {tag, self()})
+
+          receive do
+            ^tag -> call.()
+          end
+        end)
+      end
+
+    for task <- tasks do
+      pid = task.pid
+      assert_receive {^tag, ^pid}
+    end
+
+    Enum.each(tasks, &send(&1.pid, tag))
+    Task.await_many(tasks, 3000)
   end
 
   defp message(body) do
