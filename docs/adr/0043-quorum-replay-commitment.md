@@ -16,8 +16,10 @@ and subset changes as ways to bypass a commitment over signature facts.
 
 Require a finite freshness policy and explicit trust resolution in each slot.
 Verify every selector-eligible label against its complete slot policy. Build
-key identity classes from verified observations, merging aliases and treating
-unknown equivalence conservatively. An assignment uses each label and identity
+key identity classes from verified observations and merge known aliases.
+Only affirmative key identity evidence can fill a slot, including for
+principal and role verdicts. A failed custody lookup rejects that candidate.
+An assignment uses each label and identity
 class at most once. It meets required slots, bindings and distinct key,
 principal or role counting rules. Authorization remains unevaluated.
 
@@ -26,7 +28,9 @@ signature-negotiation checks. The commitment uses the configured namespace and o
 configured trusted principals, plus one identity shared by every verified
 candidate. Shared-nonce mode requires one identical nonempty authenticated
 nonce. Operation mode requires the same ordered mandatory components in every
-slot, and derives their exact values from verified bases. Signatures and their
+slot, and derives their exact values from verified bases. Policy construction
+requires a shared schema for each structured operation field so that disjoint
+signer sets interpret the same wire bytes identically. Signatures and their
 dictionary fields cannot appear in the commitment input. The exclusive
 retention end is fixed in the replay policy. All qualifying signature windows
 must fit it, including when the only supplied signatures are required ones.
@@ -52,10 +56,15 @@ boundary. The single post-verdict claim avoids both failure modes.
 
 ## Consequences
 
-Evaluation bounds label-slot verification at 64 × 16. The 16,384-unit
-assignment budget covers identity traversal, search nodes, candidate scans,
-binding checks and role matching. A completed satisfying assignment may be
-returned at the work bound. If none has been found, the verdict fails closed.
-A cooperative monotonic deadline covers phases between callback invocations.
-The caller controls resolver latency, clock agreement, safe sweep timing,
-and consistent policy across verifiers.
+Admission limits verification to 128 selector-eligible label-slot pairs.
+Identical digest policies reuse one body check while each signature proves
+digest coverage independently. The 16,384-unit assignment budget covers
+identity traversal, search nodes, candidate scans, binding checks and role
+matching. A completed satisfying assignment may be returned at the work
+bound. If none has been found, the verdict fails closed.
+
+When supplied, the absolute monotonic deadline bounds the evaluation worker,
+including caller callbacks. The replay claim receives the earlier of the
+same deadline and the store timeout. A store timeout may leave a committed
+claim. Callers control clock agreement, safe sweep timing, and consistent
+policy across verifiers.

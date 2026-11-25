@@ -12,30 +12,72 @@ defmodule RequestSeal.Quorum.Evaluation do
     SignatureFields
   }
 
+  alias RequestSeal.Custody.Context
   alias RequestSeal.Quorum.Verification
 
+  @verification_budget 128
   @work_budget 16_384
 
   def verify(message, quorum, opts) do
-    {deadline, requests} = options(opts)
-    ensure(Quorum.valid?(quorum), :invalid_quorum, :input)
-    checkpoint(deadline)
-    ensure(Message.validate(message) == :ok, :invalid_message, :input)
-    validate_requests(requests, message.kind)
-    {entries, signatures} = unwrap(Authentication.dictionaries(message, quorum.max_signatures))
-    check_signature_limits(quorum.slots, length(entries))
-    candidates = qualify(entries, signatures, message, quorum, deadline)
-    {count, selected} = assign(candidates, quorum, deadline)
-    negotiation = negotiate(requests, candidates, entries, deadline)
-    replay = claim(candidates, quorum.replay, deadline)
+    protect(fn ->
+      {deadline, requests} = options(opts)
+      checkpoint(deadline)
+      {assignments, count, negotiation, key} =
+        unwrap(evaluate(message, quorum, requests, deadline))
 
-    {:ok,
-     %Verification{
-       assignments: Map.new(selected, fn {id, candidate} -> {id, candidate.verification} end),
-       count: count,
-       replay: replay,
-       negotiation: negotiation
-     }}
+      checkpoint(deadline)
+      replay = claim(key, quorum.replay, deadline)
+
+      {:ok,
+       %Verification{
+         assignments: assignments,
+         count: count,
+         negotiation: negotiation,
+         replay: replay
+       }}
+    end)
+  end
+
+  defp evaluate(message, quorum, requests, deadline) do
+    callback = fn ->
+      protect(fn ->
+        checkpoint(deadline)
+        ensure(Quorum.valid?(quorum), :invalid_quorum, :input)
+        ensure(Message.validate(message) == :ok, :invalid_message, :input)
+        validate_requests(requests, message.kind)
+
+        {entries, signatures} =
+          unwrap(Authentication.dictionaries(message, quorum.max_signatures))
+
+        check_signature_limits(quorum.slots, length(entries))
+        eligible = admission(entries, quorum.slots)
+        candidates = qualify(eligible, signatures, message, quorum, deadline)
+        {count, selected} = assign(candidates, quorum, deadline)
+        negotiation = negotiate(requests, candidates, entries, deadline)
+        key = replay_key(candidates, quorum.replay)
+
+        assignments =
+          Map.new(selected, fn {id, candidate} -> {id, candidate.verification} end)
+
+        {:ok, {assignments, count, negotiation, key}}
+      end)
+    end
+
+    if deadline do
+      context = %Context{owner: self(), deadline: deadline}
+
+      case Replay.run(context, callback) do
+        {:error, %Replay.Error{reason: :store_timeout}} -> fail(:deadline, :quorum)
+        {:error, %Replay.Error{}} -> {:error, Error.new(:internal, :internal, :exit)}
+        result -> result
+      end
+    else
+      callback.()
+    end
+  end
+
+  defp protect(fun) do
+    fun.()
   rescue
     exception -> {:error, Error.new(:internal, :internal, exception.__struct__)}
   catch
@@ -72,66 +114,82 @@ defmodule RequestSeal.Quorum.Evaluation do
     ensure(Enum.all?(slots, &(count <= &1.policy.max_signatures)), :limit, :input)
   end
 
-  defp qualify(entries, signatures, message, quorum, deadline) do
+  defp admission(entries, slots) do
+    slots = Enum.sort_by(slots, & &1.id)
+
+    {eligible, _count} =
+      entries
+      |> Enum.sort_by(&elem(&1, 0))
+      |> Enum.map_reduce(0, fn {label, input}, count ->
+        tag = SignatureFields.parameters(input)["tag"]
+
+        eligible =
+          Enum.filter(slots, fn slot ->
+            slot[:label] in [nil, label] and slot[:tag] in [nil, tag]
+          end)
+
+        count = count + length(eligible)
+        ensure(count <= @verification_budget, :limit, :input)
+        {{label, input, eligible}, count}
+      end)
+
+    eligible
+  end
+
+  defp qualify(eligible, signatures, message, quorum, deadline) do
     context = %{quorum_replay: {scope(quorum), identifier(quorum.replay.identifier)}}
-    slots = Enum.sort_by(quorum.slots, & &1.id)
 
-    entries
-    |> Enum.sort_by(&elem(&1, 0))
-    |> Enum.flat_map(fn {label, input} ->
-      checkpoint(deadline)
-      params = SignatureFields.parameters(input)
+    {groups, _} =
+      Enum.map_reduce(eligible, %{}, fn {label, input, slots}, digest_cache ->
+        checkpoint(deadline)
 
-      eligible =
-        Enum.filter(slots, fn slot ->
-          slot[:label] in [nil, label] and slot[:tag] in [nil, params["tag"]]
-        end)
+        {records, cache} =
+          Enum.reduce(slots, {[], digest_cache}, fn slot, {records, cache} ->
+            checkpoint(deadline)
 
-      {records, _} =
-        Enum.reduce(eligible, {[], %{}}, fn slot, {records, cache} ->
-          checkpoint(deadline)
+            {result, cache} =
+              Authentication.verify_label(
+                message,
+                slot.policy,
+                label,
+                input,
+                signatures[label],
+                context,
+                cache
+              )
 
-          {result, cache} =
-            Authentication.verify_label(
-              message,
-              slot.policy,
-              label,
-              input,
-              signatures[label],
-              context,
-              cache
-            )
+            checkpoint(deadline)
 
-          checkpoint(deadline)
+            case result do
+              {:ok, {verification, identity, replay}} ->
+                candidate = %{
+                  slot: slot,
+                  label: label,
+                  verification: verification,
+                  key: identity_vertex(identity),
+                  replay: replay,
+                  covered: MapSet.new(verification.signature.covered)
+                }
 
-          case result do
-            {:ok, {verification, identity, replay}} ->
-              candidate = %{
-                slot: slot,
-                label: label,
-                verification: verification,
-                key: identity_vertex(identity),
-                replay: replay,
-                covered: MapSet.new(verification.signature.covered)
-              }
+                {[candidate | records], cache}
 
-              {[candidate | records], cache}
+              {:error, _} ->
+                {records, cache}
+            end
+          end)
 
-            {:error, _} ->
-              {records, cache}
-          end
-        end)
+        ensure(slots != [] or quorum.unexpected == :ignore, :unexpected_signature, :quorum)
 
-      ensure(eligible != [] or quorum.unexpected == :ignore, :unexpected_signature, :quorum)
+        ensure(
+          slots == [] or records != [] or quorum.invalid == :ignore,
+          :nonqualifying_signature,
+          :quorum
+        )
 
-      ensure(
-        eligible == [] or records != [] or quorum.invalid == :ignore,
-        :nonqualifying_signature,
-        :quorum
-      )
+        {Enum.reverse(records), Map.take(cache, [:content])}
+      end)
 
-      Enum.reverse(records)
-    end)
+    List.flatten(groups)
   end
 
   defp identity_vertex(%KeyIdentity{kind: :public, value: material}), do: {:public, material}
@@ -139,11 +197,13 @@ defmodule RequestSeal.Quorum.Evaluation do
   defp identity_vertex(_), do: :unknown
 
   defp assignments_by_slot(records, quorum, state) do
-    # Each observation connects a wire label and a verified key identity.
-    # Unknown observations share a vertex. Canonical roots make the merge
-    # independent of which eligible resolver returned first.
+    {known, unknown} = Enum.split_with(records, &(&1.key != :unknown))
+    unknown_slots = MapSet.new(unknown, & &1.slot.id)
+
+    # Only authenticated key identities establish independence. A label
+    # observed under two known identities connects them into one class.
     {parents, state} =
-      Enum.reduce(records, {%{}, state}, fn record, {parents, state} ->
+      Enum.reduce(known, {%{}, state}, fn record, {parents, state} ->
         {left, state} = root({:label, record.label}, parents, state)
         {right, state} = root(record.key, parents, state)
 
@@ -152,13 +212,8 @@ defmodule RequestSeal.Quorum.Evaluation do
           else: {Map.put(parents, max(left, right), min(left, right)), state}
       end)
 
-    known =
-      records
-      |> Enum.reject(&(&1.key == :unknown))
-      |> MapSet.new(& &1.label)
-
     {edges, state} =
-      Enum.map_reduce(records, state, fn record, state ->
+      Enum.map_reduce(known, state, fn record, state ->
         {class, state} = root({:label, record.label}, parents, state)
         {Map.put(record, :class, class), state}
       end)
@@ -169,18 +224,13 @@ defmodule RequestSeal.Quorum.Evaluation do
                                                                                      state ->
       available = Map.get(edges, slot.id, [])
 
-      allowed =
-        if quorum.unit == :key,
-          do: Enum.filter(available, &MapSet.member?(known, &1.label)),
-          else: available
-
       ensure(
-        not slot.required or available == [] or allowed != [],
+        not slot.required or available != [] or not MapSet.member?(unknown_slots, slot.id),
         :ambiguous_key_identity,
         :quorum
       )
 
-      {{slot, allowed}, spend(state)}
+      {{slot, available}, spend(state)}
     end)
   end
 
@@ -376,7 +426,10 @@ defmodule RequestSeal.Quorum.Evaluation do
   defp negotiate([], _candidates, _entries, _deadline), do: :not_requested
 
   defp negotiate(requests, candidates, entries, deadline) do
-    qualified = Map.new(candidates, &{&1.label, &1.verification.signature.parameters})
+    qualified =
+      candidates
+      |> Enum.reject(&(&1.key == :unknown))
+      |> Map.new(&{&1.label, &1.verification.signature.parameters})
     inputs = Map.new(entries)
 
     Enum.each(requests, fn request ->
@@ -399,7 +452,7 @@ defmodule RequestSeal.Quorum.Evaluation do
     :fulfilled
   end
 
-  defp claim(candidates, replay, deadline) do
+  defp replay_key(candidates, replay) do
     ensure(
       Enum.all?(
         candidates,
@@ -409,29 +462,23 @@ defmodule RequestSeal.Quorum.Evaluation do
       :replay
     )
 
-    key =
-      case Enum.uniq_by(candidates, & &1.replay) do
-        [%{replay: {:ok, digest}}] -> digest
-        _ -> fail(:replay_identity_mismatch, :replay)
-      end
+    case Enum.uniq_by(candidates, & &1.replay) do
+      [%{replay: {:ok, digest}}] -> digest
+      _ -> fail(:replay_identity_mismatch, :replay)
+    end
+  end
 
-    checkpoint(deadline)
-
-    timeout =
-      if deadline,
-        do: min(replay.timeout, max(1, deadline - System.monotonic_time(:millisecond))),
-        else: replay.timeout
-
+  defp claim(key, replay, deadline) do
     commitment = fn _ -> {:ok, key} end
 
     policy = %{
       namespace: replay.namespace,
       store: replay.store,
-      timeout: timeout,
+      timeout: replay.timeout,
       commitment: commitment
     }
 
-    unwrap(Replay.commit(policy, %{}, replay.retain_until))
+    unwrap(Replay.commit(policy, %{}, replay.retain_until, deadline))
   end
 
   defp scope(%{replay: %{scope: :namespace}}), do: :namespace

@@ -1,7 +1,7 @@
 defmodule RequestSeal.ReplayTest do
   use ExUnit.Case, async: false
   alias RequestSeal.{Body, FieldOccurrence, Message, Policy, PublicKey, Replay, TransportFacts}
-  alias RequestSeal.Replay.ETS
+  alias RequestSeal.Replay.{Commitment, ETS}
   alias RequestSeal.Custody.Context
   @root Path.join(__DIR__, "fixtures")
   @vectors :json.decode(File.read!(Path.join(@root, "verification/rfc9421.json")))
@@ -14,6 +14,32 @@ defmodule RequestSeal.ReplayTest do
     # GenServer.stop races the linked exit.
     pid = start_supervised!({ETS, max_entries: 256})
     %{pid: pid, store: ETS.store(pid)}
+  end
+
+  test "commitments reject invalid and duplicate identifiers and quorum-only scopes" do
+    scope = {:principal, "principal"}
+    assert {:ok, _} = Commitment.key(scope, {:operation, [{~s["@method"], "POST: parameter"}]})
+
+    for pairs <- [
+          [{~s["@method": POST], "parameter"}],
+          [{~s["@method"], "POST"}, {~s["@method"], "POST"}],
+          [{~s["flags";sf=?1], "value"}],
+          [{~s["flags";sf;tr], "value"}, {~s["flags";tr;sf], "value"}]
+        ] do
+      assert {:error, :missing_replay_identifier} = Commitment.key(scope, {:operation, pairs})
+    end
+
+    for invalid <- [:namespace, {:principals, ["principal"]}, {:principals, [nil]}] do
+      assert {:error, :ambiguous_replay_scope} = Commitment.key(invalid, {:nonce, "nonce"})
+    end
+  end
+
+
+  test "internal quorum scope rejects malformed principal collections" do
+    for malformed <- [[:unknown | :tail], [nil], []] do
+      assert {:error, :ambiguous_replay_scope} =
+               Commitment.quorum_key({:principals, malformed}, {:nonce, "nonce"})
+    end
   end
 
   test "sweep bounds protect claims through both public and direct entry points", ctx do

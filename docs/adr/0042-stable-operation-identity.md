@@ -18,6 +18,8 @@ scope survive material rotation and key aliases when the trusted identity stays
 stable. Material scope uses a public thumbprint or caller-supplied opaque
 symmetric identity. Built-in policies pin one retention end for all eligible
 attempts in a namespace. Verification refuses any signature window beyond it.
+Operation identifiers must be unique, canonical RFC 9421 components. The
+encoding length-prefixes each identifier and value separately.
 
 [Idempotency-Key draft-ietf-httpapi-idempotency-key-header-09](https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header-09)
 defines an RFC 9651 String, opaque key equality, fingerprint-based mismatch

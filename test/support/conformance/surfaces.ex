@@ -1590,8 +1590,10 @@ defmodule RequestSeal.Conformance.Surfaces do
           {:operation, Enum.map(pairs, fn [id, bytes] -> {id, C.bytes(bytes)} end)}
       end
 
-    {:ok, digest} = RequestSeal.Replay.Commitment.key(scope, identity)
-    {:ok, %{"commitment" => C.b64(digest)}}
+    case RequestSeal.Replay.Commitment.key(scope, identity) do
+      {:ok, digest} -> {:ok, %{"commitment" => C.b64(digest)}}
+      {:error, reason} -> {:error, RequestSeal.Error.new(reason, :replay)}
+    end
   end
 
   def idempotency_fingerprint(_root, %{"inputs" => input}) do

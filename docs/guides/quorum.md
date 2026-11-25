@@ -67,11 +67,12 @@ Enum.each(handles, fn handle -> :ok = Custody.Local.release(handle) end)
 ```
 
 Every required slot must qualify. In a threshold policy, `:unit` says whether
-to count distinct keys, configured principals, or roles. Use
+to count distinct keys, configured principals, or roles. Every assigned
+signature needs a known key identity in all counting modes. Use
 `{:role, shared_principal: false}` to require distinct principals across
 counted roles. Principal and role facts come from a slot's trusted resolver
 configuration. HMAC handles need explicit opaque equivalence identities for
-key counting. Nested bindings can require the outer signer to cover both inner
+independent signing. Nested bindings can require the outer signer to cover both inner
 signature dictionary members. Same-parameter bindings require a common
 authenticated value among their referenced slots. Pass parsed
 `Accept-Signature` requests as `:accept_signature` to require a qualifying
@@ -86,7 +87,11 @@ verifiers and account for clock skew and in-flight verification when sweeping.
 With shared nonce replay, confirm all signers cover the intended scope and
 payload, and coordinate so they use the same unique nonce. For operation
 replay, require the same complete operation-defining coverage in every slot,
-including a checked Content-Digest for requests with bodies. Adding an
-optional signer cannot change the replay key of an otherwise accepted request.
+including a checked Content-Digest for requests with bodies. Set the same
+schema in every slot for each structured operation field. Adding an optional
+signer cannot change the replay key of an otherwise accepted request.
+Verification admits up to 128 eligible label-slot pairs. A supplied absolute
+monotonic deadline bounds callbacks and assignment, and caps the replay
+store deadline.
 The verifier returns a replay receipt after the quorum verdict. Application
 authorization and effect uniqueness remain separate decisions.

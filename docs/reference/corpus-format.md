@@ -371,7 +371,9 @@ object is either `{"principal": bytes}` or
 big-endian length. Scope starts with `principal` or `credential` followed by
 the framed principal or framed purpose and credential. Purpose is byte zero
 for null or byte one followed by its UTF-8 bytes. Identity starts with `nonce`
-or `operation` followed by the framed nonce or framed `identifier: value` lines.
+or `operation` followed by the framed nonce or individually framed
+identifier/value pairs in policy order. RFC 9421 identifiers are canonical
+and unique, including equivalent parameter orderings.
 
 `idempotency.fingerprint/v1` takes four byte tags `method`, `target`,
 `content_digest`, and `body`. SHA-256 covers ASCII
@@ -398,7 +400,12 @@ one stored row. Use the replay v1 construction with profile `rfc9421/quorum`
 and scope bytes `namespace` for these cases. For a quorum scoped by trusted
 principals, scope bytes are ASCII `principals` followed by the individually
 framed, deduplicated principal bytes sorted lexicographically. A rejected
-case requires the specified rule ID and no stored claim.
+case requires the specified rule ID and no stored claim. A slot may declare
+`flags_schema` as `list` or `dictionary` over token and Boolean items for
+the `flags` field. All slots covering it as operation data must agree on the
+schema. A case with a `retry` message uses the same policy and store for both
+verdicts. Its expected `retry_rule_id` is checked alongside the first
+verdict and the unchanged single stored row.
 
 ## Publication and vendoring
 

@@ -24,16 +24,20 @@ defmodule RequestSeal.Replay.Commitment do
 
   Scopes are framed separately from the identity. Operation pairs use exact
   serialized signature-base identifiers and values, ordered by the policy.
+  Each identifier must be canonical and unique. Identifiers and values are
+  framed separately.
   Returns `{:error, :ambiguous_replay_scope}` for unusable scopes and
   `{:error, :missing_replay_identifier}` for absent or malformed identity.
   """
   @spec key(scope(), identity()) ::
           {:ok, <<_::256>>} | {:error, :ambiguous_replay_scope | :missing_replay_identifier}
-  def key(scope, identity), do: derive("rfc9421", scope, identity)
+  def key(scope, identity), do: derive("rfc9421", scope_bytes(scope), identity)
 
   @doc false
-  def derive(profile, scope, identity) do
-    with {:ok, scoped} <- scope_bytes(scope),
+  def quorum_key(scope, identity), do: derive("rfc9421/quorum", quorum_scope_bytes(scope), identity)
+
+  defp derive(profile, scope, identity) do
+    with {:ok, scoped} <- scope,
          {:ok, identified} <- identity_bytes(identity) do
       {:ok, digest("request-seal replay v1", [profile, scoped, identified])}
     end
@@ -93,14 +97,9 @@ defmodule RequestSeal.Replay.Commitment do
 
   @doc false
   def key_identity(%PublicKey{material: material}),
-    do: %KeyIdentity{kind: :public, value: KeyIdentity.normalize(material)}
+    do: {:ok, %KeyIdentity{kind: :public, value: KeyIdentity.normalize(material)}}
 
-  def key_identity(%KeyHandle{} = key) do
-    case Custody.identity(key) do
-      {:ok, identity} -> identity
-      {:error, _} -> %KeyIdentity{kind: :unknown}
-    end
-  end
+  def key_identity(%KeyHandle{} = key), do: Custody.identity(key)
 
   defp stable_component?(id) do
     not Enum.any?([~s["signature"], ~s["signature-input"]], fn name ->
@@ -119,7 +118,8 @@ defmodule RequestSeal.Replay.Commitment do
     {:ok, IO.iodata_to_binary(["credential", frame([binding, credential])])}
   end
 
-  defp scope_bytes({:key, %KeyIdentity{kind: :public, value: material}}) do
+  defp scope_bytes({:key, %KeyIdentity{kind: :public, value: material} = identity})
+       when map_size(identity) == 3 do
     with {:ok, key} <- PublicKey.import(material, :raw),
          {:ok, thumbprint} <- PublicKey.thumbprint(key) do
       {:ok, IO.iodata_to_binary(["key", frame(["public", thumbprint])])}
@@ -128,25 +128,36 @@ defmodule RequestSeal.Replay.Commitment do
     end
   end
 
-  defp scope_bytes({:key, %KeyIdentity{kind: :symmetric, value: identity}})
-       when is_binary(identity) and byte_size(identity) in 1..256,
-       do: {:ok, IO.iodata_to_binary(["key", frame(["symmetric", identity])])}
-
-  defp scope_bytes(:namespace), do: {:ok, "namespace"}
-
-  defp scope_bytes({:principals, values}) do
-    {:ok, IO.iodata_to_binary(["principals", frame(values)])}
-  end
+  defp scope_bytes({:key, %KeyIdentity{kind: :symmetric, value: value} = identity})
+       when map_size(identity) == 3 and is_binary(value) and byte_size(value) in 1..256,
+       do: {:ok, IO.iodata_to_binary(["key", frame(["symmetric", value])])}
 
   defp scope_bytes(_), do: {:error, :ambiguous_replay_scope}
+
+  defp quorum_scope_bytes(:namespace), do: {:ok, "namespace"}
+
+  defp quorum_scope_bytes({:principals, values}) when is_list(values) do
+    with true <- length(values) in 1..16 and Enum.all?(values, &Claim.bounded?/1),
+         principals = values |> Enum.uniq() |> Enum.sort() do
+      {:ok, IO.iodata_to_binary(["principals", frame(principals)])}
+    else
+      _ -> {:error, :ambiguous_replay_scope}
+    end
+  rescue
+    ArgumentError -> {:error, :ambiguous_replay_scope}
+  end
+
+  defp quorum_scope_bytes(_), do: {:error, :ambiguous_replay_scope}
 
   defp identity_bytes({:nonce, nonce}) when is_binary(nonce) and byte_size(nonce) in 1..1024,
     do: {:ok, IO.iodata_to_binary(["nonce", frame([nonce])])}
 
   defp identity_bytes({:operation, pairs}) when is_list(pairs) do
     with true <- length(pairs) in 1..64,
-         {:ok, lines} <- lines(pairs, [], 0) do
-      {:ok, IO.iodata_to_binary(["operation", frame(lines)])}
+         {:ok, parts} <- operation_parts(pairs, [], 0),
+         ids = Enum.map(pairs, &elem(&1, 0)),
+         {:ok, _} <- operation_components(ids) do
+      {:ok, IO.iodata_to_binary(["operation", frame(parts)])}
     else
       _ -> {:error, :missing_replay_identifier}
     end
@@ -156,14 +167,27 @@ defmodule RequestSeal.Replay.Commitment do
 
   defp identity_bytes(_), do: {:error, :missing_replay_identifier}
 
-  defp lines([], acc, _), do: {:ok, Enum.reverse(acc)}
+  @doc false
+  def operation_components(ids) do
+    wire = IO.iodata_to_binary(["(", Enum.intersperse(ids, " "), ")"])
 
-  defp lines([{id, value} | rest], acc, bytes)
-       when is_binary(id) and byte_size(id) in 3..65536 and is_binary(value) and
-              bytes + byte_size(id) + byte_size(value) + 2 <= 1_048_576 do
-    line = id <> ": " <> value
-    lines(rest, [line | acc], bytes + byte_size(line))
+    with {:ok, input} <- SignatureFields.inner(wire),
+         true <- input.parameters == [],
+         {:ok, ^ids} <- SignatureFields.identifiers(input.value),
+         true <- Enum.all?(ids, &stable_component?/1) do
+      {:ok, input.value}
+    else
+      _ -> :error
+    end
   end
 
-  defp lines(_, _, _), do: :error
+  defp operation_parts([], acc, _), do: {:ok, Enum.reverse(acc)}
+
+  defp operation_parts([{id, value} | rest], acc, bytes)
+       when is_binary(id) and byte_size(id) in 3..65_536 and is_binary(value) and
+              bytes + byte_size(id) + byte_size(value) <= 1_048_576 do
+    operation_parts(rest, [value, id | acc], bytes + byte_size(id) + byte_size(value))
+  end
+
+  defp operation_parts(_, _, _), do: :error
 end

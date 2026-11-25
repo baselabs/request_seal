@@ -159,10 +159,10 @@ defmodule RequestSeal.Replay do
   def policy?(_, _), do: false
 
   @doc false
-  def commit(replay, facts, retain_until) do
+  def commit(replay, facts, retain_until, deadline \\ nil) do
     start = System.monotonic_time()
 
-    result = run_claim(replay, facts, retain_until)
+    result = run_claim(replay, facts, retain_until, deadline)
 
     RequestSeal.Telemetry.emit(
       [:request_seal, :replay, :claim],
@@ -181,8 +181,11 @@ defmodule RequestSeal.Replay do
   defp claim_meta({:error, %RequestSeal.Error{} = error}),
     do: %{outcome: :error, reason: error.reason}
 
-  defp run_claim(replay, facts, retain_until) do
+  defp run_claim(replay, facts, retain_until, deadline) do
     context = context!(timeout: replay.timeout)
+
+    context =
+      if deadline, do: %{context | deadline: min(context.deadline, deadline)}, else: context
 
     run(context, fn ->
       key =

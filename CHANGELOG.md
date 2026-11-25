@@ -2,6 +2,9 @@
 
 ## Unreleased 2.0.0
 
+- Require known key identities and shared structured operation schemas for
+  quorum decisions, bound verifier callbacks, and reuse equivalent digest
+  checks. Frame operation identifiers and values independently.
 - Check idempotency admission and completion against the store clock, normalize
   adapter returns, and validate journal reconstruction before recording.
 

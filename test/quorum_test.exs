@@ -10,7 +10,7 @@ defmodule RequestSeal.QuorumTest do
 
   setup do
     keys =
-      for name <- ["primary", "optional", "third"], into: %{} do
+      for name <- ["primary", "optional", "third", "fourth"], into: %{} do
         {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
         {:ok, handle} = Local.new("ed25519", {:ed25519, seed})
         {:ok, public} = Custody.public_key(handle)
@@ -44,18 +44,14 @@ defmodule RequestSeal.QuorumTest do
 
   test "an unassigned qualifying nonce disagreement never claims", ctx do
     first = sign(ctx.message, ctx.keys, "primary", "main", "first")
-    both = sign(first, ctx.keys, "optional", "extra", "second")
-
-    quorum =
-      quorum(ctx, {:nonce, :shared}, [
-        slot(ctx, :main, "primary", true),
-        slot(ctx, :optional, "optional", false)
-      ])
+    both = sign(first, ctx.keys, "primary", "extra", "second")
+    matching = sign(first, ctx.keys, "primary", "extra", "first")
+    quorum = quorum(ctx, {:nonce, :shared}, [slot(ctx, :main, "primary", true)])
 
     assert {:error, %{reason: :replay_identity_mismatch, layer: :replay}} =
              RequestSeal.verify_quorum(both, quorum, [])
 
-    assert {:ok, %{count: 1}} = RequestSeal.verify_quorum(first, quorum, [])
+    assert {:ok, %{count: 1}} = RequestSeal.verify_quorum(matching, quorum, [])
     assert {:error, %{reason: :replayed}} = RequestSeal.verify_quorum(first, quorum, [])
   end
 
@@ -233,6 +229,229 @@ defmodule RequestSeal.QuorumTest do
 
     assert {:error, %{reason: :ambiguous_key_identity, layer: :quorum}} =
              RequestSeal.verify_quorum(signed, quorum, [])
+  end
+
+  test "structured operation fields require the same schema in every slot", ctx do
+    identifier = ~s["flags";sf]
+    components = "(" <> identifier <> ")"
+
+    make_slot = fn id, kind ->
+      slot = slot(ctx, id, nil, false)
+      schema = RequestSeal.SignatureFields.schema(kind, [:token, :boolean])
+
+      policy = %{slot.policy | components: components, field_schemas: %{"flags" => schema}}
+      %{slot | policy: policy}
+    end
+
+    policy = quorum(ctx, {:operation, [identifier]}, [make_slot.(:first, :list)], :any)
+    compatible = %{policy | slots: [make_slot.(:first, :list), make_slot.(:second, :list)]}
+    assert {:ok, _} = Quorum.new(Map.from_struct(compatible))
+
+    incompatible_slots = [make_slot.(:first, :list), make_slot.(:second, :dictionary)]
+    incompatible = %{compatible | slots: incompatible_slots}
+    assert {:error, %{reason: :invalid_quorum}} = Quorum.new(Map.from_struct(incompatible))
+  end
+
+  test "concurrent disjoint signatures with different dictionary order share an operation", ctx do
+    one = sign(ctx.message, ctx.keys, "primary", "one", "attempt-a")
+    two = sign(one, ctx.keys, "optional", "two", "attempt-b")
+    three = sign(ctx.message, ctx.keys, "third", "three", "attempt-c")
+    four = sign(three, ctx.keys, "fourth", "four", "attempt-d")
+    slots = [slot(ctx, :first, nil, false), slot(ctx, :second, nil, false)]
+    policy = quorum(ctx, @operation, slots, {:threshold, 2})
+
+    results =
+      [two, four]
+      |> Task.async_stream(&RequestSeal.verify_quorum(&1, policy, []), max_concurrency: 2)
+      |> Enum.map(fn {:ok, result} -> result end)
+
+    assert Enum.count(results, &match?({:ok, %{count: 2}}, &1)) == 1
+    assert Enum.count(results, &match?({:error, %{reason: :replayed}}, &1)) == 1
+
+    {:ok, distinct} = Message.request("GET", "https://example.test/another", [], nil)
+    one = sign(distinct, ctx.keys, "primary", "one", "attempt-a")
+    two = sign(one, ctx.keys, "optional", "two", "attempt-b")
+    assert {:ok, %{count: 2}} = RequestSeal.verify_quorum(two, policy, [])
+  end
+
+  test "principal and role thresholds cannot count an unknown alias beside the known key", ctx do
+    material = {:hmac, :crypto.strong_rand_bytes(32)}
+    {:ok, known} = Local.new("hmac-sha256", material, equivalence: "configured")
+    {:ok, unknown} = Local.new("hmac-sha256", material)
+    on_exit(fn -> Enum.each([known, unknown], &Local.release/1) end)
+
+    handles = [known: known, unknown: unknown]
+
+    {message, slots} =
+      Enum.reduce(handles, {ctx.message, []}, fn {id, handle}, {message, slots} ->
+        label = Atom.to_string(id)
+        spec = %{label: label, components: @components, algorithm: "hmac-sha256", expires_in: 60}
+        {:ok, signed} = RequestSeal.sign(message, spec, handle, clock: fn -> @now end)
+        slot = slot(ctx, id, nil, false)
+        key_resolver = fn _ -> {:ok, %{algorithm: "hmac-sha256", key: handle}} end
+        policy = %{slot.policy | algorithms: ["hmac-sha256"], key_resolver: key_resolver}
+        slot = Map.merge(slot, %{policy: policy, label: label, principal: label, role: id})
+        {signed, [slot | slots]}
+      end)
+
+    policy = quorum(ctx, @operation, slots, {:threshold, 2})
+
+    for unit <- [:principal, {:role, shared_principal: true}, {:role, shared_principal: false}] do
+      assert {:error, %{reason: :quorum_not_met}} =
+               RequestSeal.verify_quorum(message, %{policy | unit: unit}, [])
+    end
+
+    assert {:ok, %{count: 1}} =
+             RequestSeal.verify_quorum(message, %{policy | mode: :any}, [])
+  end
+
+  defmodule FailedIdentity do
+    alias RequestSeal.Custody.Local
+    defdelegate sign(ref, algorithm, bytes, context), to: Local
+    defdelegate public_key(ref), to: Local
+    defdelegate verify(ref, algorithm, bytes, signature, context), to: Local
+    def identity(_), do: {:error, :custodian_failure}
+  end
+
+  test "custody identity failures invalidate the candidate", ctx do
+    {signer, _} = ctx.keys["primary"]
+    signed = sign(ctx.message, ctx.keys, "primary", "main", "attempt")
+    failed = %{signer | custodian: FailedIdentity}
+    slot = slot(ctx, :main, "primary", true)
+    resolver = fn _ -> {:ok, %{algorithm: "ed25519", key: failed}} end
+    slot = %{slot | policy: %{slot.policy | key_resolver: resolver}}
+    policy = quorum(ctx, @operation, [slot])
+    policy = %{policy | invalid: :reject}
+
+    assert {:error, %{reason: :nonqualifying_signature}} =
+             RequestSeal.verify_quorum(signed, policy, [])
+
+    assert {:ok, 0} = Replay.ETS.sweep(ctx.pid, @now + 120)
+  end
+
+  test "aggregate admission refuses too many eligible signature checks before resolution", ctx do
+    message =
+      Enum.reduce(1..9, ctx.message, fn i, message ->
+        sign(message, ctx.keys, "primary", "sig-#{i}", "attempt")
+      end)
+
+    owner = self()
+
+    slots =
+      Enum.map(1..15, fn i ->
+        slot = slot(ctx, :main, nil, false)
+
+        resolver = fn _ ->
+          send(owner, :resolved)
+          :error
+        end
+
+        policy = %{slot.policy | key_resolver: resolver}
+        %{slot | id: String.to_atom("quorum-budget-#{i}"), policy: policy}
+      end)
+
+    policy = quorum(ctx, @operation, slots, :any)
+    assert {:error, %{reason: :limit}} = RequestSeal.verify_quorum(message, policy, [])
+    refute_received :resolved
+  end
+
+  test "a blocked resolver is joined at the caller deadline", ctx do
+    owner = self()
+    signed = sign(ctx.message, ctx.keys, "primary", "main", "attempt")
+    slot = slot(ctx, :main, "primary", true)
+
+    resolver = fn _ ->
+      send(owner, {:resolver, self()})
+
+      receive do
+        :finish -> :error
+      end
+    end
+
+    slot = %{slot | policy: %{slot.policy | key_resolver: resolver}}
+    policy = quorum(ctx, @operation, [slot])
+
+    result =
+      Task.async(fn ->
+        deadline = System.monotonic_time(:millisecond) + 1000
+        RequestSeal.verify_quorum(signed, policy, deadline: deadline)
+      end)
+
+    assert_receive {:resolver, pid}, 1000
+    assert {:error, %{reason: :deadline}} = Task.await(result, 3000)
+    refute Process.alive?(pid)
+    assert {:ok, 0} = Replay.ETS.sweep(ctx.pid, @now + 120)
+  end
+
+  test "equivalent digest checks are reused and every signer still must cover the digest", ctx do
+    covered = ~s[("@method" "@target-uri" "content-digest")]
+
+    {:ok, request} =
+      Message.request("POST", "https://example.test/operation", [], "data", digest: ["sha-256"])
+
+    add = fn message, keyid, components ->
+      {signer, _} = Map.fetch!(ctx.keys, keyid)
+      label = if keyid == "primary", do: "one", else: "two"
+
+      spec = %{
+        label: label,
+        keyid: keyid,
+        algorithm: "ed25519",
+        components: components,
+        expires_in: 60
+      }
+
+      {:ok, signed} = RequestSeal.sign(message, spec, signer, clock: fn -> @now end)
+      signed
+    end
+
+    first = add.(request, "primary", covered)
+    valid = add.(first, "optional", covered)
+    missing_digest = add.(first, "optional", @components)
+    content = %{kind: :content, section: :headers, algorithms: ["sha-256"]}
+
+    slots =
+      Enum.map([{:main, "primary"}, {:other, "optional"}], fn {id, keyid} ->
+        slot = slot(ctx, id, keyid, true)
+        %{slot | policy: %{slot.policy | content: content}}
+      end)
+
+    policy = quorum(ctx, @operation, slots)
+    assert {:error, %{reason: :quorum_not_met}} =
+             RequestSeal.verify_quorum(missing_digest, policy, [])
+
+    owner = self()
+
+    task =
+      Task.async(fn ->
+        receive do
+          :verify ->
+            result = RequestSeal.verify_quorum(valid, policy, [])
+            send(owner, {:verdict, self(), result})
+
+            receive do
+              :join -> :ok
+            end
+        end
+      end)
+
+    session = :trace.session_create(:quorum_digest, self(), [])
+    worker = task.pid
+    mfa = {RequestSeal.Digest, :check_validated, 3}
+
+    try do
+      assert :trace.function(session, mfa, true, [:local]) == 1
+      assert :trace.process(session, worker, true, [:call, :arity]) == 1
+      send(worker, :verify)
+      assert_receive {:verdict, ^worker, {:ok, %{count: 2}}}, 3000
+      delivered = :trace.delivered(session, worker)
+      assert_receive {:trace_delivered, ^worker, ^delivered}
+      assert_received {:trace, ^worker, :call, ^mfa}
+      refute_received {:trace, ^worker, :call, ^mfa}
+    after
+      :trace.session_destroy(session)
+      Task.shutdown(task, :brutal_kill)
+    end
   end
 
   defp sign(message, keys, keyid, label, nonce) do

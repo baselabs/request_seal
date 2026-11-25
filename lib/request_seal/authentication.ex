@@ -115,14 +115,16 @@ defmodule RequestSeal.Authentication do
 
         cache = Map.put(cache, cache_key, built)
 
-        result =
-          case built do
-            {:ok, {bytes, components}} ->
-              protect(fn ->
-                signature_bytes = elem(signature.value, 1)
-                public = verify_bytes(algorithm, bytes, signature_bytes, key, screening)
-                content = content(message, input, policy.content, opts)
+        signature_bytes = elem(signature.value, 1)
 
+        with {:ok, {bytes, components}} <- built,
+             {:ok, public} <-
+               protect(fn -> {:ok, verify_bytes(algorithm, bytes, signature_bytes, key, screening)} end) do
+          {content, cache} = content_result(message, input, policy.content, opts, cache)
+
+          result =
+            with {:ok, content} <- content do
+              protect(fn ->
                 replay =
                   replay(
                     policy.replay,
@@ -148,27 +150,32 @@ defmodule RequestSeal.Authentication do
                   replay: replay
                 }
 
-                case Map.fetch(opts, :quorum_replay) do
-                  {:ok, {quorum_scope, identifier}} ->
-                    identity = Commitment.select(identifier, params, components)
-                    digest = Commitment.derive("rfc9421/quorum", quorum_scope, identity)
-                    {:ok, {verification, Commitment.key_identity(public || key), digest}}
-
-                  :error ->
-                    {:ok, verification}
-                end
+                quorum_evidence(verification, public || key, components, opts)
               end)
+            end
 
-            error ->
-              error
-          end
-
-        {result, cache}
+          {result, cache}
+        else
+          error -> {error, cache}
+        end
 
       error ->
         {error, cache}
     end
   end
+
+  defp quorum_evidence(verification, key, components, %{quorum_replay: {scope, identifier}}) do
+    case Commitment.key_identity(key) do
+      {:ok, identity} ->
+        selected = Commitment.select(identifier, verification.signature.parameters, components)
+        {:ok, {verification, identity, Commitment.quorum_key(scope, selected)}}
+
+      {:error, _} ->
+        fail(:verifier_failed, :crypto)
+    end
+  end
+
+  defp quorum_evidence(verification, _, _, _), do: {:ok, verification}
 
   @doc false
   def preflight(input, components, extra, freshness_policy) do
@@ -537,7 +544,11 @@ defmodule RequestSeal.Authentication do
 
     scope =
       case {kind, scope} do
-        {:key, _} -> {:key, Commitment.key_identity(key)}
+        {:key, _} ->
+          case Commitment.key_identity(key) do
+            {:ok, identity} -> {:key, identity}
+            {:error, _} -> fail(:ambiguous_replay_scope, :replay)
+          end
         {:credential, {:credential, _, _}} -> scope
         {:principal, {:principal, _}} -> scope
         _ -> nil
@@ -605,9 +616,32 @@ defmodule RequestSeal.Authentication do
     end
   end
 
-  defp content(_, _, :not_required, _), do: :not_required
+  defp content_result(_, _, :not_required, _, cache), do: {{:ok, :not_required}, cache}
 
-  defp content(message, input, policy, opts) do
+  defp content_result(message, input, policy, opts, cache) do
+    case protect(fn -> content_coverage(input, policy) end) do
+      :ok ->
+        if Map.has_key?(opts, :quorum_replay) do
+          checks = Map.get(cache, :content, %{})
+          id = {policy.kind, policy.section, Enum.sort(policy.algorithms)}
+
+          result =
+            case Map.fetch(checks, id) do
+              {:ok, result} -> result
+              :error -> protect(fn -> {:ok, check_content(message, policy, opts)} end)
+            end
+
+          {result, Map.put(cache, :content, Map.put(checks, id, result))}
+        else
+          {protect(fn -> {:ok, check_content(message, policy, opts)} end), cache}
+        end
+
+      error ->
+        {error, cache}
+    end
+  end
+
+  defp content_coverage(input, policy) do
     name = if policy.kind == :content, do: "content-digest", else: "repr-digest"
 
     ensure(
@@ -625,7 +659,10 @@ defmodule RequestSeal.Authentication do
       :digest_not_covered,
       :content
     )
+  end
 
+  defp check_content(message, policy, opts) do
+    name = if policy.kind == :content, do: "content-digest", else: "repr-digest"
     section = if policy.section == :headers, do: message.fields, else: message.trailers
     ensure(is_list(section), :body_unavailable, :content)
     fields = Enum.filter(section, &(String.downcase(&1.name) == name))

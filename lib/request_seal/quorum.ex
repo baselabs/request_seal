@@ -9,6 +9,7 @@ defmodule RequestSeal.Quorum do
   """
   alias RequestSeal.{Error, Policy, SignatureFields}
   alias RequestSeal.Replay.{Claim, Commitment}
+  alias RequestSeal.StructuredFields.{Schema, Value}
 
   @derive {Inspect, only: [:mode, :unit, :max_signatures]}
   @enforce_keys [:mode, :unit, :slots, :unexpected, :invalid, :replay]
@@ -47,7 +48,8 @@ defmodule RequestSeal.Quorum do
   `identifier: {:nonce, :shared}` or `identifier: {:operation, ordered_ids}`
   and `scope: :namespace` or `scope: :principals`. The latter requires a
   trusted principal in every slot. Operation identifiers must be mandatory
-  under every slot policy.
+  under every slot policy. All slots must use the same valid schema for each
+  structured operation field.
 
   `:bindings` defaults to `[]`. It accepts at most 64 distinct
   `{:nested, outer: slot_id, inner: slot_id}` or
@@ -87,8 +89,33 @@ defmodule RequestSeal.Quorum do
     Commitment.settings?(replay) and
       (replay.scope == :namespace or
          (replay.scope == :principals and Enum.all?(slots, &Claim.bounded?(&1[:principal])))) and
-      (replay.identifier == {:nonce, :shared} or
-         Enum.all?(slots, &Commitment.operation?(replay.identifier, &1.policy.components)))
+      replay_identifier?(replay.identifier, slots)
+  end
+
+  defp replay_identifier?({:nonce, :shared}, _slots), do: true
+
+  defp replay_identifier?({:operation, ids} = identifier, slots) do
+    with true <- Enum.all?(slots, &Commitment.operation?(identifier, &1.policy.components)),
+         {:ok, components} <- Commitment.operation_components(ids) do
+      Enum.all?(components, &common_schema?(&1, slots))
+    else
+      _ -> false
+    end
+  end
+
+  defp replay_identifier?(_, _), do: false
+
+  defp common_schema?(%Value{value: {:string, name}, parameters: parameters}, slots) do
+    member? = List.keymember?(parameters, "key", 0)
+
+    if member? or List.keymember?(parameters, "sf", 0) do
+      case Enum.uniq(Enum.map(slots, &Map.get(&1.policy.field_schemas, name))) do
+        [%Schema{type: type}] -> not member? or type == :dictionary
+        _ -> false
+      end
+    else
+      true
+    end
   end
 
   defp slot?(%{id: id, policy: policy, required: required} = slot, unit) do

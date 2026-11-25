@@ -2,6 +2,7 @@ defmodule RequestSeal.Conformance.Quorum do
   @moduledoc false
   alias RequestSeal.{Conformance, Custody.Local, Policy, Quorum, Replay}
   alias RequestSeal.Conformance.Surfaces
+  alias RequestSeal.SignatureFields
 
   def verify(root, %{"inputs" => input, "now" => now}) do
     {:ok, pid} = Replay.ETS.start_link(max_entries: 8)
@@ -31,7 +32,9 @@ defmodule RequestSeal.Conformance.Quorum do
 
   defp run(root, input, now, pid, handles) do
     slots =
-      Enum.map(input["slots"], fn %{"id" => id, "keyid" => keyid, "required" => required} ->
+      Enum.map(input["slots"], fn slot ->
+        %{"id" => id, "keyid" => keyid, "required" => required} = slot
+
         {:ok, policy} =
           Policy.new(%{
             algorithms: ["hmac-sha256"],
@@ -44,6 +47,7 @@ defmodule RequestSeal.Conformance.Quorum do
                 :error
             end,
             content: :not_required,
+            field_schemas: schemas(slot["flags_schema"]),
             freshness: %{clock: fn -> now end, max_age: 120, skew: 0, require_expires: true},
             replay: :not_required
           })
@@ -60,10 +64,11 @@ defmodule RequestSeal.Conformance.Quorum do
     mode =
       case input["mode"] do
         "all" -> :all
+        "any" -> :any
         %{"threshold" => count} -> {:threshold, Conformance.int(count)}
       end
 
-    {:ok, policy} =
+    policy =
       Quorum.new(%{
         mode: mode,
         unit: :key,
@@ -80,30 +85,58 @@ defmodule RequestSeal.Conformance.Quorum do
         }
       })
 
-    result = RequestSeal.verify_quorum(Surfaces.message(root, input["message"]), policy, [])
     table = :sys.get_state(pid).table
 
-    case result do
-      {:ok, verdict} ->
-        [{{:claim, "corpus", commitment}, retain_until}] =
-          :ets.match_object(table, {{:claim, "corpus", :_}, :_})
-
-        {:ok,
-         %{
-           "count" => %{"int" => Integer.to_string(verdict.count)},
-           "slots" =>
-             verdict.assignments |> Map.keys() |> Enum.map(&Atom.to_string/1) |> Enum.sort(),
-           "commitment" => Conformance.b64(commitment),
-           "retain_until" => %{"int" => Integer.to_string(retain_until)}
-         }}
+    case policy do
+      {:ok, quorum} ->
+        verdict(root, input, quorum, table)
 
       {:error, _} = error ->
-        [] = :ets.match_object(table, {{:claim, "corpus", :_}, :_})
+        [] = rows(table)
         error
     end
   end
 
+  defp verdict(root, input, policy, table) do
+    result = RequestSeal.verify_quorum(Surfaces.message(root, input["message"]), policy, [])
+
+    case result do
+      {:ok, verdict} ->
+        [{{:claim, "corpus", commitment}, retain_until}] = rows(table)
+
+        facts = %{
+          "count" => %{"int" => Integer.to_string(verdict.count)},
+          "slots" =>
+            verdict.assignments |> Map.keys() |> Enum.map(&Atom.to_string/1) |> Enum.sort(),
+          "commitment" => Conformance.b64(commitment),
+          "retain_until" => %{"int" => Integer.to_string(retain_until)}
+        }
+
+        case input["retry"] do
+          nil ->
+            {:ok, facts}
+
+          retry ->
+            {:error, error} = RequestSeal.verify_quorum(Surfaces.message(root, retry), policy, [])
+            [{{:claim, "corpus", ^commitment}, ^retain_until}] = rows(table)
+            {:ok, Map.put(facts, "retry_rule_id", Conformance.rule_id(error))}
+        end
+
+      {:error, _} = error ->
+        [] = rows(table)
+        error
+    end
+  end
+
+  defp rows(table), do: :ets.match_object(table, {{:claim, "corpus", :_}, :_})
+
+  defp schemas(nil), do: %{}
+  defp schemas("list"), do: %{"flags" => SignatureFields.schema(:list, [:token, :boolean])}
+  defp schemas("dictionary"),
+    do: %{"flags" => SignatureFields.schema(:dictionary, [:token, :boolean])}
+
   defp slot_id("primary"), do: :primary
   defp slot_id("optional"), do: :optional
   defp slot_id("third"), do: :third
+  defp slot_id("fourth"), do: :fourth
 end

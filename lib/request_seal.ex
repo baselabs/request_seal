@@ -224,9 +224,10 @@ defmodule RequestSeal do
 
   Pass optional `:accept_signature` requests from `RequestSeal.AcceptSignature`
   to check their label, coverage and signed parameters before claiming.
-  The optional `:deadline` is an absolute monotonic millisecond time. Candidate
-  verification and assignment check it cooperatively. Assignment has a
-  16,384-unit work cap. Results establish no application authorization.
+  The optional `:deadline` is an absolute monotonic millisecond time. It
+  bounds verification, including callbacks, assignment, and the store call.
+  Verification admits at most 128 eligible label-slot checks. Assignment has
+  a 16,384-unit work cap. Results establish no application authorization.
   """
   @spec verify_quorum(Message.t(), RequestSeal.Quorum.t(), keyword()) ::
           {:ok, RequestSeal.Quorum.Verification.t()} | {:error, Error.t()}
