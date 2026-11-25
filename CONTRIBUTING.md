@@ -5,8 +5,9 @@ Pull requests execute no project code. A maintainer reviews outside contribution
 then submits the candidate commit through the landing process on a `kci/` ref.
 Its hosted qualification must pass before the default branch advances.
 Qualification reads `.tool-versions` only through the shared `scripts/toolchain.sh`
-reader and refuses differing installed versions. It restores analysis caches;
-a separate default-branch workflow warms them. Notebooks execute against the
+reader and refuses differing installed versions. It restores locked Mix dependencies,
+compiled dependencies and the latest lane's Dialyzer PLT. Only the default-branch
+cache warmer saves these caches. Notebooks execute against the
 inspected packed source, so a version can qualify before it exists on Hex.
 Contributions are licensed under Apache-2.0, as section 5 of the [license](LICENSE) describes.
 Report vulnerabilities as [SECURITY.md](SECURITY.md) describes, never in a public issue.
@@ -28,12 +29,16 @@ ordered/raw transport information, caller-owned custody, explicit profiles, and 
 results. Document each option and error at its public boundary. Add the corresponding
 guide, executable example, notebook, and corpus case as capabilities are implemented.
 
-Run permitted source-only checks before opening a pull request. Repository builds, tests, ExDoc, and notebooks run only in GitHub-hosted qualification; [testing and evidence](docs/guides/testing.md) describes that gate.
+Run permitted source-only checks before opening a pull request. The candidate's
+build, tests, ExDoc and notebooks run in GitHub-hosted qualification.
+[Testing and evidence](docs/guides/testing.md) describes that gate.
 Conformance claims require independent evidence beyond a local self-round-trip.
 
-Maintainers publish through a separate approved dispatch. Repeating it can finish
-an untagged release with identical package bytes by uploading only missing files;
-retired versions and differing bytes refuse. The package is read back byte for byte,
+Maintainers publish through a separate approved dispatch. The near-cap JWE teardown
+measurement and paired performance verdict must pass for the dispatched commit.
+Repeating the dispatch can finish an untagged release with identical package
+bytes by uploading only missing files. Retired versions and differing bytes
+refuse. The package is read back byte for byte,
 and the served docs by the commit their `release.json` names.
 Consumer assets are available from the GitHub release for `v<version>`; the
 [verification guide](docs/guides/verifying-releases.md) shows how to check them.

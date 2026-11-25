@@ -27,8 +27,7 @@ registry credentials and the later tag. Workflow changes require review before l
    history, including deleted content and commit messages, before accepting a cut.
 3. Submit the candidate through the protected landing process. The candidate
    qualifies in one GitHub-hosted run on a `kci/` ref. Every runtime lane,
-   mutation and teardown proof must pass, along with the reduced performance
-   harness self-check.
+   the mutation sweep and the reduced performance harness self-check must pass.
    The final check is `qualified`; the default-branch ruleset requires it without
    bypass. Only the landing process watches the run.
 4. Give release maintainers the repository, full commit, version, publication
@@ -39,8 +38,9 @@ registry credentials and the later tag. Workflow changes require review before l
    refuses any other ref as its first step. It trusts the default-branch ruleset
    without re-checking `qualified`. A package name absent from Hex is refused;
    first publication is the owner's decision.
-   The publication job waits for a passing paired performance verdict on the
-   exact dispatched commit. See [performance gates](#performance-gates).
+   The publication job waits for the paired performance verdict and the near-cap
+   teardown measurement to pass on the exact dispatched commit.
+   See [performance gates](#performance-gates).
 5. The unkeyed publication steps install the exact latest `.tool-versions` pair,
    refuse differing installed releases, fetch `--check-locked`, audit both feeds,
    verify the corpus pin and build deterministic corpus assets. They validate
@@ -49,7 +49,9 @@ registry credentials and the later tag. Workflow changes require review before l
    archive's checksum, metadata, explicit inventory and every source byte, write
    `release.json` (`package`, `version` and the dispatched `commit`) into the docs,
    and build and inspect the docs archive. An anonymous Hex API read then decides
-   exactly which archives to upload. No cache is read or written.
+   exactly which archives to upload. Unkeyed builds can restore exact locked
+   dependency caches from the default-branch warmer. The upload runs outside
+   those project directories.
 6. The same unkeyed steps generate and verify CycloneDX 1.6 against the production
    dependency closure, including optional integrations. `scripts/sbom.py` verifies
    the platform-specific digest of upstream's prebuilt tool before execution.
@@ -88,7 +90,9 @@ The publication workflow runs 24 paired rounds on fresh GitHub-hosted
 dispatch run to inspect the per-round medians, ratios and host conditions.
 The [decision record](../adr/0031-performance-release-gates.md) defines the
 workloads, admission rule and four thresholds. Failed and unmeasured gates
-block publication. Each dispatch collects its fixed set of rounds once.
+block publication. Each dispatch collects its fixed set of rounds once. A
+separate job measures near-cap JWE teardown against the library bounds and
+retains the JSON in the `jwe-teardown` artifact, including on failure.
 
 When both relative gates pass and an absolute gate is the only failure, give
 the owner the verdict and round artifacts. The owner decides whether to
@@ -360,7 +364,8 @@ scheduled or dispatched drift report may otherwise resolve fresh; it has no
 secret, environment, cache or qualification verdict. An advisory without a fixed
 release needs a reasoned `hex: [ignore_advisories: [...]]` project entry.
 Security overrides require a reason and real Livebook importer/exporter checks.
-Rebuild incompatible build artifacts and analysis caches when the toolchain or major dependencies change.
+Exact cache keys turn over when the toolchain, Mix configuration or lockfile changes.
+The default-branch warmer builds and saves new entries for the affected lanes.
 
 ## Incident and rollback
 

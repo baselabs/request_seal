@@ -16,8 +16,10 @@ Starting with 2.0, the GitHub release for each `v<version>` tag carries:
 The package tarball, docs archive, corpus archive, and SBOM have GitHub build-provenance
 attestations. The package tarball also has a CycloneDX SBOM attestation binding
 it to the dependency inventory. The dispatch-only `Publish` workflow builds and
-attests these files on the default branch and publishes the package to Hex. After
-reading the publication back, the maintainers tag the published commit and create
+attests these files on the default branch after the dispatched commit passes
+the near-cap JWE teardown and paired performance gates, then publishes the
+package to Hex. After reading the publication back, the maintainers tag the
+published commit and create
 the GitHub release from the files that run handed over. No workflow runs on a tag.
 A held publication can resume from a later dispatch: identical package bytes
 skip package upload, and only missing docs upload. Retired versions and differing

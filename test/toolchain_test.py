@@ -116,6 +116,17 @@ class ToolchainTest(unittest.TestCase):
         key, value = result.stdout.strip().split("=", 1)
         self.assertEqual("matrix", key)
         self.assertEqual(expected, json.loads(value))
+        result = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "scripts/qualify.py"),
+                                 "--matrix", "--cache-environments"],
+                                env={"PATH": "/usr/bin:/bin", "TOOLCHAIN_OUTPUTS": json.dumps(outputs)},
+                                check=True, capture_output=True, text=True, timeout=30)
+        key, value = result.stdout.strip().split("=", 1)
+        self.assertEqual("matrix", key)
+        floor, mid, latest = expected["include"]
+        self.assertEqual({"include": [
+            dict(floor, mix_env="test"), dict(floor, mix_env="dev"), dict(mid, mix_env="test"),
+            dict(latest, mix_env="test"), dict(latest, mix_env="dev"), dict(latest, mix_env="prod"),
+        ]}, json.loads(value))
         for lanes in ([], [{}], [{}, {}, {}], {}):
             with self.subTest(lanes=lanes), self.assertRaises(ValueError):
                 qualify.verification_matrix({**outputs, "beam_lanes": json.dumps(lanes)})
@@ -141,7 +152,8 @@ class ToolchainTest(unittest.TestCase):
             (proofs.replace("  mutations:\n", "  mutations: {container: sidecar:latest}\n"), "ci.yml"),
             ("jobs:\n  mutations: {container: sidecar:latest}\n", "ci.yml"),
             ("jobs:\n  verify:\n    services:\n      sidecar: {image: sidecar:latest}\n", "ci.yml"),
-            (proofs.replace("  teardown:\n", "  teardown:\n    services:\n      postgres:\n        image: "
+            (proofs.replace("  release-gate-self-check:\n",
+                            "  release-gate-self-check:\n    services:\n      postgres:\n        image: "
                             + "${{ inputs.engine }}\n"), "ci.yml"),
             (proofs.replace("  verify:\n", "  verify:\n    services:\n      postgres:\n        image: "
                             + "${{ inputs.engine }}\n"), "ci.yml"),

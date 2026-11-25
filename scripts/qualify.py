@@ -14,8 +14,9 @@ from urllib.request import Request, urlopen
 
 VERDICT = "qualified"
 # Every proof job in .github/workflows/ci.yml; verify runs once per toolchain lane.
-JOBS = ("process-ownership-macos", "toolchain", "mutations", "teardown", "release-gate-self-check")
+JOBS = ("process-ownership-macos", "toolchain", "mutations", "release-gate-self-check")
 LANE_JOB = "verify"
+MIX_ENVIRONMENTS = {"floor": ("test", "dev"), "mid": ("test",), "latest": ("test", "dev", "prod")}
 
 
 def verification_matrix(outputs):
@@ -39,6 +40,12 @@ def expected_jobs(matrix):
         raise ValueError("Qualification requires exactly the floor, mid, and latest proofs")
     names = [*JOBS, *(f"{LANE_JOB} ({lane})" for lane in lanes)]
     return set(names)
+
+
+def cache_matrix(matrix):
+    """Warm the root Mix environments used by each qualification lane."""
+    return {"include": [dict(lane, mix_env=mix_env) for lane in matrix["include"]
+                        for mix_env in MIX_ENVIRONMENTS[lane["lane"]]]}
 
 
 def refusals(proofs_result, jobs, expected):
@@ -91,10 +98,16 @@ def run_jobs(api, repository, run_id, token):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--matrix", action="store_true", help="Label the shared reader's runtime lanes")
+    parser.add_argument("--cache-environments", action="store_true",
+                        help="Expand --matrix to the Mix environments used by each runtime lane")
     args = parser.parse_args()
+    if args.cache_environments and not args.matrix:
+        parser.error("--cache-environments requires --matrix")
     environment = os.environ
     if args.matrix:
         matrix = verification_matrix(json.loads(environment["TOOLCHAIN_OUTPUTS"]))
+        if args.cache_environments:
+            matrix = cache_matrix(matrix)
         print("matrix=" + json.dumps(matrix, separators=(",", ":")))
         return 0
     expected = expected_jobs(environment["VERIFY_MATRIX"])

@@ -14,7 +14,7 @@ from workflow_yaml import load as load_workflow  # noqa: E402
 from jwe_release_gates import ROUNDS  # noqa: E402
 
 WORKFLOWS = ROOT / ".github/workflows"
-PROOFS = {"process-ownership-macos", "toolchain", "verify", "mutations", "teardown",
+PROOFS = {"process-ownership-macos", "toolchain", "verify", "mutations",
           "release-gate-self-check"}
 VERIFY_MATRIX = json.dumps({"include": [{"lane": lane} for lane in ("floor", "mid", "latest")]})
 
@@ -63,12 +63,13 @@ def proof_condition_errors(source, ci_source):
                 conditions.setdefault(identity, []).append(step["if"])
     conditions = {identity: sorted(bound) for identity, bound in conditions.items()}
     expected = {
-        ("verify", "actions/cache/restore"): ["matrix.lane == 'latest'"],
+        ("verify", "actions/cache/restore"): [
+            "matrix.lane != 'mid'", "matrix.lane == 'latest'", "matrix.lane == 'latest'",
+        ],
         ("verify", "mix test --warnings-as-errors"): ["matrix.lane == 'floor'", "matrix.lane == 'mid'"],
         ("verify", "python3 scripts/check_optional_clients.py"): ["matrix.lane == 'floor'"],
         ("verify", "python3 scripts/check.py"): ["matrix.lane == 'latest'"],
         ("verify", "Remove disposable PostgreSQL"): ["always()"],
-        ("teardown", "actions/upload-artifact"): ["always()"],
         ("release-gate-self-check", "actions/upload-artifact"): ["always()"],
     }
     if conditions != expected:
@@ -182,7 +183,7 @@ class QualificationTest(unittest.TestCase):
 
     def test_inventory_is_every_proof_and_one_verify_leg_per_lane(self):
         self.assertEqual(
-            {"process-ownership-macos", "toolchain", "mutations", "teardown",
+            {"process-ownership-macos", "toolchain", "mutations",
              "release-gate-self-check", "verify (floor)", "verify (mid)", "verify (latest)"},
             qualify.expected_jobs(VERIFY_MATRIX),
         )
@@ -206,9 +207,9 @@ class QualificationTest(unittest.TestCase):
              proof_jobs(**{leg: [{"name": leg, "status": "completed", "conclusion": "cancelled"}]}),
              f"{leg}: completed/cancelled"),
             ("inner job skipped", direct_results(),
-             proof_jobs(**{"teardown": [{"name": "teardown", "status": "completed",
-                                                  "conclusion": "skipped"}]}),
-             "teardown: completed/skipped"),
+             proof_jobs(mutations=[{"name": "mutations", "status": "completed",
+                                    "conclusion": "skipped"}]),
+             "mutations: completed/skipped"),
             ("leg missing", direct_results(), proof_jobs(**{leg: []}), f"{leg}: missing"),
             ("leg still running", direct_results(),
              proof_jobs(**{leg: [{"name": leg, "status": "in_progress", "conclusion": None}]}),
@@ -254,8 +255,10 @@ class QualificationTest(unittest.TestCase):
         self.assertIn("latest's PLT restore missed", ci)
         self.assertEqual("${{ matrix.lane == 'latest' && 51 || matrix.lane == 'floor' && 29 || 23 }}",
                          jobs(ci)["verify"]["timeout-minutes"])
-        self.assertEqual("10", jobs(text("cache-warmer.yml"))["dialyzer"]["timeout-minutes"])
         self.assertIn("run 44299761657: cold 4m54s", text("cache-warmer.yml"))
+        self.assertIn("run 44295770186: cold 22m51s", text("publish.yml"))
+        for source in (ci, text("cache-warmer.yml"), text("publish.yml")):
+            self.assertIn("warm value: measure on first green run", source)
 
     def test_only_packed_archive_consumers_resolve_fresh_and_all_projects_audit_both_feeds(self):
         fresh = set()
@@ -303,8 +306,8 @@ class QualificationTest(unittest.TestCase):
 
     def test_condition_bindings_reject_relocation_and_extra_conditions(self):
         original, ci = text("ci.yml"), text("ci.yml")
-        relocated = original.replace("      - if: matrix.lane == 'latest'\n        uses: actions/cache/restore@",
-                                     "      - uses: actions/cache/restore@", 1).replace(
+        relocated = original.replace("      - name: Restore Dialyzer PLT\n        if: matrix.lane == 'latest'\n",
+                                     "      - name: Restore Dialyzer PLT\n", 1).replace(
             "        run: python3 scripts/mutations.py",
             "        if: matrix.lane == 'latest'\n        run: python3 scripts/mutations.py", 1)
         for changed in (
@@ -317,8 +320,8 @@ class QualificationTest(unittest.TestCase):
                              "      - if: false\n        run: python3 -B -m unittest discover -s test -p processes_test.py"),
             original.replace("        run: python3 scripts/mutations.py",
                              "        if: false\n        run: python3 scripts/mutations.py"),
-            original.replace('        run: python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"',
-                             '        if: false\n        run: python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"'),
+            original.replace("        run: |\n          python3 scripts/jwe_release_gates.py round",
+                             "        if: false\n        run: |\n          python3 scripts/jwe_release_gates.py round"),
         ):
             with self.subTest(changed=changed):
                 self.assertNotEqual(original, changed)
@@ -326,34 +329,43 @@ class QualificationTest(unittest.TestCase):
         self.assertTrue(proof_condition_errors(original, ci.replace(
             "  qualified:\n", "  qualified:\n    continue-on-error: true\n")))
 
-    def test_mutations_and_teardown_are_candidate_jobs_with_kept_evidence(self):
+    def test_mutations_are_a_candidate_proof_and_teardown_is_a_publication_gate(self):
         proofs = jobs(text("ci.yml"))
-        for job, command in (("mutations", "python3 scripts/mutations.py"),
-                             ("teardown", 'python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"')):
-            with self.subTest(job=job):
-                self.assertEqual("toolchain", proofs[job]["needs"])
-                steps = proofs[job]["steps"]
-                commands = [step["run"] for step in steps if "run" in step]
-                self.assertEqual(1, commands.count(command))
-                self.assertNotIn("if", next(step for step in steps if step.get("run") == command))
-                self.assertEqual("test", proofs[job]["env"]["MIX_ENV"])
-                self.assertIn("mix deps.get --check-locked", commands)
-                # These proofs run without services or caches.
-                self.assertNotIn("services", proofs[job])
-                self.assertFalse(any(step_identity(step).split("/")[:2] == ["actions", "cache"] for step in steps))
-        uploads = [step for step in proofs["teardown"]["steps"] if step_identity(step) == "actions/upload-artifact"]
+        pub = jobs(text("publish.yml"))
+        self.assertNotIn("teardown", proofs)
+        self.assertEqual({"release-gate-verdict", "teardown"}, set(pub["publish"]["needs"]))
+        self.assertNotIn("environment", pub["teardown"])
+        self.assertEqual(pub["publish"]["if"], pub["teardown"]["if"])
+        self.assertEqual("${{ github.sha }}", pub["teardown"]["steps"][1]["with"]["ref"])
+        self.assertEqual("toolchain", proofs["mutations"]["needs"])
+        for job, command in (
+            (proofs["mutations"], "python3 scripts/mutations.py"),
+            (pub["teardown"], 'python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"'),
+        ):
+            steps = job["steps"]
+            commands = [step["run"] for step in steps if "run" in step]
+            self.assertEqual(1, commands.count(command))
+            step = next(step for step in steps if step.get("run") == command)
+            self.assertNotIn("if", step)
+            self.assertNotIn("continue-on-error", step)
+            self.assertNotIn("continue-on-error", job)
+            self.assertEqual("test", job["env"]["MIX_ENV"])
+            self.assertIn("mix deps.get --check-locked", commands[:commands.index(command)])
+            self.assertNotIn("services", job)
+        uploads = [step for step in pub["teardown"]["steps"] if step_identity(step) == "actions/upload-artifact"]
         self.assertEqual(1, len(uploads))
         self.assertEqual({"uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
                           "if": "always()", "with": {"name": "jwe-teardown", "if-no-files-found": "error",
                                                        "retention-days": "7",
                                                        "path": "${{ runner.temp }}/jwe-teardown.json"}}, uploads[0])
         for workflow in workflows():
-            if workflow.name != "ci.yml":
-                commands = [step.get("run", "") for body in jobs(workflow.read_text()).values()
-                            for step in body.get("steps", [])]
-                for command in commands:
-                    self.assertNotIn("scripts/mutations.py", command, workflow.name)
-                    self.assertNotIn("jwe_teardown_gate", command, workflow.name)
+            for name, job in jobs(workflow.read_text()).items():
+                for step in job["steps"]:
+                    command = step.get("run", "")
+                    if "scripts/mutations.py" in command:
+                        self.assertEqual(("ci.yml", "mutations"), (workflow.name, name))
+                    if "scripts/jwe_teardown_gate.py" in command:
+                        self.assertEqual(("publish.yml", "teardown"), (workflow.name, name))
 
     def test_only_publication_requires_all_full_performance_rounds(self):
         ci = jobs(text("ci.yml"))
@@ -368,7 +380,7 @@ class QualificationTest(unittest.TestCase):
         self.assertEqual([str(i) for i in range(1, ROUNDS + 1)], rounds["strategy"]["matrix"]["round"])
         self.assertEqual("false", rounds["strategy"]["fail-fast"])
         self.assertEqual("release-gate-round", verdict["needs"])
-        self.assertEqual("release-gate-verdict", pub["publish"]["needs"])
+        self.assertIn("release-gate-verdict", pub["publish"]["needs"])
         for job in (rounds, verdict):
             self.assertEqual("ubuntu-24.04", job["runs-on"])
             self.assertNotIn("environment", job)
@@ -393,22 +405,14 @@ class QualificationTest(unittest.TestCase):
                         self.assertEqual(expected, step["with"].get("retention-days"))
         self.assertGreater(found, 0)
 
-    def test_only_the_default_branch_warmer_saves_the_exact_qualification_cache(self):
+    def test_only_the_default_branch_warmer_saves_caches(self):
         warmer = load_workflow(text("cache-warmer.yml"))
         self.assertEqual({"push": {"branches": ["main"]}, "schedule": [{"cron": "19 6 * * *"}],
                           "workflow_dispatch": ""}, warmer["on"])
         self.assertNotIn("secrets.", text("cache-warmer.yml"))
-        self.assertNotIn("environment", warmer["jobs"]["dialyzer"])
-        steps = warmer["jobs"]["dialyzer"]["steps"]
-        self.assertEqual('test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"', steps[0]["run"])
-        lookup = next(step for step in steps if step.get("id") == "lookup")
-        self.assertEqual("true", lookup["with"]["lookup-only"])
-        proof_cache = next(step for step in jobs(text("ci.yml"))["verify"]["steps"]
-                           if step.get("uses", "").startswith("actions/cache/restore@"))
-        self.assertEqual(proof_cache["with"]["key"].replace("matrix.", "steps.pins.outputs."), lookup["with"]["key"])
-        self.assertEqual(proof_cache["with"]["path"], lookup["with"]["path"])
-        for step in steps[steps.index(lookup) + 1:]:
-            self.assertEqual("steps.lookup.outputs.cache-hit != 'true'", step["if"])
+        for name, job in warmer["jobs"].items():
+            self.assertNotIn("environment", job)
+            self.assertEqual('test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"', job["steps"][0]["run"], name)
         for path in workflows():
             for body in jobs(path.read_text()).values():
                 for step in body["steps"]:
@@ -416,11 +420,91 @@ class QualificationTest(unittest.TestCase):
                     self.assertNotEqual("actions/cache", action)
                     if action == "actions/cache/save":
                         self.assertEqual("cache-warmer.yml", path.name)
+                    if action.startswith("actions/cache/"):
+                        self.assertEqual(action + "@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", step["uses"])
+                        self.assertNotIn("restore-keys", step["with"])
                     if action.startswith("actions/setup-"):
                         self.assertNotIn("cache", step.get("with", {}))
                     if action == "actions/setup-node":
                         self.assertEqual("false", step["with"]["package-manager-cache"])
 
+    def test_compiling_jobs_restore_the_exact_caches_the_warmer_saves(self):
+        def restores(job):
+            return [step for step in job["steps"] if step_identity(step) == "actions/cache/restore"]
+
+        def template(lane, pins, environment):
+            expr = lambda value: "$" + "{{ " + value + " }}"
+            lock = expr("hashFiles('mix.lock')")
+            config = expr("hashFiles('mix.exs', 'config/**/*.exs')")
+            return (f"mix-{lane}-{expr(pins + '.elixir')}-{expr(pins + '.otp')}-{environment}-"
+                    f"{expr('runner.os')}-{lock}-{config}")
+
+        warmer = jobs(text("cache-warmer.yml"))
+        ci = jobs(text("ci.yml"))
+        pub = jobs(text("publish.yml"))
+        mix_lookups = restores(warmer["mix"])
+        mix, plt, restore_for_plt = mix_lookups
+        benchmark, = restores(warmer["benchmark"])
+        self.assertEqual("${{ fromJSON(needs.toolchain.outputs.matrix) }}", warmer["mix"]["strategy"]["matrix"])
+        self.assertEqual("${{ matrix.mix_env }}", warmer["mix"]["env"]["MIX_ENV"])
+        self.assertIn('python3 scripts/qualify.py --matrix --cache-environments',
+                      warmer["toolchain"]["steps"][-1]["run"])
+        self.assertEqual(template("${{ matrix.lane }}", "matrix", "${{ matrix.mix_env }}"), mix["with"]["key"])
+        self.assertEqual(mix["with"]["key"], restore_for_plt["with"]["key"])
+        self.assertEqual(mix["with"]["path"], restore_for_plt["with"]["path"])
+        self.assertEqual("matrix.lane == 'latest' && matrix.mix_env == 'dev'", plt["if"])
+
+        for job, lookups in ((warmer["mix"], (mix, plt)), (warmer["benchmark"], (benchmark,))):
+            saves = [step for step in job["steps"] if step_identity(step) == "actions/cache/save"]
+            self.assertEqual(len(lookups), len(saves))
+            for lookup, save in zip(lookups, saves):
+                identifier = lookup["id"]
+                self.assertEqual("true", lookup["with"]["lookup-only"])
+                self.assertEqual(lookup["with"]["path"], save["with"]["path"])
+                self.assertEqual("${{ steps." + identifier + ".outputs.cache-primary-key }}", save["with"]["key"])
+                self.assertIn(f"steps.{identifier}.outputs.cache-hit != 'true'", save["if"])
+        root_steps = warmer["mix"]["steps"]
+        commands = [step.get("run", "") for step in root_steps]
+        compile_deps = commands.index("mix deps.compile")
+        build_plt = commands.index("mix dialyzer --plt")
+        save_deps = next(root_steps.index(step) for step in root_steps
+                         if step_identity(step) == "actions/cache/save")
+        self.assertLess(compile_deps, save_deps)
+        self.assertLess(save_deps, build_plt)
+        warm_bench = next(step["run"] for step in warmer["benchmark"]["steps"]
+                          if "mix deps.compile" in step.get("run", ""))
+        self.assertIn("mix deps.compile --skip-local-deps", warm_bench)
+
+        verify_test, verify_dev, verify_prod, verify_plt = restores(ci["verify"])
+        self.assertNotIn("if", verify_test)
+        self.assertEqual("matrix.lane != 'mid'", verify_dev["if"])
+        self.assertEqual("matrix.lane == 'latest'", verify_prod["if"])
+        self.assertEqual("matrix.lane == 'latest'", verify_plt["if"])
+        for env, restore in zip(("test", "dev", "prod"), (verify_test, verify_dev, verify_prod)):
+            self.assertEqual(template("${{ matrix.lane }}", "matrix", env), restore["with"]["key"])
+            self.assertEqual(f"deps\n_build/{env}\n", restore["with"]["path"])
+            for job, pins in ((ci["mutations"], "needs.toolchain.outputs"),
+                              (pub["teardown"], "steps.pins.outputs"),
+                              (pub["publish"], "steps.pins.outputs")):
+                if env != "test" and job != pub["publish"]:
+                    continue
+                matches = [step for step in restores(job) if step["with"]["path"] == restore["with"]["path"]]
+                binding, = matches
+                self.assertEqual(template("latest", pins, env), binding["with"]["key"])
+                self.assertNotIn("if", binding)
+        self.assertEqual("dialyzer-plt-" + verify_dev["with"]["key"], verify_plt["with"]["key"])
+        self.assertEqual(verify_plt["with"], {key: plt["with"][key] for key in ("key", "path")})
+        for job, pins in ((ci["release-gate-self-check"], "needs.toolchain.outputs"),
+                          (pub["release-gate-round"], "steps.pins.outputs")):
+            lookup, = restores(job)
+            self.assertEqual(benchmark["with"]["path"], lookup["with"]["path"])
+            self.assertEqual(benchmark["with"]["key"].replace("needs.toolchain.outputs", pins),
+                             lookup["with"]["key"])
+            self.assertIn(template("latest", pins, "prod"), lookup["with"]["key"])
+            steps = job["steps"]
+            run = next(step for step in steps if "scripts/jwe_release_gates.py round" in step.get("run", ""))
+            self.assertLess(steps.index(lookup), steps.index(run))
+            self.assertIn('--build-directory "$RUNNER_TEMP/release-gate-build"', run["run"])
 
 
 if __name__ == "__main__":

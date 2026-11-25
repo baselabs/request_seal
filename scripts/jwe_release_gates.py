@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run one paired JWE benchmark round or collect a publication verdict."""
 import argparse
+from contextlib import nullcontext
 import json
 import math
 import os
@@ -114,12 +115,14 @@ def run_round(args, mode, candidate_version):
                          if line.startswith("model name"))
         output["host"] = {"logical_cpus": cpus, "cpu_model": cpu_model,
                           "image_version": os.environ["ImageVersion"]}
-        with processes.temporary_directory(prefix="requestseal-release-gate-") as scratch:
+        build_directory = (nullcontext(args.build_directory) if args.build_directory is not None
+                           else processes.temporary_directory(prefix="requestseal-release-gate-"))
+        with build_directory as build, processes.temporary_directory(prefix="requestseal-release-samples-") as scratch:
             environments = {}
             for side in dict.fromkeys(sides(mode)):
                 environments[side] = {"MIX_ENV": "prod",
-                                      "MIX_BUILD_PATH": str(Path(scratch) / side / "_build"),
-                                      "MIX_DEPS_PATH": str(Path(scratch) / side / "deps")}
+                                      "MIX_BUILD_PATH": str(Path(build) / side / "_build" / "prod"),
+                                      "MIX_DEPS_PATH": str(Path(build) / side / "deps")}
                 for command in (["mix", "deps.get", "--check-locked"], ["mix", "hex.audit"],
                                 ["mix", "deps.audit"], ["mix", "compile", "--warnings-as-errors"]):
                     processes.run(command, cwd=PROJECTS / side, extra_env=environments[side], timeout=180)
@@ -225,6 +228,8 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("round")
     run.add_argument("--id", required=True, type=int, choices=range(1, ROUNDS + 1))
+    run.add_argument("--build-directory", type=lambda path: Path(path).resolve(),
+                     help="Use a hosted runner's restored benchmark dependency builds")
     verdict = commands.add_parser("collect")
     verdict.add_argument("--rounds", required=True, type=Path)
     for command in (run, verdict):

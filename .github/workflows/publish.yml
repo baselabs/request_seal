@@ -10,10 +10,63 @@ concurrency:
   group: publish
   cancel-in-progress: false
 jobs:
+  teardown:
+    if: contains(fromJSON('["corepay","palermo-git"]'), github.actor) && contains(fromJSON('["corepay","palermo-git"]'), github.triggering_actor)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 46 # run 44295770186: cold 22m51s; warm value: measure on first green run
+    env:
+      MIX_ENV: test
+    steps:
+      - name: Refuse any ref except the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - id: pins
+        run: scripts/toolchain.sh >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ steps.pins.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ steps.pins.outputs.python }}
+        run: scripts/toolchain.sh --installed "python=$EXPECTED_PYTHON"
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ steps.pins.outputs.elixir }}
+          otp-version: ${{ steps.pins.outputs.otp }}
+          version-type: strict
+      - name: Refuse a differing installed runtime
+        env:
+          ELIXIR: ${{ steps.pins.outputs.elixir }}
+          OTP: ${{ steps.pins.outputs.otp }}
+        run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
+      - name: Restore Mix test dependencies and build
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            deps
+            _build/test
+          key: mix-latest-${{ steps.pins.outputs.elixir }}-${{ steps.pins.outputs.otp }}-test-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get --check-locked
+      - name: Measure near-cap teardown against the library bounds
+        run: python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: jwe-teardown
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/jwe-teardown.json
   release-gate-round:
     if: contains(fromJSON('["corepay","palermo-git"]'), github.actor) && contains(fromJSON('["corepay","palermo-git"]'), github.triggering_actor)
     runs-on: ubuntu-24.04
-    timeout-minutes: 12 # no green run yet; measure the first green run
+    timeout-minutes: 12 # cold value unmeasured; warm value: measure on first green run
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +98,15 @@ jobs:
           ELIXIR: ${{ steps.pins.outputs.elixir }}
           OTP: ${{ steps.pins.outputs.otp }}
         run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
+      - name: Restore benchmark dependencies and builds
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/release-gate-build/baseline/deps
+            ${{ runner.temp }}/release-gate-build/baseline/_build/prod
+            ${{ runner.temp }}/release-gate-build/candidate/deps
+            ${{ runner.temp }}/release-gate-build/candidate/_build/prod
+          key: release-gate-mix-latest-${{ steps.pins.outputs.elixir }}-${{ steps.pins.outputs.otp }}-prod-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}-${{ hashFiles('bench/release_gates/*/mix.lock', 'bench/release_gates/*/mix.exs') }}
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - name: Measure the same-VM baseline and candidate
@@ -52,6 +114,7 @@ jobs:
           ROUND: ${{ matrix.round }}
         run: |
           python3 scripts/jwe_release_gates.py round --id "$ROUND" --commit "$GITHUB_SHA" \
+            --build-directory "$RUNNER_TEMP/release-gate-build" \
             --output "$RUNNER_TEMP/release-gate/round.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -108,10 +171,10 @@ jobs:
           path: ${{ runner.temp }}/release-gate-verdict.json
   publish:
     if: contains(fromJSON('["corepay","palermo-git"]'), github.actor) && contains(fromJSON('["corepay","palermo-git"]'), github.triggering_actor)
-    needs: release-gate-verdict
+    needs: [release-gate-verdict, teardown]
     environment: publish
     runs-on: ubuntu-24.04
-    timeout-minutes: 90 # no green run yet; measure the first green publication
+    timeout-minutes: 90 # cold value unmeasured; warm value: measure on first green run
     permissions:
       contents: read
       id-token: write
@@ -154,6 +217,27 @@ jobs:
         env:
           VERSION: ${{ steps.identity.outputs.version }}
         run: python3 scripts/publication.py --check-registry --version "$VERSION"
+      - name: Restore Mix test dependencies and build
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            deps
+            _build/test
+          key: mix-latest-${{ steps.pins.outputs.elixir }}-${{ steps.pins.outputs.otp }}-test-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+      - name: Restore Mix dev dependencies and build
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            deps
+            _build/dev
+          key: mix-latest-${{ steps.pins.outputs.elixir }}-${{ steps.pins.outputs.otp }}-dev-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+      - name: Restore Mix prod dependencies and build
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            deps
+            _build/prod
+          key: mix-latest-${{ steps.pins.outputs.elixir }}-${{ steps.pins.outputs.otp }}-prod-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
       - name: Verify dependencies and corpus pin
         env:
           MIX_ENV: test

@@ -48,10 +48,14 @@ qualification verdict consumes that same matrix.
 All three lockfiles fetch with `--check-locked` and retain separate advisory checks
 through both `mix hex.audit` and `mix deps.audit`.
 Publishing safety is defined by the runtime guard and actual Hex artifact metadata.
-Qualification only restores the analysis cache; its default-branch warmer is the
-sole writer. Limits name measured cold green runs, with a five-minute floor and
-a ninety-minute cap. The peer tool declares npm and installs its committed lock
-with `npm ci`; qualification disables setup-node's automatic package-manager cache.
+Qualification restores locked dependencies and compiled dependencies by lane,
+Elixir and OTP versions, Mix environment, runner OS, lockfile and Mix
+configuration. The latest lane also restores its Dialyzer PLT. The default-branch
+warmer uses the same runtime matrix and is the sole cache writer. Limits keep measured cold timings
+where available and record warm timings after a green run, with a five-minute
+floor and a ninety-minute cap. The peer tool declares npm and installs its
+committed lock with `npm ci`. Qualification disables setup-node's automatic
+package-manager cache.
 
 ## Optional integrations
 

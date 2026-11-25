@@ -74,6 +74,7 @@ on shared infrastructure vary with hardware and active load.
 
 ## Consequences
 
-Code landing requires the harness self-check. Publication requires the full measurement
-verdict. Host conditions can leave a release unmeasured. Each dispatch uses its fixed
+Code landing requires the harness self-check. Publication requires the full
+measurement verdict and the near-cap teardown gate for the dispatched commit.
+Host conditions can leave a release unmeasured. Each dispatch uses its fixed
 round inventory and runs it once.

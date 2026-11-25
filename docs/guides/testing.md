@@ -5,7 +5,7 @@
 Use the Elixir/OTP pairs, Node, and Python pins in `.tool-versions`, with OpenSSL and
 OpenSSH tools (`ssh-agent`, `ssh-add`, `ssh-keygen`) on `PATH`.
 Commands support macOS and Linux; Windows development uses WSL2.
-Repository builds and runtime tests run only in GitHub-hosted qualification on
+Candidate builds and runtime tests run in GitHub-hosted qualification on
 a `kci/` ref. The commands below describe hosted checks, not developer-machine
 steps. The full gate runs on Linux; Python process-ownership tests also run on
 hosted macOS, including kqueue timeout and closed-descriptor cleanup checks.
@@ -31,6 +31,10 @@ Hosted qualification reads CI runtimes through `scripts/toolchain.sh`. Its
 compatibility matrix runs these properties on the floor and mid pairs as part
 of `mix test`; the default pair runs the declared gate. Setup refuses any
 installed runtime that differs from the reader's output.
+Qualification restores dependencies and build outputs for the lane's exact
+runtime and Mix environment. Only the latest lane runs Dialyzer and restores a
+PLT. The default-branch cache warmer saves compiled dependencies. Each check
+builds the candidate from its checkout and runs its usual locked dependency fetch.
 
 The benchmark reports local resource use and OAEP timing; it establishes no conformance claim.
 Generated-key measurements and independent published vectors are distinct evidence.
@@ -133,6 +137,9 @@ rejected even when patch headers, context, whitespace, or the location of a
 duplicated line within the same function differ. Function names and arities
 distinguish edits in different functions.
 
+The publication workflow measures teardown on the dispatched commit before
+building and uploading the release. It keeps the JSON report as the `jwe-teardown`
+artifact. Runtime tests and reversing mutations still run during qualification.
 `python3 -B scripts/jwe_teardown_gate.py --output teardown.json` records absolute
 trigger-to-last-end-marker monotonic microseconds against Bounds B(10,000), and
 derived K_pf against Bounds K_pf. The constants are 170 ms and 5 ms respectively;

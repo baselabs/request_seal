@@ -4,7 +4,8 @@
 
 - Verify that the inspected Hex archive ships a changelog stamped for its version before planning publication.
 
-- Gate publication on hosted paired JWE page and single-open measurements against RequestSeal 1.0.0.
+- Gate publication on near-cap JWE teardown and hosted paired JWE page and
+  single-open measurements against RequestSeal 1.0.0.
 
 - Align documented dependency requirements with the package declarations and reject drift in installation examples.
 
@@ -103,13 +104,14 @@
 - Add a runnable credential-proxy recipe using caller-owned generated custody and the
   existing Req and Finch adapters, including refusal when custody is unavailable.
 
-- Qualify each candidate in one hosted run, with every runtime lane, mutation and
-  teardown proof feeding the exact final verdict. Pull requests execute no project
-  code. Enforce installed runtime identity, measured timeouts, locked tooling and
-  both dependency advisory feeds. Add development-only mix_audit and isolate
-  fresh packed-archive consumers from committed locks. Warm the analysis cache
-  only on the default branch. Measure cold analysis and cache-warmer runs for
-  their timeouts, declare npm for the locked peer tool and disable automatic
+- Qualify each candidate in one hosted run, with every runtime lane, mutation sweep
+  and performance harness self-check feeding the exact final verdict. Pull
+  requests execute no project code. Enforce installed runtime identity, measured
+  timeouts, locked tooling and both dependency advisory feeds. Add development-only
+  mix_audit and isolate fresh packed-archive consumers from committed locks.
+  Restore dependency and build caches by toolchain lane, Mix environment and lockfile,
+  plus the latest lane's Dialyzer PLT. The default-branch warmer alone saves
+  caches. Declare npm for the locked peer tool and disable automatic
   package-manager caching in qualification.
 - Replace tag-triggered publication with default-branch dispatch. Build and inspect
   package and documentation archives without a key; upload only those archives

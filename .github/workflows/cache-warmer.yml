@@ -14,9 +14,14 @@ defaults:
   run:
     shell: bash
 jobs:
-  dialyzer:
+  toolchain:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10 # run 44299761657: cold 4m54s; lookup-only restore missed
+    timeout-minutes: 5 # cold value unmeasured; warm value: measure on first green run
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      python: ${{ steps.pins.outputs.python }}
+      elixir: ${{ steps.pins.outputs.elixir }}
+      otp: ${{ steps.pins.outputs.otp }}
     steps:
       - name: Refuse any ref except the default branch
         env:
@@ -34,37 +39,167 @@ jobs:
         env:
           EXPECTED_PYTHON: ${{ steps.pins.outputs.python }}
         run: scripts/toolchain.sh --installed "python=$EXPECTED_PYTHON"
-      - id: lookup
+      - id: matrix
+        env:
+          TOOLCHAIN_OUTPUTS: ${{ toJSON(steps.pins.outputs) }}
+        run: python3 scripts/qualify.py --matrix --cache-environments >> "$GITHUB_OUTPUT"
+  mix:
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    # Previous PLT-only job: run 44299761657: cold 4m54s.
+    timeout-minutes: 29 # expanded cold value unmeasured; warm value: measure on first green run
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.toolchain.outputs.matrix) }}
+    env:
+      MIX_ENV: ${{ matrix.mix_env }}
+    steps:
+      - name: Refuse any ref except the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.toolchain.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ needs.toolchain.outputs.python }}
+        run: scripts/toolchain.sh --installed "python=$EXPECTED_PYTHON"
+      - name: Look up the Mix dependency and build cache
+        id: mix-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          lookup-only: true
+          path: |
+            deps
+            _build/${{ matrix.mix_env }}
+          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.mix_env }}-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+      - name: Look up the Dialyzer PLT cache
+        id: plt-cache
+        if: matrix.lane == 'latest' && matrix.mix_env == 'dev'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           lookup-only: true
           path: |
             _build/dev/dialyxir_*.plt
             _build/dev/dialyxir_*.plt.hash
-          key: dialyzer-plt-${{ steps.pins.outputs.elixir }}-${{ steps.pins.outputs.otp }}-${{ hashFiles('mix.lock') }}
-      - if: steps.lookup.outputs.cache-hit != 'true'
-        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+          key: dialyzer-plt-mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-dev-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        if: steps.mix-cache.outputs.cache-hit != 'true' || (matrix.lane == 'latest' && matrix.mix_env == 'dev' && steps.plt-cache.outputs.cache-hit != 'true')
         with:
-          elixir-version: ${{ steps.pins.outputs.elixir }}
-          otp-version: ${{ steps.pins.outputs.otp }}
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
           version-type: strict
       - name: Refuse a differing installed runtime
-        if: steps.lookup.outputs.cache-hit != 'true'
+        if: steps.mix-cache.outputs.cache-hit != 'true' || (matrix.lane == 'latest' && matrix.mix_env == 'dev' && steps.plt-cache.outputs.cache-hit != 'true')
         env:
-          ELIXIR: ${{ steps.pins.outputs.elixir }}
-          OTP: ${{ steps.pins.outputs.otp }}
+          ELIXIR: ${{ matrix.elixir }}
+          OTP: ${{ matrix.otp }}
         run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
-      - name: Build the exact cold PLT
-        if: steps.lookup.outputs.cache-hit != 'true'
+      - name: Restore Mix dependencies and build for PLT generation
+        if: steps.mix-cache.outputs.cache-hit == 'true' && matrix.lane == 'latest' && matrix.mix_env == 'dev' && steps.plt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            deps
+            _build/${{ matrix.mix_env }}
+          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.mix_env }}-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+      - name: Fetch locked dependencies
+        if: steps.mix-cache.outputs.cache-hit != 'true' || (matrix.lane == 'latest' && matrix.mix_env == 'dev' && steps.plt-cache.outputs.cache-hit != 'true')
         run: |
           mix local.hex --force
           mix local.rebar --force
           mix deps.get --check-locked
-          mix dialyzer --plt
-      - if: steps.lookup.outputs.cache-hit != 'true'
+      - name: Compile the locked dependencies
+        if: steps.mix-cache.outputs.cache-hit != 'true'
+        run: mix deps.compile
+      - name: Save Mix dependencies and build
+        if: steps.mix-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            deps
+            _build/${{ matrix.mix_env }}
+          key: ${{ steps.mix-cache.outputs.cache-primary-key }}
+      - name: Build the exact cold PLT
+        if: matrix.lane == 'latest' && matrix.mix_env == 'dev' && steps.plt-cache.outputs.cache-hit != 'true'
+        run: mix dialyzer --plt
+      - name: Save the Dialyzer PLT
+        if: matrix.lane == 'latest' && matrix.mix_env == 'dev' && steps.plt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             _build/dev/dialyxir_*.plt
             _build/dev/dialyxir_*.plt.hash
-          key: ${{ steps.lookup.outputs.cache-primary-key }}
+          key: ${{ steps.plt-cache.outputs.cache-primary-key }}
+  benchmark:
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5 # cold value unmeasured; warm value: measure on first green run
+    env:
+      MIX_ENV: prod
+    steps:
+      - name: Refuse any ref except the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ needs.toolchain.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ needs.toolchain.outputs.python }}
+        run: scripts/toolchain.sh --installed "python=$EXPECTED_PYTHON"
+      - name: Look up the benchmark dependency and build cache
+        id: benchmark-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          lookup-only: true
+          path: |
+            ${{ runner.temp }}/release-gate-build/baseline/deps
+            ${{ runner.temp }}/release-gate-build/baseline/_build/prod
+            ${{ runner.temp }}/release-gate-build/candidate/deps
+            ${{ runner.temp }}/release-gate-build/candidate/_build/prod
+          key: release-gate-mix-latest-${{ needs.toolchain.outputs.elixir }}-${{ needs.toolchain.outputs.otp }}-prod-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}-${{ hashFiles('bench/release_gates/*/mix.lock', 'bench/release_gates/*/mix.exs') }}
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        if: steps.benchmark-cache.outputs.cache-hit != 'true'
+        with:
+          elixir-version: ${{ needs.toolchain.outputs.elixir }}
+          otp-version: ${{ needs.toolchain.outputs.otp }}
+          version-type: strict
+      - name: Refuse a differing installed runtime
+        if: steps.benchmark-cache.outputs.cache-hit != 'true'
+        env:
+          ELIXIR: ${{ needs.toolchain.outputs.elixir }}
+          OTP: ${{ needs.toolchain.outputs.otp }}
+        run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
+      - name: Compile each benchmark's locked dependencies
+        if: steps.benchmark-cache.outputs.cache-hit != 'true'
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          for side in baseline candidate; do
+            (
+              cd "bench/release_gates/$side"
+              export MIX_BUILD_PATH="$RUNNER_TEMP/release-gate-build/$side/_build/prod"
+              export MIX_DEPS_PATH="$RUNNER_TEMP/release-gate-build/$side/deps"
+              mix deps.get --check-locked
+              mix deps.compile --skip-local-deps
+            )
+          done
+      - name: Save benchmark dependencies and builds
+        if: steps.benchmark-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/release-gate-build/baseline/deps
+            ${{ runner.temp }}/release-gate-build/baseline/_build/prod
+            ${{ runner.temp }}/release-gate-build/candidate/deps
+            ${{ runner.temp }}/release-gate-build/candidate/_build/prod
+          key: ${{ steps.benchmark-cache.outputs.cache-primary-key }}
