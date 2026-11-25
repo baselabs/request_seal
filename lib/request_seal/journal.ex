@@ -13,6 +13,7 @@ defmodule RequestSeal.Journal do
   use GenServer
 
   alias RequestSeal.{Idempotency, KeyHandle, Message, SignatureBase, SignatureFields, Signing}
+  alias RequestSeal.Message.Validation
   alias RequestSeal.Replay.{Claim, Commitment}
 
   @derive {Inspect, only: []}
@@ -45,13 +46,15 @@ defmodule RequestSeal.Journal do
   @doc """
   Capture a validated unsigned HTTP(S) origin-form request with a retained body of at most 1 MiB,
   one valid Idempotency-Key, a matching header Content-Digest, and no trailers
-  or credential fields.
+  or credential fields. The fields must leave room for the largest permitted
+  Signature-Input and Signature fields.
   """
   @spec entry(binary(), Message.t()) :: {:ok, t()} | error()
   def entry(namespace, %Message{kind: :request, target_form: :origin} = message) do
     with true <- Claim.bounded?(namespace) and Message.validate(message) == :ok,
          true <- message.trailers in [[], :unavailable] and message.body.state == :retained,
          true <- byte_size(message.body.bytes) <= 1_048_576,
+         true <- Message.field_bytes_fit?(message.fields, signature_field_bytes()),
          {:ok, key} <- Idempotency.key(message),
          {:ok, %{components: [{_, target}]}} <-
            SignatureBase.components(message, ~s[("@target-uri")]),
@@ -90,7 +93,7 @@ defmodule RequestSeal.Journal do
   @spec record(pid(), binary(), Message.t()) ::
           :recorded | :already_recorded | :conflict | error()
   def record(journal, namespace, message) do
-    with {:ok, entry} <- entry(namespace, message), do: call(journal, {:record, entry})
+    call(journal, {:record, namespace, message})
   end
 
   @doc "Read the recorded intent by its trusted namespace and decoded operation key."
@@ -157,7 +160,36 @@ defmodule RequestSeal.Journal do
   def init(max), do: {:ok, {%{}, max}}
 
   @impl GenServer
-  def handle_call({:record, entry}, _from, {entries, max} = state) do
+  def handle_call({:record, namespace, message}, _from, state) do
+    case entry(namespace, message) do
+      {:ok, entry} -> store_entry(entry, state)
+      error -> {:reply, error, state}
+    end
+  end
+
+  def handle_call({:load, {namespace, key} = identity}, _from, {entries, _} = state) do
+    reply =
+      if Claim.bounded?(namespace) and Claim.bounded?(key) do
+        case Map.fetch(entries, identity) do
+          {:ok, entry} -> {:ok, entry}
+          :error -> :not_found
+        end
+      else
+        {:error, :invalid_options}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:forget, {namespace, key} = identity}, _from, {entries, max} = state) do
+    if Claim.bounded?(namespace) and Claim.bounded?(key),
+      do: {:reply, :ok, {Map.delete(entries, identity), max}},
+      else: {:reply, {:error, :invalid_options}, state}
+  end
+
+  def handle_call(_, _from, state), do: {:reply, {:error, :failure}, state}
+
+  defp store_entry(entry, {entries, max} = state) do
     key = {entry.namespace, entry.key}
     digest = entry.digest
 
@@ -176,26 +208,25 @@ defmodule RequestSeal.Journal do
     end
   end
 
-  def handle_call({:load, key}, _from, {entries, _} = state) do
-    reply =
-      case Map.fetch(entries, key) do
-        {:ok, entry} -> {:ok, entry}
-        :error -> :not_found
-      end
-
-    {:reply, reply, state}
-  end
-
-  def handle_call({:forget, key}, _from, {entries, max}),
-    do: {:reply, :ok, {Map.delete(entries, key), max}}
-
   defp call(pid, request) when is_pid(pid) do
-    GenServer.call(pid, request)
+    case GenServer.call(pid, request) do
+      {:error, :failure} -> {:error, :journal_unavailable}
+      reply -> reply
+    end
   catch
     :exit, _ -> {:error, :journal_unavailable}
   end
 
   defp call(_, _), do: {:error, :invalid_options}
+
+  defp signature_field_bytes do
+    # Dictionary key, equals sign, byte-sequence delimiters and padded base64.
+    encoded_signature_bytes = 4 * div(Signing.max_signature_bytes() + 2, 3)
+    signature_bytes = SignatureFields.max_label_bytes() + 3 + encoded_signature_bytes
+
+    byte_size("Signature-Input") + Validation.max_field_value_bytes() +
+      byte_size("Signature") + signature_bytes
+  end
 
   defp signing_spec(%{components: components} = spec, opts) do
     with true <-

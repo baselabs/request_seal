@@ -32,6 +32,7 @@ defmodule RequestSeal.Message do
   """
   alias RequestSeal.{Body, FieldOccurrence, TransportFacts}
   alias RequestSeal.Message.Validation
+  @max_field_bytes 1_048_576
   @derive {Inspect, only: []}
   defstruct [
     :kind,
@@ -481,13 +482,20 @@ defmodule RequestSeal.Message do
 
   defp target_origin_valid?(_), do: true
 
+  @doc false
+  def field_bytes_fit?(fields, additional_bytes) do
+    Enum.reduce(fields, additional_bytes, &(field_bytes(&1) + &2)) <= @max_field_bytes
+  end
+
+  defp field_bytes(field), do: byte_size(field.name) + byte_size(field.value)
+
   defp fields([], _, count, bytes), do: {:ok, count, bytes}
 
   defp fields([%FieldOccurrence{section: section} = field | rest], section, count, bytes)
        when count < 1024 do
     with :ok <- FieldOccurrence.validate(field),
-         total = bytes + byte_size(field.name) + byte_size(field.value),
-         true <- total <= 1_048_576 do
+         total = bytes + field_bytes(field),
+         true <- total <= @max_field_bytes do
       fields(rest, section, count + 1, total)
     else
       _ -> Validation.error(:invalid_field)

@@ -64,23 +64,35 @@ defmodule RequestSeal.Idempotency.ETS do
     do: {:ok, %{table: :ets.new(__MODULE__, [:set, :private]), max: max, clock: clock, now: 0}}
 
   @impl GenServer
-  def handle_call({request, context}, _from, state) do
-    if live?(context) do
-      case read_clock(state) do
-        {:ok, now} ->
-          state = %{state | now: max(state.now, now)}
-          reply = if live?(context), do: perform(request, state), else: {:error, :timeout}
-          {:reply, reply, state}
-
-        :error ->
-          {:reply, {:error, :failure}, state}
-      end
+  def handle_call({request, %Context{deadline: deadline, owner: owner} = context}, _from, state)
+      when is_pid(owner) and node(owner) == node() and is_integer(deadline) do
+    with true <- valid_request?(request),
+         :ok <- check_live(context),
+         {:ok, now} <- read_clock(state) do
+      state = %{state | now: max(state.now, now)}
+      reply = if check_live(context) == :ok, do: perform(request, state), else: {:error, :timeout}
+      {:reply, reply, state}
     else
-      {:reply, {:error, :timeout}, state}
+      {:error, :timeout} -> {:reply, {:error, :timeout}, state}
+      _ -> {:reply, {:error, :failure}, state}
     end
   end
 
-  defp live?(context), do: Context.remaining(context) > 0 and Process.alive?(context.owner)
+  def handle_call(_, _from, state), do: {:reply, {:error, :failure}, state}
+
+  defp valid_request?({:reserve, record}), do: Record.valid?(record)
+
+  defp valid_request?({:store, reservation, response}),
+    do: Idempotency.valid_reservation?(reservation) and Idempotency.response?(response)
+
+  defp valid_request?({:sweep, now}), do: is_integer(now) and now in 0..253_402_300_799
+  defp valid_request?(_), do: false
+
+  defp check_live(context) do
+    if Context.remaining(context) > 0 and Process.alive?(context.owner),
+      do: :ok,
+      else: {:error, :timeout}
+  end
 
   defp read_clock(state) do
     case state.clock.() do

@@ -41,8 +41,12 @@ response and a mismatch fails. Adapter output is normalized to closed public
 results before it reaches the caller or telemetry.
 
 The client journal rebuilds each captured HTTP(S) intent before recording it,
-checking that method, target and retained content survive reconstruction. On
-reissue it generates a fresh nonce and uses caller-owned custody.
+checking that method, target and retained content survive reconstruction.
+The unsigned fields must leave room in the HTTP message field budget for the
+largest supported Signature-Input and Signature occurrences. On reissue it
+generates a fresh nonce and uses caller-owned custody. The in-process journal
+and idempotency store validate their call arguments before accessing stored
+records, and reject unsupported calls without terminating the state owner.
 
 ## Reasons
 

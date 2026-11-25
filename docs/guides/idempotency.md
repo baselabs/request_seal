@@ -111,7 +111,9 @@ transport-specific response fields and any new response signature at delivery.
 For durable client recovery, persist the `Journal.entry/2` snapshot under its
 unique namespace and key before sending. Before recording, it reconstructs
 the HTTP(S) request and checks the captured method, target, and retained
-body. It preserves the ordered field values. Reissue checks the loaded snapshot against its digest, which
+body. It preserves the ordered field values and reserves enough room in the
+message field budget to append both signature fields. Reissue checks the
+loaded snapshot against its digest, which
 detects accidental changes. Protect the journal against unauthorized reads and
 writes. Keep custom credential headers out of persisted intent. The caller
 controls retries and records send outcomes where needed.

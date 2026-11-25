@@ -3,6 +3,9 @@ defmodule RequestSeal.Signing do
   alias RequestSeal.{Body, Custody, Digest, KeyHandle, Policy, SignatureFields}
   alias RequestSeal.Adapter.Error
 
+  @max_signature_bytes 1024
+  def max_signature_bytes, do: @max_signature_bytes
+
   @type spec :: RequestSeal.signing_spec() | full_spec()
   @type full_spec :: %{
           required(:label) => binary(),
@@ -405,7 +408,8 @@ defmodule RequestSeal.Signing do
 
   defp custody_sign_result(handle, base, timeout, purpose) do
     case Custody.sign(handle, base, timeout: timeout, issued_for: purpose, operation: :http) do
-      {:ok, signature} when is_binary(signature) and byte_size(signature) in 1..1024 ->
+      {:ok, signature}
+      when is_binary(signature) and byte_size(signature) in 1..@max_signature_bytes ->
         {:ok, signature}
 
       {:error, %Custody.Error{}} = error ->

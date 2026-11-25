@@ -246,6 +246,82 @@ defmodule RequestSeal.OperationIdentityTest do
     assert {:error, :invalid_intent} = Journal.entry("orders", captured)
   end
 
+  test "misrouted and malformed calls leave both stores and their records intact" do
+    {{Idempotency.ETS, store_pid} = store, _} = timed_store()
+    journal = start_supervised!({Journal, max_entries: 2})
+    request = message("first")
+    record = record(@now, @now + 5, @now + 10)
+    assert {:ok, entry} = Journal.entry("orders", request)
+    assert :recorded = Journal.record(journal, "orders", request)
+    assert {:reserved, reservation} = Idempotency.reserve(store, record, timeout: 1000)
+
+    assert {:error, :journal_unavailable} = Journal.load(store_pid, "orders", "create-1")
+
+    assert {:error, %{reason: :store_failed}} =
+             Idempotency.reserve(Idempotency.ETS.store(journal), record, timeout: 1000)
+
+    context = %RequestSeal.Custody.Context{
+      owner: self(),
+      deadline: System.monotonic_time(:millisecond) + 1000
+    }
+
+    assert {:error, :failure} = GenServer.call(store_pid, {{:reserve, :invalid}, context})
+    assert {:error, :failure} = GenServer.call(store_pid, {{:reserve, record}, :invalid})
+
+    malformed_record = record |> Map.delete(:now) |> Map.put(:unknown, @now)
+    assert {:error, :failure} = GenServer.call(store_pid, {{:reserve, malformed_record}, context})
+    assert {:error, :invalid_intent} = GenServer.call(journal, {:record, "orders", :invalid})
+    assert {:error, :invalid_options} = GenServer.call(journal, {:forget, {"orders", nil}})
+    assert Process.alive?(store_pid)
+    assert Process.alive?(journal)
+    assert :in_progress = Idempotency.reserve(store, record, timeout: 1000)
+    assert {:ok, ^entry} = Journal.load(journal, "orders", "create-1")
+
+    response = %{status: 200, headers: [], body: "accepted"}
+    assert :stored = Idempotency.store(store, reservation, response, timeout: 1000, allow_headers: [])
+  end
+
+  test "journal admission reserves the complete signed field budget", ctx do
+    original = message("first")
+    # One maximal input value and one maximal 1,024-byte signature member.
+    reserve = 65_536 + 256 + 3 + 1368 + byte_size("Signature-InputSignature")
+    at_limit = pad_fields(original, 1_048_576 - reserve)
+    above_limit = pad_fields(original, 1_048_576 - reserve + 1)
+    full = pad_fields(original, 1_048_576)
+
+    assert :ok = Message.validate(full)
+    assert {:ok, entry} = Journal.entry("orders", at_limit)
+    assert {:error, :invalid_intent} = Journal.entry("orders", above_limit)
+    assert {:error, :invalid_intent} = Journal.entry("orders", full)
+
+    assert {:ok, signed} =
+             Journal.reissue(entry, spec("primary"), ctx.signer, clock: fn -> @now end)
+
+    assert :ok = Message.validate(signed)
+    assert Enum.take(signed.fields, length(at_limit.fields)) == at_limit.fields
+  end
+
+  defp pad_fields(message, size) do
+    existing = Enum.sum(Enum.map(message.fields, &(byte_size(&1.name) + byte_size(&1.value))))
+    {count, remainder} = {div(size - existing, 65_537), rem(size - existing, 65_537)}
+
+    sizes = List.duplicate(65_537, count) ++ List.wrap(if remainder > 0, do: remainder)
+
+    fields =
+      Enum.map(sizes, fn size ->
+        {:ok, field} =
+          RequestSeal.FieldOccurrence.new(%{
+            name: "x",
+            value: :binary.copy("a", size - 1),
+            section: :headers
+          })
+
+        field
+      end)
+
+    %{message | fields: message.fields ++ fields}
+  end
+
   defp timed_store do
     clock = :atomics.new(1, [])
     :ok = :atomics.put(clock, 1, @now)

@@ -37,7 +37,10 @@ defmodule RequestSeal.Message.Validation do
 
   defp token_bytes?(_), do: false
 
-  def field_value?(value) when is_binary(value) and byte_size(value) <= 65_536,
+  @max_field_value_bytes 65_536
+  def max_field_value_bytes, do: @max_field_value_bytes
+
+  def field_value?(value) when is_binary(value) and byte_size(value) <= @max_field_value_bytes,
     do: field_bytes?(value)
 
   def field_value?(_), do: false

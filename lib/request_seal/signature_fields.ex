@@ -5,6 +5,9 @@ defmodule RequestSeal.SignatureFields do
   alias RequestSeal.Message.Validation
 
   @derived ~w(@method @target-uri @authority @scheme @request-target @path @query @query-param @status)
+  @max_label_bytes 256
+
+  def max_label_bytes, do: @max_label_bytes
 
   def schema(type, items \\ [:string], inner \\ true),
     do: %Schema{
@@ -23,7 +26,7 @@ defmodule RequestSeal.SignatureFields do
 
   def label?(label),
     do:
-      is_binary(label) and byte_size(label) in 1..256 and
+      is_binary(label) and byte_size(label) in 1..@max_label_bytes and
         Regex.match?(~r/\A[a-z*][a-z0-9_.*-]*\z/, label)
 
   def field_name?(name), do: Validation.token?(name, 256) and name == String.downcase(name)

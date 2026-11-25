@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Preserve journal and idempotency stores on misrouted calls and reserve
+  signed field capacity when admitting unsigned journal entries.
 - Require known key identities and shared structured operation schemas for
   quorum decisions, bound verifier callbacks, and reuse equivalent digest
   checks. Frame operation identifiers and values independently.
