@@ -109,7 +109,8 @@ if Code.ensure_loaded?(Plug.Conn) do
     Nonempty bodies must have been fully read from Capture's retained adapter
     and parsed into a map by a configured parser. Competing headers refuse
     in both the captured and current headers. Nested maps and lists are
-    inspected for selectors. Unfetched and opaque nested values refuse,
+    inspected for selectors, including query names discarded during decoding.
+    Unfetched and opaque nested values refuse,
     except for uploads. Percent escapes and empty or dot segments refuse
     before any capture is bound.
 
@@ -232,9 +233,14 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     defp refuse_query(conn, query, names) when query == conn.query_string do
       fresh = %{conn | query_params: %Plug.Conn.Unfetched{aspect: :query_params}}
-      parsed = Plug.Conn.fetch_query_params(fresh).query_params
+      _ = Plug.Conn.fetch_query_params(fresh)
 
-      case combine(inspect_params(parsed, names), inspect_optional(conn.query_params, names)) do
+      result =
+        if raw_query_selector?(query, names),
+          do: :selector,
+          else: inspect_optional(conn.query_params, names)
+
+      case result do
         :selector -> reject(:scope_in_query)
         :indeterminate -> reject(:invalid_query)
         :clean -> :ok
@@ -244,6 +250,17 @@ if Code.ensure_loaded?(Plug.Conn) do
     end
 
     defp refuse_query(_, _, _), do: reject(:invalid_query)
+
+    # Decode each name separately with Plug's bracket rules so merging
+    # repeated parents or finalizing lists cannot erase a selector.
+    defp raw_query_selector?(query, names) do
+      query
+      |> :binary.split("&", [:global])
+      |> Enum.any?(fn pair ->
+        [name | _] = :binary.split(pair, "=")
+        inspect_params(Plug.Conn.Query.decode(name), names) == :selector
+      end)
+    end
 
     defp refuse_body(conn, bytes, names) do
       params = conn.body_params

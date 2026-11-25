@@ -21,6 +21,9 @@ Reject competing headers in the captured fields and the current connection.
 Recursively inspect query and parsed body maps and lists. Nested unfetched
 values and opaque structs make inspection indeterminate. A multipart upload
 is an opaque leaf whose parameter name still participates in inspection.
+Inspect every captured query parameter name independently using Plug's
+decoding rules. Scalar replacement and list finalization can erase named
+entries from the merged query map.
 A nonempty body requires a configured parser that fully consumes the captured
 bytes before Scope runs. The principal lookup runs within a finite deadline
 and must return exactly the selected tenant.

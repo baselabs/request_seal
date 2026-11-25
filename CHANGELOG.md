@@ -17,7 +17,8 @@
 
 - Bind Plug tenant context to a verified path and pass it through to Ash scope
   mapping. Reject conflicting captured or current headers and indeterminate
-  nested request parameters.
+  nested request parameters. Check every captured query name for selectors
+  that the merged query map can discard.
 
 - Add paired replay stores for migrations that require both stores to admit
   each claim. Direct claims and sweeps bound both adapters by the shared deadline.

@@ -33,6 +33,9 @@ also refuses the `x-tenant` and `x-tenant-id` headers in both the captured and
 current request. Removing a header after Capture does not erase the occurrence.
 Add application aliases with `:refuse_names` and `:refuse_headers`.
 
+Scope checks each captured query name before the decoder merges parameters.
+A repeated parent or a mix of list and named entries cannot hide a selector.
+
 Place the configured body parser between Capture and Verify. A nonempty body
 must be fully read through Capture's retained adapter and parsed into a plain
 map before Scope runs. A pass-through parser leaves the body indeterminate and

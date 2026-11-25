@@ -181,6 +181,23 @@ defmodule RequestSeal.PlugScopeTest do
     assert refused(conn, :scope_in_header)
   end
 
+  test "rejects encoded selector names lost to scalar overrides and list finalization" do
+    for {query, value} <- [
+          {"filters%5B%74enant_id%5D=other&filters=plain", "plain"},
+          {"filters%5Btenant_id%5D=other&filters%5B%5D=plain", ["plain"]}
+        ] do
+      conn =
+        verified("/teams/alpha?" <> query, @covered)
+        |> Plug.Conn.fetch_query_params()
+
+      assert conn.query_params == %{"filters" => value}
+      assert refused(conn, :scope_in_query)
+    end
+
+    clean = verified("/teams/alpha?filters=tenant_id&filters%5B%5D=tenant", @covered)
+    assert {:ok, %{tenant: "alpha"}} = SealPlug.scope(Scope.call(clean, options()))
+  end
+
   test "requires exact principal agreement and removes scope on repeat" do
     conn = verified("/teams/alpha", @covered)
 
