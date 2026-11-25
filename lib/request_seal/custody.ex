@@ -620,7 +620,14 @@ defmodule RequestSeal.Custody do
       :ok
   """
   @spec verify(KeyHandle.t(), binary(), binary(), keyword()) :: :ok | {:error, Error.t()}
-  def verify(handle, bytes, signature, opts \\ []) do
+  def verify(handle, bytes, signature, opts \\ []),
+    do: verify_operation(handle, bytes, signature, :custodian, opts)
+
+  @doc false
+  def verify_bound(handle, bytes, signature, deny, opts),
+    do: verify_operation(handle, bytes, signature, {:public, deny}, opts)
+
+  defp verify_operation(handle, bytes, signature, mode, opts) do
     operation(
       handle,
       :verify,
@@ -629,7 +636,7 @@ defmodule RequestSeal.Custody do
         data!(bytes, max)
         ensure(is_binary(signature), :invalid_signature)
         ensure(byte_size(signature) <= 16_384, :limit)
-        [bytes, signature]
+        [bytes, signature, mode]
       end,
       [:timeout, :max_bytes, :issued_for, :operation]
     )
@@ -935,7 +942,7 @@ defmodule RequestSeal.Custody do
     ensure(algorithm == handle.algorithm and purpose == handle.issued_for, :key_mismatch)
   end
 
-  defp invoke(handle, :verify, [bytes, signature], context) do
+  defp invoke(handle, :verify, [bytes, signature, :custodian], context) do
     result =
       if function_exported?(handle.custodian, :verify, 5) do
         check_signing_assignment!(handle, context)
@@ -943,14 +950,31 @@ defmodule RequestSeal.Custody do
       else
         ensure(context.issued_for == nil, :unsupported_operation)
         public = verification_key!(handle, context)
-
-        RequestSeal.Crypto.verify(handle.algorithm, bytes, signature, public,
-          max_bytes: RequestSeal.Crypto.max_bytes_ceiling()
-        )
+        verify_public(handle.algorithm, bytes, signature, public)
       end
 
     normalize(:verify, result)
   end
+
+  defp invoke(handle, :verify, [bytes, signature, {:public, deny}], context) do
+    callback? = function_exported?(handle.custodian, :verify, 5)
+    ensure(callback? or context.issued_for == nil, :unsupported_operation)
+    ensure(RequestSeal.DenySet.valid?(deny), :invalid_options)
+    public = verification_key!(handle, context)
+
+    with :ok <- RequestSeal.DenySet.check(deny, public),
+         :ok <- approve_verification(handle, bytes, signature, context, callback?),
+         :ok <- verify_public(handle.algorithm, bytes, signature, public) do
+      {:ok, public}
+    else
+      error -> normalize(:verify, error)
+    end
+  end
+
+  defp approve_verification(handle, bytes, signature, context, true),
+    do: handle.custodian.verify(handle.ref, handle.algorithm, bytes, signature, context)
+
+  defp approve_verification(_, _, _, _, false), do: :ok
 
   defp invoke(handle, :sign, [bytes], context) do
     check_signing_assignment!(handle, context)
@@ -999,10 +1023,23 @@ defmodule RequestSeal.Custody do
 
   defp verification_key!(handle, context) do
     case assignment_interface(handle.custodian) do
-      :binding -> read_binding!(handle, context) || fail(:no_public_key)
+      :binding -> read_binding!(handle, context) || fail(:unsupported_operation)
       :assignment -> fail(:unsupported_operation)
-      :legacy -> Support.unwrap(handle.custodian.public_key(handle.ref))
+      :legacy ->
+        ensure(context.issued_for == nil, :unsupported_operation)
+        result = Support.safe(fn -> normalize(:public_key, handle.custodian.public_key(handle.ref)) end)
+
+        case result do
+          {:ok, public} -> public
+          _ -> fail(:key_fingerprint_unknown)
+        end
     end
+  end
+
+  defp verify_public(algorithm, bytes, signature, public) do
+    RequestSeal.Crypto.verify(algorithm, bytes, signature, public,
+      max_bytes: RequestSeal.Crypto.max_bytes_ceiling()
+    )
   end
 
   defp normalize(_, {:error, %{reason: reason}}), do: {:error, Error.new(reason)}

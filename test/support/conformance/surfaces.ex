@@ -440,6 +440,13 @@ defmodule RequestSeal.Conformance.Surfaces do
 
       true ->
         key = public(root, name)
+
+        key =
+          case descriptor["restrictions"] do
+            nil -> key
+            fields -> %{key | algorithm: fields["alg"], use: fields["use"], operations: fields["key_ops"]}
+          end
+
         fn _ -> {:ok, %{algorithm: name, key: key}} end
     end
   end

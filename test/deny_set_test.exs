@@ -39,6 +39,94 @@ defmodule RequestSeal.DenySetTest do
     assert {:ok, _} = DenySet.new(DenySet.published_test_keys())
   end
 
+  test "verification screens the public key and still requires custody approval" do
+    {:ok, deny} = DenySet.new([])
+    {:ok, signing} = Local.generate("ed25519", capabilities: [:sign])
+    {:ok, public} = Custody.public_key(signing)
+    {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+
+    spec = %{label: "sig", algorithm: "ed25519", signature_input: ~s[("@method")]}
+    {:ok, signed} = RequestSeal.sign(message, spec, signing)
+
+    attrs = %{
+      algorithms: ["ed25519"],
+      components: "()",
+      key_resolver: fn _ -> {:ok, %{algorithm: "ed25519", key: public}} end,
+      content: :not_required,
+      freshness: :not_evaluated,
+      replay: :not_required,
+      deny: deny
+    }
+
+    {:ok, policy} = RequestSeal.Policy.new(attrs)
+    assert {:ok, _} = RequestSeal.verify(signed, policy, label: "sig")
+    assert {:ok, _} = RequestSeal.verify(signed, Map.delete(policy, :deny), label: "sig")
+
+    # The handle claims verification. The real holder still grants signing only.
+    handle = %{signing | capabilities: [:verify]}
+    policy = %{policy | key_resolver: fn _ -> {:ok, %{algorithm: "ed25519", key: handle}} end}
+
+    assert {:error, %{reason: :verifier_failed}} =
+             RequestSeal.verify(signed, policy, label: "sig")
+
+    assert {:error, %{reason: :verifier_failed}} =
+             RequestSeal.verify(signed, policy, label: "sig", capture: true)
+
+    assert {:error, %{reason: :verifier_failed}} =
+             RequestSeal.verify(signed, %{policy | deny: nil}, label: "sig", capture: true)
+
+    assert :ok = Custody.release(signing)
+    {:ok, jws_signing} = Local.generate({:jws, "EdDSA"}, capabilities: [:sign])
+    {:ok, jws_public} = Custody.public_key(jws_signing)
+    {:ok, jwk} = PublicKey.export(jws_public, :jwk)
+    {:ok, compact} = JWS.sign([{"alg", "EdDSA"}], "payload", jws_signing)
+    jws_policy = Map.put(V.jws_policy(jwk, "EdDSA"), :deny, deny)
+    assert {:ok, _} = JWS.verify(compact, jws_policy)
+
+    jws_handle = %{jws_signing | capabilities: [:verify]}
+    jws_policy = %{jws_policy | key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: jws_handle}} end}
+
+    assert {:error, %{reason: :invalid_signature}} = JWS.verify(compact, jws_policy)
+    assert :ok = Custody.release(jws_signing)
+  end
+
+  test "policy rejects forged deny maps including text thumbprints" do
+    {:ok, public} = PublicKey.import(Map.delete(@jwk, "d"), :jwk)
+
+    attrs = %{
+      algorithms: ["ed25519"],
+      components: "()",
+      key_resolver: fn _ -> {:ok, %{algorithm: "ed25519", key: public}} end,
+      content: :not_required,
+      freshness: :not_evaluated,
+      replay: :not_required
+    }
+
+    raw = Base.url_decode64!(@thumbprint, padding: false)
+
+    for entries <- [%{@thumbprint => true}, %{raw => false}] do
+      forged = %DenySet{entries: entries}
+      assert {:error, %{reason: :invalid_policy}} =
+               RequestSeal.Policy.new(Map.put(attrs, :deny, forged))
+
+      assert {:error, :invalid_options} = DenySet.check(forged, public)
+    end
+  end
+
+  test "local screening precedes the private RSA possession probe" do
+    [entry] = :public_key.pem_decode(File.read!("test/fixtures/crypto/rsa_private.pem"))
+    private = :public_key.pem_entry_decode(entry)
+    broken = {:rsa, put_elem(private, 5, 1)}
+    {:ok, key} = PublicKey.import(File.read!("test/fixtures/crypto/rsa_public.pem"), :pem)
+    {:ok, thumbprint} = PublicKey.thumbprint(key)
+    {:ok, deny} = DenySet.new([thumbprint])
+
+    assert {:error, %{reason: :invalid_key}} = Local.new("rsa-v1_5-sha256", broken)
+    assert {:error, %{reason: :key_denied}} = Local.new("rsa-v1_5-sha256", broken, deny: deny)
+    assert {:error, %{reason: :key_mismatch}} =
+             Local.new("rsa-v1_5-sha256", broken, expected_thumbprint: @other)
+  end
+
   test "local seed and import compare custody-derived key before admission" do
     seed = Base.url_decode64!(@jwk["d"], padding: false)
     {:ok, deny} = DenySet.new([@thumbprint])

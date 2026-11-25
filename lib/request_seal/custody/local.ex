@@ -126,6 +126,8 @@ defmodule RequestSeal.Custody.Local do
       constructing a handle. An active deny set rejects `:key_denied` for a
       match. An expected thumbprint rejects `:key_mismatch` on disagreement.
       If an enabled check has no public key, it rejects `:key_fingerprint_unknown`.
+      These checks run before the possession probe. To retire an issued handle,
+      withdraw it from callers and release it through its owner.
     * `:equivalence` - a nonsecret binary of 1–256 bytes, accepted only for HMAC
       algorithms; it becomes the handle's `:symmetric` `RequestSeal.KeyIdentity`.
       When absent, an HMAC handle's identity is `:unknown`. No default.
@@ -438,6 +440,9 @@ defmodule RequestSeal.Custody.Local do
       :invalid_key
     )
 
+    admitted = if is_struct(expected, PublicKey), do: PublicKey.validate!(expected), else: public
+    Support.check_public_key(admitted, opts)
+
     if capabilities == [:mac] do
       ensure(match?({:hmac, _}, material), :key_mismatch)
       {:hmac, key} = material
@@ -445,11 +450,9 @@ defmodule RequestSeal.Custody.Local do
     else
       validate_operation(algorithm, material, public)
     end
-    public = if is_struct(expected, PublicKey), do: PublicKey.validate!(expected), else: public
-    Support.check_public_key(public, opts)
 
     identity =
-      case public do
+      case admitted do
         nil ->
           %KeyIdentity{kind: if(equivalence, do: :symmetric, else: :unknown), value: equivalence}
 
@@ -463,7 +466,7 @@ defmodule RequestSeal.Custody.Local do
     {
       algorithm,
       held_material,
-      public,
+      admitted,
       identity,
       capabilities,
       Keyword.get(opts, :issued_for),

@@ -57,8 +57,13 @@ defmodule RequestSeal.DenySet do
   @doc false
   def valid?(nil), do: true
 
-  def valid?(%__MODULE__{entries: entries} = set),
-    do: map_size(set) == 2 and is_map(entries) and map_size(entries) <= @max_entries
+  def valid?(%__MODULE__{entries: entries} = set) do
+    map_size(set) == 2 and is_map(entries) and map_size(entries) <= @max_entries and
+      Enum.all?(entries, fn
+        {<<_::256>>, true} -> true
+        _ -> false
+      end)
+  end
 
   def valid?(_), do: false
 
@@ -85,18 +90,17 @@ defmodule RequestSeal.DenySet do
   def check_proof(_, _), do: {:error, :key_fingerprint_unknown}
 
   @doc false
-  def verification_key(nil, key), do: {:ok, key}
+  def public_for_verification(nil, _key, false), do: {:ok, nil}
 
-  def verification_key(set, %KeyHandle{} = handle) do
-    with true <- is_list(handle.capabilities) and :verify in handle.capabilities,
-         {:ok, public} <- Custody.public_key(handle) do
-      verification_key(set, public)
+  def public_for_verification(set, %KeyHandle{} = handle, capture?) do
+    with {:ok, public} <- Custody.public_key(handle) do
+      public_for_verification(set, public, capture?)
     else
       _ -> {:error, :key_fingerprint_unknown}
     end
   end
 
-  def verification_key(set, key) do
+  def public_for_verification(set, %PublicKey{} = key, _) do
     with :ok <- check(set, key), do: {:ok, key}
   end
 

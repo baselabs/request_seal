@@ -16,8 +16,9 @@ defmodule RequestSeal.VerificationRecord do
   arrays, null, and nonnegative decimal integers without leading zeros.
   The digest is unpadded Base64url SHA-256 of the canonical record object.
   Signature bases, signatures and DER are also unpadded Base64url. Keys
-  retain their validated public JWK restrictions, or canonical public
-  SubjectPublicKeyInfo DER for PSS-only RSA.
+  retain their validated public JWK restrictions. A PSS-only RSA key uses
+  public SubjectPublicKeyInfo DER plus optional `alg`, `use`, and `key_ops`
+  restrictions in the same object.
 
   Offline checks establish mathematical validity against the retained key.
   Trust in that key, freshness, replay, and body integrity are time- and
@@ -52,8 +53,9 @@ defmodule RequestSeal.VerificationRecord do
   Accepts a `RequestSeal.Verification` or its `{:ok, verification}` tuple.
   Optional `directory: resolution` records the origin and fetch time of a
   `RequestSeal.Discovery.Resolution` for the same public key. A Web Bot Auth
-  agent already supplies these historical facts. The provenance describes
-  the original verification and is outside the HTTP signature.
+  agent already supplies these historical facts. An explicit resolution must
+  agree with them. Provenance describes the original verification and is
+  outside the HTTP signature.
 
   Returns `{:ok, record}` or `{:error, :not_accepted}` when the result lacks
   sound capture evidence or the options or directory provenance are invalid.
@@ -211,7 +213,14 @@ defmodule RequestSeal.VerificationRecord do
   defp check(_, _), do: @refusal
 
   defp export_key(%PublicKey{material: {:rsa_pss, _, _}} = key) do
-    with {:ok, der} <- PublicKey.export(key, :der), do: {:ok, %{"spki" => b64(der)}}
+    public = PublicKey.validate!(key)
+    unrestricted = %{public | algorithm: nil, use: nil, operations: nil}
+
+    with {:ok, der} <- PublicKey.export(unrestricted, :der) do
+      restrictions = [{"alg", public.algorithm}, {"use", public.use}, {"key_ops", public.operations}]
+      members = Map.new(Enum.reject(restrictions, fn {_, value} -> is_nil(value) end))
+      {:ok, Map.put(members, "spki", b64(der))}
+    end
   end
 
   defp export_key(key) do
@@ -224,9 +233,10 @@ defmodule RequestSeal.VerificationRecord do
          do: {:ok, key}
   end
 
-  defp import_key(%{"spki" => encoded} = wire) when map_size(wire) == 1 do
+  defp import_key(%{"spki" => encoded} = wire) when map_size(wire) in 1..4 do
     with {:ok, der} <- unb64(encoded, 16_384),
-         {:ok, key} <- PublicKey.import(der, :der),
+         {:ok, %PublicKey{material: {:rsa_pss, _, _}} = key} <- PublicKey.import(der, :der),
+         key = %{key | algorithm: wire["alg"], use: wire["use"], operations: wire["key_ops"]},
          {:ok, ^wire} <- export_key(key),
          do: {:ok, key}
   end
@@ -252,22 +262,33 @@ defmodule RequestSeal.VerificationRecord do
 
   defp profile?(_), do: false
 
-  defp directory(
+  defp directory(principal, opts, thumbprint) do
+    with {:ok, established} <- established_directory(principal, thumbprint),
+         {:ok, supplied} <- supplied_directory(opts, thumbprint),
+         true <- is_nil(established) or is_nil(supplied) or established == supplied do
+      {:ok, established || supplied}
+    else
+      _ -> :error
+    end
+  end
+
+  defp established_directory(
          %{kind: :agent, origin: origin, provenance: %{fetched_at: time}, thumbprint: thumb},
-         [],
          thumb
        ),
        do: checked_directory(origin, time)
 
-  defp directory(%{kind: :agent}, [], _), do: :error
-  defp directory(_, [], _), do: {:ok, nil}
+  defp established_directory(%{kind: :agent}, _), do: :error
+  defp established_directory(_, _), do: {:ok, nil}
 
-  defp directory(_, [directory: %Resolution{thumbprint: thumb} = resolution], thumb) do
+  defp supplied_directory([], _), do: {:ok, nil}
+
+  defp supplied_directory([directory: %Resolution{thumbprint: thumb} = resolution], thumb) do
     with {:ok, ^thumb} <- PublicKey.thumbprint(resolution.key),
          do: checked_directory(resolution.origin, resolution.fetched_at)
   end
 
-  defp directory(_, _, _), do: :error
+  defp supplied_directory(_, _), do: :error
 
   defp checked_directory(origin, time) do
     info = %{"origin" => origin, "fetched_at" => time}

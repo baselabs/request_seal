@@ -449,3 +449,10 @@ With the 131-byte test key of repeated `aa` bytes in
 the framed HMAC-SHA256 tag is `177e8624574728c0429489b62a9730c4ca8cd4e63e926e70eeceeeee5cada356`.
 The label bytes are followed by each field's four-byte big-endian length
 and bytes. Fix the label and field order in your application format.
+
+Public-key screening at local import compares the derived thumbprint before a
+private-key possession probe. Once custody issues a handle, retire it by
+withdrawing it from callers and releasing it through its owner. To reject an
+already-issued key when verifying a message, update the verification policy
+with its thumbprint. An active set still requires the custodian's approval
+when the handle implements a verifier.

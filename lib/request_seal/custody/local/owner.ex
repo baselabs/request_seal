@@ -40,7 +40,15 @@ defmodule RequestSeal.Custody.Local.Owner do
           | :unconfigured
           | {:error,
              :invalid_seed | :insecure_file | :unreadable | :key_denied | :thumbprint_mismatch}
-  @type options :: [name: atom(), keys: [{atom(), {binary(), source()}}]]
+  @type options :: [
+          name: atom(),
+          keys: [
+            {atom(),
+             {"ed25519", source()}
+             | {"ed25519", source(),
+                [deny: RequestSeal.DenySet.t() | nil, expected_thumbprint: binary()]}}
+          ]
+        ]
   @max_source_bytes 4_096
 
   @doc """
@@ -225,6 +233,8 @@ defmodule RequestSeal.Custody.Local.Owner do
       * `{:error, :insecure_file}` - the file is not a regular file with mode 0600
         or stricter, or it changed identity during reading.
       * `{:error, :unreadable}` - the source could not be read.
+      * `{:error, :key_denied}` - the derived public key is in the deny set.
+      * `{:error, :thumbprint_mismatch}` - the seed derives a different public key.
     * `{:error, :owner_unavailable}` - the owner is stopped or did not reply
       within the default `GenServer.call/3` timeout.
 

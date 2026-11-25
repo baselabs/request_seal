@@ -266,3 +266,9 @@ freshness, replay and body digest checks require the original context. A
 record carries no authorization. After retirement or compromise, an old
 key may still verify mathematically. Restrict access to the saved bytes
 because covered field values may be sensitive.
+
+Capture also supports asymmetric verification handles that export the public
+key used for the signature and approve the operation. PSS-only keys preserve
+their SPKI and validated restrictions in the record. For Web Bot Auth, the
+record uses the established directory origin and fetch time. A supplied
+`directory: resolution` must agree with both facts.

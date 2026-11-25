@@ -1,7 +1,7 @@
 defmodule RequestSeal.VerificationRecordTest do
   use ExUnit.Case, async: true
 
-  alias RequestSeal.{Conformance, PublicKey, VerificationRecord}
+  alias RequestSeal.{Conformance, Custody, DenySet, PublicKey, VerificationRecord}
   alias RequestSeal.Conformance.Surfaces
   alias RequestSeal.Discovery.Resolution
 
@@ -12,7 +12,7 @@ defmodule RequestSeal.VerificationRecordTest do
   end
 
   test "captures the cryptographically verified RFC bytes only on request" do
-    for name <- ["capture-ed25519", "capture-rsa-pss"] do
+    for name <- ["capture-ed25519", "capture-rsa-pss", "capture-restricted-rsa-pss"] do
       c = manifest("verification_record", name)
       assert {:ok, result} = Surfaces.verification_record(@root, c)
       assert result == c["expected"]
@@ -81,12 +81,47 @@ defmodule RequestSeal.VerificationRecordTest do
     end
   end
 
+  test "valid record mutations reject duplicate and unknown members at every object boundary" do
+    positive = manifest("verification_record", "reverify-directory")
+    bytes = Conformance.bytes(positive["inputs"]["record"])
+    assert :ok = VerificationRecord.reverify(bytes)
+
+    for boundary <- ~w(envelope record profile directory key jwk),
+        defect <- ~w(duplicate unknown) do
+      c = manifest("verification_record", "#{defect}-#{boundary}-member")
+      mutated = Conformance.bytes(c["inputs"]["record"])
+      assert mutated != bytes
+      assert {:error, :invalid_record} = VerificationRecord.decode(mutated)
+    end
+  end
+
+  test "asymmetric custody capture works with or without a deny set" do
+    {:ok, handle} = Custody.Local.generate("ed25519", [])
+    {:ok, key} = Custody.public_key(handle)
+    {:ok, message} = RequestSeal.Message.request("GET", "https://example.com/", [], nil)
+    spec = %{label: "sig", algorithm: "ed25519", signature_input: ~s[("@method")]}
+    {:ok, signed} = RequestSeal.sign(message, spec, handle)
+    {:ok, empty} = DenySet.new([])
+    p = policy("ed25519", handle)
+
+    for deny <- [nil, empty] do
+      assert {:ok, result} =
+               RequestSeal.verify(signed, %{p | deny: deny}, label: "sig", capture: true)
+
+      assert result.signature.record_material.key == key
+      assert {:ok, record} = VerificationRecord.from_verification(result)
+      assert {:ok, bytes} = VerificationRecord.encode(record)
+      assert :ok = VerificationRecord.reverify(bytes)
+    end
+
+    assert :ok = Custody.release(handle)
+  end
+
   test "decoder refuses invalid framing and malformed records" do
     for bytes <- [
           false,
           "",
           "{}",
-          ~s({"digest":"first","digest":"second","record":{}}),
           ~s({"digest":"","record":{"version":1.0}}),
           String.duplicate("[", 9) <> String.duplicate("]", 9),
           :binary.copy(" ", 2_097_153)
@@ -101,6 +136,11 @@ defmodule RequestSeal.VerificationRecordTest do
 
   test "symmetric HTTP verification cannot capture retained material" do
     c = manifest("verification_record", "capture-symmetric")
+    assert {:error, %{layer: :input, reason: :invalid_options}} =
+             Surfaces.verification_record(@root, c)
+
+    c = put_in(c, ["policy", "deny"], [])
+
     assert {:error, %{layer: :input, reason: :invalid_options}} =
              Surfaces.verification_record(@root, c)
   end

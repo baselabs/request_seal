@@ -148,6 +148,8 @@ defmodule RequestSeal.WebBotAuth.Policy do
   def new(_), do: invalid()
   @doc false
   def valid?(%__MODULE__{} = p) do
+    p = Map.put_new(p, :deny, nil)
+
     Enum.sort(Map.keys(p)) == Enum.sort(Map.keys(%__MODULE__{})) and
       is_function(p.agents, 1) and (p.cache == nil or is_pid(p.cache)) and
       is_integer(p.max_lifetime) and p.max_lifetime in 1..604_800 and

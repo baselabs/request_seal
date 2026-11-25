@@ -2,6 +2,10 @@
 
 ## Unreleased 2.0.0
 
+- Preserve custody verification when screening or capturing public keys, validate
+  deny-set entries, and screen imported seeds before the possession probe.
+- Preserve established directory provenance and restricted PSS keys in records.
+  Accept HTTP verification policy structs created before deny sets were added.
 - Check directory keys and proof lifetimes over the full trusted clock interval
   and apply the Web Bot Auth deny set to every directory proof signer.
 - Support opt-in capture and offline checking of canonical public-key HTTP signature records.

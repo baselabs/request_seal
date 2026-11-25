@@ -25,6 +25,7 @@ defmodule RequestSeal.CustodyLocalOwnerTest do
     assert :ok = Local.release(handle)
     {:ok, deny} = RequestSeal.DenySet.new([thumbprint])
     wrong = Base.url_encode64(<<0::256>>, padding: false)
+    malformed = %RequestSeal.DenySet{entries: %{thumbprint => true}}
 
     owner =
       start_supervised!(
@@ -32,6 +33,7 @@ defmodule RequestSeal.CustodyLocalOwnerTest do
          keys: [
            allowed: {"ed25519", source, expected_thumbprint: thumbprint},
            denied: {"ed25519", source, deny: deny},
+           malformed: {"ed25519", source, deny: malformed},
            mismatch: {"ed25519", source, expected_thumbprint: wrong}
          ]}
       )
@@ -39,11 +41,13 @@ defmodule RequestSeal.CustodyLocalOwnerTest do
     assert Owner.status(owner) == %{
              allowed: :ready,
              denied: {:error, :key_denied},
+             malformed: {:error, :invalid_seed},
              mismatch: {:error, :thumbprint_mismatch}
            }
 
     assert {:ok, _} = Owner.fetch(owner, :allowed)
     assert {:error, :unconfigured} = Owner.fetch(owner, :denied)
+    assert {:error, :unconfigured} = Owner.fetch(owner, :malformed)
     assert {:error, :unconfigured} = Owner.fetch(owner, :mismatch)
   end
 

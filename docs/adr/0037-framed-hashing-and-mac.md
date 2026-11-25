@@ -25,3 +25,6 @@ compact JWS inputs. Operation capabilities constrain the use of local keys.
 The application chooses and versions the domain and field order. These are
 RequestSeal byte contracts using [RFC 6234](https://www.rfc-editor.org/rfc/rfc6234.html)
 algorithms. The corpus publishes independently calculated framing vectors.
+
+Local import assesses admission before issuing capabilities. Applications
+withdraw and release an existing handle to retire it.

@@ -116,8 +116,8 @@ defmodule RequestSeal do
       lowercase letters, digits, `_`, `-`, `.` or `*`.
     * `:capture` - Boolean, default false. Retain the exact public key,
       signature base and signature in `signature.record_material` after all
-      checks pass. Capture requires public-key verification; secret custody
-      rejects with `:invalid_options`.
+      checks pass. An asymmetric handle may capture its verified public key
+      after custody approval. Symmetric capture rejects with `:invalid_options`.
     * `:representation` - optional validated `RequestSeal.Body`, accepted only
       when the policy requires a representation digest. No content body
       substitutes for it.

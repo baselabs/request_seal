@@ -78,6 +78,8 @@ and policy descriptors; required capture returns canonical record `bytes`.
 `verification_record.reverify/v1` accepts the encoded `record` as a byte
 descriptor and returns `valid: true` after offline verification. The record
 format itself is documented by `RequestSeal.VerificationRecord`.
+The capture surface can supply an optional verification resolver
+`restrictions` object with `alg`, `use`, and `key_ops` for a public key.
 
 Format `request-seal-conformance-case/1` requires `id`, `surface`, `class`,
 `evidence_class`, `source`, `inputs` and `expected`. Source identity contains

@@ -76,24 +76,28 @@ defmodule RequestSeal.Authentication do
         {algorithm, key} = resolve(policy, label, params)
         match_algorithm(params, algorithm, :policy)
         ensure(algorithm in policy.algorithms, :algorithm_not_permitted, :policy)
-        key =
-          case DenySet.verification_key(policy.deny, key) do
-            {:ok, key} -> key
-            {:error, :key_denied} -> fail(:key_denied, :key)
-            {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)
-          end
+        capture? = Map.get(opts, :capture, false)
+        deny = Map.get(policy, :deny)
 
         ensure(
-          not Map.get(opts, :capture, false) or match?(%PublicKey{}, key),
+          not capture? or algorithm not in ["hmac-sha256", {:jws, "HS256"}],
           :invalid_options,
           :input
         )
 
-        {:ok, {algorithm, key, params, freshness}}
+        if is_struct(key, PublicKey) do
+          case DenySet.check(deny, key) do
+            :ok -> :ok
+            {:error, :key_denied} -> fail(:key_denied, :key)
+            {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)
+          end
+        end
+
+        {:ok, {algorithm, key, deny, capture?, Map.get(policy, :require_issued_for), params, freshness}}
       end)
 
     case prepared do
-      {:ok, {algorithm, key, params, freshness}} ->
+      {:ok, {algorithm, key, deny, capture?, purpose, params, freshness}} ->
         schemas = policy.field_schemas
         cache_key = {label, schemas}
 
@@ -110,13 +114,7 @@ defmodule RequestSeal.Authentication do
             {:ok, bytes} ->
               protect(fn ->
                 signature_bytes = elem(signature.value, 1)
-                verify_bytes(
-                  algorithm,
-                  bytes,
-                  signature_bytes,
-                  key,
-                  Map.get(policy, :require_issued_for)
-                )
+                public = verify_bytes(algorithm, bytes, signature_bytes, key, {deny, capture?, purpose})
                 content = content(message, input, policy.content, opts)
 
                 replay =
@@ -145,7 +143,7 @@ defmodule RequestSeal.Authentication do
                 signature_facts =
                   if Map.get(opts, :capture, false) do
                     Map.put(signature_facts, :record_material, %{
-                      key: key,
+                      key: public,
                       base: bytes,
                       signature: signature_bytes
                     })
@@ -475,9 +473,20 @@ defmodule RequestSeal.Authentication do
     end
   end
 
-  defp verify_bytes(_, bytes, signature, %KeyHandle{} = handle, purpose) do
-    case Custody.verify(handle, bytes, signature, issued_for: purpose, operation: :http) do
-      :ok -> :ok
+  defp verify_bytes(_, bytes, signature, %KeyHandle{} = handle, {deny, capture?, purpose}) do
+    opts = [issued_for: purpose, operation: :http]
+
+    result =
+      if deny != nil or capture?,
+        do: Custody.verify_bound(handle, bytes, signature, deny, opts),
+        else: Custody.verify(handle, bytes, signature, opts)
+
+    case result do
+      :ok -> nil
+      {:ok, public} -> public
+      {:error, %{reason: :key_denied}} -> fail(:key_denied, :key)
+      {:error, %{reason: :key_fingerprint_unknown}} when deny == nil -> fail(:invalid_options, :input)
+      {:error, %{reason: :key_fingerprint_unknown}} -> fail(:key_fingerprint_unknown, :key)
       {:error, %{reason: :invalid_signature}} -> fail(:invalid_signature, :crypto)
       _ -> fail(:verifier_failed, :crypto)
     end
@@ -485,7 +494,7 @@ defmodule RequestSeal.Authentication do
 
   defp verify_bytes(algorithm, bytes, signature, key, _) do
     case Crypto.verify(algorithm, bytes, signature, key) do
-      :ok -> :ok
+      :ok -> key
       {:error, %{reason: :invalid_signature}} -> fail(:invalid_signature, :crypto)
       _ -> fail(:verifier_failed, :crypto)
     end

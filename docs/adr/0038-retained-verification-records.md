@@ -27,3 +27,9 @@ A record carries no authorization and establishes no live trust or freshness.
 A retired key may still verify mathematically. Protect stored records and
 sensitive covered bytes. See [RFC 9421 Section 3.2](https://www.rfc-editor.org/rfc/rfc9421.html#section-3.2),
 [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html), and [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html).
+
+Capture an asymmetric handle's verified public material under the same
+rules with or without a deny set. PSS-only keys retain the SPKI along with
+any validated algorithm, use, and operation restrictions. Established
+agent origin and fetch time take precedence and a supplied resolution must
+agree. Decode refuses duplicate and unknown members at every object boundary.

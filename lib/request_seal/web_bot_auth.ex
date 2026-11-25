@@ -283,7 +283,7 @@ defmodule RequestSeal.WebBotAuth do
                 freshness: %{freshness | clock: fn -> interval end},
                 content: policy.content,
                 replay: :not_required,
-                deny: policy.deny,
+                deny: Map.get(policy, :deny),
                 max_signatures: policy.max_signatures,
                 field_schemas: schemas(policy.field_schemas)
               })
@@ -506,7 +506,7 @@ defmodule RequestSeal.WebBotAuth do
     )
 
     if resolution.proof == :signed do
-      case RequestSeal.DenySet.check_proof(policy.deny, Map.get(resolution, :proof_signers)) do
+      case RequestSeal.DenySet.check_proof(Map.get(policy, :deny), Map.get(resolution, :proof_signers)) do
         :ok -> :ok
         {:error, :key_denied} -> fail(:key_denied, :key)
         {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)

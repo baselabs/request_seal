@@ -1195,6 +1195,38 @@ defmodule RequestSeal.WebBotAuthTest do
     assert {:ok, bytes} = VerificationRecord.encode(record)
     assert %{"record" => %{"directory" => %{"fetched_at" => @now}}} = :json.decode(bytes)
     assert :ok = VerificationRecord.reverify(bytes)
+
+    key = result.signature.record_material.key
+    {:ok, thumbprint} = PublicKey.thumbprint(key)
+
+    matching = %Resolution{
+      origin: result.principal.origin,
+      fetched_at: result.principal.provenance.fetched_at,
+      thumbprint: thumbprint,
+      key: key
+    }
+
+    assert {:ok, matching_record} =
+             VerificationRecord.from_verification(result, directory: matching)
+
+    assert {:ok, ^bytes} = VerificationRecord.encode(matching_record)
+
+    for mismatch <- [
+          %{matching | origin: "https://other.example"},
+          %{matching | fetched_at: matching.fetched_at + 1}
+        ] do
+      assert {:error, :not_accepted} =
+               VerificationRecord.from_verification(result, directory: mismatch)
+    end
+
+    legacy = Map.delete(policy(), :deny)
+    assert {:ok, _} = WebBotAuth.verify(request("directory"), legacy)
+
+    forged = %RequestSeal.DenySet{entries: %{thumbprint => true}}
+    assert_error(WebBotAuth.verify(request("directory"), Map.put(legacy, :deny, forged)),
+      :invalid_policy,
+      :input
+    )
   end
 
   test "deny set applies to an otherwise trusted directory key" do

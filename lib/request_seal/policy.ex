@@ -87,8 +87,8 @@ defmodule RequestSeal.Policy do
         (`"hmac-sha256"`, `{:jws, "HS256"}`) requires a custody handle. Any other key in the
         result, or any other return, rejects with `:key_resolver_failed`.
       * `:deny` - a `RequestSeal.DenySet` or nil (default). An active set
-        checks the public key used by verification. A handle must grant
-        verification and export a public key; verification uses that key.
+        checks the public key used by verification. A handle must authorize
+        verification and export the public key used to verify the same bytes.
       * `:freshness` - `:not_evaluated` or a map containing exactly `:clock`
         (arity zero, Unix second or ordered `{lower, upper}` interval), `:max_age` (1 to
         253,402,300,799, or nil), `:skew` (0 to 86,400), and
@@ -177,7 +177,7 @@ defmodule RequestSeal.Policy do
 
   @doc false
   def valid?(%__MODULE__{} = p) do
-    p = Map.put_new(p, :require_issued_for, nil)
+    p = p |> Map.put_new(:require_issued_for, nil) |> Map.put_new(:deny, nil)
 
     Enum.sort(Map.keys(p)) == Enum.sort(Map.keys(%__MODULE__{})) and
       list?(p.algorithms, &SignatureFields.algorithm?/1) and

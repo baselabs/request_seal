@@ -225,8 +225,9 @@ defmodule RequestSeal.JOSE.JWS do
       * `:require_issued_for` - an optional purpose atom. Omission and nil
         select unassigned keys.
       * `:deny` - optional `RequestSeal.DenySet` or nil. A matching key rejects
-        as `:key_denied`. With an active set, verification uses validated public
-        material and rejects with `:key_fingerprint_unknown` when unavailable.
+        as `:key_denied`. An active set requires validated public material and
+        rejects with `:key_fingerprint_unknown` when unavailable. A handle's
+        verifier must approve the signature as well.
 
   Admission checks header refusals and algorithm selection, then the member
   set and expected values before resolution. Under :refuse, jwk is unsupported.
@@ -330,25 +331,34 @@ defmodule RequestSeal.JOSE.JWS do
       :key
     )
 
+    deny = Map.get(p, :deny)
+
     result =
       case key do
         %RequestSeal.PublicKey{} = key ->
           ensure(not match?({:x25519, _}, key.material), :algorithm_mismatch, :key)
-          RequestSeal.Crypto.verify({:jws, alg}, base, signature, key)
+          with :ok <- RequestSeal.DenySet.check(deny, key),
+               do: RequestSeal.Crypto.verify({:jws, alg}, base, signature, key)
 
         %RequestSeal.KeyHandle{} = handle ->
-          ensure(handle.algorithm == {:jws, alg}, :algorithm_mismatch, :key)
           ensure(handle.issued_for == purpose, :issued_for_mismatch, :key)
+          opts = [timeout: p.timeout, issued_for: purpose, operation: :jws]
 
-          RequestSeal.Custody.verify(handle, base, signature,
-            timeout: p.timeout,
-            issued_for: purpose,
-            operation: :jws
-          )
-
-        _ ->
-          fail(:key_resolver_failed, :key)
+          if deny == nil do
+            RequestSeal.Custody.verify(handle, base, signature, opts)
+          else
+            with {:ok, _} <- RequestSeal.Custody.verify_bound(handle, base, signature, deny, opts),
+                 do: :ok
+          end
       end
+
+    case result do
+      {:error, :key_denied} -> fail(:key_denied, :key)
+      {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)
+      {:error, %{reason: :key_denied}} -> fail(:key_denied, :key)
+      {:error, %{reason: :key_fingerprint_unknown}} -> fail(:key_fingerprint_unknown, :key)
+      _ -> :ok
+    end
 
     ensure(result == :ok, :invalid_signature, :crypto)
     {:ok, %Result{algorithm: alg, header: h, protected: protected, payload: payload}}
