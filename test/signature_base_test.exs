@@ -130,6 +130,18 @@ defmodule RequestSeal.SignatureBaseTest do
     end
   end
 
+  test "field occurrence limits apply across a message's headers and trailers" do
+    full = List.duplicate("::", 1_024) |> Enum.join(", ")
+    headers = ~s["x";bs: #{full}]
+    trailers = ~s["y";bs;tr: ::]
+
+    assert {:ok, _} =
+             SignatureBase.parse(headers <> "\n" <> ~s["@signature-params": ("x";bs)])
+
+    combined = Enum.join([headers, trailers, ~s["@signature-params": ("x";bs "y";bs;tr)]], "\n")
+    assert {:error, %{reason: :malformed}} = SignatureBase.parse(combined)
+  end
+
   test "all complete Sections 2, 4.3 and Appendix B bases match independently published bytes" do
     assert length(@vectors) == 12
     assert Enum.any?(@vectors, &(&1["section"] == "B.2.1"))

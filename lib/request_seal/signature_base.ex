@@ -313,7 +313,7 @@ defmodule RequestSeal.SignatureBase do
   defp field_kind(%{"sf" => _}), do: :structured
   defp field_kind(_), do: :plain
 
-  defp field_wire?(:plain, _, value), do: plain_field?(value, 1_024)
+  defp field_wire?(:plain, _, value), do: is_integer(plain_occurrence_count(value, 0))
 
   defp field_wire?(:bytes, _, value), do: match?({:ok, _}, byte_sequences(value))
 
@@ -370,15 +370,24 @@ defmodule RequestSeal.SignatureBase do
   end
 
   defp field_facts?(components) do
-    components
-    |> Enum.reject(fn {name, _, _} -> name in @derived end)
-    |> Enum.group_by(fn {name, params, _} -> {name, Map.has_key?(params, "tr")} end)
-    |> Enum.all?(fn {_, field} -> field_group?(field) end)
+    fields =
+      components
+      |> Enum.reject(fn {name, _, _} -> name in @derived end)
+      |> Enum.group_by(fn {name, params, _} -> {name, Map.has_key?(params, "tr")} end)
+
+    Enum.reduce_while(fields, {0, 0}, fn {{name, _}, field}, {count, bytes} ->
+      case field_group(field, byte_size(name)) do
+        {occurrences, minimum_bytes}
+        when count + occurrences <= 1_024 and bytes + minimum_bytes <= 1_048_576 ->
+          {:cont, {count + occurrences, bytes + minimum_bytes}}
+
+        _ ->
+          {:halt, false}
+      end
+    end) != false
   end
 
-  defp field_group?([_]), do: true
-
-  defp field_group?(field) do
+  defp field_group(field, name_bytes) do
     values = Map.new(field, fn {_, params, value} -> {field_kind(params), value} end)
 
     members =
@@ -386,28 +395,44 @@ defmodule RequestSeal.SignatureBase do
 
     plain = values[:plain]
     complete = values[:structured]
-    combined = combined_bytes(values[:bytes])
+    occurrences = byte_occurrences(values[:bytes])
+    combined = if occurrences != nil, do: Enum.join(occurrences, ", ")
     source = combined || plain || complete
 
-    matches_fact?(combined, plain) and
-      cond do
-        complete == nil and members == [] ->
-          true
-
-        source != nil ->
-          structured_matches?(source, complete, members)
-
-        true ->
-          source = Enum.map_join(members, ", ", &named_member/1)
-          structured_matches?(source, nil, members)
-      end
+    if matches_fact?(combined, plain) and consistent_structured_field?(source, complete, members) do
+      minimum_field_size(occurrences, plain, name_bytes)
+    end
   end
 
-  defp combined_bytes(nil), do: nil
+  defp consistent_structured_field?(_, nil, []), do: true
 
-  defp combined_bytes(wire) do
+  defp consistent_structured_field?(nil, nil, members) do
+    source = Enum.map_join(members, ", ", &named_member/1)
+    structured_matches?(source, nil, members)
+  end
+
+  defp consistent_structured_field?(source, complete, members),
+    do: structured_matches?(source, complete, members)
+
+  defp byte_occurrences(nil), do: nil
+
+  defp byte_occurrences(wire) do
     {:ok, reversed} = byte_sequences(wire)
-    reversed |> Enum.reverse() |> Enum.join(", ")
+    Enum.reverse(reversed)
+  end
+
+  defp minimum_field_size(nil, nil, name_bytes), do: {1, name_bytes}
+
+  defp minimum_field_size(nil, plain, name_bytes) do
+    count = plain_occurrence_count(plain, 0)
+    # Bound one-byte names conservatively because extra separators save bytes.
+    name_overhead = if name_bytes == 1, do: -1_024, else: count * (name_bytes - 2)
+    {count, max(name_bytes, byte_size(plain) + name_overhead + 2)}
+  end
+
+  defp minimum_field_size(occurrences, _, name_bytes) do
+    count = length(occurrences)
+    {count, count * name_bytes + IO.iodata_length(occurrences)}
   end
 
   defp named_member({key, "?1" <> parameters}), do: key <> parameters
@@ -421,18 +446,18 @@ defmodule RequestSeal.SignatureBase do
   end
 
   # An empty last occurrence leaves the separator's space at the end.
-  defp plain_field?(_, 0), do: false
+  defp plain_occurrence_count(_, 1_024), do: nil
 
-  defp plain_field?(value, count) do
+  defp plain_occurrence_count(value, count) do
     cond do
       String.ends_with?(value, ", ") ->
-        plain_field?(binary_part(value, 0, byte_size(value) - 2), count - 1)
+        plain_occurrence_count(binary_part(value, 0, byte_size(value) - 2), count + 1)
 
       value != trim_ows(value) ->
-        false
+        nil
 
       byte_size(value) <= 65_536 ->
-        true
+        count + 1
 
       true ->
         # Use the last legal separator within the field occurrence bound.
@@ -441,10 +466,10 @@ defmodule RequestSeal.SignatureBase do
         case Enum.find(Enum.reverse(:binary.matches(prefix, ", ")), &ows_boundary?(value, &1)) do
           {offset, 2} ->
             rest = binary_part(value, offset + 2, byte_size(value) - offset - 2)
-            plain_field?(rest, count - 1)
+            plain_occurrence_count(rest, count + 1)
 
           nil ->
-            false
+            nil
         end
     end
   end
