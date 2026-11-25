@@ -51,7 +51,9 @@ defmodule RequestSeal.SignatureBaseTest do
           valid <> "\n",
           String.replace(valid, "\n", "\r\n"),
           String.replace(valid, "GET", <<255>>),
-          String.replace(valid, "GET", "G\tET"),
+          String.replace(valid, "GET", "G\vET"),
+          valid <> ~s[;created="wrong type"],
+          ~s["@unregistered": x] <> "\n" <> ~s["@signature-params": ("@unregistered")],
           String.replace(valid, ~s[("@method")], ~s[( "@method" )]),
           String.replace(valid, ~s[("@method")], ~s[("@path")]),
           valid <> "\nextra: line",
@@ -90,6 +92,14 @@ defmodule RequestSeal.SignatureBaseTest do
     base = prefix <> Enum.join(first ++ [last], ", ") <> suffix
     assert byte_size(base) == 1_048_576
     assert {:ok, _} = SignatureBase.parse(base)
+  end
+
+  test "inspection preserves internal horizontal tabs from a covered field" do
+    message = request(%{fields: fields([{"Example-Header", "left\tright"}])})
+    params = ~s[("example-header")]
+    assert {:ok, base} = SignatureBase.build(message, params)
+    assert {:ok, %{components: [{~s["example-header"], "left\tright"}]}} =
+             SignatureBase.parse(base)
   end
 
   test "components shares build errors, schemas and resource accounting" do

@@ -222,3 +222,12 @@ parameters.
 See [the public contract](../design/architecture.md) for the separate representation, construction, cryptography, profile, trust, integrity, and replay layers. Named application profiles use `RequestSeal.Profile` in extension packages; that extension surface follows the [compatibility policy](../reference/compatibility.md) like the rest of the public API. Extensions must enforce their source-specific rules and trusted attribution; a profile stamp alone is no proof.
 
 Module docs: `RequestSeal`, `RequestSeal.Message`, `RequestSeal.SignatureBase`, `RequestSeal.Policy`, `RequestSeal.Verification`, `RequestSeal.Digest`, `RequestSeal.Profile`, `RequestSeal.Error`. `RequestSeal.Error` lists every reason by layer, and the [errors guide](errors.md) shows how to diagnose them. [Testing](testing.md) distinguishes published vectors, local round trips, independent verifiers, and deployed-peer acceptance.
+
+## Inspect a signature base
+
+Call `RequestSeal.SignatureBase.components(message, ~s[("@method")])` to inspect
+the ordered identifier and value pairs before signing. To inspect saved bytes,
+pass the result of `RequestSeal.SignatureBase.build(message, ~s[("@method")])`
+to `RequestSeal.SignatureBase.parse/1` after unwrapping `{:ok, base}`. The
+parser requires byte-exact reconstruction and preserves internal horizontal
+tabs in field values. It performs no signature or provenance check.

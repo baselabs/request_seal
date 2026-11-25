@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Validate parsed signature-base identifiers like live signature inputs and preserve internal field tabs.
+
 - Require matching purpose and operation family for assigned signing keys.
   HTTP and JWS propagate that requirement into custody. Assigned operations
   require a retained assignment from the custodian. Custodians reporting an
