@@ -11,6 +11,7 @@ defmodule RequestSeal.JOSE.JWS do
   network permission. Cryptographic validity supplies no principal, claims
   validation, freshness, replay protection, or authorization.
   """
+  alias RequestSeal.KeyHandle
   alias RequestSeal.JOSE.{Header, Support}
   alias RequestSeal.JOSE.JWS.Result
   import Support
@@ -39,6 +40,7 @@ defmodule RequestSeal.JOSE.JWS do
   ## Options
 
     * `:timeout` - integer milliseconds, 1 to 300,000. Default 5,000.
+    * `:issued_for` - optional purpose to match against the signing handle.
 
   ## Returns
 
@@ -81,7 +83,7 @@ defmodule RequestSeal.JOSE.JWS do
         ) :: {:ok, binary()} | {:error, RequestSeal.JOSE.Error.t()}
   def sign(header, payload, signer, opts \\ []) do
     safe(fn ->
-      timeout = timeout(opts)
+      timeout = signing_timeout(opts, signer)
       bytes(payload)
       ensure(payload != "", :detached_payload)
       {protected, h} = Header.serialize(header)
@@ -117,6 +119,7 @@ defmodule RequestSeal.JOSE.JWS do
   ## Options
 
     * `:timeout` - integer milliseconds, 1 to 300,000. Default 5,000.
+    * `:issued_for` - optional purpose to match against the signing handle.
 
   ## Returns
 
@@ -153,7 +156,7 @@ defmodule RequestSeal.JOSE.JWS do
           {:ok, binary()} | {:error, RequestSeal.JOSE.Error.t()}
   def sign_protected(protected_json, payload, signer, opts \\ []) do
     safe(fn ->
-      timeout = timeout(opts)
+      timeout = signing_timeout(opts, signer)
       bytes(payload)
       ensure(payload != "", :detached_payload)
       h = Header.json(protected_json)
@@ -165,6 +168,20 @@ defmodule RequestSeal.JOSE.JWS do
       bytes(compact)
       {:ok, compact}
     end)
+  end
+
+  defp signing_timeout(opts, signer) do
+    timeout = timeout(opts, [:timeout, :issued_for])
+    purpose = Keyword.get(opts, :issued_for)
+    ensure(KeyHandle.purpose?(purpose), :invalid_options)
+
+    ensure(
+      purpose == nil or match?(%KeyHandle{issued_for: ^purpose}, signer),
+      :issued_for_mismatch,
+      :key
+    )
+
+    timeout
   end
 
   @doc """

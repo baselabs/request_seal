@@ -73,7 +73,7 @@ defmodule RequestSeal.Custody.Local do
   @behaviour RequestSeal.Custody
   alias RequestSeal.{Crypto, KeyHandle, KeyIdentity, PublicKey}
   alias RequestSeal.Crypto.Algorithm
-  alias RequestSeal.Custody.{Context, Derivation, DeriveRequest, Sink, Support}
+  alias RequestSeal.Custody.{Context, Derivation, DeriveRequest, Gate, Sink, Support}
   import Support, only: [fail: 1, ensure: 2, unwrap: 1]
   @rsa {1, 2, 840, 113_549, 1, 1, 1}
   @pss {1, 2, 840, 113_549, 1, 1, 10}
@@ -115,6 +115,8 @@ defmodule RequestSeal.Custody.Local do
 
   ## Options
 
+    * `:issued_for` - caller-assigned purpose atom or nil.
+    * `:admission` - a `RequestSeal.Custody.Gate` configuration for HTTP signing.
     * `:capabilities` - for JWE and derivation parents, a nonempty unique subset of the family's
       capabilities. AES-KW defaults to `[:wrap, :unwrap]`; other JWE families
       default to `[:unwrap]` and refuse `:wrap`.
@@ -128,10 +130,8 @@ defmodule RequestSeal.Custody.Local do
       signing algorithm, `[:wrap, :unwrap]` (or the selected subset) for AES-KW,
       `[:unwrap]` for other JWE algorithms, or `[:derive]` for an HKDF parent.
     * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
-      `:unsupported_algorithm`, `:invalid_options` (an option other than a single
-      `:equivalence`/`:capabilities`, invalid capabilities, or `:equivalence`
-      on a non-HMAC algorithm or outside
-      1–256 bytes), `:invalid_key` (malformed, out-of-range, or inconsistent
+      `:unsupported_algorithm`, `:invalid_options` (unknown, duplicate or
+      invalid options), `:invalid_key` (malformed, out-of-range, or inconsistent
       material), and `:key_mismatch` (material of a type or curve that does not
       fit `algorithm`). Holder startup can also return `:custodian_failure` or
       `:deadline_exceeded`. Other reasons: see `RequestSeal.Custody.Error`.
@@ -172,6 +172,7 @@ defmodule RequestSeal.Custody.Local do
   Both HTTP and explicit JWS signing identifiers are accepted.
 
   Options are exactly the required `:bits` or `:curve` for that family, plus
+  optional `:issued_for` and HTTP `:admission` as in `new/3`,
   optional `:capabilities` narrowing its defaults (sign/verify, wrap/unwrap, or
   unwrap) and optional `:timeout` (1..300,000 ms, default 5,000) bounding holder
   startup and generation. RSA-4096 generation can take several seconds on a
@@ -200,7 +201,13 @@ defmodule RequestSeal.Custody.Local do
       {holder, token} =
         start_holder({:generate, algorithm, family, opts, capabilities}, self(), deadline)
 
-      KeyHandle.new(__MODULE__, algorithm, capabilities, fn -> {holder, token} end)
+      KeyHandle.new(
+        __MODULE__,
+        algorithm,
+        capabilities,
+        fn -> {holder, token} end,
+        Keyword.get(opts, :issued_for)
+      )
     end)
   end
 
@@ -220,7 +227,8 @@ defmodule RequestSeal.Custody.Local do
         _ -> []
       end
 
-    timeout = Support.timeout(opts, [:capabilities, :timeout | required])
+    timeout = Support.timeout(opts, [:capabilities, :timeout, :issued_for, :admission | required])
+    binding_options(algorithm, opts)
 
     case family do
       :rsa ->
@@ -363,7 +371,13 @@ defmodule RequestSeal.Custody.Local do
   defp construct(algorithm, material, opts, type, expected, capabilities) do
     state = prepare_state(algorithm, material, opts, type, expected, capabilities)
     {holder, token} = start_holder(state)
-    KeyHandle.new(__MODULE__, algorithm, elem(state, 4), fn -> {holder, token} end)
+    KeyHandle.new(
+      __MODULE__,
+      algorithm,
+      elem(state, 4),
+      fn -> {holder, token} end,
+      elem(state, 5)
+    )
   end
 
   defp prepare_state(algorithm, material, opts, type, expected, capabilities) do
@@ -371,10 +385,11 @@ defmodule RequestSeal.Custody.Local do
 
     allowed =
       if match?({:jwe, _}, algorithm) or match?({:derive, _}, algorithm),
-        do: [:equivalence, :capabilities],
-        else: [:equivalence]
+        do: [:equivalence, :capabilities, :issued_for],
+        else: [:equivalence, :issued_for, :admission]
 
     Support.options(opts, allowed)
+    binding_options(algorithm, opts)
 
     if Keyword.has_key?(opts, :capabilities) do
       selected = Keyword.fetch!(opts, :capabilities)
@@ -420,7 +435,23 @@ defmodule RequestSeal.Custody.Local do
     held_material =
       if match?({:jwe, alg} when alg in @ecdh, algorithm), do: {:ecdh, material}, else: material
 
-    {algorithm, held_material, public, identity, capabilities}
+    {
+      algorithm,
+      held_material,
+      public,
+      identity,
+      capabilities,
+      Keyword.get(opts, :issued_for),
+      Keyword.get(opts, :admission)
+    }
+  end
+
+  defp binding_options(algorithm, opts) do
+    ensure(KeyHandle.purpose?(Keyword.get(opts, :issued_for)), :invalid_options)
+
+    if Keyword.has_key?(opts, :admission) do
+      Gate.validate!(Keyword.fetch!(opts, :admission), algorithm)
+    end
   end
 
   defp selection({:derive, "hkdf-sha256"}), do: {"hkdf-sha256", :ikm, [:derive]}
@@ -546,7 +577,10 @@ defmodule RequestSeal.Custody.Local do
     Support.safe(
       fn ->
         ensure(match?(%KeyHandle{custodian: __MODULE__}, handle), :invalid_handle)
-        ensure(map_size(handle) == 5 and is_function(handle.ref, 0), :invalid_handle)
+        ensure(
+          map_size(handle) == map_size(%KeyHandle{}) and is_function(handle.ref, 0),
+          :invalid_handle
+        )
         release(handle.ref, default_context()) |> Support.unwrap()
       end,
       :invalid_handle
@@ -609,6 +643,9 @@ defmodule RequestSeal.Custody.Local do
 
   @impl true
   def identity(ref), do: request(ref, :identity, default_context())
+
+  @impl true
+  def binding(ref, context), do: request(ref, :binding, context)
 
   defp default_context do
     %RequestSeal.Custody.Context{
@@ -747,7 +784,14 @@ defmodule RequestSeal.Custody.Local do
     material = generated_material(algorithm, family, opts)
     # Generation has its own capability option for every family; imported signing
     # keys retain new/3's existing option contract.
-    prepare_state(algorithm, material, [], nil, nil, capabilities)
+    prepare_state(
+      algorithm,
+      material,
+      Keyword.take(opts, [:issued_for, :admission]),
+      nil,
+      nil,
+      capabilities
+    )
   end
 
   defp initial_state(state), do: state
@@ -813,7 +857,13 @@ defmodule RequestSeal.Custody.Local do
     if Process.alive?(owner) and Process.alive?(context.owner) and Context.remaining(context) > 0 do
       result =
         if pending == :committed do
-          Support.safe(fn -> holder_operation(operation, state, context) end, :custodian_failure)
+          Support.safe(
+            fn ->
+              check_binding(operation, state, context)
+              holder_operation(operation, state, context)
+            end,
+            :custodian_failure
+          )
         else
           {:error, :unavailable}
         end
@@ -831,7 +881,22 @@ defmodule RequestSeal.Custody.Local do
 
   defp valid_token?(_, _), do: false
 
-  defp holder_operation({:derive, request}, {bound, {:ikm, ikm}, _, _, capabilities}, context) do
+  defp check_binding(
+         operation,
+         {algorithm, _, _, _, _, purpose, _},
+         %Context{} = context
+       )
+       when is_tuple(operation) do
+    ensure(
+      context.issued_for == purpose and
+        context.operation_family in [nil, KeyHandle.family(algorithm)],
+      :key_mismatch
+    )
+  end
+
+  defp check_binding(_, _, _), do: :ok
+
+  defp holder_operation({:derive, request}, {bound, {:ikm, ikm}, _, _, capabilities, _, _}, context) do
     ensure(bound == {:derive, "hkdf-sha256"} and :derive in capabilities, :unsupported_operation)
     ensure(request.owner == context.owner and Process.alive?(request.owner), :unavailable)
     ensure(is_binary(request.token) and byte_size(request.token) == 32, :invalid_options)
@@ -850,7 +915,7 @@ defmodule RequestSeal.Custody.Local do
 
   defp holder_operation(
          {:unwrap, algorithm, items, sink},
-         {bound, material, _, _, capabilities},
+         {bound, material, _, _, capabilities, _, _},
          context
        ) do
     ensure(algorithm == bound, :key_mismatch)
@@ -887,6 +952,23 @@ defmodule RequestSeal.Custody.Local do
     end
   end
 
+  defp holder_operation(
+         {:sign, algorithm, bytes},
+         {bound, material, _, _, capabilities, _, admission},
+         context
+       ) do
+    ensure(algorithm == bound, :key_mismatch)
+    ensure(:sign in capabilities, :unsupported_operation)
+
+    if admission == nil do
+      Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling())
+    else
+      Gate.sign(bytes, admission, context, algorithm, fn ->
+        Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling())
+      end)
+    end
+  end
+
   defp holder_operation(operation, state, _context), do: holder_operation(operation, state)
 
   defp owner_cancelled?(monitor) do
@@ -897,15 +979,9 @@ defmodule RequestSeal.Custody.Local do
     end
   end
 
-  defp holder_operation({:sign, algorithm, bytes}, {bound, material, _, _, capabilities}) do
-    ensure(algorithm == bound, :key_mismatch)
-    ensure(:sign in capabilities, :unsupported_operation)
-    Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling())
-  end
-
   defp holder_operation(
          {:verify, algorithm, bytes, signature},
-         {bound, material, public, _, capabilities}
+         {bound, material, public, _, capabilities, _, _}
        ) do
     ensure(algorithm == bound, :key_mismatch)
     ensure(:verify in capabilities, :unsupported_operation)
@@ -915,11 +991,14 @@ defmodule RequestSeal.Custody.Local do
     )
   end
 
-  defp holder_operation(:public_key, {_, _, nil, _, _}), do: {:error, :no_public_key}
-  defp holder_operation(:public_key, {_, _, public, _, _}), do: {:ok, public}
-  defp holder_operation(:identity, {_, _, _, identity, _}), do: identity
+  defp holder_operation(:public_key, {_, _, nil, _, _, _, _}), do: {:error, :no_public_key}
+  defp holder_operation(:public_key, {_, _, public, _, _, _, _}), do: {:ok, public}
+  defp holder_operation(:identity, {_, _, _, identity, _, _, _}), do: identity
 
-  defp holder_operation({:wrap, algorithm, cek}, {bound, material, _, _, capabilities}) do
+  defp holder_operation(:binding, {algorithm, _, public, _, _, issued_for, _}),
+    do: {:ok, %{algorithm: algorithm, public_key: public, issued_for: issued_for}}
+
+  defp holder_operation({:wrap, algorithm, cek}, {bound, material, _, _, capabilities, _, _}) do
     ensure(algorithm == bound, :key_mismatch)
     ensure(:wrap in capabilities, :unsupported_operation)
     {:jwe, alg} = bound

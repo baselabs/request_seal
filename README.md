@@ -13,6 +13,7 @@ Use it to:
 - Identify and verify AI agents and crawlers with Web Bot Auth.
 - Turn a verified caller into an Ash actor and tenant, including tenant context from a signed Plug path.
 - Protect against replayed requests and migrate between replay stores.
+- Bind custody keys to a purpose and require single-use approval before signing.
 
 ## What RequestSeal does not do
 

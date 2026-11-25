@@ -29,7 +29,7 @@ defmodule RequestSeal.Error do
     bounds, including a decoded `Signature` member or nonce exceeding 1,024 bytes).
     `:signer_algorithm_mismatch` means a KeyHandle's algorithm differs from the
     specification's algorithm, in either signing form, before custody is
-    invoked.
+    invoked. A required signing purpose mismatch gives `:issued_for_mismatch`.
   * `:input` additionally includes `:invalid_profile` (invalid extension profile namespace, keys, values or size,
     or a generic verification `:profile` or `:principal` option).
   * `:fields`: `:duplicate_parameter` (repeated parameter names on signature or request members/components), `:duplicate_label` (repeated labels within or across occurrences), `:missing_signature_input`, `:missing_signature` (absent field),
@@ -57,7 +57,8 @@ defmodule RequestSeal.Error do
     (extra identifier with rejection selected).
   * `:profile`: extension packages document their own bounded reason atoms and
     details for source-specific acceptance rules.
-  * `:key`: `:unknown_key` (resolver returned `:error`), `:key_resolver_failed`
+  * `:key`: `:key_issued_for_mismatch` (the trusted key's purpose differs),
+    `:unknown_key` (resolver returned `:error`), `:key_resolver_failed`
     (callback fault or malformed algorithm/key result).
   * `:crypto`: `:invalid_signature` (cryptography rejects), `:signature_base_failed`
     (base construction rejects), `:verifier_failed` (custody verification failure
@@ -147,6 +148,8 @@ defmodule RequestSeal.Error do
           | :retention_exceeded
           | :signature_base_failed
           | :signer_algorithm_mismatch
+          | :issued_for_mismatch
+          | :key_issued_for_mismatch
           | :signer_failed
           | :signing_failed
           | :store_failed

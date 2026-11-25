@@ -5,9 +5,18 @@ defmodule RequestSeal.Custody.Context do
   Custodians propagate `deadline` to all external work and honor caller death as
   cancellation. The custody boundary also terminates its worker on either event.
   Closing a client connection does not undo a signature already produced by a peer.
+
+  The library stamps the handle's purpose and operation family on key-use
+  callbacks. Built-in custodians compare them with their retained binding.
   """
-  defstruct [:deadline, :owner]
-  @type t :: %__MODULE__{deadline: integer(), owner: pid()}
+  defstruct [:deadline, :owner, :issued_for, :operation_family]
+
+  @type t :: %__MODULE__{
+          deadline: integer(),
+          owner: pid(),
+          issued_for: atom() | nil,
+          operation_family: RequestSeal.KeyHandle.family() | nil
+        }
   @doc """
   Remaining operation milliseconds; zero means the deadline has expired.
 

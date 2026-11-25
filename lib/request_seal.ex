@@ -38,9 +38,10 @@ defmodule RequestSeal do
   alias RequestSeal.{Authentication, Error, Message, Policy, Verification}
 
   @type signature_spec :: %{
-          label: binary(),
-          signature_input: binary() | RequestSeal.StructuredFields.Value.t(),
-          algorithm: RequestSeal.Crypto.algorithm()
+          required(:label) => binary(),
+          required(:signature_input) => binary() | RequestSeal.StructuredFields.Value.t(),
+          required(:algorithm) => RequestSeal.Crypto.algorithm(),
+          optional(:issued_for) => atom() | nil
         }
   @type signing_spec ::
           %{
@@ -54,7 +55,8 @@ defmodule RequestSeal do
             optional(:keyid) => binary() | nil,
             optional(:tag) => binary() | nil,
             optional(:digest) => [binary()] | nil,
-            optional(:field_schemas) => map()
+            optional(:field_schemas) => map(),
+            optional(:issued_for) => atom() | nil
           }
           | parameterized_signing_spec()
 
@@ -71,7 +73,8 @@ defmodule RequestSeal do
             optional(:tag) => binary() | nil
           },
           optional(:digest) => [binary()] | nil,
-          optional(:field_schemas) => map()
+          optional(:field_schemas) => map(),
+          optional(:issued_for) => atom() | nil
         }
 
   @doc """
@@ -239,6 +242,10 @@ defmodule RequestSeal do
 
   ### Signing spec
 
+  Either signing form accepts `:issued_for` as an optional non-Boolean atom
+  that must equal the handle's purpose. A difference returns `:issued_for_mismatch`.
+  This option contributes no wire metadata.
+
   A `t:signing_spec/0` requires `:label`, `:algorithm`, serialized
   `:components` (an Inner List without list parameters), and `:expires_in` (a
   positive integer of seconds, at most 999,999,999,999,999). Defaults are
@@ -264,7 +271,7 @@ defmodule RequestSeal do
 
   ### Explicit signature spec
 
-  A `t:signature_spec/0` has exactly `:label`, `:signature_input` (a
+  A `t:signature_spec/0` requires `:label`, `:signature_input` (a
   serialized Inner List or `RequestSeal.StructuredFields.Value`), and
   `:algorithm`. An HTTP `alg` parameter must equal `:algorithm`; JWS selection
   requires no `alg` parameter. Signing runs through custody.

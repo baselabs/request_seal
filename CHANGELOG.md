@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Bind custody to a key purpose and operation family. Add single-use admission for Local HTTP signing.
+
 - Bind Plug tenant context to a verified path and pass it through to Ash scope mapping.
 
 - Add paired replay stores for migrations that require both stores to admit each claim.

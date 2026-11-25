@@ -13,6 +13,9 @@ defmodule RequestSeal.Custody.SSHAgent do
   an agent, loads keys, or accesses private files. The caller owns agent access and
   authorization. An OpenSSH agent is a separate process, not an HSM guarantee.
 
+  The optional `:issued_for` purpose is retained with the agent reference.
+  `RequestSeal.Custody.binding/2` checks live agent membership.
+
   `new/4` lists the supported algorithms; RSA PKCS #1 v1.5 SHA-256 signing uses
   agent flag 2.
   Each sign uses one new connection; replies cannot spill into another operation.
@@ -106,7 +109,9 @@ defmodule RequestSeal.Custody.SSHAgent do
           {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
   def new(algorithm, socket_path, public, opts \\ []) do
     Support.safe(fn ->
-      Support.timeout(opts)
+      Support.timeout(opts, [:timeout, :issued_for])
+      issued_for = Keyword.get(opts, :issued_for)
+      ensure(KeyHandle.purpose?(issued_for), :invalid_options)
       {jose, _} = resolved = Algorithm.resolve(algorithm)
       ensure(jose in ~w(EdDSA RS256 ES256 ES384), :unsupported_algorithm)
 
@@ -117,19 +122,21 @@ defmodule RequestSeal.Custody.SSHAgent do
       )
 
       PublicKey.bind!(public, resolved)
-      provisional = handle(algorithm, socket_path, public, false)
-      Custody.sign(provisional, "", opts) |> unwrap()
-      {:ok, handle(algorithm, socket_path, public, true)}
+      provisional = handle(algorithm, socket_path, public, false, issued_for)
+      Custody.sign(provisional, "", Keyword.take(opts, [:timeout])) |> unwrap()
+      {:ok, handle(algorithm, socket_path, public, true, issued_for)}
     end)
   end
 
-  defp handle(algorithm, socket, public, check) do
-    state = {algorithm, socket, public, check}
+  defp handle(algorithm, socket, public, check, issued_for) do
+    state = {algorithm, socket, public, check, issued_for}
 
     %KeyHandle{
       custodian: __MODULE__,
       algorithm: algorithm,
       capabilities: [:sign, :verify],
+      issued_for: issued_for,
+      operation_family: KeyHandle.family(algorithm),
       ref: fn -> state end
     }
   end
@@ -137,8 +144,8 @@ defmodule RequestSeal.Custody.SSHAgent do
   @impl true
   def sign(ref, algorithm, bytes, context)
       when is_binary(bytes) and byte_size(bytes) <= @max_bytes_ceiling do
-    {bound, socket_path, public, check} = ref.()
-    ensure(algorithm == bound, :key_mismatch)
+    {bound, socket_path, public, check, issued_for} = ref.()
+    check_binding!(algorithm, bound, issued_for, context)
     blob = Wire.key_blob(public)
     {:ok, socket} = connect(socket_path, context)
 
@@ -167,10 +174,10 @@ defmodule RequestSeal.Custody.SSHAgent do
   def sign(_, _, _, _), do: {:error, :invalid_data}
 
   @impl true
-  def verify(ref, algorithm, bytes, signature, _context)
+  def verify(ref, algorithm, bytes, signature, context)
       when is_binary(bytes) and byte_size(bytes) <= @max_bytes_ceiling do
-    {bound, _, public, _} = ref.()
-    ensure(algorithm == bound, :key_mismatch)
+    {bound, _, public, _, issued_for} = ref.()
+    check_binding!(algorithm, bound, issued_for, context)
     Crypto.verify(algorithm, bytes, signature, public, max_bytes: Crypto.max_bytes_ceiling())
   end
 
@@ -178,14 +185,37 @@ defmodule RequestSeal.Custody.SSHAgent do
 
   @impl true
   def public_key(ref) do
-    {_, _, public, _} = ref.()
+    {_, _, public, _, _} = ref.()
     {:ok, public}
   end
 
   @impl true
   def identity(ref) do
-    {_, _, public, _} = ref.()
+    {_, _, public, _, _} = ref.()
     %KeyIdentity{kind: :public, value: KeyIdentity.normalize(public.material)}
+  end
+
+  @impl true
+  def binding(ref, context) do
+    {algorithm, socket_path, public, _, issued_for} = ref.()
+    blob = Wire.key_blob(public)
+    {:ok, socket} = connect(socket_path, context)
+
+    try do
+      identities = exchange(socket, <<11>>, context) |> Wire.identities() |> unwrap()
+      ensure(blob in identities, :key_not_found)
+      {:ok, %{algorithm: algorithm, issued_for: issued_for, public_key: public}}
+    after
+      :gen_tcp.close(socket)
+    end
+  end
+
+  defp check_binding!(algorithm, bound, purpose, context) do
+    ensure(
+      algorithm == bound and context.issued_for == purpose and
+        context.operation_family in [nil, KeyHandle.family(bound)],
+      :key_mismatch
+    )
   end
 
   defp connect(path, context) do

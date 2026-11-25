@@ -323,3 +323,58 @@ discarded before the process exits. Unknown abnormal reasons become
 recognizable. Normal and shutdown exits retain their lifecycle meaning.
 
 Module docs: `RequestSeal.Custody`, `RequestSeal.Custody.Local`, `RequestSeal.Custody.Local.Owner`, `RequestSeal.Custody.SSHAgent`, `RequestSeal.KeyHandle`, `RequestSeal.PublicKey`, `RequestSeal.Custody.Error`.
+
+## Bind a key purpose and approve exact covered values
+
+Use a purpose atom when a signing key is assigned to a specific workflow.
+A signing specification can require the same purpose through `:issued_for`.
+JWS uses the `:issued_for` option on both signing forms. The verification
+policy can set `:require_issued_for` from trusted configuration.
+
+    alias RequestSeal.{Custody, Message, SignatureBase}
+    alias RequestSeal.Custody.Gate
+    alias RequestSeal.Replay.ETS
+
+    {:ok, store} = ETS.start_link(max_entries: 100)
+    {:ok, message} = Message.request("GET", "https://example.test/builds", [], "")
+    components = ~s[("@method" "@path")]
+    {:ok, digest} = Gate.commitment(message, components)
+    now = 1_700_000_000
+    decision = %Gate.Admission{
+      decision: "build-approval-1",
+      commitment: digest,
+      not_after: now + 30,
+      nonce: "build-1"
+    }
+
+    config = %{
+      port: fn _, _ -> {:allow, decision} end,
+      once: {:store, ETS.store(store), "builds"},
+      required_components: [~s["@method"], ~s["@path"]],
+      max_lifetime: 30,
+      clock: fn -> now end,
+      skew: 0,
+      tag: "build"
+    }
+
+    {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+    {:ok, signer} = Gate.new("ed25519", {:ed25519, seed}, config, issued_for: :build)
+    params = components <> ~s[;created=1700000000;expires=1700000030;nonce="build-1";tag="build"]
+    {:ok, base} = SignatureBase.build(message, params)
+    {:ok, _signature} = Custody.sign(signer, base, issued_for: :build)
+    {:error, %{reason: :gate_spent}} = Custody.sign(signer, base, issued_for: :build)
+    :ok = Custody.release(signer)
+    :ok = GenServer.stop(store)
+
+`RequestSeal.Custody.binding/2` reports the held algorithm, operation family,
+purpose and public thumbprint. It observes the key at the time of the call.
+For HTTP verification, resolver entries returning a public key may include
+`:issued_for` from trusted configuration. A handle supplies its own purpose.
+
+The gate rejects malformed bases before invoking the caller port. It matches
+the approved component digest and optional nonce, then spends the decision
+through the configured store. With `:port_owned`, the port must perform the
+atomic spend itself. A failure after spending requires a new decision. Set
+`:record` to verify recording of the decision, base digest, and signature
+digest before releasing bytes. Use `:admission` on Local key generation to
+keep fresh private material inside custody from construction.

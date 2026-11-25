@@ -54,6 +54,17 @@ defmodule RequestSeal.CustodySSHAgentTest do
       assert Custody.public_key(handle) == {:ok, key}
     end
 
+    assert {:ok, bound} = SSHAgent.new("ed25519", ctx.socket, key, issued_for: :build)
+    assert {:ok, thumbprint} = PublicKey.thumbprint(key)
+    assert {:ok, %{issued_for: :build, thumbprint: ^thumbprint}} = Custody.binding(bound)
+
+    assert_error(Custody.sign(%{bound | issued_for: :audit}, @vector["base"]), :key_mismatch)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", ["-D"], env: ctx.env, stderr_to_stdout: true)
+
+    assert_error(Custody.binding(bound), :key_not_found)
+
     assert_error(SSHAgent.new("hmac-sha256", ctx.socket, key), :unsupported_algorithm)
     assert_error(SSHAgent.new("rsa-pss-sha512", ctx.socket, key), :unsupported_algorithm)
     assert_error(SSHAgent.new("ed25519", ctx.socket, key, timeout: :infinity), :invalid_options)
@@ -432,8 +443,8 @@ defmodule RequestSeal.CustodySSHAgentTest do
       handle
       | ref: fn ->
           send(parent, {:socket_runner, self()})
-          {algorithm, _, public, _} = original.()
-          {algorithm, path, public, false}
+          {algorithm, _, public, _, issued_for} = original.()
+          {algorithm, path, public, false, issued_for}
         end
     }
 
@@ -565,8 +576,8 @@ defmodule RequestSeal.CustodySSHAgentTest do
     hostile = %{
       handle
       | ref: fn ->
-          {algorithm, _, public, check} = original.()
-          {algorithm, path, public, check}
+          {algorithm, _, public, check, issued_for} = original.()
+          {algorithm, path, public, check, issued_for}
         end
     }
 

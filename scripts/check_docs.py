@@ -51,6 +51,7 @@ SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/w
         "0033-jwe-guard-and-heir-notices", "0044-qualify-hex-release-archives",
         "0039-paired-replay-store",
         "0040-signed-path-tenant",
+        "0041-custody-purpose-and-admission",
     )
 }
 GIT_INSTALL = re.compile(

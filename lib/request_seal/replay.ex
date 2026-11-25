@@ -123,11 +123,21 @@ defmodule RequestSeal.Replay do
   @spec claim(Store.t(), Claim.t(), keyword()) ::
           :claimed | :already_claimed | {:error, Error.t()}
   def claim(store, claim, opts) do
+    safe(fn -> claim_in_context(store, claim, context!(opts)) end)
+  end
+
+  @doc false
+  @spec claim_in_context(Store.t(), Claim.t(), Context.t()) ::
+          :claimed | :already_claimed | {:error, Error.t()}
+  def claim_in_context(store, claim, %Context{} = context) do
     safe(fn ->
-      context = context!(opts)
       ensure(Store.valid?(store), :invalid_store)
       ensure(Claim.valid?(claim), :invalid_claim)
-      run(context, fn -> invoke(store, claim, context) end)
+
+      run(context, fn ->
+        ensure(Context.remaining(context) > 0, :store_timeout)
+        invoke(store, claim, context)
+      end)
     end)
   end
 

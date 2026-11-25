@@ -7,7 +7,7 @@ defmodule RequestSeal.JOSE.Error do
   `:invalid_serialization`, `:invalid_base64`, `:invalid_header`,
   `:duplicate_member`, `:unsupported_header`, `:unsupported_serialization`,
   `:compression_unsupported`, `:detached_payload`, `:invalid_iv`, `:invalid_tag`.
-  Selection errors: `:algorithm_not_permitted`, `:algorithm_mismatch`,
+  Selection errors: `:algorithm_not_permitted`, `:algorithm_mismatch`, `:issued_for_mismatch`,
   `:unsupported_critical_header`, `:unknown_key`, `:key_resolver_failed`.
   Operation errors: `:invalid_signature`, `:signer_failed`, `:decryption_failed`,
   `:entropy_failure`, `:internal_failure` (library lifecycle failure), `:deadline_exceeded`, `:nesting_depth`, `:content_type_mismatch`.
@@ -19,7 +19,7 @@ defmodule RequestSeal.JOSE.Error do
     invalid_header duplicate_member unsupported_header unsupported_serialization
     compression_unsupported detached_payload algorithm_not_permitted algorithm_mismatch
     unsupported_critical_header unknown_key key_resolver_failed invalid_signature signer_failed
-    invalid_iv invalid_tag decryption_failed entropy_failure deadline_exceeded nesting_depth
+    issued_for_mismatch invalid_iv invalid_tag decryption_failed entropy_failure deadline_exceeded nesting_depth
     content_type_mismatch unexpected_member protected_mismatch internal_failure)a
   defstruct [:reason, :layer, :correlation, retryable: false]
   @type reason :: unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))

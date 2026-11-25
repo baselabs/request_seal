@@ -96,6 +96,7 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `digest.content` | Exact body bytes, selected algorithms and field kind | Canonical digest `bytes` |
 | `crypto.verify` | Algorithm, public source key, data and signature bytes | `valid` |
 | `hpke.derive_key_pair/v1` | Tagged `kem_id` (16, 17, 32), `ikm` byte tag | `sk` and `pk` byte tags from the internal RFC 9180 stage; not a public key-export operation |
+| `custody.purpose/v1` | RFC 8032 TEST 2 seed and message hex references, assigned and required purposes, and presented handle purpose and family | Signature byte tag |
 | `custody.derive/v1` | `parent_ikm`, `domain` byte tags; `target` with algorithm object and explicit curve or null; symmetric `probe` message or CEK | `public_key` JWK pairs for asymmetric targets, `tag` or `wrapped` byte tags for HMAC or AES-KW |
 | `key_management.aes_kw/v1` | `alg` (A128KW/A256KW), `kek` byte tag, `operation` (wrap/unwrap), and `key_data` or `wrapped` byte tag | `wrapped` or `key_data` byte tag |
 | `key_management.ecdh_kdf/v1` | `z`, `apu`, `apv` byte tags; `algorithm_id` string; `keydatalen` tagged bits (128/256) | `output` byte tag |

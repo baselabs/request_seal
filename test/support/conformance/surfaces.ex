@@ -34,6 +34,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     "key.import" => :key_import,
     "hpke.derive_key_pair/v1" => :hpke_derive_key_pair,
     "custody.derive/v1" => :custody_derive,
+    "custody.purpose/v1" => :custody_purpose,
     "key_management.aes_kw/v1" => :aes_kw,
     "key_management.ecdh_kdf/v1" => :ecdh_kdf,
     "key_management.agree/v1" => :agree,
@@ -52,6 +53,32 @@ defmodule RequestSeal.Conformance.Surfaces do
   }
   def run(root, case_),
     do: apply(__MODULE__, Map.fetch!(@registry, case_["surface"]), [root, case_])
+
+  def custody_purpose(root, %{"inputs" => inputs}) do
+    alias RequestSeal.Custody
+    alias RequestSeal.Custody.Local
+
+    seed = root |> C.load(inputs["seed"]) |> Base.decode16!(case: :lower)
+    message = root |> C.load(inputs["message"]) |> Base.decode16!(case: :lower)
+
+    with {:ok, handle} <-
+           Local.new("ed25519", {:ed25519, seed}, issued_for: purpose(inputs["issued_for"])) do
+      try do
+        requested_handle = %{
+          handle
+          | issued_for: purpose(inputs["handle_purpose"]),
+            operation_family: purpose_family(inputs["operation_family"])
+        }
+
+        case Custody.sign(requested_handle, message, issued_for: purpose(inputs["required"])) do
+          {:ok, signature} -> {:ok, %{"signature" => C.b64(signature)}}
+          {:error, _} = error -> error
+        end
+      after
+        :ok = Local.release(handle)
+      end
+    end
+  end
 
   def signed_path(_root, %{"inputs" => inputs}) do
     alias RequestSeal.Plug.Scope
@@ -84,6 +111,14 @@ defmodule RequestSeal.Conformance.Surfaces do
       {:error, _} = error -> error
     end
   end
+
+  defp purpose(nil), do: nil
+  defp purpose("build"), do: :build
+  defp purpose("audit"), do: :audit
+  defp purpose(true), do: true
+
+  defp purpose_family("http"), do: :http
+  defp purpose_family("jws"), do: :jws
 
   def parse_signature_base(root, case_) do
     bytes = root |> C.load(case_["inputs"]["base"]) |> C.bytes()

@@ -174,8 +174,10 @@ defmodule RequestSeal.Authentication do
       ensure(is_integer(timeout) and timeout in 1..300_000, :invalid_options, :input)
 
       ensure(
-        is_map(spec) and map_size(spec) == 3 and
-          Enum.all?([:label, :signature_input, :algorithm], &Map.has_key?(spec, &1)),
+        is_map(spec) and
+          Enum.all?([:label, :signature_input, :algorithm], &Map.has_key?(spec, &1)) and
+          Enum.all?(Map.keys(spec), &(&1 in [:label, :signature_input, :algorithm, :issued_for])) and
+          KeyHandle.purpose?(Map.get(spec, :issued_for)),
         :invalid_options,
         :input
       )
@@ -187,8 +189,9 @@ defmodule RequestSeal.Authentication do
         :input
       )
 
-      if is_struct(signer, KeyHandle),
-        do: ensure(signer.algorithm == spec.algorithm, :signer_algorithm_mismatch, :input)
+      ensure(signer.algorithm == spec.algorithm, :signer_algorithm_mismatch, :input)
+      purpose = Map.get(spec, :issued_for)
+      ensure(purpose == nil or purpose == signer.issued_for, :issued_for_mismatch, :input)
 
       ensure(Message.validate(message) == :ok, :invalid_message, :input)
       inputs = dictionary(message, "signature-input", 16, false)
@@ -393,7 +396,8 @@ defmodule RequestSeal.Authentication do
       :error ->
         fail(:unknown_key, :key)
 
-      {:ok, %{algorithm: algorithm, key: key} = result} when map_size(result) == 2 ->
+      {:ok, %{algorithm: algorithm, key: key} = result}
+      when map_size(result) == 2 or (map_size(result) == 3 and is_map_key(result, :issued_for)) ->
         ensure(SignatureFields.algorithm?(algorithm), :key_resolver_failed, :key)
         ensure(match?(%PublicKey{}, key) or match?(%KeyHandle{}, key), :key_resolver_failed, :key)
         # Symmetric verification keeps the secret behind a custody handle.
@@ -403,8 +407,20 @@ defmodule RequestSeal.Authentication do
           :key
         )
 
-        if match?(%KeyHandle{}, key),
-          do: ensure(key.algorithm == algorithm, :algorithm_mismatch, :key)
+        handle_purpose = if is_struct(key, KeyHandle), do: key.issued_for
+        purpose = Map.get(result, :issued_for, handle_purpose)
+        ensure(KeyHandle.purpose?(purpose), :key_resolver_failed, :key)
+
+        if is_struct(key, KeyHandle) do
+          ensure(key.algorithm == algorithm, :algorithm_mismatch, :key)
+          ensure(purpose == handle_purpose, :key_issued_for_mismatch, :key)
+        end
+
+        ensure(
+          policy.require_issued_for == nil or purpose == policy.require_issued_for,
+          :key_issued_for_mismatch,
+          :key
+        )
 
         {algorithm, key}
 

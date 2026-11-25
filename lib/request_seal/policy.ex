@@ -16,11 +16,16 @@ defmodule RequestSeal.Policy do
   Plug supports `@scheme`; its unavailable exact target evidence prevents
   coverage of `@target-uri`.
 
+  Set `:require_issued_for` to require the same caller-assigned purpose on the
+  resolver's key. The resolver may return `:issued_for` alongside a public key.
+  Custody handles use their retained purpose, and a resolver-supplied value
+  must agree. A missing or different purpose refuses at the key layer.
+
   The resolver's algorithm is authoritative; sender `alg` never selects it.
   Key identity values remain internal; no trusted principal association is
   inferred.
   """
-  alias RequestSeal.{Error, SignatureFields}
+  alias RequestSeal.{Error, KeyHandle, SignatureFields}
   alias RequestSeal.StructuredFields.Schema
   @derive {Inspect, only: [:algorithms, :extra_components, :max_signatures]}
   defstruct [
@@ -32,7 +37,8 @@ defmodule RequestSeal.Policy do
     :replay,
     field_schemas: %{},
     extra_components: :allow,
-    max_signatures: 16
+    max_signatures: 16,
+    require_issued_for: nil
   ]
 
   @type t :: %__MODULE__{
@@ -41,8 +47,9 @@ defmodule RequestSeal.Policy do
           key_resolver: (map() ->
                            {:ok,
                             %{
-                              algorithm: RequestSeal.Crypto.algorithm(),
-                              key: RequestSeal.PublicKey.t() | RequestSeal.KeyHandle.t()
+                              required(:algorithm) => RequestSeal.Crypto.algorithm(),
+                              required(:key) => RequestSeal.PublicKey.t() | RequestSeal.KeyHandle.t(),
+                              optional(:issued_for) => atom() | nil
                             }}
                            | :error),
           freshness: :not_evaluated | map(),
@@ -50,10 +57,11 @@ defmodule RequestSeal.Policy do
           replay: :not_required | map(),
           field_schemas: map(),
           extra_components: :allow | :reject,
-          max_signatures: 1..64
+          max_signatures: 1..64,
+          require_issued_for: atom() | nil
         }
   @required [:algorithms, :components, :key_resolver, :freshness, :content, :replay]
-  @optional [:field_schemas, :extra_components, :max_signatures]
+  @optional [:field_schemas, :extra_components, :max_signatures, :require_issued_for]
   @doc """
   Construct a fully explicit policy or return a bounded invalid-policy error.
 
@@ -166,7 +174,7 @@ defmodule RequestSeal.Policy do
       is_function(p.key_resolver, 1) and freshness?(p.freshness) and content?(p.content) and
       RequestSeal.Replay.policy?(p.replay, p.freshness) and schemas?(p.field_schemas) and
       p.extra_components in [:allow, :reject] and is_integer(p.max_signatures) and
-      p.max_signatures in 1..64
+      p.max_signatures in 1..64 and KeyHandle.purpose?(p.require_issued_for)
   end
 
   def valid?(_), do: false

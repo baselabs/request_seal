@@ -38,8 +38,8 @@ defmodule RequestSeal.JOSE.Support do
     _, _ -> {:error, Error.new(fallback, layer)}
   end
 
-  def timeout(opts) do
-    options(opts, [:timeout])
+  def timeout(opts, allowed \\ [:timeout]) do
+    options(opts, allowed)
     t = Keyword.get(opts, :timeout, 5000)
     ensure(is_integer(t) and t in 1..300_000, :invalid_options)
     t

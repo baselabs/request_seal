@@ -1,10 +1,10 @@
 --- a/lib/request_seal/custody/local.ex
 +++ b/lib/request_seal/custody/local.ex
 @@ -905,6 +905,7 @@
-   defp holder_operation(:public_key, {_, _, nil, _, _}), do: {:error, :no_public_key}
-   defp holder_operation(:public_key, {_, _, public, _, _}), do: {:ok, public}
-   defp holder_operation(:identity, {_, _, _, identity, _}), do: identity
-+  defp holder_operation(:export, {_, material, _, _, _}), do: {:ok, material}
+   defp holder_operation(:public_key, {_, _, nil, _, _, _, _}), do: {:error, :no_public_key}
+   defp holder_operation(:public_key, {_, _, public, _, _, _, _}), do: {:ok, public}
+   defp holder_operation(:identity, {_, _, _, identity, _, _, _}), do: identity
++  defp holder_operation(:export, {_, material, _, _, _, _, _}), do: {:ok, material}
 
-   defp holder_operation({:wrap, algorithm, cek}, {bound, material, _, _, capabilities}) do
-     ensure(algorithm == bound, :key_mismatch)
+   defp holder_operation(:binding, {algorithm, _, public, _, _, issued_for, _}),
+     do: {:ok, %{algorithm: algorithm, public_key: public, issued_for: issued_for}}

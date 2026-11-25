@@ -18,6 +18,10 @@ defmodule RequestSeal.Custody do
   Signing returns bytes; verification establishes mathematical validity only.
   Neither establishes identity attribution, authorization, or replay protection.
 
+  A signing or verification call can pass `:issued_for` to require a specific
+  handle purpose. Custom custodians supporting purpose-bound handles must
+  compare it with held state via `RequestSeal.Custody.Context` before use.
+
   Custodians are trusted code: they must return only public keys and nonsecret
   identities, never log secrets, and must propagate the context deadline and
   cancellation to any additional work they own. Killing the worker closes sockets
@@ -64,7 +68,15 @@ defmodule RequestSeal.Custody do
               {:ok, term()} | {:error, Error.reason()}
   @callback commit(term(), <<_::256>>, Context.t()) :: :ok | {:error, Error.reason()}
   @callback release(term(), Context.t()) :: :ok | {:error, Error.reason()}
-  @optional_callbacks verify: 5, unwrap: 5, wrap: 4, derive: 3, commit: 3, release: 2
+  @callback binding(term(), Context.t()) ::
+              {:ok,
+               %{
+                 algorithm: algorithm(),
+                 issued_for: atom() | nil,
+                 public_key: PublicKey.t() | nil
+               }}
+              | {:error, Error.reason()}
+  @optional_callbacks binding: 2, verify: 5, unwrap: 5, wrap: 4, derive: 3, commit: 3, release: 2
 
   @doc """
   Derive and atomically commit a caller-owned child without exporting its key.
@@ -121,7 +133,11 @@ defmodule RequestSeal.Custody do
         ensure(is_binary(domain) and byte_size(domain) in 1..255, :invalid_data)
         handle!(parent)
         ensure(:derive in parent.capabilities, :unsupported_operation)
-        context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
+        context =
+          bind_context(
+            %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout},
+            parent
+          )
 
         request = %DeriveRequest{
           target: target,
@@ -350,10 +366,8 @@ defmodule RequestSeal.Custody do
     handle!(handle)
     ensure(:unwrap in handle.capabilities, :unsupported_operation)
 
-    normalize(
-      :unwrap,
-      handle.custodian.unwrap(handle.ref, handle.algorithm, items, sink, context)
-    )
+    context = bind_context(context, handle)
+    normalize(:unwrap, handle.custodian.unwrap(handle.ref, handle.algorithm, items, sink, context))
   end
 
   defp items!(algorithm, items) do
@@ -487,7 +501,7 @@ defmodule RequestSeal.Custody do
         data!(bytes, max)
         [bytes]
       end,
-      [:timeout, :max_bytes]
+      [:timeout, :max_bytes, :issued_for]
     )
   end
 
@@ -563,7 +577,7 @@ defmodule RequestSeal.Custody do
         ensure(byte_size(signature) <= 16_384, :limit)
         [bytes, signature]
       end,
-      [:timeout, :max_bytes]
+      [:timeout, :max_bytes, :issued_for]
     )
   end
 
@@ -657,12 +671,33 @@ defmodule RequestSeal.Custody do
   @spec identity(KeyHandle.t()) :: {:ok, KeyIdentity.t()} | {:error, Error.t()}
   def identity(handle), do: operation(handle, :identity, [], fn _max -> [] end)
 
+  @doc """
+  Reads the algorithm, operation family, purpose and public-key thumbprint from
+  custody under a bounded deadline. Symmetric keys have a nil thumbprint.
+  A custodian without a binding callback returns `:unsupported_operation`.
+  """
+  @spec binding(KeyHandle.t(), keyword()) ::
+          {:ok,
+           %{
+             algorithm: algorithm(),
+             operation_family: KeyHandle.family(),
+             issued_for: atom() | nil,
+             thumbprint: binary() | nil
+           }}
+          | {:error, Error.t()}
+  def binding(handle, opts \\ []) do
+    operation(handle, :binding, opts, fn _ -> [] end)
+  end
+
   defp operation(handle, op, opts, args, allowed \\ [:timeout]) do
     Support.safe(
       fn ->
         timeout = Support.timeout(opts, allowed)
         max = Support.max_bytes(opts)
         handle!(handle)
+        purpose = Keyword.get(opts, :issued_for)
+        ensure(KeyHandle.purpose?(purpose), :invalid_options)
+        ensure(purpose == nil or purpose == handle.issued_for, :issued_for_mismatch)
 
         ensure(
           op not in [:sign, :verify, :wrap] or op in handle.capabilities,
@@ -670,12 +705,16 @@ defmodule RequestSeal.Custody do
         )
 
         ensure(
-          op != :release or function_exported?(handle.custodian, :release, 2),
+          op not in [:release, :binding] or function_exported?(handle.custodian, op, 2),
           :unsupported_operation
         )
 
         args = args.(max)
-        context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
+        context =
+          bind_context(
+            %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout},
+            handle
+          )
 
         case run(context, fn -> invoke(handle, op, args, context) end) do
           {:ok, :ok} when op in [:verify, :release] -> :ok
@@ -688,7 +727,13 @@ defmodule RequestSeal.Custody do
 
   defp handle!(%KeyHandle{} = handle) do
     ensure(
-      map_size(handle) == 5 and is_atom(handle.custodian) and is_function(handle.ref, 0),
+      map_size(handle) == map_size(%KeyHandle{}) and is_atom(handle.custodian) and
+        is_function(handle.ref, 0) and KeyHandle.purpose?(handle.issued_for),
+      :invalid_handle
+    )
+
+    ensure(
+      handle.operation_family == nil or handle.operation_family == KeyHandle.family(handle.algorithm),
       :invalid_handle
     )
 
@@ -739,6 +784,15 @@ defmodule RequestSeal.Custody do
   end
 
   defp handle!(_), do: fail(:invalid_handle)
+
+  defp bind_context(context, handle) do
+    %{
+      context
+      | issued_for: handle.issued_for,
+        operation_family: KeyHandle.family(handle.algorithm)
+    }
+  end
+
   defp data!(bytes, max), do: ensure(is_binary(bytes) and byte_size(bytes) <= max, :invalid_data)
 
   defp invoke(handle, :verify, [bytes, signature], context) do
@@ -746,6 +800,7 @@ defmodule RequestSeal.Custody do
       if function_exported?(handle.custodian, :verify, 5) do
         handle.custodian.verify(handle.ref, handle.algorithm, bytes, signature, context)
       else
+        ensure(handle.issued_for == nil, :unsupported_operation)
         public = handle.custodian.public_key(handle.ref) |> Support.unwrap()
 
         RequestSeal.Crypto.verify(handle.algorithm, bytes, signature, public,
@@ -762,6 +817,40 @@ defmodule RequestSeal.Custody do
         op,
         apply(handle.custodian, op, [handle.ref, handle.algorithm | args] ++ [context])
       )
+
+  defp invoke(handle, :binding, [], context) do
+    case handle.custodian.binding(handle.ref, context) do
+      {:ok, %{algorithm: algorithm, issued_for: issued_for, public_key: public} = binding}
+      when map_size(binding) == 3 ->
+        ensure(algorithm == handle.algorithm and KeyHandle.purpose?(issued_for), :custodian_failure)
+
+        thumbprint =
+          case public do
+            nil ->
+              nil
+
+            %PublicKey{} ->
+              case PublicKey.thumbprint(public) do
+                {:ok, value} -> value
+                _ -> fail(:custodian_failure)
+              end
+
+            _ ->
+              fail(:custodian_failure)
+          end
+
+        {:ok,
+         %{
+           algorithm: algorithm,
+           operation_family: KeyHandle.family(algorithm),
+           issued_for: issued_for,
+           thumbprint: thumbprint
+         }}
+
+      result ->
+        normalize(:binding, result)
+    end
+  end
 
   defp invoke(handle, :release, [], context),
     do: normalize(:release, handle.custodian.release(handle.ref, context))

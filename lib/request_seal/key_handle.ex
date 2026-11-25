@@ -28,24 +28,38 @@ defmodule RequestSeal.KeyHandle do
   answer gives that item's `:key_resolver_failed`. Store larger custodian state
   behind a reference rather than capturing it in the handle.
 
+  `issued_for` is a caller-chosen purpose atom or nil. The
+  `operation_family` distinguishes HTTP signatures, JWS, JWE and derivation.
+  Built-in custodians retain the binding independently of the handle.
   Loading the library starts no process or store. Local construction starts one
   holder per handle. An asymmetric public key is obtained through
   `RequestSeal.Custody.public_key/1`; HMAC has no public export.
   """
   @derive {Inspect, only: [:custodian, :algorithm, :capabilities]}
-  defstruct [:custodian, :algorithm, :capabilities, :ref]
+  defstruct [:custodian, :algorithm, :capabilities, :ref, :issued_for, :operation_family]
 
   @type t :: %__MODULE__{
           custodian: module(),
           algorithm: RequestSeal.Custody.algorithm(),
           capabilities: [RequestSeal.Custody.capability()],
-          ref: (-> term())
+          ref: (-> term()),
+          issued_for: atom() | nil,
+          operation_family: family() | nil
         }
+
+  @type family :: :http | :jws | :jwe | :derive
+
+  @doc false
+  def family({family, _}) when family in [:jws, :jwe, :derive], do: family
+  def family(_), do: :http
+
+  @doc false
+  def purpose?(value), do: is_atom(value) and not is_boolean(value)
 
   # Shared construction gate for custodians; opaque references keep the existing
   # zero-arity reference contract, including derivation child references.
   @doc false
-  def new(custodian, algorithm, capabilities, ref) do
+  def new(custodian, algorithm, capabilities, ref, issued_for \\ nil) do
     RequestSeal.Custody.Support.safe(fn ->
       if :derive in capabilities do
         RequestSeal.Custody.Support.ensure(
@@ -62,6 +76,8 @@ defmodule RequestSeal.KeyHandle do
          custodian: custodian,
          algorithm: algorithm,
          capabilities: capabilities,
+         issued_for: issued_for,
+         operation_family: family(algorithm),
          ref: ref
        }}
     end)

@@ -5,10 +5,10 @@ defmodule RequestSeal.Signing do
 
   @type spec :: RequestSeal.signing_spec() | full_spec()
   @type full_spec :: %{
-          label: binary(),
-          components: binary(),
-          algorithm: RequestSeal.Crypto.algorithm(),
-          parameters: %{
+          required(:label) => binary(),
+          required(:components) => binary(),
+          required(:algorithm) => RequestSeal.Crypto.algorithm(),
+          required(:parameters) => %{
             created: boolean(),
             expires_in: pos_integer() | nil,
             nonce: :random | nil,
@@ -16,8 +16,9 @@ defmodule RequestSeal.Signing do
             tag: binary() | nil,
             alg: boolean()
           },
-          digest: [binary()] | nil,
-          field_schemas: map()
+          required(:digest) => [binary()] | nil,
+          required(:field_schemas) => map(),
+          optional(:issued_for) => atom() | nil
         }
 
   def protect(adapter, stage, attempt, fun) do
@@ -59,14 +60,15 @@ defmodule RequestSeal.Signing do
 
     ensure(
       is_map(s) and
-        Enum.sort(Map.keys(s)) ==
+        Enum.sort(Map.keys(Map.delete(s, :issued_for))) ==
           Enum.sort([:label, :components, :algorithm, :parameters, :digest, :field_schemas]),
       :invalid_options
     )
 
     ensure(
       SignatureFields.label?(s.label) and SignatureFields.algorithm?(s.algorithm) and
-        is_binary(s.components) and Policy.schemas?(s.field_schemas),
+        is_binary(s.components) and Policy.schemas?(s.field_schemas) and
+        KeyHandle.purpose?(Map.get(s, :issued_for)),
       :invalid_options
     )
 
@@ -293,7 +295,7 @@ defmodule RequestSeal.Signing do
 
   defp core_spec!(spec) do
     ensure(is_map(spec), :invalid_options)
-    base_keys = [:label, :algorithm, :components, :digest, :field_schemas]
+    base_keys = [:label, :algorithm, :components, :digest, :field_schemas, :issued_for]
     parameter_keys = [:created, :expires_in, :nonce, :alg, :keyid, :tag]
     nested? = Map.has_key?(spec, :parameters)
     allowed = base_keys ++ if(nested?, do: [:parameters], else: parameter_keys)
@@ -340,6 +342,11 @@ defmodule RequestSeal.Signing do
     if match?(%KeyHandle{}, signer) and signer.algorithm != spec.algorithm,
       do: fail(:invalid_options, RequestSeal.Error.new(:signer_algorithm_mismatch, :input))
 
+    purpose = Map.get(spec, :issued_for)
+
+    if purpose != nil and purpose != signer.issued_for,
+      do: fail(:invalid_options, RequestSeal.Error.new(:issued_for_mismatch, :input))
+
     ensure(not body_required?(input, spec) or message.body.state == :retained, :body_unavailable)
     message = digest(message, spec.digest)
     message = content_length(message, input)
@@ -348,7 +355,12 @@ defmodule RequestSeal.Signing do
     # The core signer builds the base once; its base failures keep these closed reasons.
     case RequestSeal.sign(
            message,
-           %{label: spec.label, signature_input: input, algorithm: spec.algorithm},
+           %{
+             label: spec.label,
+             signature_input: input,
+             algorithm: spec.algorithm,
+             issued_for: purpose
+           },
            signer,
            field_schemas: spec.field_schemas,
            signing_timeout: timeout
