@@ -75,10 +75,11 @@ defmodule RequestSeal.Custody do
   Report the retained algorithm and signing purpose for this reference.
 
   Implement this callback to support assigned signing and verification. Read
-  the assignment from custody under the supplied deadline. The handle and
-  context supply the claims being checked. The signing and verification
-  callbacks must enforce the assignment, operation family, and input format
-  when using the key. Assigned verification requires `c:verify/5`.
+  the assignment from custody under the supplied deadline. The facade calls
+  it for every signing and verification request when implemented, including
+  requests with no purpose. The signing and verification callbacks must
+  enforce the assignment, operation family, and input format when using the
+  key. Assigned verification requires `c:verify/5`.
   """
   @callback signing_assignment(term(), Context.t()) ::
               {:ok, {algorithm(), atom() | nil}} | {:error, Error.reason()}
@@ -842,17 +843,18 @@ defmodule RequestSeal.Custody do
   defp data!(bytes, max), do: ensure(is_binary(bytes) and byte_size(bytes) <= max, :invalid_data)
 
   defp check_signing_assignment!(handle, op, %{issued_for: purpose} = context)
-       when op in [:sign, :verify] and purpose != nil do
-    ensure(function_exported?(handle.custodian, :signing_assignment, 2), :unsupported_operation)
-    ensure(op != :verify or function_exported?(handle.custodian, :verify, 5), :unsupported_operation)
+       when op in [:sign, :verify] do
+    if function_exported?(handle.custodian, :signing_assignment, 2) do
+      case handle.custodian.signing_assignment(handle.ref, context) do
+        {:ok, {algorithm, retained}} ->
+          ensure(KeyHandle.purpose?(retained), :custodian_failure)
+          ensure(algorithm == handle.algorithm and retained == purpose, :key_mismatch)
 
-    case handle.custodian.signing_assignment(handle.ref, context) do
-      {:ok, {algorithm, retained}} ->
-        ensure(KeyHandle.purpose?(retained), :custodian_failure)
-        ensure(algorithm == handle.algorithm and retained == purpose, :key_mismatch)
-
-      result ->
-        Support.unwrap(normalize(:signing_assignment, result))
+        result ->
+          Support.unwrap(normalize(:signing_assignment, result))
+      end
+    else
+      ensure(purpose == nil, :unsupported_operation)
     end
   end
 
@@ -863,6 +865,7 @@ defmodule RequestSeal.Custody do
       if function_exported?(handle.custodian, :verify, 5) do
         handle.custodian.verify(handle.ref, handle.algorithm, bytes, signature, context)
       else
+        ensure(context.issued_for == nil, :unsupported_operation)
         public = handle.custodian.public_key(handle.ref) |> Support.unwrap()
 
         RequestSeal.Crypto.verify(handle.algorithm, bytes, signature, public,

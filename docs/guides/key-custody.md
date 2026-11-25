@@ -344,9 +344,10 @@ for you. Raw bytes remain supported by unassigned, ungated keys.
 
 Custom custodians implement `signing_assignment/2` to report the retained
 algorithm and purpose under the same deadline. The custody facade compares
-that result with the requested assignment before dispatching. The signing
-and verification callbacks also enforce the assignment, operation family,
-and input format at key use. Assigned verification requires `verify/5`.
+that result before dispatching, including when the caller omits a purpose.
+The signing and verification callbacks also enforce the assignment, operation
+family, and input format at key use. Assigned verification requires `verify/5`.
+The public-key fallback is available for unassigned custody.
 
     alias RequestSeal.{Custody, Message, SignatureBase}
     alias RequestSeal.Custody.Gate
@@ -389,7 +390,9 @@ purpose and public thumbprint. It observes the key at the time of the call.
 For HTTP verification, resolver entries returning a public key may include
 `:issued_for` from trusted configuration. A handle supplies its own purpose.
 Both must match the policy's `:require_issued_for`, with omitted and nil
-policies selecting unassigned keys.
+policies selecting unassigned keys. An assigned key used for HTTP verification
+must use an HTTP algorithm, whether resolved as a handle or a public key.
+For an unassigned key, a policy may explicitly select a JWS algorithm for HTTP.
 
 The gate rejects malformed bases, including parameters of the wrong wire
 type, before invoking the caller port. Verification with a gated key also

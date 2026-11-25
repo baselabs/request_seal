@@ -58,6 +58,8 @@ defmodule RequestSeal.Error do
   * `:profile`: extension packages document their own bounded reason atoms and
     details for source-specific acceptance rules.
   * `:key`: `:key_issued_for_mismatch` (the trusted key's purpose differs),
+    `:algorithm_mismatch` (the handle and resolver algorithms differ, or an
+    assigned key does not use an HTTP algorithm during HTTP verification),
     `:unknown_key` (resolver returned `:error`), `:key_resolver_failed`
     (callback fault or malformed algorithm/key result).
   * `:crypto`: `:invalid_signature` (cryptography rejects), `:signature_base_failed`

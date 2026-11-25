@@ -19,7 +19,8 @@ defmodule RequestSeal.Policy do
   Set `:require_issued_for` to require the same caller-assigned purpose on the
   resolver's key. The resolver may return `:issued_for` alongside a public key.
   Custody handles use their retained purpose, and a resolver-supplied value
-  must agree. A missing or different purpose refuses at the key layer.
+  must agree. A missing or different purpose refuses at the key layer. An
+  assigned key must use an HTTP algorithm for HTTP verification.
 
   The resolver's algorithm is authoritative; sender `alg` never selects it.
   Key identity values remain internal; no trusted principal association is

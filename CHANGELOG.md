@@ -4,10 +4,11 @@
 
 - Require matching purpose and operation family for assigned signing keys.
   HTTP and JWS propagate that requirement into custody. Assigned operations
-  require a retained assignment from the custodian. HTTP verification matches
-  public-key resolver assignments against the policy. Assigned and gated keys
-  require protocol input validation. Local HTTP signing can require single-use
-  admission for a valid typed base.
+  require a retained assignment from the custodian. Custodians reporting an
+  assignment do so even for operations that omit a purpose. HTTP verification
+  checks the assignment and family for handles and public-key resolver entries.
+  Assigned and gated keys require protocol input validation. Local HTTP signing
+  can require single-use admission for a valid typed base.
 
 - Keep SSH socket operations within custody. SSH handles expire on creator
   exit or release, including handles transferred to another process. Recreate

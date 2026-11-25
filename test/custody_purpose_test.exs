@@ -1,9 +1,26 @@
 defmodule RequestSeal.CustodyPurposeTest do
   use ExUnit.Case, async: true
 
-  alias RequestSeal.{Custody, Message, Policy, SignatureBase}
+  alias RequestSeal.{Custody, KeyHandle, Message, Policy, SignatureBase}
   alias RequestSeal.Custody.Local
   alias RequestSeal.JOSE.JWS
+
+  defmodule PublicKeyCustodian do
+    @moduledoc false
+    @behaviour Custody
+
+    @impl true
+    def signing_assignment(ref, context), do: Local.signing_assignment(ref.().ref, context)
+
+    @impl true
+    def public_key(ref), do: Custody.public_key(ref.())
+
+    @impl true
+    def sign(_, _, _, _), do: {:error, :unsupported_operation}
+
+    @impl true
+    def identity(ref), do: Custody.identity(ref.())
+  end
 
   setup do
     {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
@@ -182,6 +199,61 @@ defmodule RequestSeal.CustodyPurposeTest do
     end
   end
 
+  test "public-key fallback checks retained assignment even when the claim is cleared", ctx do
+    spec = %{label: "sig", algorithm: "ed25519", signature_input: ~s[("@method" "@path")]}
+
+    assert {:ok, signed} =
+             RequestSeal.sign(ctx.message, Map.put(spec, :issued_for, :build), ctx.handle)
+
+    assert {:ok, bytes} = SignatureBase.build(ctx.message, spec.signature_input)
+
+    assert {:ok, signature} =
+             Custody.sign(ctx.handle, bytes, issued_for: :build, operation: :http)
+
+    reference = %KeyHandle{
+      custodian: PublicKeyCustodian,
+      algorithm: "ed25519",
+      capabilities: [:verify],
+      issued_for: :build,
+      ref: fn -> ctx.handle end
+    }
+
+    assert {:error, %{reason: :unsupported_operation}} =
+             Custody.verify(reference, bytes, signature, issued_for: :build, operation: :http)
+
+    cleared = %{reference | issued_for: nil}
+
+    assert {:error, %{reason: :key_mismatch}} =
+             Custody.verify(cleared, bytes, signature, operation: :http)
+
+    assert {:error, %{reason: :verifier_failed, layer: :crypto}} =
+             RequestSeal.verify(signed, policy(cleared, nil), label: "sig")
+
+    assert {:ok, local} = Local.new("ed25519", {:ed25519, ctx.seed})
+    unassigned = %{cleared | ref: fn -> local end}
+    assert :ok = Custody.verify(unassigned, bytes, signature, operation: :http)
+    assert {:ok, _} = RequestSeal.verify(signed, policy(unassigned, nil), label: "sig")
+  end
+
+  test "assigned JWS keys refuse HTTP verification in either representation", ctx do
+    algorithm = {:jws, "EdDSA"}
+    assert {:ok, unassigned} = Local.new(algorithm, {:ed25519, ctx.seed})
+    assert {:ok, assigned} = Local.new(algorithm, {:ed25519, ctx.seed}, issued_for: :build)
+    assert {:ok, public} = Custody.public_key(assigned)
+
+    spec = %{label: "sig", algorithm: algorithm, signature_input: ~s[("@method" "@path")]}
+    assert {:ok, signed} = RequestSeal.sign(ctx.message, spec, unassigned)
+
+    for {key, extra} <- [{assigned, %{}}, {public, %{issued_for: :build}}] do
+      assert {:error, %{reason: :algorithm_mismatch, layer: :key}} =
+               RequestSeal.verify(signed, policy(key, :build, extra, algorithm), label: "sig")
+    end
+
+    for key <- [unassigned, public] do
+      assert {:ok, _} = RequestSeal.verify(signed, policy(key, nil, %{}, algorithm), label: "sig")
+    end
+  end
+
   test "JWS enforces purpose in both signing forms", ctx do
     {:ok, handle} = Local.new({:jws, "EdDSA"}, {:ed25519, ctx.seed}, issued_for: :build)
     assert handle.operation_family == :jws
@@ -220,11 +292,11 @@ defmodule RequestSeal.CustodyPurposeTest do
     base
   end
 
-  defp policy(key, purpose, extra \\ %{}) do
-    entry = Map.merge(%{algorithm: "ed25519", key: key}, extra)
+  defp policy(key, purpose, extra \\ %{}, algorithm \\ "ed25519") do
+    entry = Map.merge(%{algorithm: algorithm, key: key}, extra)
 
     attrs = %{
-      algorithms: ["ed25519"],
+      algorithms: [algorithm],
       components: ~s[("@method" "@path")],
       key_resolver: fn _ -> {:ok, entry} end,
       freshness: :not_evaluated,

@@ -17,6 +17,9 @@ exposes the operation family and purpose for selection. Built-in custodians
 verify the binding before key use. Assigned use requires the custodian to
 report the retained algorithm and purpose through `signing_assignment/2`
 under the same deadline. Legacy callbacks cannot establish an assignment.
+When a custodian provides the callback, the facade also checks requests with
+an omitted purpose. Public-key verification fallback requires an unassigned
+reference.
 SSH custody retains its assignment and socket path in a sensitive process
 and controls socket operations from there. A binding read reports held public
 facts and an RFC 7638 thumbprint when public material exists. SSH binding reads
@@ -26,11 +29,13 @@ Purpose assignments apply to signing and verification keys. An assigned key
 requires the matching purpose and protocol for both operations. An omitted
 or nil purpose works for an unassigned key. Assigned keys accept canonical
 HTTP bases or compact JWS signing inputs according to their retained family.
-Raw use refuses, and a JWS-bound key cannot sign an HTTP message. Existing
-unassigned custody continues to support raw use and explicitly selected HTTP
-JWS algorithms. Gated keys require a valid HTTP base for both operations
-even with no purpose. For HTTP public keys, the policy purpose must equal
-the resolver's trusted assignment. Purposes stay outside the wire format.
+Raw use refuses. An assigned JWS key cannot sign or verify an HTTP message,
+including verification through a public key with a trusted JWS assignment.
+Existing unassigned custody continues to support raw use and explicitly
+selected JWS algorithms in HTTP. Gated keys require a valid HTTP base for
+both operations even with no purpose. For HTTP public keys, the policy purpose
+must equal the resolver's trusted assignment. Purposes stay outside the wire
+format.
 
 Local HTTP signing may require approval inside the sensitive key process.
 A gate validates the typed HTTP Inner List before extracting any parameter

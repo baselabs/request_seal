@@ -428,6 +428,8 @@ defmodule RequestSeal.Authentication do
           :key
         )
 
+        ensure(purpose == nil or KeyHandle.family(algorithm) == :http, :algorithm_mismatch, :key)
+
         {algorithm, key}
 
       _ ->
