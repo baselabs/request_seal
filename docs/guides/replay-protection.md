@@ -176,8 +176,9 @@ history, so keep it alive across the switch to paired operation.
 
 A claim succeeds after two new writes. A retirement-side refusal leaves the
 destination entry spent. Budget the policy timeout for two sequential operations
-and continue sweeping both stores under their existing retention rules. A
-reply after the shared deadline reports timeout. A completed write stays spent.
+and continue sweeping both stores under their existing retention rules.
+The shared deadline bounds each adapter worker, even on direct pair calls.
+A blocked adapter or late reply reports timeout. A completed write stays spent.
 `RequestSeal.Replay.Pair.sweep/3` handles stores whose cleanup is external.
 The receipt names the pair during migration. The `[:request_seal, :replay, :pair]`
 event identifies the attempted position without logging claim data.

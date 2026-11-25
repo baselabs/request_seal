@@ -12,9 +12,10 @@ refusal of nonces already recorded anywhere in the verification boundary.
 
 Claim the destination first and consult the retiring store only when the
 destination inserted the claim. Supply the same absolute deadline to both
-operations. Require completion inside that deadline, including direct adapter
-calls. Leave completed writes in place on every failure. Sweep each store with
-the same clock and deadline.
+operations. Run each adapter in a cancellable worker so a blocked adapter
+cannot hold the caller past that deadline, including direct pair calls.
+Leave completed writes in place on every failure. Sweep each store with the
+same clock and deadline.
 
 The destination must preserve and share each claim across every verifier that
 may receive it throughout retention, including across restarts and routing

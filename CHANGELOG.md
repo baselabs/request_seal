@@ -18,7 +18,8 @@
   mapping. Reject conflicting captured or current headers and indeterminate
   nested request parameters.
 
-- Add paired replay stores for migrations that require both stores to admit each claim.
+- Add paired replay stores for migrations that require both stores to admit
+  each claim. Direct claims and sweeps bound both adapters by the shared deadline.
 
 - Document RequestSeal's steward, license, and name policy, and require matching
   Developer Certificate of Origin sign-offs in qualification.

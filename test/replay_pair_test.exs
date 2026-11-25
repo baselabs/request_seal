@@ -5,24 +5,36 @@ defmodule RequestSeal.ReplayPairTest do
   alias RequestSeal.Replay
   alias RequestSeal.Replay.{Claim, ETS, Error, Pair}
 
-  # The adapter delegates each operation to a real store and delays only its
-  # reply. This preserves the committed state across the boundary being tested.
-  defmodule LateETS do
+  # Every completed operation uses a real store. The wrapper controls when
+  # the adapter reaches the store or returns its reply.
+  defmodule ControlledETS do
     @moduledoc false
     @behaviour RequestSeal.Replay
 
     @impl true
-    def claim(pid, claim, context) do
-      result = ETS.claim(pid, claim, context)
+    def claim({pid, mode}, claim, context),
+      do: control(mode, context, fn -> ETS.claim(pid, claim, context) end)
+
+    @impl true
+    def sweep({pid, mode}, now, context),
+      do: control(mode, context, fn -> ETS.sweep(pid, now, context) end)
+
+    defp control(:immediate, _, operation), do: operation.()
+
+    defp control(:late, context, operation) do
+      result = operation.()
       Process.sleep(Context.remaining(context) + 5)
       result
     end
 
-    @impl true
-    def sweep(pid, now, context) do
-      result = ETS.sweep(pid, now, context)
-      Process.sleep(Context.remaining(context) + 5)
-      result
+    defp control({:blocked, observer}, _, operation) do
+      send(observer, {:blocked, self()})
+
+      receive do
+        :continue -> operation.()
+      after
+        2_000 -> {:error, :failure}
+      end
     end
   end
 
@@ -106,7 +118,7 @@ defmodule RequestSeal.ReplayPairTest do
   end
 
   test "expiry between writes leaves the first claim spent", ctx do
-    late = %{ctx.destination | adapter: LateETS}
+    late = controlled(ctx.destination, :late)
     {:ok, pair} = Pair.store(late, ctx.retiring)
 
     assert {:error, :timeout} = Pair.claim(pair.ref, ctx.claim, context(100))
@@ -115,8 +127,10 @@ defmodule RequestSeal.ReplayPairTest do
   end
 
   test "late final claim and sweep replies cannot report success", ctx do
-    late = %{ctx.retiring | adapter: LateETS}
-    {:ok, pair} = Pair.store(ctx.destination, late)
+    destination = controlled(ctx.destination, :immediate)
+    retiring = controlled(ctx.retiring, :late)
+    assert {:error, %Error{reason: :invalid_store}} = Pair.store(ctx.destination, retiring)
+    assert {:ok, pair} = Pair.store(destination, retiring)
 
     assert {:error, :timeout} = Pair.claim(pair.ref, ctx.claim, context(100))
     assert :already_claimed = claim(ctx.destination, ctx.claim)
@@ -126,6 +140,25 @@ defmodule RequestSeal.ReplayPairTest do
     assert :claimed = claim(ctx.destination, ctx.claim)
     assert :claimed = claim(ctx.retiring, ctx.claim)
   end
+
+  test "direct claims and sweeps cancel a blocked adapter inside the deadline", ctx do
+    retiring = controlled(ctx.retiring, {:blocked, self()})
+    assert {:ok, pair} = Pair.store(controlled(ctx.destination, :immediate), retiring)
+
+    assert {:error, :timeout} = Pair.claim(pair.ref, ctx.claim, context(150))
+    assert_received {:blocked, claim_worker}
+    refute Process.alive?(claim_worker)
+    assert :already_claimed = claim(ctx.destination, ctx.claim)
+    assert :claimed = claim(ctx.retiring, ctx.claim)
+
+    assert {:error, :timeout} = Pair.sweep(pair.ref, 2_000, context(150))
+    assert_received {:blocked, sweep_worker}
+    refute Process.alive?(sweep_worker)
+    assert :claimed = claim(ctx.destination, ctx.claim)
+    assert :already_claimed = claim(ctx.retiring, ctx.claim)
+  end
+
+  defp controlled(store, mode), do: %{store | adapter: ControlledETS, ref: {store.ref, mode}}
 
   defp claim(store, claim), do: Replay.claim(store, claim, timeout: 1_000)
 

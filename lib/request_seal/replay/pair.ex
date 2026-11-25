@@ -3,12 +3,14 @@ defmodule RequestSeal.Replay.Pair do
   Composes two caller-owned replay stores during a migration.
 
   Every accepted claim is new in the destination and then new in the retiring
-  store. The same absolute deadline applies to both. A destination claim
-  survives a refusal or failure in the retiring store. See the replay protection
-  guide for the order of rollout and the retention window.
+  store. The same absolute deadline bounds both adapter workers, including
+  direct calls to this module. A destination claim survives a refusal or
+  failure in the retiring store. See the replay protection guide for the
+  order of rollout and the retention window.
   """
   @behaviour RequestSeal.Replay
 
+  alias RequestSeal.Custody
   alias RequestSeal.Custody.Context
   alias RequestSeal.Replay.{Claim, Error, ETS, Store}
 
@@ -85,14 +87,10 @@ defmodule RequestSeal.Replay.Pair do
     started = System.monotonic_time()
 
     result =
-      if Context.remaining(context) > 0 do
-        reply = call(operation, store, input, context)
-
-        if Context.remaining(context) > 0,
-          do: normalize(operation, reply),
-          else: {:error, :timeout}
-      else
-        {:error, :timeout}
+      case Custody.run(context, fn -> {:ok, call(operation, store, input, context)} end) do
+        {:ok, reply} -> normalize(operation, reply)
+        {:error, %{reason: :deadline_exceeded}} -> {:error, :timeout}
+        {:error, _} -> {:error, :failure}
       end
 
     {outcome, reason} =
