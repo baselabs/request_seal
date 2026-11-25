@@ -164,10 +164,8 @@ defmodule RequestSeal.Custody.Local do
   def new(algorithm, material, opts \\ []) do
     Support.safe(fn ->
       {_, family, capabilities} = selection(algorithm)
-      capabilities =
-        if family == :hmac and is_list(opts) and Keyword.get(opts, :capabilities) == [:mac],
-          do: [:mac],
-          else: capabilities
+      mac_only? = family == :hmac and Keyword.keyword?(opts) and opts[:capabilities] == [:mac]
+      capabilities = if mac_only?, do: [:mac], else: capabilities
       construct(algorithm, material, opts, nil, nil, capabilities)
     end)
   end
@@ -188,8 +186,8 @@ defmodule RequestSeal.Custody.Local do
   unwrap) and optional `:timeout` (1..300,000 ms, default 5,000) bounding holder
   startup and generation. RSA-4096 generation can take several seconds on a
   loaded machine; pass a longer `:timeout` for it. HMAC generation also accepts
-  `capabilities: [:mac]` for a dedicated framed MAC key. Unknown, duplicate, misplaced, missing, or invalid options return
-  `:invalid_options`. GCMKW, `dir`, derivation parents, and unknown algorithms
+  `capabilities: [:mac]` for a dedicated framed MAC key. Unknown, duplicate,
+  misplaced, missing, or invalid options return `:invalid_options`. GCMKW, `dir`, derivation parents, and unknown algorithms
   return `:unsupported_algorithm`; HKDF IKM is imported with `new/3`.
 
   Returns `{:ok, KeyHandle.t()}` after actual cryptographic validation, or

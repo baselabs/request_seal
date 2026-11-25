@@ -72,6 +72,12 @@ array of byte descriptors `fields`; success returns `digest` as bytes.
 `fields`; success returns `tag` as bytes. Each field is encoded with an
 unsigned four-byte big-endian length and its unchanged bytes.
 
+`verification_record.capture/v1` uses the HTTP verification message, label
+and policy descriptors; required capture returns canonical record `bytes`.
+`verification_record.reverify/v1` accepts the encoded `record` as a byte
+descriptor and returns `valid: true` after offline verification. The record
+format itself is documented by `RequestSeal.VerificationRecord`.
+
 Format `request-seal-conformance-case/1` requires `id`, `surface`, `class`,
 `evidence_class`, `source`, `inputs` and `expected`. Source identity contains
 `document`, `section` and `url`. Evidence is `published_vector` or

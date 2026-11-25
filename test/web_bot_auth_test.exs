@@ -1124,6 +1124,17 @@ defmodule RequestSeal.WebBotAuthTest do
     end
   end
 
+  test "captured directory verification can be independently rechecked" do
+    alias RequestSeal.VerificationRecord
+
+    assert {:ok, envelope} = WebBotAuth.verify(request("directory"), policy(), capture: true)
+    assert [result] = Map.values(envelope.signatures)
+    assert {:ok, record} = VerificationRecord.from_verification(result)
+    assert {:ok, bytes} = VerificationRecord.encode(record)
+    assert %{"record" => %{"directory" => %{"fetched_at" => @now}}} = :json.decode(bytes)
+    assert :ok = VerificationRecord.reverify(bytes)
+  end
+
   test "deny set applies to an otherwise trusted directory key" do
     message = request("directory")
     assert {:ok, envelope} = WebBotAuth.verify(message, policy())

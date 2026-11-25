@@ -114,6 +114,10 @@ defmodule RequestSeal do
     * `:label` - required. The case-sensitive Structured Fields dictionary key
       to verify: 1 to 256 bytes, a lowercase letter or `*` followed by
       lowercase letters, digits, `_`, `-`, `.` or `*`.
+    * `:capture` - Boolean, default false. Retain the exact public key,
+      signature base and signature in `signature.record_material` after all
+      checks pass. Capture requires public-key verification; secret custody
+      rejects with `:invalid_options`.
     * `:representation` - optional validated `RequestSeal.Body`, accepted only
       when the policy requires a representation digest. No content body
       substitutes for it.
@@ -142,7 +146,8 @@ defmodule RequestSeal do
         `:algorithm_not_permitted`, `:algorithm_mismatch`.
       * `:freshness` - `:invalid_clock`, `:missing_created`, `:missing_expires`,
         `:created_in_future`, `:expired`, `:too_old`.
-      * `:key` - `:unknown_key`, `:key_resolver_failed`.
+      * `:key` - `:unknown_key`, `:key_resolver_failed`, `:key_denied`,
+        `:key_fingerprint_unknown`.
       * `:crypto` - `:signature_base_failed` (`detail` is the signature-base
         reason), `:invalid_signature`, `:verifier_failed`.
       * `:content` - `:digest_not_covered`, `:digest_unsupported`,

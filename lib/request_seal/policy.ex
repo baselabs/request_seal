@@ -184,8 +184,8 @@ defmodule RequestSeal.Policy do
       is_binary(p.components) and valid_components?(p.components) and
       is_function(p.key_resolver, 1) and freshness?(p.freshness) and content?(p.content) and
       RequestSeal.Replay.policy?(p.replay, p.freshness) and schemas?(p.field_schemas) and
-      RequestSeal.DenySet.valid?(p.deny) and p.extra_components in [:allow, :reject] and is_integer(p.max_signatures) and
-      p.max_signatures in 1..64 and KeyHandle.purpose?(p.require_issued_for)
+      RequestSeal.DenySet.valid?(p.deny) and p.extra_components in [:allow, :reject] and
+      is_integer(p.max_signatures) and p.max_signatures in 1..64 and KeyHandle.purpose?(p.require_issued_for)
   end
 
   def valid?(_), do: false

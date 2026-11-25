@@ -400,6 +400,14 @@
   "RequestSeal.Verification": [
     "type t/0"
   ],
+  "RequestSeal.VerificationRecord": [
+    "function decode/1",
+    "function encode/1",
+    "function from_verification/1",
+    "function from_verification/2",
+    "function reverify/1",
+    "type t/0"
+  ],
   "RequestSeal.WebBotAuth": [
     "function sign/4",
     "function verify/3"

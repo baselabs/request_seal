@@ -38,7 +38,8 @@ defmodule RequestSeal.Custody.Local.Owner do
   @type key_status ::
           :ready
           | :unconfigured
-          | {:error, :invalid_seed | :insecure_file | :unreadable | :key_denied | :thumbprint_mismatch}
+          | {:error,
+             :invalid_seed | :insecure_file | :unreadable | :key_denied | :thumbprint_mismatch}
   @type options :: [name: atom(), keys: [{atom(), {binary(), source()}}]]
   @max_source_bytes 4_096
 
@@ -377,7 +378,8 @@ defmodule RequestSeal.Custody.Local.Owner do
     with true <- descriptor({"ed25519", source}) != :invalid_seed,
          true <- Keyword.keyword?(opts),
          keys = Keyword.keys(opts),
-         true <- Enum.uniq(keys) == keys and Enum.all?(keys, &(&1 in [:deny, :expected_thumbprint])),
+         true <- Enum.uniq(keys) == keys,
+         true <- Enum.all?(keys, &(&1 in [:deny, :expected_thumbprint])),
          true <- RequestSeal.DenySet.valid_admission_options?(opts) do
       spec
     else

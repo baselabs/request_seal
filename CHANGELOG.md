@@ -2,6 +2,7 @@
 
 ## Unreleased 2.0.0
 
+- Support opt-in capture and offline checking of canonical public-key HTTP signature records.
 - Add framed SHA-256 and a dedicated framed HMAC-SHA256 custody operation with independent corpus vectors.
 - Screen public signatures against caller-owned deny sets and check expected public thumbprints on custody import.
 - Check HTTP signature freshness across caller-supplied trusted clock intervals.

@@ -28,6 +28,8 @@ defmodule RequestSeal.Conformance.Surfaces do
     "signature_base.parse" => :parse_signature_base,
     "sign" => :sign,
     "verify" => :verify,
+    "verification_record.capture/v1" => :verification_record,
+    "verification_record.reverify/v1" => :verification_record_recheck,
     "accept_signature.parse" => :accept_signature,
     "digest.content" => :digest,
     "crypto.verify" => :crypto_verify,
@@ -303,7 +305,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     m
   end
 
-  defp case_message(root, i) do
+  def case_message(root, i) do
     m = message(root, i["message"])
 
     fields =
@@ -516,6 +518,25 @@ defmodule RequestSeal.Conformance.Surfaces do
 
       _ ->
         verify_with_store(root, c, nil)
+    end
+  end
+
+  def verification_record(root, c) do
+    i = c["inputs"]
+    message = case_message(root, i)
+
+    with {:ok, p} <- policy(root, c["policy"]),
+         {:ok, result} <- RequestSeal.verify(message, p, label: i["label"], capture: true),
+         {:ok, record} <- RequestSeal.VerificationRecord.from_verification(result),
+         {:ok, bytes} <- RequestSeal.VerificationRecord.encode(record) do
+      {:ok, %{"bytes" => C.b64(bytes)}}
+    end
+  end
+
+  def verification_record_recheck(_root, c) do
+    case RequestSeal.VerificationRecord.reverify(C.bytes(c["inputs"]["record"])) do
+      :ok -> {:ok, %{"valid" => true}}
+      {:error, :invalid_record} -> {:error, "verification_record/invalid_record"}
     end
   end
 

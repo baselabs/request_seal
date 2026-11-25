@@ -53,6 +53,7 @@ SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/w
         "0035-trusted-clock-intervals",
         "0036-public-key-denial",
         "0037-framed-hashing-and-mac",
+        "0038-retained-verification-records",
         "0039-paired-replay-store",
         "0040-signed-path-tenant",
         "0041-custody-purpose-and-admission",

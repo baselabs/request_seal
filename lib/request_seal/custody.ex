@@ -38,6 +38,8 @@ defmodule RequestSeal.Custody do
   alias RequestSeal.Custody.{Cleanup, Context, Derivation, DeriveRequest, Error, Sink, Support}
   import Support, only: [fail: 1, ensure: 2]
 
+  @capabilities [:sign, :verify, :wrap, :unwrap, :derive, :mac]
+
   @type capability :: :sign | :verify | :wrap | :unwrap | :derive | :mac
   @type key_algorithm :: {:jwe, binary()}
   @type algorithm ::
@@ -839,7 +841,7 @@ defmodule RequestSeal.Custody do
 
     ensure(
       is_list(handle.capabilities) and handle.capabilities != [] and
-        Enum.all?(handle.capabilities, &(&1 in [:sign, :verify, :wrap, :unwrap, :derive, :mac])) and
+        Enum.all?(handle.capabilities, &(&1 in @capabilities)) and
         Enum.uniq(handle.capabilities) == handle.capabilities,
       :invalid_handle
     )

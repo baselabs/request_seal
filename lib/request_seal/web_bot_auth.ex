@@ -77,6 +77,8 @@ defmodule RequestSeal.WebBotAuth do
 
     * `:representation` - optional `RequestSeal.Body` for a required
       representation digest, as in `RequestSeal.verify/3`.
+    * `:capture` - Boolean, default false. Retain each accepted public
+      signature's bytes for `RequestSeal.VerificationRecord`.
     * `:digest_state` - optional `RequestSeal.Digest` state, as in
       `RequestSeal.verify/3`; mutually exclusive with `:representation`.
     * `:timeout` - integer milliseconds, 1 to 300,000. Default 5,000. One
@@ -178,7 +180,8 @@ defmodule RequestSeal.WebBotAuth do
 
     protect(fn ->
       ensure(Policy.valid?(policy), :invalid_policy, :input)
-      options(opts, [:representation, :digest_state, :timeout])
+      options(opts, [:representation, :digest_state, :timeout, :capture])
+      ensure(is_boolean(Keyword.get(opts, :capture, false)), :invalid_options, :input)
       timeout = Keyword.get(opts, :timeout, 5000)
       ensure(is_integer(timeout) and timeout in 1..300_000, :invalid_options, :input)
 

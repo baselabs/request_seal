@@ -31,7 +31,7 @@ defmodule RequestSeal.Authentication do
         :input
       )
 
-      opts = options(opts, [:label, :representation, :digest_state])
+      opts = options(opts, [:label, :representation, :digest_state, :capture])
       label = Map.get(opts, :label)
       ensure(SignatureFields.label?(label), :invalid_options, :input)
       ensure(Policy.valid?(policy), :invalid_policy, :input)
@@ -83,6 +83,12 @@ defmodule RequestSeal.Authentication do
             {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)
           end
 
+        ensure(
+          not Map.get(opts, :capture, false) or match?(%PublicKey{}, key),
+          :invalid_options,
+          :input
+        )
+
         {:ok, {algorithm, key, params, freshness}}
       end)
 
@@ -103,10 +109,11 @@ defmodule RequestSeal.Authentication do
           case built do
             {:ok, bytes} ->
               protect(fn ->
+                signature_bytes = elem(signature.value, 1)
                 verify_bytes(
                   algorithm,
                   bytes,
-                  elem(signature.value, 1),
+                  signature_bytes,
                   key,
                   Map.get(policy, :require_issued_for)
                 )
@@ -127,17 +134,30 @@ defmodule RequestSeal.Authentication do
                     :error -> fail(:invalid_signature_input, :fields)
                   end
 
+                signature_facts = %{
+                  algorithm: algorithm,
+                  covered: covered,
+                  parameters: params,
+                  keyid: params["keyid"],
+                  crypto: :valid
+                }
+
+                signature_facts =
+                  if Map.get(opts, :capture, false) do
+                    Map.put(signature_facts, :record_material, %{
+                      key: key,
+                      base: bytes,
+                      signature: signature_bytes
+                    })
+                  else
+                    signature_facts
+                  end
+
                 {:ok,
                  %Verification{
                    label: label,
                    profile: Map.get(opts, :profile, %{name: :rfc9421}),
-                   signature: %{
-                     algorithm: algorithm,
-                     covered: covered,
-                     parameters: params,
-                     keyid: params["keyid"],
-                     crypto: :valid
-                   },
+                   signature: signature_facts,
                    content: content,
                    freshness: freshness,
                    replay: replay
@@ -293,6 +313,8 @@ defmodule RequestSeal.Authentication do
   defp proper_list?(_), do: false
 
   defp verify_options(opts, policy) do
+    ensure(is_boolean(Map.get(opts, :capture, false)), :invalid_options, :input)
+
     ensure(
       not (Map.has_key?(opts, :representation) and Map.has_key?(opts, :digest_state)),
       :invalid_options,

@@ -45,7 +45,13 @@ defmodule RequestSeal.Freshness do
 
       true ->
         {:ok,
-         %{now: upper, created: created, expires: expires, max_age: policy.max_age, skew: policy.skew}}
+         %{
+           now: upper,
+           created: created,
+           expires: expires,
+           max_age: policy.max_age,
+           skew: policy.skew
+         }}
     end
   end
 end

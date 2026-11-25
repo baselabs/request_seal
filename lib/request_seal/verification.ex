@@ -13,8 +13,9 @@ defmodule RequestSeal.Verification do
 
   `signature` records the authoritative resolver algorithm, canonical ordered
   covered identifier strings (including parameters), decoded signature parameter
-  map, optional keyid and `crypto: :valid`. It does not retain signature bytes,
-  base bytes or keys.
+  map, optional keyid and `crypto: :valid`. When `capture: true` was supplied,
+  `signature.record_material` also contains the exact base, signature and
+  public key for `RequestSeal.VerificationRecord`.
 
   `content` is `:not_required` or the `RequestSeal.Digest.check/3` or
   `RequestSeal.Digest.check_stream/3` result (`kind`, `checked`, `bytes`,

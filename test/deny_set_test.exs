@@ -25,8 +25,14 @@ defmodule RequestSeal.DenySetTest do
     # The final sextet has two unused bits.
     noncanonical = binary_part(@thumbprint, 0, 42) <> "l"
 
-    for entries <- [nil, [@thumbprint | :bad_tail], [noncanonical], [@thumbprint <> "="],
-                    [@thumbprint <> "x"], List.duplicate(@thumbprint, 65_537)] do
+    for entries <- [
+          nil,
+          [@thumbprint | :bad_tail],
+          [noncanonical],
+          [@thumbprint <> "="],
+          [@thumbprint <> "x"],
+          List.duplicate(@thumbprint, 65_537)
+        ] do
       assert {:error, %{reason: :invalid_options}} = DenySet.new(entries)
     end
 

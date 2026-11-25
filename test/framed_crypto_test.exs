@@ -69,8 +69,13 @@ defmodule RequestSeal.FramedCryptoTest do
       assert {:error, %{reason: :invalid_options}} = Custody.mac(handle, label, ["a"])
     end
 
-    for fields <- [[], ["a" | :bad], [1], List.duplicate("", 257),
-                   [:binary.copy(<<0>>, 1_048_576), "a"]] do
+    for fields <- [
+          [],
+          ["a" | :bad],
+          [1],
+          List.duplicate("", 257),
+          [:binary.copy(<<0>>, 1_048_576), "a"]
+        ] do
       assert {:error, %{reason: :invalid_data}} = Custody.mac(handle, "frame v1", fields)
     end
 
@@ -81,6 +86,11 @@ defmodule RequestSeal.FramedCryptoTest do
              Custody.mac(handle, "frame v1", ["a"], timeout: 0)
 
     assert :ok = Local.release(handle)
+    assert {:error, %{reason: :invalid_options}} =
+             Local.new("hmac-sha256", {:hmac, :crypto.strong_rand_bytes(32)}, [
+               {:capabilities, [:mac]} | :invalid_tail
+             ])
+
     assert {:error, %{reason: :invalid_options}} = Local.generate("ed25519", capabilities: [:mac])
     assert {:error, %{reason: :invalid_options}} =
              Local.generate("hmac-sha256", capabilities: [:sign, :mac])

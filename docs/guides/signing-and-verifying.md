@@ -241,3 +241,28 @@ must pass at the lower bound. Expiration and maximum age must pass at the
 upper bound. Endpoints are inclusive within the supported clock range and
 use the policy's skew. `verification.freshness.now` is the upper bound.
 The same interval input works with Web Bot Auth.
+
+## Retain a public-key verification record
+
+Use this when you need to check accepted signature bytes after the message
+or original key-discovery context is gone. With the public-key policy from
+the example above, capture and encode the result.
+
+```elixir
+{:ok, captured} = RequestSeal.verify(signed, policy, label: "sig", capture: true)
+{:ok, record} = RequestSeal.VerificationRecord.from_verification(captured)
+{:ok, saved_bytes} = RequestSeal.VerificationRecord.encode(record)
+:ok = RequestSeal.VerificationRecord.reverify(saved_bytes)
+```
+
+Version 1 uses compact JSON with sorted ASCII object keys, preserved array
+order, printable ASCII strings with only quote and backslash escaped, null,
+and ordinary decimal integers for version and optional fetch time. The
+envelope contains a Base64url SHA-256 digest of the canonical record.
+It can detect changes when the stored digest or record is trusted.
+
+A record checks the signature against the retained public key. Live trust,
+freshness, replay and body digest checks require the original context. A
+record carries no authorization. After retirement or compromise, an old
+key may still verify mathematically. Restrict access to the saved bytes
+because covered field values may be sensitive.

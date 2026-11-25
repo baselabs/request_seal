@@ -180,6 +180,20 @@ defmodule RequestSeal.GuideSigningAndVerifyingTest do
     assert Keyword.fetch!(binding, :verification).authorization == :not_evaluated
     assert :ok = RequestSeal.Message.validate(Keyword.fetch!(binding, :low_level_signed))
     E.assert_rejected_signature(binding)
-    E.assert_fences("docs/guides/signing-and-verifying.md", 9)
+    binding =
+      E.eval(
+        ~S'''
+        {:ok, captured} = RequestSeal.verify(signed, policy, label: "sig", capture: true)
+        {:ok, record} = RequestSeal.VerificationRecord.from_verification(captured)
+        {:ok, saved_bytes} = RequestSeal.VerificationRecord.encode(record)
+        :ok = RequestSeal.VerificationRecord.reverify(saved_bytes)
+        ''',
+        binding,
+        "docs/guides/signing-and-verifying.md",
+        10
+      )
+
+    assert is_binary(Keyword.fetch!(binding, :saved_bytes))
+    E.assert_fences("docs/guides/signing-and-verifying.md", 10)
   end
 end

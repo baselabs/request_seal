@@ -83,8 +83,13 @@ defmodule RequestSeal.DenySet do
 
   @doc false
   def valid_admission_options?(opts) do
+    expected = Keyword.fetch(opts, :expected_thumbprint)
+
     valid?(opts[:deny]) and
-      (not Keyword.has_key?(opts, :expected_thumbprint) or thumbprint?(opts[:expected_thumbprint]))
+      case expected do
+        :error -> true
+        {:ok, value} -> thumbprint?(value)
+      end
   end
 
   defp collect([], acc, _count), do: {:ok, acc}
