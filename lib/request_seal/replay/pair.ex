@@ -3,8 +3,8 @@ defmodule RequestSeal.Replay.Pair do
   Composes two caller-owned replay stores during a migration.
 
   Every accepted claim is new in the destination and then new in the retiring
-  store. The same absolute deadline bounds both adapter workers, including
-  direct calls to this module. A destination claim survives a refusal or
+  store. The same absolute deadline bounds both adapters and their telemetry,
+  including direct calls to this module. A destination claim survives a refusal or
   failure in the retiring store. See the replay protection guide for the
   order of rollout and the retention window.
   """
@@ -36,19 +36,22 @@ defmodule RequestSeal.Replay.Pair do
 
   @doc """
   Claims the destination first and, on a new claim, claims the retiring store.
-  Implements the replay adapter callback under the caller's shared deadline.
+  The shared deadline covers both adapters and their synchronous events.
+  Malformed contexts return `{:error, :failure}` before either adapter runs.
   """
   @impl RequestSeal.Replay
   @spec claim(term(), Claim.t(), Context.t()) ::
           :claimed | :already_claimed | {:error, :unavailable | :timeout | :full | :failure}
   def claim({destination, retiring}, claim, %Context{} = context) do
-    if distinct?(destination, retiring) and Claim.valid?(claim) do
-      with :claimed <- invoke(:claim, :destination, destination, claim, context) do
-        invoke(:claim, :retiring, retiring, claim, context)
+    run(context, fn ->
+      if distinct?(destination, retiring) and Claim.valid?(claim) do
+        with :claimed <- invoke(:claim, :destination, destination, claim, context) do
+          invoke(:claim, :retiring, retiring, claim, context)
+        end
+      else
+        {:error, :failure}
       end
-    else
-      {:error, :failure}
-    end
+    end)
   end
 
   def claim(_, _, _), do: {:error, :failure}
@@ -57,19 +60,22 @@ defmodule RequestSeal.Replay.Pair do
   Sweeps both stores within the shared deadline and sums deleted entries.
   Externally managed stores contribute zero. When both are externally managed,
   returns `{:error, :externally_managed}`. Other errors take precedence in
-  destination-first order. Implements the replay adapter callback.
+  destination-first order. The deadline and context requirements are the
+  same as in `claim/3`.
   """
   @impl RequestSeal.Replay
   @spec sweep(term(), integer(), Context.t()) :: {:ok, non_neg_integer()} | {:error, atom()}
   def sweep({destination, retiring}, now, %Context{} = context)
       when is_integer(now) and now in 0..@max_clock do
-    if distinct?(destination, retiring) do
-      first = invoke(:sweep, :destination, destination, now, context)
-      second = invoke(:sweep, :retiring, retiring, now, context)
-      if Context.remaining(context) > 0, do: sweep_result(first, second), else: {:error, :timeout}
-    else
-      {:error, :failure}
-    end
+    run(context, fn ->
+      if distinct?(destination, retiring) do
+        first = invoke(:sweep, :destination, destination, now, context)
+        second = invoke(:sweep, :retiring, retiring, now, context)
+        sweep_result(first, second)
+      else
+        {:error, :failure}
+      end
+    end)
   end
 
   def sweep(_, _, _), do: {:error, :failure}
@@ -83,16 +89,26 @@ defmodule RequestSeal.Replay.Pair do
 
   defp distinct?(_, _), do: false
 
+  defp run(context, callback) do
+    case Custody.run(context, fn -> {:ok, callback.()} end) do
+      {:ok, result} -> result
+      {:error, %{reason: :deadline_exceeded}} -> {:error, :timeout}
+      {:error, _} -> {:error, :failure}
+    end
+  end
+
   defp invoke(operation, position, store, input, context) do
-    started = System.monotonic_time()
+    if Context.remaining(context) > 0 do
+      started = System.monotonic_time()
+      result = normalize(operation, call(operation, store, input, context))
+      emit(operation, position, started, result)
+      result
+    else
+      {:error, :timeout}
+    end
+  end
 
-    result =
-      case Custody.run(context, fn -> {:ok, call(operation, store, input, context)} end) do
-        {:ok, reply} -> normalize(operation, reply)
-        {:error, %{reason: :deadline_exceeded}} -> {:error, :timeout}
-        {:error, _} -> {:error, :failure}
-      end
-
+  defp emit(operation, position, started, result) do
     {outcome, reason} =
       case result do
         {:error, reason} -> {:error, reason}
@@ -105,8 +121,6 @@ defmodule RequestSeal.Replay.Pair do
       System.monotonic_time() - started,
       %{operation: operation, position: position, outcome: outcome, reason: reason}
     )
-
-    if Context.remaining(context) > 0, do: result, else: {:error, :timeout}
   end
 
   defp call(operation, store, input, context) do

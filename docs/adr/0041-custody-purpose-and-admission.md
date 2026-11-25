@@ -41,8 +41,10 @@ Local HTTP signing may require approval inside the sensitive key process.
 A gate validates the typed HTTP Inner List before extracting any parameter
 value. It compares canonical covered components, tag, algorithm, optional key ID,
 and the approved digest, nonce, and time window. It consumes the decision
-under the operation deadline before signing. A configured recorder must
-succeed before return. Claims survive every subsequent failure.
+under the operation deadline before signing. The claim worker monitors the
+holder that calls it and the original signing caller. Either process's exit
+cancels pending worker activity. A configured recorder must succeed before
+return. Committed claims survive every subsequent failure.
 
 ## Alternatives
 

@@ -177,11 +177,14 @@ history, so keep it alive across the switch to paired operation.
 A claim succeeds after two new writes. A retirement-side refusal leaves the
 destination entry spent. Budget the policy timeout for two sequential operations
 and continue sweeping both stores under their existing retention rules.
-The shared deadline bounds each adapter worker, even on direct pair calls.
-A blocked adapter or late reply reports timeout. A completed write stays spent.
+The shared deadline covers both adapters and synchronous telemetry, even on
+direct pair calls. A blocked adapter, blocked event handler, or late reply
+reports timeout. Direct calls require an integer deadline and an owner PID.
+A completed write stays spent.
 `RequestSeal.Replay.Pair.sweep/3` handles stores whose cleanup is external.
-The receipt names the pair during migration. The `[:request_seal, :replay, :pair]`
-event identifies the attempted position without logging claim data.
+The receipt names the pair during migration. When an adapter returns within
+the shared budget, the `[:request_seal, :replay, :pair]` event identifies its
+position without logging claim data.
 
 ## Errors
 

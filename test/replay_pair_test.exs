@@ -1,5 +1,5 @@
 defmodule RequestSeal.ReplayPairTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias RequestSeal.Custody.Context
   alias RequestSeal.Replay
@@ -32,8 +32,6 @@ defmodule RequestSeal.ReplayPairTest do
 
       receive do
         :continue -> operation.()
-      after
-        2_000 -> {:error, :failure}
       end
     end
   end
@@ -117,6 +115,22 @@ defmodule RequestSeal.ReplayPairTest do
     assert :claimed = claim(ctx.destination, ctx.claim)
   end
 
+  test "malformed contexts refuse before either store is called", ctx do
+    assert :claimed = claim(ctx.pair, ctx.claim)
+    other = %{ctx.claim | key: "other"}
+    valid = context(1_000)
+
+    for invalid <- [%Context{}, %{valid | owner: nil}, %{valid | deadline: :invalid}] do
+      assert {:error, :failure} = Pair.claim(ctx.pair.ref, other, invalid)
+      assert {:error, :failure} = Pair.sweep(ctx.pair.ref, 2_000, invalid)
+    end
+
+    for store <- [ctx.destination, ctx.retiring] do
+      assert :already_claimed = claim(store, ctx.claim)
+      assert :claimed = claim(store, other)
+    end
+  end
+
   test "expiry between writes leaves the first claim spent", ctx do
     late = controlled(ctx.destination, :late)
     {:ok, pair} = Pair.store(late, ctx.retiring)
@@ -145,17 +159,61 @@ defmodule RequestSeal.ReplayPairTest do
     retiring = controlled(ctx.retiring, {:blocked, self()})
     assert {:ok, pair} = Pair.store(controlled(ctx.destination, :immediate), retiring)
 
-    assert {:error, :timeout} = Pair.claim(pair.ref, ctx.claim, context(150))
+    assert_bounded_timeout(fn -> Pair.claim(pair.ref, ctx.claim, context(150)) end)
     assert_received {:blocked, claim_worker}
     refute Process.alive?(claim_worker)
     assert :already_claimed = claim(ctx.destination, ctx.claim)
     assert :claimed = claim(ctx.retiring, ctx.claim)
 
-    assert {:error, :timeout} = Pair.sweep(pair.ref, 2_000, context(150))
+    assert_bounded_timeout(fn -> Pair.sweep(pair.ref, 2_000, context(150)) end)
     assert_received {:blocked, sweep_worker}
     refute Process.alive?(sweep_worker)
     assert :claimed = claim(ctx.destination, ctx.claim)
     assert :already_claimed = claim(ctx.retiring, ctx.claim)
+  end
+
+  test "direct operations bound synchronous telemetry and preserve completed writes", ctx do
+    event = [:request_seal, :replay, :pair]
+    id = make_ref()
+
+    handler = fn
+      _, _, %{operation: operation, position: :retiring}, observer ->
+        send(observer, {:telemetry_blocked, operation, self()})
+
+        receive do
+          :continue -> :ok
+        end
+
+      _, _, _, _ ->
+        :ok
+    end
+
+    :ok = :telemetry.attach(id, event, handler, self())
+    on_exit(fn -> :telemetry.detach(id) end)
+
+    assert_bounded_timeout(fn -> Pair.claim(ctx.pair.ref, ctx.claim, context(150)) end)
+    assert_received {:telemetry_blocked, :claim, claim_worker}
+    refute Process.alive?(claim_worker)
+    assert :already_claimed = claim(ctx.destination, ctx.claim)
+    assert :already_claimed = claim(ctx.retiring, ctx.claim)
+
+    assert_bounded_timeout(fn -> Pair.sweep(ctx.pair.ref, 2_000, context(150)) end)
+    assert_received {:telemetry_blocked, :sweep, sweep_worker}
+    refute Process.alive?(sweep_worker)
+    assert :claimed = claim(ctx.destination, ctx.claim)
+    assert :claimed = claim(ctx.retiring, ctx.claim)
+  end
+
+  defp assert_bounded_timeout(operation) do
+    task =
+      Task.async(fn ->
+        started = System.monotonic_time(:millisecond)
+        result = operation.()
+        {result, System.monotonic_time(:millisecond) - started}
+      end)
+
+    assert {{:error, :timeout}, elapsed} = Task.await(task, 1_500)
+    assert elapsed < 1_000
   end
 
   defp controlled(store, mode), do: %{store | adapter: ControlledETS, ref: {store.ref, mode}}

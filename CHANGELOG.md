@@ -21,7 +21,9 @@
   that the merged query map can discard.
 
 - Add paired replay stores for migrations that require both stores to admit
-  each claim. Direct claims and sweeps bound both adapters by the shared deadline.
+  each claim. Direct claims and sweeps validate the context and bound both
+  adapters and telemetry by the shared deadline. A store-backed signing
+  admission also cancels the claim worker when the signing caller exits.
 
 - Document RequestSeal's steward, license, and name policy, and require matching
   Developer Certificate of Origin sign-offs in qualification.

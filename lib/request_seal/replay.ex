@@ -9,13 +9,15 @@ defmodule RequestSeal.Replay do
   cannot be swept. Direct store callers still receive the existing invalid-claim
   failure; `RequestSeal.Replay.Claim.valid?/1` rejects them.
   Negative retention ends are already expired.
-  A single monotonic deadline covers the commitment and store operation; caller
-  death or deadline expiry kills the operation worker. Cancellation cannot undo
-  an already committed claim. No error permits automatic retry.
+  A single monotonic deadline covers the commitment and store operation. Death
+  of the immediate caller or original context owner, or expiry of the deadline,
+  kills the operation worker. Cancellation cannot undo an already committed
+  claim. No error permits automatic retry.
   Multi-node operators sweep at `now - max_internode_skew` to preserve claims
   while any verifier still accepts the authenticated input.
   One namespace should use one freshness bound because duplicates never extend retention.
   """
+  alias RequestSeal.Custody
   alias RequestSeal.Custody.Context
   alias RequestSeal.Replay.{Claim, Error, Receipt, Store}
 
@@ -257,75 +259,10 @@ defmodule RequestSeal.Replay do
   end
 
   defp run(context, callback) do
-    owner = self()
-    tag = make_ref()
-
-    {worker, monitor} = spawn_monitor(fn -> watch_owner(owner, tag, callback) end)
-
-    receive do
-      {^tag, result} ->
-        Process.demonitor(monitor, [:flush])
-        flush(tag)
-
-        if Context.remaining(context) > 0,
-          do: result,
-          else: {:error, Error.new(:store_timeout)}
-
-      {:DOWN, ^monitor, :process, ^worker, _} ->
-        flush(tag)
-        {:error, Error.new(:store_failed)}
-    after
-      Context.remaining(context) ->
-        send(worker, {:cancel, tag})
-
-        receive do
-          {:DOWN, ^monitor, :process, ^worker, _} -> :ok
-        end
-
-        flush(tag)
-        {:error, Error.new(:store_timeout)}
-    end
-  end
-
-  defp watch_owner(owner, tag, callback) do
-    Process.flag(:trap_exit, true)
-    owner_ref = Process.monitor(owner)
-    middle = self()
-
-    runner =
-      spawn_link(fn ->
-        send(middle, {tag, safe(callback)})
-      end)
-
-    receive do
-      {^tag, result} ->
-        stop_runner(runner)
-        send(owner, {tag, result})
-
-      {:DOWN, ^owner_ref, :process, ^owner, _} ->
-        stop_runner(runner)
-
-      {:cancel, ^tag} ->
-        stop_runner(runner)
-
-      {:EXIT, ^runner, _} ->
-        :ok
-    end
-  end
-
-  defp stop_runner(runner) do
-    Process.exit(runner, :kill)
-
-    receive do
-      {:EXIT, ^runner, _} -> :ok
-    end
-  end
-
-  defp flush(tag) do
-    receive do
-      {^tag, _} -> flush(tag)
-    after
-      0 -> :ok
+    case Custody.run(context, fn -> {:ok, safe(callback)} end) do
+      {:ok, result} -> result
+      {:error, %{reason: :deadline_exceeded}} -> {:error, Error.new(:store_timeout)}
+      {:error, _} -> {:error, Error.new(:store_failed)}
     end
   end
 end

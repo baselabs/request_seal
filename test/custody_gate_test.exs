@@ -9,6 +9,34 @@ defmodule RequestSeal.CustodyGateTest do
   @components ~s[("@method" "@path")]
   @input ~s[("@method" "@path");created=1700000000;expires=1700000030;nonce="one";tag="release";keyid="local"]
 
+  defmodule PendingWrite do
+    @moduledoc false
+    @behaviour RequestSeal.Replay
+
+    @impl true
+    def claim({store, observer, :before}, claim, context) do
+      pause(observer)
+      ETS.claim(store, claim, context)
+    end
+
+    def claim({store, observer, :after}, claim, context) do
+      result = ETS.claim(store, claim, context)
+      pause(observer)
+      result
+    end
+
+    @impl true
+    def sweep({store, _, _}, now, context), do: ETS.sweep(store, now, context)
+
+    defp pause(observer) do
+      send(observer, {:claim_pending, self()})
+
+      receive do
+        :continue -> :ok
+      end
+    end
+  end
+
   setup do
     {:ok, store} = ETS.start_link(max_entries: 10)
     {:ok, message} = Message.request("GET", "https://example.test/items", [], "")
@@ -169,6 +197,27 @@ defmodule RequestSeal.CustodyGateTest do
 
     GenServer.stop(ctx.store)
     assert_error(sign(handle, ctx.base), :gate_store_failed)
+  end
+
+  test "caller death cancels a pending spend and preserves a committed spend", ctx do
+    observer = self()
+
+    for {phase, spent} <- [{:before, 0}, {:after, 1}] do
+      {:ok, store} = ETS.start_link(max_entries: 10)
+      delayed = %{ETS.store(store) | adapter: PendingWrite, ref: {store, observer, phase}}
+      {:ok, handle} = gated(%{ctx.config | once: {:store, delayed, "release-keys"}})
+
+      caller = Task.async(fn -> sign(handle, ctx.base) end)
+      assert_receive {:claim_pending, worker}, 1_000
+      monitor = Process.monitor(worker)
+      Task.shutdown(caller, :brutal_kill)
+
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}, 1_000
+      assert {:ok, _} = Custody.public_key(handle)
+      assert {:ok, ^spent} = ETS.sweep(store, @now + 31)
+      assert :ok = Local.release(handle)
+      assert :ok = GenServer.stop(store)
+    end
   end
 
   test "externally checked admission returns the exact base digest and spends atomically", ctx do

@@ -12,6 +12,9 @@ defmodule RequestSeal.Telemetry do
 
   Duration measurements use `System.monotonic_time/0` native units. Events
   carry `:duration` unless their row below specifies a different measurement set.
+  Replay pair handlers run inside the pair's shared deadline after an adapter
+  replies. A blocking handler can cause the pair to return a timeout after the
+  adapter has committed its operation.
 
   | Event | Emitted by | Metadata |
   | --- | --- | --- |

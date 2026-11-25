@@ -404,3 +404,7 @@ atomic spend itself. A failure after spending requires a new decision. Set
 `:record` to verify recording of the decision, base digest, and signature
 digest before releasing bytes. Use `:admission` on Local key generation to
 keep fresh private material inside custody from construction.
+
+For a store-backed admission, the worker follows the original signing caller's
+lifetime as well as the holder's. Caller exit cancels pending worker activity.
+The store may already have received the request, and committed spends remain spent.
