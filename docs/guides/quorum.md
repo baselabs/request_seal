@@ -102,7 +102,7 @@ wire can exhaust it even when the policy is valid. Use label or tag selectors
 to constrain matching. A supplied absolute monotonic deadline bounds
 callbacks and assignment, and caps the replay store deadline. A remaining
 interval above 4,294,967,295 milliseconds is invalid.
-The local replay store refuses any late claim at or before its latest sweep
-cutoff, including a verification that started before the sweep. The verifier
+The replay store refuses a claim whose retention ends at or before its
+greatest sweep cutoff, even if verification started before the sweep. The verifier
 returns a replay receipt after the quorum verdict. Application
 authorization and effect uniqueness remain separate decisions.

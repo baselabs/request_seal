@@ -5,7 +5,8 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
     Requires optional ash_onetime 1.9.2 or newer within 1.x, and Elixir 1.20.
     The caller owns the existing Ecto repo, PostgreSQL database, and ash_onetime
-    installation migrations. Namespace and commitment bytes are base64url encoded into scope and key;
+    installation migrations. Install `cleanup_guard_ddl/1` in the same schema
+    after the ash_onetime migrations. Namespace and commitment bytes are base64url encoded into scope and key;
     they never become SQL identifiers or logical partitions.
 
     Each claim owns a READ COMMITTED transaction under the remaining deadline.
@@ -14,19 +15,17 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     `:not_required`, then use ash_onetime in the application's transaction.
     No timeout or failure permits automatic retry: the claim may have committed.
 
-    Facts use PostgreSQL's transaction clock, read in the same transaction as
-    admission. Max age is derived from `retain_until`; one second of rounding
-    headroom and ash_onetime's cleanup margin keep retention beyond that horizon
-    without relying on application/database clock synchronization. ash_onetime's
-    freshness check can still reject clock skew; rejection never spends a nonce.
-    Past or current retention horizons still block an immediate duplicate.
-    Historical verification clocks do not move the database's cleanup clock.
-    Duplicate claims do not
-    extend retention; use one freshness bound per namespace.
+    The delegate owns nonce uniqueness and cleanup eligibility. A statement
+    trigger records its greatest successful cleanup transaction timestamp,
+    including cleanup that deletes zero rows. Before commit the adapter locks
+    that cutoff and checks the claim against it and the current database clock.
+    Admission at or before either boundary fails and leaves no new nonce.
+    Duplicate claims never extend retention.
 
     `sweep/3` never deletes anything. Cleanup belongs to
     `mix ash_onetime.prune` or `AshOnetime.Oban.CleanupWorker`; this adapter never
-    calls ash_onetime's internal store APIs or starts any process.
+    calls ash_onetime's internal store APIs or starts any process. The cutoff
+    trigger runs in the delegate's cleanup transaction.
     """
     @behaviour RequestSeal.Replay
     alias RequestSeal.Custody.Context
@@ -87,6 +86,61 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     def store(_, _), do: {:error, Error.new(:invalid_store)}
 
     @doc """
+    Return the SQL to install the delegated cleanup cutoff in `prefix`.
+
+    Run these statements in order in one migration transaction after installing
+    ash_onetime. Use the same schema as the store. With `nil`, the migration
+    and store use the repo's default schema. The installed trigger runs on each
+    nonce DELETE statement, including empty cleanup batches. Grant the claim
+    and cleanup database roles permission to lock and update the cutoff row.
+    This function builds SQL and does not execute it.
+    """
+    @spec cleanup_guard_ddl(binary() | nil) :: [binary()] | {:error, Error.t()}
+    def cleanup_guard_ddl(prefix) do
+      if prefix == nil or text?(prefix, 63) do
+        cutoff = relation(prefix, "request_seal_replay_cutoff")
+        function = relation(prefix, "request_seal_record_replay_cleanup")
+        nonce_claims = relation(prefix, "ash_onetime_nonce_claims")
+
+        [
+          """
+          CREATE TABLE #{cutoff} (
+            singleton boolean PRIMARY KEY CHECK (singleton),
+            swept_through bigint NOT NULL
+          )
+          """,
+          """
+          INSERT INTO #{cutoff} VALUES
+            (true, floor(extract(epoch FROM transaction_timestamp()))::bigint)
+          """,
+          """
+          CREATE FUNCTION #{function}() RETURNS trigger LANGUAGE plpgsql AS $cutoff$
+          DECLARE updated bigint;
+          BEGIN
+            EXECUTE format(
+              'UPDATE %I.request_seal_replay_cutoff
+               SET swept_through = GREATEST(swept_through, $1) WHERE singleton',
+              TG_TABLE_SCHEMA
+            ) USING floor(extract(epoch FROM transaction_timestamp()))::bigint;
+            GET DIAGNOSTICS updated = ROW_COUNT;
+            IF updated <> 1 THEN
+              RAISE EXCEPTION 'replay cleanup cutoff row is missing';
+            END IF;
+            RETURN NULL;
+          END;
+          $cutoff$
+          """,
+          """
+          CREATE TRIGGER request_seal_record_replay_cleanup AFTER DELETE ON #{nonce_claims}
+          FOR EACH STATEMENT EXECUTE FUNCTION #{function}()
+          """
+        ]
+      else
+        {:error, Error.new(:invalid_store)}
+      end
+    end
+
+    @doc """
     Atomically claim an envelope in an independently committed transaction.
 
     Implements `c:RequestSeal.Replay.claim/3`; most callers use
@@ -110,8 +164,8 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
         may have committed.
       * `{:error, :unavailable}` - the repo is not running, a connection could not
         be checked out, or the database is shutting down or refusing connections.
-      * `{:error, :failure}` - an invalid claim or reference, any other ash_onetime
-        error code, or any other failure.
+      * `{:error, :failure}` - an invalid claim or reference, a retention end at
+        or before the database clock or cleanup cutoff, or any other failure.
 
     ## Examples
 
@@ -168,24 +222,33 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
                   timeout: Context.remaining(context)
                 )
 
-              with {:ok, verified} <-
+              with true <- claim.retain_until > DateTime.to_unix(now),
+                   {:ok, verified} <-
                      AshOnetime.Verified.new(
                        key: key,
                        issued_at: now,
                        verifier_id: "request_seal.replay.v1"
                      ) do
-                AshOnetime.Transaction.nonce(repo,
-                  operation: {__MODULE__, :claim},
-                  partition: partition,
-                  prefix: prefix,
-                  scope: scope,
-                  key: key,
-                  verified: [verified],
-                  max_age: max(claim.retain_until - DateTime.to_unix(now), 0),
-                  clock_skew: 1
-                )
+                outcome =
+                  AshOnetime.Transaction.nonce(repo,
+                    operation: {__MODULE__, :claim},
+                    partition: partition,
+                    prefix: prefix,
+                    scope: scope,
+                    key: key,
+                    verified: [verified],
+                    max_age: claim.retain_until - DateTime.to_unix(now),
+                    clock_skew: 1
+                  )
+
+                if outcome == :ok or
+                     match?({:error, %AshOnetime.Error{code: :nonce_already_used}}, outcome) do
+                  check_cutoff(outcome, repo, prefix, claim.retain_until, context)
+                else
+                  outcome
+                end
               else
-                _ -> {:error, :invalid_claim}
+                _ -> repo.rollback(:invalid_claim)
               end
             end,
             timeout: Context.remaining(context)
@@ -202,6 +265,34 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       :exit, _ -> {:error, :unavailable}
       _, _ -> {:error, :failure}
     end
+
+    defp check_cutoff(outcome, repo, prefix, retain_until, context) do
+      table = relation(prefix, "request_seal_replay_cutoff")
+
+      # Cleanup locks the nonce rows before the cutoff. Take locks in that
+      # same order and roll back the nonce if the cutoff advanced during admission.
+      %{rows: [[cutoff]]} =
+        Ecto.Adapters.SQL.query!(
+          repo,
+          "SELECT swept_through FROM #{table} WHERE singleton FOR SHARE",
+          [],
+          timeout: Context.remaining(context)
+        )
+
+      %{rows: [[now]]} =
+        Ecto.Adapters.SQL.query!(repo, "SELECT clock_timestamp()", [],
+          timeout: Context.remaining(context)
+        )
+
+      if retain_until > max(cutoff, DateTime.to_unix(now)),
+        do: outcome,
+        else: repo.rollback(:invalid_claim)
+    end
+
+    defp relation(nil, table), do: table
+
+    defp relation(prefix, table),
+      do: "\"" <> String.replace(prefix, "\"", "\"\"") <> "\"." <> table
 
     defp valid_ref?(repo, partition, prefix) do
       is_atom(repo) and Code.ensure_loaded?(repo) and function_exported?(repo, :transaction, 2) and
@@ -239,6 +330,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     Refuse to sweep: cleanup is externally managed by ash_onetime's prune task or Oban worker.
 
     Implements `c:RequestSeal.Replay.sweep/3` without touching the database.
+    The database trigger advances the cutoff when the delegate runs cleanup.
 
     ## Parameters
 

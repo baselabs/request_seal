@@ -98,8 +98,8 @@ defmodule RequestSeal.Conformance.Quorum do
         }
       })
 
-    if input["sweep_before"] do
-      {:ok, 0} = Replay.ETS.sweep(pid, Conformance.int(input["sweep_before"]))
+    for cutoff <- List.wrap(input["sweep_before"]) do
+      {:ok, 0} = Replay.ETS.sweep(pid, Conformance.int(cutoff))
     end
 
     table = :sys.get_state(pid).table

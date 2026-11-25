@@ -214,7 +214,8 @@ defmodule RequestSeal.GuideReplayProtectionTest do
             partition: "demo-api", prefix: prefix)
           durable_replay = %{replay | store: durable_store}
           {:ok, durable_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: durable_replay})
-          {:ok, durable_accepted} = RequestSeal.verify(signed, durable_policy, label: "sig")
+          {:ok, durable_signed} = RequestSeal.sign(message, signing, handle)
+          {:ok, durable_accepted} = RequestSeal.verify(durable_signed, durable_policy, label: "sig")
           ''',
           binding,
           "docs/guides/replay-protection.md",

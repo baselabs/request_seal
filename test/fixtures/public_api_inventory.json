@@ -367,6 +367,7 @@
   ],
   "RequestSeal.Replay.AshOnetime": [
     "function claim/3",
+    "function cleanup_guard_ddl/1",
     "function store/2",
     "function sweep/3",
     "type ref/0"

@@ -37,6 +37,7 @@ defmodule RequestSeal.ReplayPostgresTest do
     on_exit(fn ->
       {:ok, cleanup} = Postgrex.start_link(options)
       Postgrex.query!(cleanup, "DROP TABLE IF EXISTS #{table}", [])
+      Postgrex.query!(cleanup, "DROP FUNCTION IF EXISTS #{table}_slow()", [])
       GenServer.stop(cleanup)
     end)
 
@@ -126,7 +127,8 @@ defmodule RequestSeal.ReplayPostgresTest do
       results = Enum.map(tasks ++ [peer_task], &Task.await(&1, 10_000))
       assert Enum.count(results, &(&1 == :claimed)) == 1
       assert Enum.count(results, &(&1 == :already_claimed)) == 64
-      assert [[1]] = Postgrex.query!(ctx.admin, "SELECT count(*) FROM #{ctx.table}", []).rows
+      assert [[1]] =
+               Postgrex.query!(ctx.admin, "SELECT count(*) FROM #{ctx.table} WHERE namespace <> ''::bytea", []).rows
     after
       :peer.stop(peer)
     end
@@ -138,8 +140,14 @@ defmodule RequestSeal.ReplayPostgresTest do
     assert :already_claimed = Replay.claim(ctx.store, claim("a", "nonce", 200), timeout: 2000)
     assert {:ok, 0} = Postgres.sweep(ctx.store.ref, 99, context())
     assert {:ok, 2} = Postgres.sweep(ctx.store.ref, 100, context())
+    assert {:ok, 0} = Postgres.sweep({ctx.b, ctx.table}, 99, context())
+    assert {:error, :failure} = Postgres.claim({ctx.b, ctx.table}, claim("b", "nonce", 99), context())
+    assert {:error, %{reason: :store_failed}} =
+             Replay.claim(ctx.store, claim("a", "nonce", 100), timeout: 2000)
+
     assert :claimed = Replay.claim(ctx.store, claim("a", "nonce", 101), timeout: 2000)
-    assert [[101]] = Postgrex.query!(ctx.admin, "SELECT retain_until FROM #{ctx.table}", []).rows
+    assert [[101]] =
+             Postgrex.query!(ctx.admin, "SELECT retain_until FROM #{ctx.table} WHERE namespace <> ''::bytea", []).rows
     rendered = inspect(ctx.store)
     refute rendered =~ ctx.table
 
@@ -152,6 +160,153 @@ defmodule RequestSeal.ReplayPostgresTest do
     assert is_binary(Postgres.ddl(String.duplicate("x", 63)))
     assert is_binary(Postgres.ddl_index(String.duplicate("x", 46)))
     assert {:error, %{reason: :invalid_store}} = Postgres.ddl_index(String.duplicate("x", 47))
+  end
+
+  test "a claim waiting behind a concurrent sweep cannot reinsert the deleted nonce", ctx do
+    original = claim("a", "nonce", 100)
+    assert :claimed = Replay.claim(ctx.store, original, timeout: 2000)
+    {:ok, sweep_pool} = Postgrex.start_link(Keyword.put(ctx.options, :pool_size, 1))
+    {:ok, claim_pool} = Postgrex.start_link(Keyword.put(ctx.options, :pool_size, 1))
+    [[sweep_backend]] = Postgrex.query!(sweep_pool, "SELECT pg_backend_pid()", []).rows
+    [[claim_backend]] = Postgrex.query!(claim_pool, "SELECT pg_backend_pid()", []).rows
+    owner = self()
+
+    blocker =
+      Task.async(fn ->
+        Postgrex.transaction(ctx.b, fn tx ->
+          Postgrex.query!(
+            tx,
+            "SELECT key FROM #{ctx.table} WHERE namespace = $1 AND key = $2 FOR UPDATE",
+            [original.namespace, original.key]
+          )
+
+          send(owner, :claim_row_locked)
+
+          receive do
+            :release -> :ok
+          end
+        end)
+      end)
+
+    assert_receive :claim_row_locked, 2000
+
+    try do
+      sweeper =
+        Task.async(fn ->
+          context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 10_000}
+          Postgres.sweep({sweep_pool, ctx.table}, original.retain_until, context)
+        end)
+
+      wait_for_lock(ctx.admin, sweep_backend, System.monotonic_time(:millisecond) + 3000)
+
+      claimant =
+        Task.async(fn ->
+          Replay.claim(Postgres.store(claim_pool, table: ctx.table), original, timeout: 10_000)
+        end)
+
+      wait_for_lock(ctx.admin, claim_backend, System.monotonic_time(:millisecond) + 3000)
+      send(blocker.pid, :release)
+      assert {:ok, 1} = Task.await(sweeper)
+      assert {:error, %{reason: :store_failed}} = Task.await(claimant)
+    after
+      send(blocker.pid, :release)
+      Task.await(blocker)
+      GenServer.stop(sweep_pool)
+      GenServer.stop(claim_pool)
+    end
+  end
+
+  test "a sweep sees a nonce committed while it waits for the cutoff lock", ctx do
+    assert {:ok, 0} = Postgres.sweep(ctx.store.ref, 99, context())
+    {:ok, sweep_pool} = Postgrex.start_link(Keyword.put(ctx.options, :pool_size, 1))
+    [[backend]] = Postgrex.query!(sweep_pool, "SELECT pg_backend_pid()", []).rows
+    owner = self()
+    claim = claim("a", "nonce", 100)
+
+    writer =
+      Task.async(fn ->
+        Postgrex.transaction(ctx.b, fn tx ->
+          Postgrex.query!(
+            tx,
+            "SELECT retain_until FROM #{ctx.table} WHERE namespace = ''::bytea AND key = ''::bytea FOR SHARE",
+            []
+          )
+
+          Postgrex.query!(tx, "INSERT INTO #{ctx.table} VALUES ($1, $2, $3)", [
+            claim.namespace,
+            claim.key,
+            claim.retain_until
+          ])
+
+          send(owner, :claim_inserted)
+
+          receive do
+            :commit_claim -> :ok
+          end
+        end)
+      end)
+
+    assert_receive :claim_inserted, 2000
+
+    try do
+      sweeper =
+        Task.async(fn ->
+          context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 10_000}
+          Postgres.sweep({sweep_pool, ctx.table}, claim.retain_until, context)
+        end)
+
+      wait_for_lock(ctx.admin, backend, System.monotonic_time(:millisecond) + 3000)
+      send(writer.pid, :commit_claim)
+      assert {:ok, 1} = Task.await(sweeper)
+      assert {:error, %{reason: :store_failed}} = Replay.claim(ctx.store, claim, timeout: 2000)
+    after
+      send(writer.pid, :commit_claim)
+      Task.await(writer)
+      GenServer.stop(sweep_pool)
+    end
+  end
+
+  test "a sweep lock timeout rolls back the cutoff together with the deletes", ctx do
+    original = claim("a", "nonce", 100)
+    assert :claimed = Replay.claim(ctx.store, original, timeout: 2000)
+
+    {:ok, limited} =
+      Postgrex.start_link(
+        Keyword.merge(ctx.options, pool_size: 1, parameters: [lock_timeout: "100"])
+      )
+
+    owner = self()
+
+    blocker =
+      Task.async(fn ->
+        Postgrex.transaction(ctx.b, fn tx ->
+          Postgrex.query!(
+            tx,
+            "SELECT key FROM #{ctx.table} WHERE namespace = $1 AND key = $2 FOR UPDATE",
+            [original.namespace, original.key]
+          )
+
+          send(owner, :claim_row_locked)
+
+          receive do
+            :release -> :ok
+          end
+        end)
+      end)
+
+    assert_receive :claim_row_locked, 2000
+
+    try do
+      assert {:error, :timeout} = Postgres.sweep({limited, ctx.table}, 100, context())
+    after
+      send(blocker.pid, :release)
+      Task.await(blocker)
+      GenServer.stop(limited)
+    end
+
+    assert :already_claimed = Replay.claim(ctx.store, original, timeout: 2000)
+    assert :claimed = Replay.claim(ctx.store, %{original | key: "other"}, timeout: 2000)
+    assert {:ok, 2} = Postgres.sweep(ctx.store.ref, 100, context())
   end
 
   test "primary key lock blocks until deadline without authenticated success", ctx do
@@ -255,7 +410,7 @@ defmodule RequestSeal.ReplayPostgresTest do
 
     Postgrex.query!(
       admin,
-      "CREATE TRIGGER #{table}_slow BEFORE INSERT ON #{table} FOR EACH ROW EXECUTE FUNCTION #{table}_slow()",
+      "CREATE TRIGGER #{table}_slow BEFORE INSERT ON #{table} FOR EACH ROW WHEN (NEW.namespace <> ''::bytea) EXECUTE FUNCTION #{table}_slow()",
       []
     )
   end
@@ -355,7 +510,7 @@ defmodule RequestSeal.ReplayPostgresTest do
                )
 
       assert [[100]] =
-               Postgrex.query!(ctx.admin, "SELECT retain_until FROM #{ctx.table}", []).rows
+               Postgrex.query!(ctx.admin, "SELECT retain_until FROM #{ctx.table} WHERE namespace <> ''::bytea", []).rows
     after
       GenServer.stop(replacement)
     end

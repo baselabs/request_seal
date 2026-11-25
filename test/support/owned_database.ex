@@ -30,6 +30,13 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       end
 
       Ecto.Migrator.up(Repo, 1, migration, prefix: schema, log: false)
+
+      {:ok, :ok} =
+        Repo.transaction(fn ->
+          for sql <- RequestSeal.Replay.AshOnetime.cleanup_guard_ddl(schema), do: Repo.query!(sql)
+          :ok
+        end)
+
       schema
     end
 

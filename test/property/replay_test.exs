@@ -130,7 +130,12 @@ defmodule RequestSeal.ReplayPostgresPropertyTest do
             ) do
         same = Storm.storm(store, "shared", nonce, false)
         distinct = Storm.storm(store, "distinct", nonce, true)
-        rows = Postgrex.query!(pool, "SELECT namespace, key, retain_until FROM #{table}", []).rows
+        rows =
+          Postgrex.query!(
+            pool,
+            "SELECT namespace, key, retain_until FROM #{table} WHERE namespace <> ''::bytea",
+            []
+          ).rows
 
         expected =
           for {ns, keys} <- [{"shared", same}, {"distinct", distinct}],
@@ -141,7 +146,8 @@ defmodule RequestSeal.ReplayPostgresPropertyTest do
         context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 10_000}
         assert {:ok, 0} = Postgres.sweep(store.ref, 100, context)
         assert {:ok, 65} = Postgres.sweep(store.ref, 101, context)
-        assert [[0]] = Postgrex.query!(pool, "SELECT count(*) FROM #{table}", []).rows
+        assert [[0]] =
+                 Postgrex.query!(pool, "SELECT count(*) FROM #{table} WHERE namespace <> ''::bytea", []).rows
         # Real reclamation, including dead tuples and indexes; no synthetic allocator.
         Postgrex.query!(pool, "VACUUM #{table}", [])
 

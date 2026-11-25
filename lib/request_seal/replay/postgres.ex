@@ -20,9 +20,9 @@ if Code.ensure_loaded?(Postgrex) do
     verification clocks require matching sweep times.
     Multi-node operators sweep at `now - max_internode_skew` to preserve claims
     while any verifier still accepts the authenticated input.
-    Before sweeping, the caller also coordinates in-flight verifications and
-    claims whose retention end falls at or below the cutoff. This adapter
-    uses the caller's table contract and keeps no sweep cutoff in the table.
+    A reserved row stores the greatest successful sweep cutoff. Claims lock
+    that row before inserting. Sweeps advance it before deleting eligible
+    claims in the same READ COMMITTED transaction.
     One namespace should use one freshness bound because duplicates never extend retention.
     PostgreSQL persistence follows the caller's database/storage configuration;
     this adapter does not start a database, pool, timer, or supervisor.
@@ -73,6 +73,9 @@ if Code.ensure_loaded?(Postgrex) do
     Return the SQL the caller executes to create the replay table.
 
     The table has a bytea namespace/key primary key and a bigint retention end.
+    The adapter reserves the pair of empty byte strings for the sweep cutoff.
+    Existing tables can be reused because valid claims never use empty values.
+    Upgrade all writers together so prior versions cannot delete the cutoff row.
     This function only builds the statement; it does not run it.
 
     ## Parameters
@@ -88,14 +91,14 @@ if Code.ensure_loaded?(Postgrex) do
     ## Examples
 
         iex> RequestSeal.Replay.Postgres.ddl("replay_claims")
-        ~S|CREATE TABLE "replay_claims" (namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL, PRIMARY KEY (namespace, key))|
+        ~S|CREATE TABLE "replay_claims" (namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL, PRIMARY KEY (namespace, key), CHECK ((namespace = ''::bytea) = (key = ''::bytea)))|
         iex> RequestSeal.Replay.Postgres.ddl("1_claims")
         {:error, %RequestSeal.Replay.Error{reason: :invalid_store, retryable: false}}
     """
     @spec ddl(binary()) :: binary() | {:error, Error.t()}
     def ddl(name) do
       if table?(name) do
-        "CREATE TABLE \"#{name}\" (namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL, PRIMARY KEY (namespace, key))"
+        "CREATE TABLE \"#{name}\" (namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL, PRIMARY KEY (namespace, key), CHECK ((namespace = ''::bytea) = (key = ''::bytea)))"
       else
         invalid()
       end
@@ -106,8 +109,8 @@ if Code.ensure_loaded?(Postgrex) do
 
     The primary key from `ddl/1` serves claims; `sweep/3` deletes by
     `retain_until`, which without this index is a full-table scan that grows
-    with the table. Execute this once beside `ddl/1`; it builds statements and
-    runs nothing.
+    with the table. The index excludes the cutoff row. Execute this once beside
+    `ddl/1`. An existing full retention index can continue to serve sweeps.
 
     ## Parameters
 
@@ -125,7 +128,7 @@ if Code.ensure_loaded?(Postgrex) do
     ## Examples
 
         iex> RequestSeal.Replay.Postgres.ddl_index("replay_claims")
-        ~S|CREATE INDEX "replay_claims_retain_until_idx" ON "replay_claims" (retain_until)|
+        ~S|CREATE INDEX "replay_claims_retain_until_idx" ON "replay_claims" (retain_until) WHERE namespace <> ''::bytea|
         iex> RequestSeal.Replay.Postgres.ddl_index("1_claims")
         {:error, %RequestSeal.Replay.Error{reason: :invalid_store, retryable: false}}
         iex> RequestSeal.Replay.Postgres.ddl_index(String.duplicate("x", 47))
@@ -134,7 +137,7 @@ if Code.ensure_loaded?(Postgrex) do
     @spec ddl_index(binary()) :: binary() | {:error, Error.t()}
     def ddl_index(name) do
       if table?(name) and byte_size(name) <= 46 do
-        "CREATE INDEX \"#{name}_retain_until_idx\" ON \"#{name}\" (retain_until)"
+        "CREATE INDEX \"#{name}_retain_until_idx\" ON \"#{name}\" (retain_until) WHERE namespace <> ''::bytea"
       else
         invalid()
       end
@@ -146,6 +149,7 @@ if Code.ensure_loaded?(Postgrex) do
     Implements `c:RequestSeal.Replay.claim/3`; most callers use
     `RequestSeal.Replay.claim/3` with the store from `store/2`. The insert uses
     `ON CONFLICT (namespace, key) DO NOTHING`, so a duplicate never updates retention.
+    The admission check and insert share a lock on the cutoff row through commit.
 
     ## Parameters
 
@@ -168,7 +172,8 @@ if Code.ensure_loaded?(Postgrex) do
         the server is shutting down or
         refusing connections (`admin_shutdown`, `crash_shutdown`,
         `cannot_connect_now`, `too_many_connections`).
-      * `{:error, :failure}` - an invalid table name or claim, any other
+      * `{:error, :failure}` - an invalid table name or claim, retention at or
+        before the sweep cutoff, any other
         database error, or any other failure.
 
     ## Examples
@@ -194,15 +199,7 @@ if Code.ensure_loaded?(Postgrex) do
             :claimed | :already_claimed | {:error, :failure | :timeout | :unavailable}
     def claim({conn, table}, %Claim{} = claim, context) do
       if table?(table) and Claim.valid?(claim) do
-        sql =
-          "INSERT INTO \"#{table}\" (namespace, key, retain_until) VALUES ($1, $2, $3) ON CONFLICT (namespace, key) DO NOTHING"
-
-        case query(conn, sql, [claim.namespace, claim.key, claim.retain_until], context) do
-          {:ok, %{num_rows: 1}} -> :claimed
-          {:ok, %{num_rows: 0}} -> :already_claimed
-          {:error, reason} -> {:error, reason}
-          _ -> {:error, :failure}
-        end
+        transaction(conn, context, fn tx -> claim_row(tx, table, claim, context) end)
       else
         {:error, :failure}
       end
@@ -210,11 +207,52 @@ if Code.ensure_loaded?(Postgrex) do
 
     def claim(_, _, _), do: {:error, :failure}
 
+    defp claim_row(tx, table, claim, context) do
+      cutoff_sql = """
+      SELECT retain_until FROM "#{table}"
+      WHERE namespace = ''::bytea AND key = ''::bytea FOR SHARE
+      """
+
+      with {:ok, %{rows: [[cutoff]]}} <- lock_cutoff(tx, table, cutoff_sql, context),
+           true <- cutoff < 0 or claim.retain_until > cutoff do
+        sql = """
+        INSERT INTO "#{table}" (namespace, key, retain_until) VALUES ($1, $2, $3)
+        ON CONFLICT (namespace, key) DO NOTHING
+        """
+
+        case query(tx, sql, [claim.namespace, claim.key, claim.retain_until], context) do
+          {:ok, %{num_rows: 1}} -> :claimed
+          {:ok, %{num_rows: 0}} -> :already_claimed
+          {:error, _} = error -> error
+          _ -> {:error, :failure}
+        end
+      else
+        {:error, _} = error -> error
+        _ -> {:error, :failure}
+      end
+    end
+
+    defp lock_cutoff(tx, table, sql, context) do
+      case query(tx, sql, [], context) do
+        {:ok, %{rows: []}} ->
+          seed = """
+          INSERT INTO "#{table}" (namespace, key, retain_until) VALUES (''::bytea, ''::bytea, -1)
+          ON CONFLICT (namespace, key) DO NOTHING
+          """
+
+          with {:ok, _} <- query(tx, seed, [], context), do: query(tx, sql, [], context)
+
+        result ->
+          result
+      end
+    end
+
     @doc """
     Delete rows whose exclusive retention end is at or before `now`.
 
     Implements `c:RequestSeal.Replay.sweep/3`. The caller schedules sweeps; this
-    adapter never sweeps on its own.
+    adapter never sweeps on its own. A successful sweep advances the cutoff
+    even if no claims are deleted.
 
     ## Parameters
 
@@ -265,10 +303,7 @@ if Code.ensure_loaded?(Postgrex) do
             {:ok, non_neg_integer()} | {:error, :failure | :timeout | :unavailable}
     def sweep({conn, table}, now, context) when is_integer(now) and now in 0..253_402_300_799 do
       if table?(table) do
-        case query(conn, "DELETE FROM \"#{table}\" WHERE retain_until <= $1", [now], context) do
-          {:ok, %{num_rows: count}} -> {:ok, count}
-          error -> error
-        end
+        transaction(conn, context, fn tx -> sweep_rows(tx, table, now, context) end)
       else
         {:error, :failure}
       end
@@ -276,16 +311,73 @@ if Code.ensure_loaded?(Postgrex) do
 
     def sweep(_, _, _), do: {:error, :failure}
 
+    defp sweep_rows(tx, table, now, context) do
+      cutoff_sql = """
+      INSERT INTO "#{table}" AS replay (namespace, key, retain_until)
+      VALUES (''::bytea, ''::bytea, $1)
+      ON CONFLICT (namespace, key) DO UPDATE
+        SET retain_until = GREATEST(replay.retain_until, EXCLUDED.retain_until)
+      """
+
+      # Read a new snapshot after taking the cutoff lock. Claims that committed
+      # while the sweep was waiting are then visible to the deletion.
+      delete_sql = """
+      DELETE FROM "#{table}" WHERE namespace <> ''::bytea AND retain_until <= $1
+      """
+
+      with {:ok, _} <- query(tx, cutoff_sql, [now], context),
+           {:ok, %{num_rows: count}} <- query(tx, delete_sql, [now], context) do
+        {:ok, count}
+      end
+    end
+
+    defp transaction(conn, context, operation) do
+      bounded(context, fn remaining ->
+        result =
+          Postgrex.transaction(
+            conn,
+            fn tx ->
+              outcome =
+                with {:ok, _} <-
+                       query(tx, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED", [], context) do
+                  operation.(tx)
+                end
+
+              case outcome do
+                {:error, _} = error -> Postgrex.rollback(tx, error)
+                result ->
+                  if Context.remaining(context) == 0,
+                    do: Postgrex.rollback(tx, {:error, :timeout}),
+                    else: result
+              end
+            end,
+            timeout: remaining
+          )
+
+        case result do
+          {:ok, outcome} -> outcome
+          {:error, {:error, _} = error} -> error
+          {:error, error} -> query_error(error, context)
+        end
+      end)
+    end
+
     defp query(conn, sql, params, context) do
+      bounded(context, fn remaining ->
+        case Postgrex.query(conn, sql, params, timeout: remaining) do
+          {:ok, result} -> {:ok, result}
+          {:error, error} -> query_error(error, context)
+        end
+      end)
+    end
+
+    defp bounded(context, callback) do
       remaining = Context.remaining(context)
 
       if remaining == 0 do
         {:error, :timeout}
       else
-        case Postgrex.query(conn, sql, params, timeout: remaining) do
-          {:ok, result} -> {:ok, result}
-          {:error, error} -> query_error(error, context)
-        end
+        callback.(remaining)
       end
     rescue
       error in [DBConnection.ConnectionError, Postgrex.Error] -> query_error(error, context)

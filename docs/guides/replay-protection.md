@@ -105,6 +105,12 @@ RequestSeal.Replay.ETS.sweep(replay_pid, retain_until)
 
 Use a trusted clock consistent with verification. Retention ends at the first rejected second: the minimum of expiration plus skew and created plus max-age plus skew plus one. Multi-node operators sweep at `now - max_internode_skew`, so a claim remains while any verifier can still accept it. Use one freshness bound per namespace; duplicate claims never extend retention. Claims never evict entries, and no RequestSeal adapter schedules a background sweep.
 
+Each successful sweep raises the store's cutoff, including when it removes
+zero entries. An older sweep never lowers it. The store atomically refuses
+claims whose retention ends at or before its cutoff, even if verification
+started earlier. The adapter returns `{:error, :failure}` and the public API
+returns `:store_failed`.
+
 ## Move replay claims to a new store
 
 Use `RequestSeal.Replay.Pair.store/2` while moving live claims to a destination
@@ -161,6 +167,9 @@ ash_onetime's migrations in your existing repo using
 `mix ash_onetime.gen.migrations --repo MyApp.Repo`, then `mix ecto.migrate`, as
 specified by its public [migration task](https://hexdocs.pm/ash_onetime/Mix.Tasks.AshOnetime.Gen.Migrations.html)
 and [transaction contract](https://hexdocs.pm/ash_onetime/AshOnetime.Transaction.html).
+Run the statements from `RequestSeal.Replay.AshOnetime.cleanup_guard_ddl(prefix)`
+in order in one migration transaction after the delegate's migrations.
+Install the guard in every schema that stores these claims.
 Given your existing `repo` and schema `prefix` (`nil` for its default schema):
 
 ```elixir
@@ -168,29 +177,27 @@ durable_store = RequestSeal.Replay.AshOnetime.store(repo,
   partition: "demo-api", prefix: prefix)
 durable_replay = %{replay | store: durable_store}
 {:ok, durable_policy} = RequestSeal.Policy.new(%{Map.from_struct(policy) | replay: durable_replay})
-{:ok, durable_accepted} = RequestSeal.verify(signed, durable_policy, label: "sig")
+{:ok, durable_signed} = RequestSeal.sign(message, signing, handle)
+{:ok, durable_accepted} = RequestSeal.verify(durable_signed, durable_policy, label: "sig")
 ```
 
 Each claim commits in its own READ COMMITTED repo transaction under the remaining
-deadline. Namespace and commitment bytes are base64url encoded. ash_onetime retains
-the claim at least through RequestSeal's `retain_until`, with its additional safety
-margin. The adapter reads `issued_at` from PostgreSQL's transaction clock in that
-same transaction; retention therefore uses the database clock even if the
-application clock differs. ash_onetime's freshness check can still reject skew.
-Past or current `retain_until` values still block an immediate duplicate until
-cleanup becomes eligible. Duplicate claims do not extend retention. A timeout is
-indeterminate and never permits automatic retry: the insert may already have
-committed, and a later claim then returns already-claimed. Invalid claim bytes and
-deterministic argument errors return failure rather than transient unavailability.
+deadline. Namespace and commitment bytes are base64url encoded. ash_onetime
+enforces nonce uniqueness and uses its database clock and retention margin
+for cleanup eligibility. RequestSeal records the latest cutoff inside the
+delegate's cleanup transaction. A claim checks that persisted cutoff and
+the current database clock before commit. It rolls back if its retention
+ends at or before either boundary. Duplicate claims do not extend retention.
+A timeout can leave a committed nonce.
 `RequestSeal.Replay.AshOnetime.sweep/3` returns `{:error, :externally_managed}`;
 use `mix ash_onetime.prune` or its Oban cleanup worker. For atomic nonce spending
 with an application effect, verify with replay explicitly `:not_required` and
 call `AshOnetime.Transaction.nonce/2` inside that application's transaction.
 
 The Postgrex-only adapter remains available. For PostgreSQL, add `:postgrex` (`>= 0.22.4 and < 0.24.0`), start the Postgrex application and your connection, execute the SQL returned by `RequestSeal.Replay.Postgres.ddl("signature_replay")` and `RequestSeal.Replay.Postgres.ddl_index("signature_replay")`, and select `RequestSeal.Replay.Postgres.store(connection, table: "signature_replay")`. The adapter starts no database or pool. Table names are explicit lowercase ASCII identifiers; namespace/key columns form a primary key, and the index keeps caller-scheduled `sweep/3` deletes from scanning the whole table (`ddl_index/1` accepts names of at most 46 bytes so its derived index identifier fits PostgreSQL's 63-byte limit). Persistence follows your database configuration. See [replay-store testing](testing.md#replay-stores) for actual database, concurrency, and restart checks.
-With that adapter, coordinate sweeps with in-flight verification and claims.
-Only sweep a cutoff once every operation that could claim a retention end at
-or below it has completed or been canceled.
+Claims and sweeps lock a reserved cutoff row in the same table. Existing
+tables and retention indexes remain usable. Upgrade all writers together so
+earlier versions cannot sweep the cutoff row.
 
 For Web Bot Auth, give `RequestSeal.WebBotAuth.Policy` the same replay map. Its commitment receives the same facts map, with the signing agent as `agent` in place of `tag`; commit to `identifier`, `keyid`, and `agent[:identifier]`, as the [Web Bot Auth guide](web-bot-auth.md) shows in a runnable example. Required replay accepts exactly one selected Web Bot Auth signature per message and rejects more with `:unexpected_signature`; its claim follows that verified signature, and the facts never include the uncovered label. Generic single-label verification requires bounded freshness and a nonempty nonce.
 

@@ -82,25 +82,113 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
          %{prefix: prefix} do
       store = AshOnetime.store(OwnedRepo, partition: "db-clock", prefix: prefix)
 
-      for horizon <- [
-            System.system_time(:second) - 60,
-            System.system_time(:second),
-            System.system_time(:second) + 120
-          ] do
+      now = database_now()
+
+      for horizon <- [now - 60, now] do
         c = %{claim() | retain_until: horizon}
-        assert :claimed = Replay.claim(store, c, timeout: 5_000)
-
-        assert %{rows: [[issued, admitted, retention]]} =
-                 OwnedRepo.query!(
-                   "SELECT issued_at, admitted_at, retain_until FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'db-clock' ORDER BY admitted_at DESC LIMIT 1"
-                 )
-
-        assert issued == admitted
-        assert DateTime.compare(retention, admitted) == :gt
-        assert DateTime.to_unix(retention) >= horizon
-        OwnedRepo.query!("SELECT #{prefix}.ash_onetime_cleanup_nonce(100)")
-        assert :already_claimed = Replay.claim(store, c, timeout: 5_000)
+        assert {:error, %Error{reason: :store_failed}} = Replay.claim(store, c, timeout: 5_000)
       end
+
+      c = %{claim() | retain_until: now + 120}
+      assert :claimed = Replay.claim(store, c, timeout: 5_000)
+
+      assert %{rows: [[issued, admitted, retention]]} =
+               OwnedRepo.query!(
+                 "SELECT issued_at, admitted_at, retain_until FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'db-clock'"
+               )
+
+      assert issued == admitted
+      assert DateTime.compare(retention, admitted) == :gt
+      assert DateTime.to_unix(retention) >= c.retain_until
+      prune(prefix)
+      assert :already_claimed = Replay.claim(store, c, timeout: 5_000)
+    end
+
+    test "delegated prune fences a claim in flight and an older prune cannot lower it",
+         %{prefix: prefix} do
+      store = AshOnetime.store(OwnedRepo, partition: "cleanup-race", prefix: prefix)
+      c = %{claim() | retain_until: database_now() + 4}
+      owner = self()
+      id = {__MODULE__, make_ref()}
+
+      older =
+        Task.async(fn ->
+          OwnedRepo.transaction(fn ->
+            %{rows: [[started]]} = OwnedRepo.query!("SELECT transaction_timestamp()")
+            send(owner, {:older_prune, DateTime.to_unix(started)})
+
+            receive do
+              :prune -> prune(prefix)
+            end
+          end, timeout: 15_000)
+        end)
+
+      assert_receive {:older_prune, started}, 2000
+      assert started < c.retain_until
+
+      :ok =
+        :telemetry.attach(
+          id,
+          [:request_seal, :owned_repo, :query],
+          &__MODULE__.pause_admission/4,
+          owner
+        )
+
+      try do
+        claimant = Task.async(fn -> Replay.claim(store, c, timeout: 15_000) end)
+        assert_receive {:admission_clock, runner}, 2000
+        assert database_now() < c.retain_until
+
+        OwnedRepo.query!(
+          "SELECT pg_sleep(GREATEST($1::bigint - extract(epoch FROM clock_timestamp()), 0)::double precision)",
+          [c.retain_until]
+        )
+
+        prune(prefix)
+        cutoff = cleanup_cutoff(prefix)
+        assert cutoff >= c.retain_until
+        send(older.pid, :prune)
+        assert {:ok, _} = Task.await(older)
+        assert cleanup_cutoff(prefix) == cutoff
+
+        send(runner, :continue_admission)
+        assert {:error, %Error{reason: :store_failed}} = Task.await(claimant)
+
+        assert %{rows: [[0]]} =
+                 OwnedRepo.query!(
+                   "SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'cleanup-race'"
+                 )
+      after
+        :telemetry.detach(id)
+      end
+
+      assert :claimed = Replay.claim(store, %{c | retain_until: database_now() + 120}, timeout: 5_000)
+    end
+
+    def pause_admission(_event, _measurements, metadata, owner) do
+      if metadata.query == "SELECT transaction_timestamp()" do
+        send(owner, {:admission_clock, self()})
+
+        receive do
+          :continue_admission -> :ok
+        after
+          10_000 -> :ok
+        end
+      end
+    end
+
+    defp database_now do
+      %{rows: [[now]]} = OwnedRepo.query!("SELECT clock_timestamp()")
+      DateTime.to_unix(now)
+    end
+
+    defp prune(prefix), do: OwnedRepo.query!("SELECT #{prefix}.ash_onetime_cleanup_nonce(100)")
+
+    defp cleanup_cutoff(prefix) do
+      %{rows: [[cutoff]]} =
+        OwnedRepo.query!("SELECT swept_through FROM #{prefix}.request_seal_replay_cutoff")
+
+      cutoff
     end
 
     test "a client timeout during a slow claim is a timeout", %{prefix: prefix} do

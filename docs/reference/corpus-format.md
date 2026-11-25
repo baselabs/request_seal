@@ -397,8 +397,9 @@ skew and required expiration. The fixture's `now` is the common decision
 instant for every slot. The replay namespace is `corpus`, the scope
 is `namespace`, and `identifier` is `shared_nonce` or
 `{"operation": [serialized_ids]}`.
-A tagged `sweep_before` advances the local replay store's cutoff before the
-first claim. A claim whose retention end is at or before that cutoff fails.
+A tagged `sweep_before`, or a list of tagged values run in order, advances the
+local replay store's cutoff before the first claim. A claim whose retention
+end is at or before the greatest cutoff fails.
 
 Successful cases require tagged `count` and `retain_until`, sorted filled slot
 IDs, and a byte-tagged `commitment` from the actual claim. They require exactly

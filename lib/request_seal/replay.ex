@@ -3,6 +3,12 @@ defmodule RequestSeal.Replay do
   Atomic single-claim replay port with caller-owned stores and commitments.
 
   Adapters implement `c:claim/3` and `c:sweep/3`. Claiming never evicts entries.
+  A sweep atomically removes eligible entries and advances the store's cutoff.
+  After a successful sweep, claims whose exclusive retention end is at or
+  before the greatest successful cutoff fail with `{:error, :failure}` from
+  the adapter and `:store_failed` from the public API. This applies even after
+  empty sweeps, older sweeps, and verification already in flight. An adapter
+  that delegates cleanup enforces its delegate's cutoff at claim admission.
   Generic and Web Bot Auth verification reject a derived retention end above
   253,402,300,799 Unix seconds with `RequestSeal.Error` reason
   `:retention_exceeded` at `:replay` before commitment or storage. Such claims
@@ -27,6 +33,8 @@ defmodule RequestSeal.Replay do
   `RequestSeal.Replay.claim/3` validates the claim and builds `context` before
   calling the adapter. An adapter honors `context` as the operation deadline
   and never evicts or refreshes an existing entry while claiming.
+  It checks the sweep cutoff atomically with the insert, before admitting
+  a claim or returning that it was already claimed.
 
   ## Parameters
 
@@ -42,7 +50,8 @@ defmodule RequestSeal.Replay do
     * `{:error, :unavailable}` - the store could not be reached.
     * `{:error, :timeout}` - the deadline expired; the claim may have been committed.
     * `{:error, :full}` - the store is at capacity.
-    * `{:error, :failure}` - any other failure, including an invalid claim or reference.
+    * `{:error, :failure}` - the claim's retention ends at or before the cutoff,
+      the claim or reference is invalid, or another failure occurred.
 
   `RequestSeal.Replay.claim/3` maps these to `RequestSeal.Replay.Error` reasons
   `:store_unavailable`, `:store_timeout`, `:store_full` and `:store_failed`;
@@ -53,6 +62,9 @@ defmodule RequestSeal.Replay do
 
   @doc """
   Delete stored claims whose exclusive retention end is at or before `now`.
+  On success, advance the admission cutoff to the greater of its previous
+  value and `now` in the same atomic operation. A delegated cleanup must
+  establish its cutoff in the same transaction as its deletes.
 
   ## Parameters
 

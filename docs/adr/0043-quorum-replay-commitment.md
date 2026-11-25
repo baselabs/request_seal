@@ -37,9 +37,10 @@ signer sets interpret the same wire bytes identically. Signatures and their
 dictionary fields cannot appear in the commitment input. The exclusive
 retention end is fixed in the replay policy. All qualifying signature windows
 must fit it, including when the only supplied signatures are required ones.
-The local replay store rejects a late claim at or before its greatest
-successful sweep cutoff. It records the cutoff and deletes expired claims
-in the same serialized transition.
+Every replay store rejects a late claim at or before its greatest successful
+sweep cutoff. ETS and Postgrex advance the cutoff with deletion. The ash_onetime
+integration records the delegate's cutoff in the cleanup transaction and
+checks it before committing nonce admission.
 
 ## Reasons
 
