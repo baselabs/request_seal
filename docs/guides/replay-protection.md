@@ -151,6 +151,9 @@ position without logging claim data.
 ## Choose local or persistent storage
 
 Supervise `RequestSeal.Replay.ETS` with an explicit `max_entries:` capacity (1 to 10,000,000) in your application. It serializes atomic claims and sweeps; owner termination loses the claims. It is local, not a distributed store.
+Before writing a queued claim, ETS checks that the calling process and
+applicable local lifetime owners are still alive. A committed claim remains
+spent after cancellation.
 
 For durable replay, prefer `RequestSeal.Replay.AshOnetime` with optional
 `{:ash_onetime, "~> 1.9 and >= 1.9.2", optional: true}` on Elixir 1.20 or newer. Install

@@ -43,6 +43,68 @@ defmodule RequestSeal.ReplayTest do
     assert :claimed = Replay.claim(store, %{claim | namespace: "other"}, timeout: 2000)
   end
 
+  test "queued ETS claims check the request process and both lifetime owners", ctx do
+    claim = claim("scope", "queued", 100)
+
+    for cancelled <- [:caller, :owner, :key_owner] do
+      owner = spawn(fn -> Process.sleep(:infinity) end)
+      creator = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn ->
+        Process.exit(owner, :kill)
+        Process.exit(creator, :kill)
+      end)
+
+      context = %{context() | owner: owner, key_owner: creator}
+      :ok = :sys.suspend(ctx.pid)
+      task = Task.async(fn -> ETS.claim(ctx.pid, claim, context) end)
+
+      try do
+        assert wait_for_queued_claim(ctx.pid, task.pid, 1_000)
+
+        case cancelled do
+          :caller -> Task.shutdown(task, :brutal_kill)
+          :owner -> stop_lifetime(owner)
+          :key_owner -> stop_lifetime(creator)
+        end
+      after
+        :ok = :sys.resume(ctx.pid)
+      end
+
+      if cancelled != :caller, do: assert({:error, :unavailable} == Task.await(task))
+      assert {:ok, 0} = ETS.sweep(ctx.pid, 100)
+      stop_lifetime(owner)
+      stop_lifetime(creator)
+    end
+
+    owner = spawn(fn -> Process.sleep(:infinity) end)
+    on_exit(fn -> Process.exit(owner, :kill) end)
+    assert :claimed = ETS.claim(ctx.pid, claim, %{context() | owner: owner})
+    stop_lifetime(owner)
+    assert :already_claimed = ETS.claim(ctx.pid, claim, context())
+  end
+
+  defp wait_for_queued_claim(pid, caller, remaining) do
+    {:messages, messages} = Process.info(pid, :messages)
+
+    cond do
+      Enum.any?(messages, &match?({:"$gen_call", {^caller, _}, {:claim, _, _}}, &1)) ->
+        true
+
+      remaining > 0 ->
+        Process.sleep(5)
+        wait_for_queued_claim(pid, caller, remaining - 5)
+
+      true ->
+        false
+    end
+  end
+
+  defp stop_lifetime(pid) do
+    monitor = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^pid, _}, 1_000
+  end
+
   test "malformed direct GenServer calls preserve the owner and existing claims", ctx do
     Process.unlink(ctx.pid)
     claim = claim("scope", "existing", 100)

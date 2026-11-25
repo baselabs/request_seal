@@ -16,6 +16,9 @@ operations. Run the pair under a cancellable worker that covers adapter calls
 and synchronous telemetry, including direct pair calls. Validate the context
 before invoking either store. Leave completed writes in place on every
 failure. Sweep each store with the same clock and deadline.
+ETS checks the requesting process and local lifetime owners before accepting a
+queued claim for insertion. External commits can remain indeterminate after
+cancellation if a peer has already accepted the write.
 
 The destination must preserve and share each claim across every verifier that
 may receive it throughout retention, including across restarts and routing

@@ -110,7 +110,8 @@ defmodule RequestSeal.Replay.ETS do
       store is full).
     * `{:error, :full}` - the store holds `max_entries` claims.
     * `{:error, :timeout}` - the deadline expired before or during the call.
-    * `{:error, :unavailable}` - the owner process is not running.
+    * `{:error, :unavailable}` - the store or a local claim lifetime owner
+      stopped before insertion.
     * `{:error, :failure}` - the claim fails `RequestSeal.Replay.Claim.valid?/1`,
       or an argument is not a claim or context.
 
@@ -226,7 +227,12 @@ defmodule RequestSeal.Replay.ETS do
   def sweep(_, _, _), do: {:error, :failure}
 
   @impl GenServer
-  def handle_call({:claim, %Claim{} = claim, %Context{} = context}, _from, state) do
+  def handle_call(
+        {:claim, %Claim{} = claim, %Context{deadline: deadline, owner: owner} = context},
+        {caller, _},
+        state
+      )
+      when is_integer(deadline) and is_pid(owner) do
     key = {:claim, claim.namespace, claim.key}
 
     result =
@@ -236,6 +242,9 @@ defmodule RequestSeal.Replay.ETS do
 
         Context.remaining(context) == 0 ->
           {:error, :timeout}
+
+        not live?(caller) or not live?(owner) or not live?(Map.get(context, :key_owner)) ->
+          {:error, :unavailable}
 
         true ->
           reserved = :ets.update_counter(state.table, :count, 1)
@@ -274,6 +283,9 @@ defmodule RequestSeal.Replay.ETS do
   end
 
   def handle_call(_, _from, state), do: {:reply, {:error, :failure}, state}
+
+  defp live?(pid) when is_pid(pid) and node(pid) == node(), do: Process.alive?(pid)
+  defp live?(pid), do: is_pid(pid) or is_nil(pid)
 
   defp call(pid, request, context) do
     GenServer.call(pid, request, max(1, Context.remaining(context)))
