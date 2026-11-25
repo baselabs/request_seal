@@ -177,6 +177,72 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       end
     end
 
+    test "a persisted future cutoff rolls back a nonce waiting on its lock" do
+      prefix = OwnedDatabase.install_delegate()
+      on_exit(fn -> OwnedDatabase.drop(prefix) end)
+      cutoff = database_now() + 120
+      c = %{claim() | retain_until: cutoff}
+      store = AshOnetime.store(OwnedRepo, partition: "cutover", prefix: prefix)
+
+      assert {:error, %Error{reason: :invalid_store}} = AshOnetime.cleanup_guard_ddl(prefix, nil)
+      assert {:error, %Error{reason: :invalid_store}} = AshOnetime.cleanup_guard_ddl(prefix, 1.5)
+      assert {:error, %Error{reason: :store_failed}} = Replay.claim(store, c, timeout: 5000)
+      assert %{rows: [[0]]} = prune(prefix)
+      OwnedDatabase.install_cutoff(prefix, cutoff)
+      assert cleanup_cutoff(prefix) == cutoff
+      owner = self()
+
+      blocker =
+        Task.async(fn ->
+          OwnedRepo.transaction(
+            fn ->
+              OwnedRepo.query!(
+                "SELECT swept_through FROM #{prefix}.request_seal_replay_cutoff FOR UPDATE"
+              )
+
+              send(owner, :cutoff_locked)
+
+              receive do
+                :release -> :ok
+              end
+            end,
+            timeout: 10_000
+          )
+        end)
+
+      assert_receive :cutoff_locked, 2000
+
+      try do
+        claimant = Task.async(fn -> Replay.claim(store, c, timeout: 10_000) end)
+        wait_for_cutoff_lock(prefix, System.monotonic_time(:millisecond) + 3000)
+        assert database_now() < c.retain_until
+        send(blocker.pid, :release)
+        assert {:error, %Error{reason: :store_failed}} = Task.await(claimant)
+
+        assert %{rows: [[0]]} =
+                 OwnedRepo.query!("SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims")
+
+        assert :claimed = Replay.claim(store, %{c | retain_until: cutoff + 1}, timeout: 5000)
+      after
+        send(blocker.pid, :release)
+        assert {:ok, :ok} = Task.await(blocker)
+      end
+    end
+
+    defp wait_for_cutoff_lock(prefix, deadline) do
+      %{rows: [[waiting]]} =
+        OwnedRepo.query!(
+          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE $1)",
+          ["%#{prefix}%request_seal_replay_cutoff%FOR SHARE%"]
+        )
+
+      unless waiting do
+        assert System.monotonic_time(:millisecond) < deadline
+        Process.sleep(5)
+        wait_for_cutoff_lock(prefix, deadline)
+      end
+    end
+
     defp database_now do
       %{rows: [[now]]} = OwnedRepo.query!("SELECT clock_timestamp()")
       DateTime.to_unix(now)

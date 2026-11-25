@@ -167,9 +167,12 @@ ash_onetime's migrations in your existing repo using
 `mix ash_onetime.gen.migrations --repo MyApp.Repo`, then `mix ecto.migrate`, as
 specified by its public [migration task](https://hexdocs.pm/ash_onetime/Mix.Tasks.AshOnetime.Gen.Migrations.html)
 and [transaction contract](https://hexdocs.pm/ash_onetime/AshOnetime.Transaction.html).
-Run the statements from `RequestSeal.Replay.AshOnetime.cleanup_guard_ddl(prefix)`
+In each new schema, run `RequestSeal.Replay.AshOnetime.cleanup_guard_ddl(prefix, 0)`
 in order in one migration transaction after the delegate's migrations.
-Install the guard in every schema that stores these claims.
+For a previously used schema, pause all nonce writers and pruning, establish
+a trusted upper bound on prior prune timestamps, and supply that bound
+instead of `0`. A clock reading alone cannot establish the bound after a clock
+rollback. Keep admission closed if the bound is unknown.
 Given your existing `repo` and schema `prefix` (`nil` for its default schema):
 
 ```elixir
@@ -195,15 +198,17 @@ with an application effect, verify with replay explicitly `:not_required` and
 call `AshOnetime.Transaction.nonce/2` inside that application's transaction.
 
 The Postgrex-only adapter remains available. For PostgreSQL, add `:postgrex` (`>= 0.22.4 and < 0.24.0`), start the Postgrex application and your connection, execute the SQL returned by `RequestSeal.Replay.Postgres.ddl("signature_replay")` and `RequestSeal.Replay.Postgres.ddl_index("signature_replay")`, and select `RequestSeal.Replay.Postgres.store(connection, table: "signature_replay")`. The adapter starts no database or pool. Table names are explicit lowercase ASCII identifiers; namespace/key columns form a primary key, and the index keeps caller-scheduled `sweep/3` deletes from scanning the whole table (`ddl_index/1` accepts names of at most 46 bytes so its derived index identifier fits PostgreSQL's 63-byte limit). Persistence follows your database configuration. See [replay-store testing](testing.md#replay-stores) for actual database, concurrency, and restart checks.
-Claims and sweeps lock a reserved cutoff row in the same table. Existing
-tables and retention indexes remain usable. Upgrade all writers together so
-earlier versions cannot sweep the cutoff row.
+Claims and sweeps lock a reserved cutoff row in the same table. For an existing
+table, quiesce all writers and sweepers and run
+`RequestSeal.Replay.Postgres.cutoff_ddl(table, last_cutoff)`. Supply a trusted
+upper bound on all previous sweeps, including empty sweeps. Admission stays closed
+when the bound is unknown. Existing retention indexes can be reused.
 
 For Web Bot Auth, give `RequestSeal.WebBotAuth.Policy` the same replay map. Its commitment receives the same facts map, with the signing agent as `agent` in place of `tag`; commit to `identifier`, `keyid`, and `agent[:identifier]`, as the [Web Bot Auth guide](web-bot-auth.md) shows in a runnable example. Required replay accepts exactly one selected Web Bot Auth signature per message and rejects more with `:unexpected_signature`; its claim follows that verified signature, and the facts never include the uncovered label. Generic single-label verification requires bounded freshness and a nonempty nonce.
 
 ## Errors
 
-`:missing_replay_identifier` means the selected signature has no usable nonce. `:replayed` means a prior claim exists. `:commitment_failed` means your function failed or returned an invalid result. `:store_unavailable`, `:store_timeout`, and `:store_failed` reject authentication, including full stores. A single deadline covers commitment and atomic storage; caller cancellation stops work but cannot undo a committed claim. A timeout may already have committed, so no replay error permits automatic retry. `:retention_exceeded` means the derived retention end is above 253,402,300,799 and rejects before commitment. `RequestSeal.Policy.new/1` returns `:invalid_policy` when required replay lacks bounded freshness (`require_expires: true` or a `max_age`). The [errors guide](errors.md) reproduces `:replayed` and `:missing_replay_identifier`.
+`:missing_replay_identifier` means the selected signature has no usable nonce. `:replayed` means a prior claim exists. `:commitment_failed` means your function failed or returned an invalid result. `:store_unavailable`, `:store_timeout`, and `:store_failed` reject authentication, including full stores. A single deadline covers commitment and atomic storage; caller cancellation stops work but cannot undo a committed claim. A timeout may already have committed, so no replay error permits automatic retry. `:retention_exceeded` rejects before the claim when a signature window extends past the configured retention end, or when the derived retention end exceeds 253,402,300,799. `RequestSeal.Policy.new/1` returns `:invalid_policy` when required replay lacks bounded freshness (`require_expires: true` or a `max_age`). The [errors guide](errors.md) reproduces `:replayed` and `:missing_replay_identifier`.
 
 Module docs: `RequestSeal.Policy`, `RequestSeal.Replay`, `RequestSeal.Replay.ETS`, `RequestSeal.Replay.AshOnetime`, `RequestSeal.Replay.Postgres`, `RequestSeal.Replay.Store`, `RequestSeal.Replay.Receipt`, `RequestSeal.Error`.
 

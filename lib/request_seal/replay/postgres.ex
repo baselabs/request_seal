@@ -70,13 +70,12 @@ if Code.ensure_loaded?(Postgrex) do
     def store(_, _), do: invalid()
 
     @doc """
-    Return the SQL the caller executes to create the replay table.
+    Return the SQL the caller executes to create and initialize a new replay table.
 
     The table has a bytea namespace/key primary key and a bigint retention end.
     The adapter reserves the pair of empty byte strings for the sweep cutoff.
-    Existing tables can be reused because valid claims never use empty values.
-    Upgrade all writers together so prior versions cannot delete the cutoff row.
-    This function only builds the statement; it does not run it.
+    Creation and initialization run in one statement. For an existing table,
+    use `cutoff_ddl/2` instead. This function only builds the statement.
 
     ## Parameters
 
@@ -84,25 +83,62 @@ if Code.ensure_loaded?(Postgrex) do
 
     ## Returns
 
-      * `binary()` - one `CREATE TABLE` statement with the name double-quoted.
+      * `binary()` - one PostgreSQL block with the name double-quoted.
       * `{:error, %RequestSeal.Replay.Error{}}` - reason `:invalid_store` for a
         malformed name. Meanings: `RequestSeal.Replay.Error`.
 
     ## Examples
 
-        iex> RequestSeal.Replay.Postgres.ddl("replay_claims")
-        ~S|CREATE TABLE "replay_claims" (namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL, PRIMARY KEY (namespace, key), CHECK ((namespace = ''::bytea) = (key = ''::bytea)))|
+        iex> sql = RequestSeal.Replay.Postgres.ddl("replay_claims")
+        iex> String.contains?(sql, ~s(CREATE TABLE "replay_claims"))
+        true
         iex> RequestSeal.Replay.Postgres.ddl("1_claims")
         {:error, %RequestSeal.Replay.Error{reason: :invalid_store, retryable: false}}
     """
     @spec ddl(binary()) :: binary() | {:error, Error.t()}
     def ddl(name) do
       if table?(name) do
-        "CREATE TABLE \"#{name}\" (namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL, PRIMARY KEY (namespace, key), CHECK ((namespace = ''::bytea) = (key = ''::bytea)))"
+        """
+        DO $replay$
+        BEGIN
+          CREATE TABLE "#{name}" (
+            namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL,
+            PRIMARY KEY (namespace, key), CHECK ((namespace = ''::bytea) = (key = ''::bytea))
+          );
+          INSERT INTO "#{name}" VALUES (''::bytea, ''::bytea, -1);
+        END;
+        $replay$
+        """
       else
         invalid()
       end
     end
+
+    @doc """
+    Return the migration SQL for an existing replay table and a trusted
+    upper bound on every prior sweep, including sweeps that removed zero rows.
+
+    Quiesce all claim writers and sweepers before establishing the bound and
+    executing this statement. If the bound is unknown, keep the existing table
+    closed to admission. Repeating the migration preserves a greater cutoff.
+    The adapter rejects claims and sweeps until the cutoff row is initialized.
+    """
+    @spec cutoff_ddl(binary(), 0..253_402_300_799) :: binary() | {:error, Error.t()}
+    def cutoff_ddl(name, swept_through)
+        when is_integer(swept_through) and swept_through in 0..253_402_300_799 do
+      if table?(name) do
+        """
+        INSERT INTO "#{name}" AS replay (namespace, key, retain_until)
+        VALUES (''::bytea, ''::bytea, #{swept_through})
+        ON CONFLICT (namespace, key) DO UPDATE
+          SET retain_until = GREATEST(replay.retain_until, EXCLUDED.retain_until)
+        """
+      else
+        invalid()
+      end
+    end
+
+    def cutoff_ddl(_, _), do: invalid()
 
     @doc """
     Return the SQL the caller executes to index the replay table for sweeps.
@@ -213,8 +249,9 @@ if Code.ensure_loaded?(Postgrex) do
       WHERE namespace = ''::bytea AND key = ''::bytea FOR SHARE
       """
 
-      with {:ok, %{rows: [[cutoff]]}} <- lock_cutoff(tx, table, cutoff_sql, context),
-           true <- cutoff < 0 or claim.retain_until > cutoff do
+      with {:ok, %{rows: [[cutoff]]}} when is_integer(cutoff) and cutoff in -1..253_402_300_799 <-
+             query(tx, cutoff_sql, [], context),
+           true <- cutoff == -1 or claim.retain_until > cutoff do
         sql = """
         INSERT INTO "#{table}" (namespace, key, retain_until) VALUES ($1, $2, $3)
         ON CONFLICT (namespace, key) DO NOTHING
@@ -229,21 +266,6 @@ if Code.ensure_loaded?(Postgrex) do
       else
         {:error, _} = error -> error
         _ -> {:error, :failure}
-      end
-    end
-
-    defp lock_cutoff(tx, table, sql, context) do
-      case query(tx, sql, [], context) do
-        {:ok, %{rows: []}} ->
-          seed = """
-          INSERT INTO "#{table}" (namespace, key, retain_until) VALUES (''::bytea, ''::bytea, -1)
-          ON CONFLICT (namespace, key) DO NOTHING
-          """
-
-          with {:ok, _} <- query(tx, seed, [], context), do: query(tx, sql, [], context)
-
-        result ->
-          result
       end
     end
 
@@ -313,10 +335,8 @@ if Code.ensure_loaded?(Postgrex) do
 
     defp sweep_rows(tx, table, now, context) do
       cutoff_sql = """
-      INSERT INTO "#{table}" AS replay (namespace, key, retain_until)
-      VALUES (''::bytea, ''::bytea, $1)
-      ON CONFLICT (namespace, key) DO UPDATE
-        SET retain_until = GREATEST(replay.retain_until, EXCLUDED.retain_until)
+      UPDATE "#{table}" SET retain_until = GREATEST(retain_until, $1)
+      WHERE namespace = ''::bytea AND key = ''::bytea AND retain_until BETWEEN -1 AND 253402300799
       """
 
       # Read a new snapshot after taking the cutoff lock. Claims that committed
@@ -325,9 +345,12 @@ if Code.ensure_loaded?(Postgrex) do
       DELETE FROM "#{table}" WHERE namespace <> ''::bytea AND retain_until <= $1
       """
 
-      with {:ok, _} <- query(tx, cutoff_sql, [now], context),
+      with {:ok, %{num_rows: 1}} <- query(tx, cutoff_sql, [now], context),
            {:ok, %{num_rows: count}} <- query(tx, delete_sql, [now], context) do
         {:ok, count}
+      else
+        {:error, _} = error -> error
+        _ -> {:error, :failure}
       end
     end
 

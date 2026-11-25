@@ -18,6 +18,10 @@ defmodule RequestSeal.Replay.ETS do
   alias RequestSeal.Custody.Context
   alias RequestSeal.Replay.{Claim, Store}
 
+  defguardp valid_context?(context)
+            when is_struct(context, Context) and map_size(context) == 3 and
+                   is_pid(context.owner) and is_integer(context.deadline)
+
   @doc """
   Start a local store owned by the calling process, normally under a supervisor.
 
@@ -87,7 +91,7 @@ defmodule RequestSeal.Replay.ETS do
   def init(max) do
     table = :ets.new(__MODULE__, [:set, :protected])
     :ets.insert(table, {:count, 0})
-    {:ok, %{table: table, max: max, swept_through: nil}}
+    {:ok, %{table: table, max: max, swept_through: -1}}
   end
 
   @doc """
@@ -137,7 +141,7 @@ defmodule RequestSeal.Replay.ETS do
   @impl RequestSeal.Replay
   @spec claim(pid(), Claim.t(), Context.t()) ::
           :claimed | :already_claimed | {:error, :failure | :timeout | :unavailable | :full}
-  def claim(pid, %Claim{} = claim, %Context{} = context),
+  def claim(pid, %Claim{} = claim, context) when valid_context?(context),
     do: call(pid, {:claim, claim, context}, context)
 
   def claim(_, _, _), do: {:error, :failure}
@@ -226,20 +230,15 @@ defmodule RequestSeal.Replay.ETS do
   @impl RequestSeal.Replay
   @spec sweep(pid(), integer(), Context.t()) ::
           {:ok, non_neg_integer()} | {:error, :failure | :timeout | :unavailable}
-  def sweep(pid, now, %Context{} = context) when is_integer(now) and now in 0..253_402_300_799,
+  def sweep(pid, now, context)
+      when valid_context?(context) and is_integer(now) and now in 0..253_402_300_799,
     do: call(pid, {:sweep, now, context}, context)
 
   def sweep(_, _, _), do: {:error, :failure}
 
   @impl GenServer
-  def handle_call(
-        {:claim, %Claim{} = claim, %Context{deadline: deadline, owner: owner} = context},
-        {caller, _},
-        state
-      )
-      when is_integer(deadline) and is_pid(owner) do
-    key = {:claim, claim.namespace, claim.key}
-
+  def handle_call({:claim, %Claim{} = claim, %Context{owner: owner} = context}, {caller, _}, state)
+      when valid_context?(context) do
     result =
       cond do
         not Claim.valid?(claim) ->
@@ -251,10 +250,11 @@ defmodule RequestSeal.Replay.ETS do
         not live?(caller) or not live?(owner) or not live?(Map.get(context, :key_owner)) ->
           {:error, :unavailable}
 
-        state.swept_through != nil and claim.retain_until <= state.swept_through ->
+        state.swept_through >= 0 and claim.retain_until <= state.swept_through ->
           {:error, :failure}
 
         true ->
+          key = {:claim, claim.namespace, claim.key}
           reserved = :ets.update_counter(state.table, :count, 1)
 
           cond do
@@ -275,8 +275,8 @@ defmodule RequestSeal.Replay.ETS do
   end
 
   @impl GenServer
-  def handle_call({:sweep, now, %Context{} = context}, _from, state)
-      when is_integer(now) and now in 0..253_402_300_799 do
+  def handle_call({:sweep, now, context}, _from, state)
+      when valid_context?(context) and is_integer(now) and now in 0..253_402_300_799 do
     if Context.remaining(context) == 0 do
       {:reply, {:error, :timeout}, state}
     else

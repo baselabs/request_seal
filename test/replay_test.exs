@@ -141,9 +141,15 @@ defmodule RequestSeal.ReplayTest do
     for request <- [
           :unexpected,
           {:claim, :garbage, context},
+          {:claim, Map.delete(claim, :namespace), context},
+          {:claim, claim |> Map.delete(:key) |> Map.put(:other, "existing"), context},
           {:claim, claim, :garbage},
+          {:claim, claim, %{context | deadline: :infinity}},
+          {:claim, claim, Map.delete(context, :deadline)},
           {:sweep, :garbage, context},
-          {:sweep, 100, :garbage}
+          {:sweep, 100, :garbage},
+          {:sweep, 100, %{context | deadline: 1.5}},
+          {:sweep, 100, %{context | owner: nil}}
         ] do
       assert {:error, :failure} = GenServer.call(ctx.pid, request)
       assert Process.alive?(ctx.pid)
@@ -151,6 +157,7 @@ defmodule RequestSeal.ReplayTest do
     end
 
     assert {:ok, 1} = ETS.sweep(ctx.pid, 100, context)
+    assert {:error, :failure} = ETS.claim(ctx.pid, claim, context)
   end
 
   test "direct claim rejects malformed claim and context before calling the owner", ctx do

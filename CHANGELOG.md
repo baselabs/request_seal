@@ -2,9 +2,10 @@
 
 ## Unreleased 2.0.0
 
-- Enforce monotonic sweep cutoffs across replay adapters. Postgrex tables
-  reserve a cutoff row. Install the ash_onetime cleanup guard migration with
-  `RequestSeal.Replay.AshOnetime.cleanup_guard_ddl/1` before using that adapter.
+- Enforce monotonic sweep cutoffs across replay adapters. Initialize existing
+  Postgrex tables with `RequestSeal.Replay.Postgres.cutoff_ddl/2` and install
+  the delegated cleanup guard with `RequestSeal.Replay.AshOnetime.cleanup_guard_ddl/2`.
+  Existing stores require a trusted upper bound on prior sweeps or pruning.
 - Reject late replay claims at the local store's sweep cutoff and account for
   principals, roles, and selectors when checking quorum policy feasibility.
 - Bound idempotency clock callbacks, exclude exchange-specific HTTP

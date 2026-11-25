@@ -3,7 +3,12 @@ defmodule RequestSeal.ReplayStormSupport do
   alias RequestSeal.Replay
   alias RequestSeal.Replay.Claim
 
-  def storm(store, namespace, nonce, distinct?) do
+  def assert_stale(store, nonce, swept_through) do
+    claim = %Claim{namespace: "shared", key: nonce, retain_until: swept_through}
+    assert {:error, %{reason: :store_failed}} = Replay.claim(store, claim, timeout: 10_000)
+  end
+
+  def storm(store, namespace, nonce, distinct?, retain_until) do
     parent = self()
     gate = make_ref()
 
@@ -19,7 +24,7 @@ defmodule RequestSeal.ReplayStormSupport do
           end
 
           {key,
-           Replay.claim(store, %Claim{namespace: namespace, key: key, retain_until: 101},
+           Replay.claim(store, %Claim{namespace: namespace, key: key, retain_until: retain_until},
              timeout: 10_000
            )}
         end)
@@ -59,6 +64,9 @@ defmodule RequestSeal.ReplayETSPropertyTest do
     store = ETS.store(pid)
     table = :sys.get_state(pid).table
     baseline = :ets.info(table, :memory)
+    expiry = :atomics.new(1, [])
+    :ok = :atomics.put(expiry, 1, 100)
+    assert {:ok, 0} = ETS.sweep(pid, 100)
 
     check all(
             nonce <- binary(min_length: 1, max_length: 32),
@@ -66,24 +74,27 @@ defmodule RequestSeal.ReplayETSPropertyTest do
             max_run_time: :infinity,
             initial_seed: @seed
           ) do
-      same = Storm.storm(store, "shared", nonce, false)
-      distinct = Storm.storm(store, "distinct", nonce, true)
+      retain_until = :atomics.add_get(expiry, 1, 1)
+      Storm.assert_stale(store, nonce, retain_until - 1)
+      same = Storm.storm(store, "shared", nonce, false, retain_until)
+      distinct = Storm.storm(store, "distinct", nonce, true, retain_until)
       assert :ets.info(table, :size) == 66
       assert :ets.lookup_element(table, :count, 2) == 65
 
       for {namespace, keys} <- [{"shared", same}, {"distinct", distinct}], key <- keys do
-        assert [{{:claim, ^namespace, ^key}, 101}] = :ets.lookup(table, {:claim, namespace, key})
+        assert [{{:claim, ^namespace, ^key}, ^retain_until}] =
+                 :ets.lookup(table, {:claim, namespace, key})
 
         assert :already_claimed =
                  Replay.claim(
                    store,
-                   %Claim{namespace: namespace, key: key, retain_until: 102},
+                   %Claim{namespace: namespace, key: key, retain_until: retain_until + 1},
                    timeout: 10_000
                  )
       end
 
-      assert {:ok, 0} = ETS.sweep(pid, 100)
-      assert {:ok, 65} = ETS.sweep(pid, 101)
+      assert {:ok, 0} = ETS.sweep(pid, retain_until - 1)
+      assert {:ok, 65} = ETS.sweep(pid, retain_until)
       assert :ets.info(table, :size) == 1
       assert :ets.lookup_element(table, :count, 2) == 0
       assert :ets.info(table, :memory) <= baseline + 1024
@@ -121,6 +132,9 @@ defmodule RequestSeal.ReplayPostgresPropertyTest do
     try do
       Postgrex.query!(pool, Postgres.ddl(table), [])
       store = Postgres.store(pool, table: table)
+      expiry = :atomics.new(1, [])
+      :ok = :atomics.put(expiry, 1, 100)
+      assert {:ok, 0} = Postgres.sweep(store.ref, 100, context())
 
       check all(
               nonce <- binary(min_length: 1, max_length: 32),
@@ -128,8 +142,10 @@ defmodule RequestSeal.ReplayPostgresPropertyTest do
               max_run_time: :infinity,
               initial_seed: @seed
             ) do
-        same = Storm.storm(store, "shared", nonce, false)
-        distinct = Storm.storm(store, "distinct", nonce, true)
+        retain_until = :atomics.add_get(expiry, 1, 1)
+        Storm.assert_stale(store, nonce, retain_until - 1)
+        same = Storm.storm(store, "shared", nonce, false, retain_until)
+        distinct = Storm.storm(store, "distinct", nonce, true, retain_until)
         rows =
           Postgrex.query!(
             pool,
@@ -140,12 +156,11 @@ defmodule RequestSeal.ReplayPostgresPropertyTest do
         expected =
           for {ns, keys} <- [{"shared", same}, {"distinct", distinct}],
               key <- keys,
-              do: [ns, key, 101]
+              do: [ns, key, retain_until]
 
         assert Enum.sort(rows) == Enum.sort(expected)
-        context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 10_000}
-        assert {:ok, 0} = Postgres.sweep(store.ref, 100, context)
-        assert {:ok, 65} = Postgres.sweep(store.ref, 101, context)
+        assert {:ok, 0} = Postgres.sweep(store.ref, retain_until - 1, context())
+        assert {:ok, 65} = Postgres.sweep(store.ref, retain_until, context())
         assert [[0]] =
                  Postgrex.query!(pool, "SELECT count(*) FROM #{table} WHERE namespace <> ''::bytea", []).rows
         # Real reclamation, including dead tuples and indexes; no synthetic allocator.
@@ -164,4 +179,7 @@ defmodule RequestSeal.ReplayPostgresPropertyTest do
       end
     end
   end
+
+  defp context,
+    do: %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 10_000}
 end

@@ -5,7 +5,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
     Requires optional ash_onetime 1.9.2 or newer within 1.x, and Elixir 1.20.
     The caller owns the existing Ecto repo, PostgreSQL database, and ash_onetime
-    installation migrations. Install `cleanup_guard_ddl/1` in the same schema
+    installation migrations. Install `cleanup_guard_ddl/2` in the same schema
     after the ash_onetime migrations. Namespace and commitment bytes are base64url encoded into scope and key;
     they never become SQL identifiers or logical partitions.
 
@@ -91,12 +91,18 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     Run these statements in order in one migration transaction after installing
     ash_onetime. Use the same schema as the store. With `nil`, the migration
     and store use the repo's default schema. The installed trigger runs on each
-    nonce DELETE statement, including empty cleanup batches. Grant the claim
-    and cleanup database roles permission to lock and update the cutoff row.
+    nonce DELETE statement, including empty cleanup batches. Pass `0` for a
+    fresh schema with no prior cleanup. For a used schema, quiesce claim
+    writers and cleanup, and supply a trusted upper bound on prior cleanup
+    timestamps. If that bound is unknown, keep admission closed. Installation
+    keeps the greater of the supplied bound and the current database time.
+    Grant the claim and cleanup database roles permission to lock and update
+    the cutoff row.
     This function builds SQL and does not execute it.
     """
-    @spec cleanup_guard_ddl(binary() | nil) :: [binary()] | {:error, Error.t()}
-    def cleanup_guard_ddl(prefix) do
+    @spec cleanup_guard_ddl(binary() | nil, 0..253_402_300_799) :: [binary()] | {:error, Error.t()}
+    def cleanup_guard_ddl(prefix, swept_through)
+        when is_integer(swept_through) and swept_through in 0..253_402_300_799 do
       if prefix == nil or text?(prefix, 63) do
         cutoff = relation(prefix, "request_seal_replay_cutoff")
         function = relation(prefix, "request_seal_record_replay_cleanup")
@@ -111,7 +117,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
           """,
           """
           INSERT INTO #{cutoff} VALUES
-            (true, floor(extract(epoch FROM transaction_timestamp()))::bigint)
+            (true, GREATEST(#{swept_through}, floor(extract(epoch FROM transaction_timestamp()))::bigint))
           """,
           """
           CREATE FUNCTION #{function}() RETURNS trigger LANGUAGE plpgsql AS $cutoff$
@@ -139,6 +145,8 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
         {:error, Error.new(:invalid_store)}
       end
     end
+
+    def cleanup_guard_ddl(_, _), do: {:error, Error.new(:invalid_store)}
 
     @doc """
     Atomically claim an envelope in an independently committed transaction.
@@ -283,6 +291,8 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
         Ecto.Adapters.SQL.query!(repo, "SELECT clock_timestamp()", [],
           timeout: Context.remaining(context)
         )
+
+      true = is_integer(cutoff)
 
       if retain_until > max(cutoff, DateTime.to_unix(now)),
         do: outcome,

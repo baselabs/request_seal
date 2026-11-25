@@ -19,6 +19,12 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
          log: false}
       )
 
+      prefix = install_delegate()
+      install_cutoff(prefix, 0)
+      prefix
+    end
+
+    def install_delegate do
       schema = "requestseal_owned_#{System.unique_integer([:positive])}"
       Repo.query!("CREATE SCHEMA #{schema}")
       # Use the package's documented migration generator, then Ecto's migrator.
@@ -30,14 +36,17 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       end
 
       Ecto.Migrator.up(Repo, 1, migration, prefix: schema, log: false)
+      schema
+    end
 
+    def install_cutoff(schema, swept_through) do
       {:ok, :ok} =
         Repo.transaction(fn ->
-          for sql <- RequestSeal.Replay.AshOnetime.cleanup_guard_ddl(schema), do: Repo.query!(sql)
+          for sql <- RequestSeal.Replay.AshOnetime.cleanup_guard_ddl(schema, swept_through),
+              do: Repo.query!(sql)
+
           :ok
         end)
-
-      schema
     end
 
     def drop(schema) do

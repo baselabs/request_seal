@@ -216,6 +216,47 @@ defmodule RequestSeal.ReplayPostgresTest do
     end
   end
 
+  test "legacy tables require a trusted cutoff even after an empty sweep", ctx do
+    table = ctx.table <> "_legacy"
+
+    Postgrex.query!(
+      ctx.admin,
+      ~s(CREATE TABLE "#{table}" (namespace bytea NOT NULL, key bytea NOT NULL, retain_until bigint NOT NULL, PRIMARY KEY (namespace, key))),
+      []
+    )
+
+    try do
+      store = Postgres.store(ctx.a, table: table)
+      old = claim("legacy", "nonce", 100)
+      Postgrex.query!(ctx.admin, "INSERT INTO #{table} VALUES ($1, $2, $3)", [
+        old.namespace,
+        old.key,
+        old.retain_until
+      ])
+
+      assert %{num_rows: 1} =
+               Postgrex.query!(ctx.admin, "DELETE FROM #{table} WHERE retain_until <= $1", [100])
+
+      assert %{num_rows: 0} =
+               Postgrex.query!(ctx.admin, "DELETE FROM #{table} WHERE retain_until <= $1", [110])
+
+      assert {:error, %Postgrex.Error{postgres: %{code: :duplicate_table}}} =
+               Postgrex.query(ctx.admin, Postgres.ddl(table), [])
+
+      assert {:error, :failure} = Postgres.sweep(store.ref, 105, context())
+      assert {:error, :failure} = Postgres.claim(store.ref, %{old | retain_until: 111}, context())
+      assert {:error, %{reason: :invalid_store}} = Postgres.cutoff_ddl(table, nil)
+      assert {:error, %{reason: :invalid_store}} = Postgres.cutoff_ddl(table, 110.0)
+      Postgrex.query!(ctx.admin, Postgres.cutoff_ddl(table, 110), [])
+      Postgrex.query!(ctx.admin, Postgres.cutoff_ddl(table, 100), [])
+      assert {:error, :failure} = Postgres.claim(store.ref, old, context())
+      assert {:error, :failure} = Postgres.claim(store.ref, %{old | retain_until: 110}, context())
+      assert :claimed = Postgres.claim(store.ref, %{old | retain_until: 111}, context())
+    after
+      Postgrex.query!(ctx.admin, "DROP TABLE #{table}", [])
+    end
+  end
+
   test "a sweep sees a nonce committed while it waits for the cutoff lock", ctx do
     assert {:ok, 0} = Postgres.sweep(ctx.store.ref, 99, context())
     {:ok, sweep_pool} = Postgrex.start_link(Keyword.put(ctx.options, :pool_size, 1))
