@@ -150,7 +150,7 @@ position without logging claim data.
 
 ## Choose local or persistent storage
 
-Supervise `RequestSeal.Replay.ETS` with an explicit `max_entries:` capacity (1 to 10,000,000) in your application. It serializes atomic claims and sweeps; owner termination loses the claims. It is local, not a distributed store.
+Supervise `RequestSeal.Replay.ETS` with an explicit `max_entries:` capacity (1 to 10,000,000) in your application. It serializes claims and sweeps and refuses claims at or before the greatest successful sweep cutoff, including after sweeps that remove zero entries. A late claim returns `:store_failed`. The local owner keeps the claims and cutoff in memory.
 Before writing a queued claim, ETS checks that the calling process and
 applicable local lifetime owners are still alive. A committed claim remains
 spent after cancellation.
@@ -188,6 +188,9 @@ with an application effect, verify with replay explicitly `:not_required` and
 call `AshOnetime.Transaction.nonce/2` inside that application's transaction.
 
 The Postgrex-only adapter remains available. For PostgreSQL, add `:postgrex` (`>= 0.22.4 and < 0.24.0`), start the Postgrex application and your connection, execute the SQL returned by `RequestSeal.Replay.Postgres.ddl("signature_replay")` and `RequestSeal.Replay.Postgres.ddl_index("signature_replay")`, and select `RequestSeal.Replay.Postgres.store(connection, table: "signature_replay")`. The adapter starts no database or pool. Table names are explicit lowercase ASCII identifiers; namespace/key columns form a primary key, and the index keeps caller-scheduled `sweep/3` deletes from scanning the whole table (`ddl_index/1` accepts names of at most 46 bytes so its derived index identifier fits PostgreSQL's 63-byte limit). Persistence follows your database configuration. See [replay-store testing](testing.md#replay-stores) for actual database, concurrency, and restart checks.
+With that adapter, coordinate sweeps with in-flight verification and claims.
+Only sweep a cutoff once every operation that could claim a retention end at
+or below it has completed or been canceled.
 
 For Web Bot Auth, give `RequestSeal.WebBotAuth.Policy` the same replay map. Its commitment receives the same facts map, with the signing agent as `agent` in place of `tag`; commit to `identifier`, `keyid`, and `agent[:identifier]`, as the [Web Bot Auth guide](web-bot-auth.md) shows in a runnable example. Required replay accepts exactly one selected Web Bot Auth signature per message and rejects more with `:unexpected_signature`; its claim follows that verified signature, and the facts never include the uncovered label. Generic single-label verification requires bounded freshness and a nonempty nonce.
 

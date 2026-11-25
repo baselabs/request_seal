@@ -127,7 +127,11 @@ choices; construction and signing do not select verification or authorization ru
 
 ## Several signatures on one message
 
-A message can carry several signatures under different labels. `RequestSeal.verify/3` verifies the one label you name and returns its result; call it once for each label your application accepts. Mapping a verified signer to an application identity or permission is your application's decision.
+A message can carry several signatures under different labels.
+`RequestSeal.verify/3` verifies the label you name. To require a joint verdict
+from several independent signers, use [quorum verification](quorum.md).
+Mapping a verified signer to an application identity or permission is your
+application's decision.
 
 ## Build messages by hand
 

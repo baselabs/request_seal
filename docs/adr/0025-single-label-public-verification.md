@@ -1,5 +1,9 @@
 # 0025 — Verify one selected signature label in the public package
 
+Status: Superseded for quorum verification by [ADR 0043](0043-quorum-replay-commitment.md).
+`RequestSeal.verify/3` still selects one label. Use `RequestSeal.verify_quorum/3`
+with an explicit `RequestSeal.Quorum` policy for a multi-signature verdict.
+
 ## Context
 
 Earlier records ([ADR 0005](0005-atomic-replay-envelope.md), [ADR 0006](0006-verification-results-and-observability.md),

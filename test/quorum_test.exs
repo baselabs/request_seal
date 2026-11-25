@@ -137,7 +137,7 @@ defmodule RequestSeal.QuorumTest do
              RequestSeal.verify_quorum(disjoint, policy, [])
 
     assert :atomics.get(clock_reads, 1) == 1
-    assert {:ok, 0} = Replay.ETS.sweep(ctx.pid, @now + 120)
+    assert :ets.lookup(:sys.get_state(ctx.pid).table, :count) == [{:count, 0}]
     :atomics.put(clock_reads, 1, 0)
 
     assert {:ok, %{assignments: assignments, count: 2}} =
@@ -168,7 +168,7 @@ defmodule RequestSeal.QuorumTest do
     policy = %{policy | unit: {:role, shared_principal: false}}
     policy = put_in(policy.replay.scope, :principals)
 
-    assert {:error, %{reason: :quorum_not_met}} = RequestSeal.verify_quorum(both, policy, [])
+    assert {:error, %{reason: :invalid_quorum}} = RequestSeal.verify_quorum(both, policy, [])
 
     shared = %{policy | unit: {:role, shared_principal: true}}
     assert {:ok, %{count: 2}} = RequestSeal.verify_quorum(both, shared, [])
@@ -453,6 +453,60 @@ defmodule RequestSeal.QuorumTest do
     assert {:ok, _} = Quorum.new(Map.from_struct(%{policy | slots: selected}))
   end
 
+  test "pair feasibility counts additional principals and roles beyond required signers", ctx do
+    slots =
+      for i <- 1..16 do
+        slot = slot(ctx, String.to_atom("counted-slot-#{i}"), nil, i <= 8)
+        {principal, role} = if i <= 8, do: {"first", :writer}, else: {"second", :reviewer}
+        Map.merge(slot, %{principal: principal, role: role})
+      end
+
+    policy = quorum(ctx, @operation, slots, {:threshold, 2})
+    at_limit = List.update_at(slots, 7, &%{&1 | required: false})
+    same_principal = Enum.map(at_limit, &%{&1 | principal: "first"})
+
+    for unit <- [:principal, {:role, shared_principal: true}, {:role, shared_principal: false}] do
+      assert {:error, %{reason: :invalid_quorum}} =
+               Quorum.new(Map.from_struct(%{policy | unit: unit}))
+
+      assert {:ok, _} = Quorum.new(Map.from_struct(%{policy | unit: unit, slots: at_limit}))
+    end
+
+    shared = %{policy | unit: {:role, shared_principal: true}, slots: same_principal}
+    assert {:ok, _} = Quorum.new(Map.from_struct(shared))
+
+    assert {:error, %{reason: :invalid_quorum}} =
+             Quorum.new(Map.from_struct(%{shared | unit: {:role, shared_principal: false}}))
+
+    [first | _] = slots
+    bound = %{policy | unit: :principal, slots: at_limit}
+    bound = %{bound | bindings: [{:same_parameter, "nonce", [first.id, Enum.at(slots, 7).id]}]}
+    assert {:error, %{reason: :invalid_quorum}} = Quorum.new(Map.from_struct(bound))
+  end
+
+  test "pair feasibility honors fixed label collisions and bound tag selectors", ctx do
+    first =
+      slot(ctx, :first, nil, true)
+      |> Map.merge(%{label: "fixed", tag: "alpha", principal: "a"})
+
+    other =
+      slot(ctx, :other, nil, false)
+      |> Map.merge(%{label: "fixed", tag: "beta", principal: "b"})
+
+    policy = quorum(ctx, @operation, [first, other])
+    principal = %{policy | unit: :principal, mode: {:threshold, 2}}
+    assert {:error, %{reason: :invalid_quorum}} = Quorum.new(Map.from_struct(principal))
+
+    other = %{other | label: "other"}
+    principal = %{principal | slots: [first, other]}
+    assert {:ok, _} = Quorum.new(Map.from_struct(principal))
+
+    bound = %{principal | bindings: [{:same_parameter, "tag", [:first, :other]}]}
+    assert {:error, %{reason: :invalid_quorum}} = Quorum.new(Map.from_struct(bound))
+    compatible = %{bound | slots: [first, %{other | tag: "alpha"}]}
+    assert {:ok, _} = Quorum.new(Map.from_struct(compatible))
+  end
+
   test "a blocked resolver is joined at the caller deadline", ctx do
     owner = self()
     signed = sign(ctx.message, ctx.keys, "primary", "main", "attempt")
@@ -487,6 +541,36 @@ defmodule RequestSeal.QuorumTest do
     refute Process.alive?(pid)
     refute Process.alive?(worker)
     assert {:ok, 0} = Replay.ETS.sweep(ctx.pid, @now + 120)
+  end
+
+  test "a verification already in flight cannot reclaim an operation after sweep", ctx do
+    signed = sign(ctx.message, ctx.keys, "primary", "main", "attempt")
+    slot = slot(ctx, :main, "primary", true)
+    policy = quorum(ctx, @operation, [slot])
+    assert {:ok, _} = RequestSeal.verify_quorum(signed, policy, [])
+    assert {:ok, 0} = Replay.ETS.sweep(ctx.pid, policy.replay.retain_until - 1)
+    assert {:error, %{reason: :replayed}} = RequestSeal.verify_quorum(signed, policy, [])
+
+    owner = self()
+    tag = make_ref()
+    resolve = slot.policy.key_resolver
+
+    blocked = fn facts ->
+      send(owner, {tag, self()})
+
+      receive do
+        ^tag -> resolve.(facts)
+      end
+    end
+
+    in_flight = %{policy | slots: [put_in(slot.policy.key_resolver, blocked)]}
+    task = Task.async(fn -> RequestSeal.verify_quorum(signed, in_flight, []) end)
+    pid = task.pid
+    assert_receive {^tag, ^pid}, 1000
+    assert {:ok, 1} = Replay.ETS.sweep(ctx.pid, policy.replay.retain_until)
+    send(pid, tag)
+    assert {:error, %{reason: :store_failed, layer: :replay}} = Task.await(task, 3000)
+    assert {:ok, 0} = Replay.ETS.sweep(ctx.pid, policy.replay.retain_until)
   end
 
   test "equivalent digest checks are reused and every signer still must cover the digest", ctx do

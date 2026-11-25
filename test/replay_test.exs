@@ -188,7 +188,10 @@ defmodule RequestSeal.ReplayTest do
     assert_raise ArgumentError, fn -> :ets.insert(table, {:count, 0}) end
     assert :already_claimed = Replay.claim(ctx.store, claim, timeout: 2000)
     assert {:ok, 1} = ETS.sweep(ctx.pid, 100)
-    assert :claimed = Replay.claim(ctx.store, claim, timeout: 2000)
+    assert {:ok, 0} = ETS.sweep(ctx.pid, 99)
+    assert {:error, :failure} = ETS.claim(ctx.pid, %{claim | retain_until: 99}, context())
+    assert {:error, %{reason: :store_failed}} = Replay.claim(ctx.store, claim, timeout: 2000)
+    assert :claimed = Replay.claim(ctx.store, %{claim | retain_until: 101}, timeout: 2000)
   end
 
   test "published nonce yields a receipt; relabeling and retention changes cannot bypass replay",
@@ -603,11 +606,11 @@ defmodule RequestSeal.ReplayTest do
     assert Enum.count(results, &(&1 == :claimed)) == 1
     assert Enum.count(results, &match?({:error, %{reason: :store_full}}, &1)) == 63
     assert {:ok, 1} = ETS.sweep(pid, 100)
-    assert :claimed = Replay.claim(store, claim("s", "first", 100), timeout: 2000)
-    assert :already_claimed = Replay.claim(store, claim("s", "first", 100), timeout: 2000)
+    assert :claimed = Replay.claim(store, claim("s", "first", 101), timeout: 2000)
+    assert :already_claimed = Replay.claim(store, claim("s", "first", 101), timeout: 2000)
 
     assert {:error, %{reason: :store_full}} =
-             Replay.claim(store, claim("s", "second", 100), timeout: 2000)
+             Replay.claim(store, claim("s", "second", 101), timeout: 2000)
 
     GenServer.stop(pid)
     {:ok, roomy} = ETS.start_link(max_entries: 2)

@@ -6,6 +6,7 @@ defmodule RequestSeal.Conformance.Quorum do
 
   @slots ~w(
     primary optional third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth
+    thirteenth fourteenth fifteenth sixteenth
   )a
 
   def verify(root, %{"inputs" => input, "now" => now}) do
@@ -59,7 +60,12 @@ defmodule RequestSeal.Conformance.Quorum do
           })
 
         attrs = %{id: slot_id(id), required: required, policy: policy}
-        if Map.has_key?(slot, "label"), do: Map.put(attrs, :label, slot["label"]), else: attrs
+
+        for {key, name} <- [label: "label", principal: "principal"],
+            Map.has_key?(slot, name),
+            reduce: attrs do
+          attrs -> Map.put(attrs, key, slot[name])
+        end
       end)
 
     identifier =
@@ -78,7 +84,7 @@ defmodule RequestSeal.Conformance.Quorum do
     policy =
       Quorum.new(%{
         mode: mode,
-        unit: :key,
+        unit: if(input["unit"] == "principal", do: :principal, else: :key),
         slots: slots,
         unexpected: :reject,
         invalid: :reject,
@@ -91,6 +97,10 @@ defmodule RequestSeal.Conformance.Quorum do
           retain_until: Conformance.int(input["retain_until"])
         }
       })
+
+    if input["sweep_before"] do
+      {:ok, 0} = Replay.ETS.sweep(pid, Conformance.int(input["sweep_before"]))
+    end
 
     table = :sys.get_state(pid).table
 

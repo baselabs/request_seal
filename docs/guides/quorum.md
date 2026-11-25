@@ -95,11 +95,14 @@ after wire admission, and applies each slot's freshness rules at that instant.
 Any two signatures assigned together must be fresh at that instant under
 their slot policies.
 
-Verification admits up to 128 eligible label-slot pairs. Construction refuses
-policies whose mandatory checks exceed that limit. Extra signatures on the
+Verification admits up to 128 eligible label-slot pairs. Construction checks
+required and bound slots, distinct counted units, and label and tag selectors
+to determine whether a satisfying assignment can fit that limit. Extra signatures on the
 wire can exhaust it even when the policy is valid. Use label or tag selectors
 to constrain matching. A supplied absolute monotonic deadline bounds
 callbacks and assignment, and caps the replay store deadline. A remaining
 interval above 4,294,967,295 milliseconds is invalid.
-The verifier returns a replay receipt after the quorum verdict. Application
+The local replay store refuses any late claim at or before its latest sweep
+cutoff, including a verification that started before the sweep. The verifier
+returns a replay receipt after the quorum verdict. Application
 authorization and effect uniqueness remain separate decisions.

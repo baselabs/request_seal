@@ -37,6 +37,9 @@ signer sets interpret the same wire bytes identically. Signatures and their
 dictionary fields cannot appear in the commitment input. The exclusive
 retention end is fixed in the replay policy. All qualifying signature windows
 must fit it, including when the only supplied signatures are required ones.
+The local replay store rejects a late claim at or before its greatest
+successful sweep cutoff. It records the cutoff and deletes expired claims
+in the same serialized transition.
 
 ## Reasons
 
@@ -60,8 +63,9 @@ boundary. The single post-verdict claim avoids both failure modes.
 ## Consequences
 
 Admission limits verification to 128 selector-eligible label-slot pairs.
-Construction rejects policies whose minimum required verification already
-exceeds the budget. Extra signatures or selectors on received messages can
+Construction checks whether a satisfying set of slots fits the budget. It
+accounts for required and bound slots, distinct counted units, fixed label
+collisions and tag bindings. Extra signatures on received messages can
 exhaust the budget of an otherwise valid policy.
 Identical digest policies reuse one body check while each signature proves
 digest coverage independently. The 16,384-unit assignment budget covers

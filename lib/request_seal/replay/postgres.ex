@@ -20,6 +20,9 @@ if Code.ensure_loaded?(Postgrex) do
     verification clocks require matching sweep times.
     Multi-node operators sweep at `now - max_internode_skew` to preserve claims
     while any verifier still accepts the authenticated input.
+    Before sweeping, the caller also coordinates in-flight verifications and
+    claims whose retention end falls at or below the cutoff. This adapter
+    uses the caller's table contract and keeps no sweep cutoff in the table.
     One namespace should use one freshness bound because duplicates never extend retention.
     PostgreSQL persistence follows the caller's database/storage configuration;
     this adapter does not start a database, pool, timer, or supervisor.

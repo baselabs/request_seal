@@ -346,8 +346,13 @@ defmodule RequestSeal.Quorum.Evaluation do
 
   defp distinct(slots, key), do: slots |> MapSet.new(&Map.fetch!(&1, key)) |> MapSet.size()
 
-  defp count(records, {:role, [shared_principal: false]}, state) do
-    edges = Enum.group_by(records, & &1.slot.role, & &1.slot.principal)
+  @doc false
+  def count_units(slots, unit), do: elem(count_slots(slots, unit, nil), 0)
+
+  defp count(records, unit, state), do: count_slots(Enum.map(records, & &1.slot), unit, state)
+
+  defp count_slots(slots, {:role, [shared_principal: false]}, state) do
+    edges = Enum.group_by(slots, & &1.role, & &1.principal)
 
     {matching, state} =
       edges
@@ -363,7 +368,7 @@ defmodule RequestSeal.Quorum.Evaluation do
     {map_size(matching), state}
   end
 
-  defp count(records, unit, state), do: {unit_bound(Enum.map(records, & &1.slot), unit), state}
+  defp count_slots(slots, unit, state), do: {unit_bound(slots, unit), state}
 
   defp augment(role, edges, matching, seen, state) do
     state = spend(state)
@@ -491,6 +496,8 @@ defmodule RequestSeal.Quorum.Evaluation do
 
   defp identifier({:nonce, :shared}), do: :nonce
   defp identifier(identifier), do: identifier
+
+  defp spend(nil), do: nil
 
   defp spend(state) do
     checkpoint(state.deadline)

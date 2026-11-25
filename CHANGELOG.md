@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Reject late replay claims at the local store's sweep cutoff and account for
+  principals, roles, and selectors when checking quorum policy feasibility.
 - Bound idempotency clock callbacks, exclude exchange-specific HTTP
   authentication fields from response recovery, and reject partial journal
   snapshots before signing.

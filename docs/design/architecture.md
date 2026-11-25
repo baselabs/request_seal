@@ -176,7 +176,10 @@ rules ran.
 
 ## Several signatures on one message
 
-Each verification covers one label; see [several signatures on one message](../guides/signing-and-verifying.md#several-signatures-on-one-message).
+`RequestSeal.verify/3` verifies one selected label. Use
+`RequestSeal.verify_quorum/3` with an explicit policy to require independent
+signers and make one replay claim after the verdict. See
+[quorum verification](../guides/quorum.md) and [ADR 0043](../adr/0043-quorum-replay-commitment.md).
 
 ## Keys, discovery, and replay
 

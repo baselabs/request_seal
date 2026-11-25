@@ -5,8 +5,9 @@ defmodule RequestSeal.Replay.ETS do
   The protected ETS table contains a reserved counter and namespace/key
   entries. Only this adapter may mutate it. Claims and explicit sweeps are serialized by its owner, preventing
   delete/insert races and enforcing an exact capacity. Duplicate claims never
-  refresh retention. Owner termination loses all claims; this is not a durable
-  or distributed store. Importing the module starts nothing.
+  refresh retention. The owner remembers the greatest successful sweep cutoff
+  and refuses claims whose retention ends at or before it. Owner termination
+  loses the claims and cutoff. Importing the module starts nothing.
   Multi-node operators sweep at `now - max_internode_skew` to preserve claims
   while any verifier still accepts the authenticated input.
   One namespace should use one freshness bound because duplicates never extend retention.
@@ -86,7 +87,7 @@ defmodule RequestSeal.Replay.ETS do
   def init(max) do
     table = :ets.new(__MODULE__, [:set, :protected])
     :ets.insert(table, {:count, 0})
-    {:ok, %{table: table, max: max}}
+    {:ok, %{table: table, max: max, swept_through: nil}}
   end
 
   @doc """
@@ -113,7 +114,8 @@ defmodule RequestSeal.Replay.ETS do
     * `{:error, :unavailable}` - the store or a local claim lifetime owner
       stopped before insertion.
     * `{:error, :failure}` - the claim fails `RequestSeal.Replay.Claim.valid?/1`,
-      or an argument is not a claim or context.
+      its retention end is at or before the sweep cutoff, or an argument is
+      not a claim or context.
 
   ## Examples
 
@@ -166,6 +168,8 @@ defmodule RequestSeal.Replay.ETS do
       iex> RequestSeal.Replay.ETS.sweep(pid, 1_000)
       {:ok, 1}
       iex> RequestSeal.Replay.claim(store, claim, timeout: 1_000)
+      {:error, %RequestSeal.Replay.Error{reason: :store_failed}}
+      iex> RequestSeal.Replay.claim(store, %{claim | retain_until: 1_001}, timeout: 1_000)
       :claimed
       iex> RequestSeal.Replay.ETS.sweep(pid, -1)
       {:error, :failure}
@@ -185,7 +189,8 @@ defmodule RequestSeal.Replay.ETS do
   Evict claims whose exclusive retention end is at or before `now`.
 
   Implements `c:RequestSeal.Replay.sweep/3`. Sweeps are serialized with claims by
-  the store owner.
+  the store owner. A successful sweep advances the admission cutoff even if
+  it removes zero claims. An earlier cutoff never moves it backward.
 
   ## Parameters
 
@@ -246,6 +251,9 @@ defmodule RequestSeal.Replay.ETS do
         not live?(caller) or not live?(owner) or not live?(Map.get(context, :key_owner)) ->
           {:error, :unavailable}
 
+        state.swept_through != nil and claim.retain_until <= state.swept_through ->
+          {:error, :failure}
+
         true ->
           reserved = :ets.update_counter(state.table, :count, 1)
 
@@ -278,7 +286,7 @@ defmodule RequestSeal.Replay.ETS do
         ])
 
       :ets.update_counter(state.table, :count, -removed)
-      {:reply, {:ok, removed}, state}
+      {:reply, {:ok, removed}, %{state | swept_through: max(state.swept_through, now)}}
     end
   end
 

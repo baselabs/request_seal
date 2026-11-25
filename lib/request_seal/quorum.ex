@@ -8,6 +8,7 @@ defmodule RequestSeal.Quorum do
   class can fill at most one slot. The quorum owns one composite replay claim.
   """
   alias RequestSeal.{Error, Policy, SignatureFields}
+  alias RequestSeal.Quorum.Evaluation
   alias RequestSeal.Replay.{Claim, Commitment}
   alias RequestSeal.StructuredFields.{Schema, Value}
 
@@ -112,29 +113,112 @@ defmodule RequestSeal.Quorum do
     {required, optional} =
       Enum.split_with(quorum.slots, &(&1.required or &1.id in bound_slots))
 
-    threshold =
+    max_signatures =
+      Enum.min([quorum.max_signatures | Enum.map(quorum.slots, & &1.policy.max_signatures)])
+
+    target =
       case quorum.mode do
         {:threshold, count} -> count
         _ -> 1
       end
 
-    min_signatures = max(length(required), threshold)
+    with true <- length(required) <= max_signatures and target <= max_signatures,
+         true <- required_roles_possible?(quorum),
+         {:ok, tags} <- bound_tags(quorum.bindings, required) do
+      price = fn slot ->
+        tag = Map.get(tags, slot.id, slot[:tag])
+        Enum.count(quorum.slots, &selector_matches?(&1, slot[:label], tag))
+      end
 
-    max_signatures =
-      Enum.min([quorum.max_signatures | Enum.map(quorum.slots, & &1.policy.max_signatures)])
+      labels = for slot <- required, slot[:label] != nil, do: slot.label
+      cost = Enum.sum(Enum.map(required, price))
+      optional = Enum.sort_by(Enum.map(optional, &{price.(&1), &1}), &elem(&1, 0))
 
-    # A signature for a slot also matches every selector that subsumes that slot.
-    cost = fn slot ->
-      Enum.count(quorum.slots, &selector_matches?(&1, slot[:label], slot[:tag]))
+      unique?(labels) and
+        feasible?(
+          optional,
+          required,
+          MapSet.new(labels),
+          @verification_budget - cost,
+          max_signatures - length(required),
+          quorum.unit,
+          target
+        )
+    else
+      _ -> false
     end
+  end
 
-    optional_costs =
-      optional |> Enum.map(cost) |> Enum.sort() |> Enum.take(min_signatures - length(required))
+  defp required_roles_possible?(
+         %{mode: :all, unit: {:role, [shared_principal: false]} = unit, slots: slots}
+       ) do
+    required = Enum.filter(slots, & &1.required)
+    Evaluation.count_units(required, unit) ==
+      Evaluation.count_units(required, {:role, [shared_principal: true]})
+  end
 
-    required_labels = for slot <- required, slot[:label] != nil, do: slot.label
+  defp required_roles_possible?(_), do: true
 
-    min_signatures <= max_signatures and unique?(required_labels) and
-      Enum.sum(Enum.map(required, cost)) + Enum.sum(optional_costs) <= @verification_budget
+  defp bound_tags(bindings, required) do
+    groups =
+      for {:same_parameter, "tag", ids} <- bindings, reduce: [] do
+        groups ->
+          ids = MapSet.new(ids)
+          {overlapping, rest} = Enum.split_with(groups, &(not MapSet.disjoint?(&1, ids)))
+          [Enum.reduce(overlapping, ids, &MapSet.union/2) | rest]
+      end
+
+    Enum.reduce_while(groups, {:ok, %{}}, fn group, {:ok, tags} ->
+      fixed =
+        for slot <- required, slot.id in group, slot[:tag] != nil, uniq: true, do: slot.tag
+
+      case fixed do
+        [] -> {:cont, {:ok, tags}}
+        [tag] -> {:cont, {:ok, Enum.reduce(group, tags, &Map.put(&2, &1, tag))}}
+        _ -> {:halt, :error}
+      end
+    end)
+  end
+
+  defp feasible?(optional, selected, labels, budget, room, unit, target) do
+    missing = target - Evaluation.count_units(selected, unit)
+
+    cond do
+      budget < 0 ->
+        false
+
+      missing <= 0 ->
+        true
+
+      room < missing ->
+        false
+
+      true ->
+        affordable =
+          Enum.take_while(optional, fn {cost, _} -> cost <= budget end)
+          |> Enum.reject(fn {_, slot} -> MapSet.member?(labels, slot[:label]) end)
+
+        # All remaining slots is an optimistic bound. The actual search below
+        # enforces the budget and one signature per fixed label.
+        possible = selected ++ Enum.map(affordable, &elem(&1, 1))
+        cheapest = affordable |> Enum.take(missing) |> Enum.sum_by(&elem(&1, 0))
+
+        cheapest <= budget and Evaluation.count_units(possible, unit) >= target and
+          Enum.any?(Enum.with_index(affordable, 1), fn {{cost, slot}, index} ->
+            next_labels =
+              if slot[:label], do: MapSet.put(labels, slot.label), else: labels
+
+            feasible?(
+              Enum.drop(affordable, index),
+              [slot | selected],
+              next_labels,
+              budget - cost,
+              room - 1,
+              unit,
+              target
+            )
+          end)
+    end
   end
 
   defp replay?(replay, slots) do
