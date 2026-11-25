@@ -83,6 +83,18 @@ HTTP signing with a mismatched handle returns `:signer_algorithm_mismatch` at
 custody error in `source`. Req, Finch, and Plug retain their adapter error
 boundary. See [signing and verifying](signing-and-verifying.md).
 
+## Rebuild in-memory custody on upgrade
+
+Restart the processes that retain key handles and recreate the holders and
+handles through their normal constructors before resuming operation. Rebuild
+custom handles with the current struct and implement `signing_assignment/2`
+for assigned operations. Keep SSH handle creators alive for the lifetime of
+their handles, including handles transferred to another process.
+
+Rebuild HTTP verification policies through `RequestSeal.Policy.new/1` when
+selecting an assigned key. An in-memory policy with the exact previous
+struct shape is interpreted with `:require_issued_for` set to nil.
+
 ## Add protected maps to JOSE policies
 
 The 1.x JWS verification policy contained `algorithms`, `timeout`, and

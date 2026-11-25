@@ -649,6 +649,9 @@ defmodule RequestSeal.Custody.Local do
   @impl true
   def binding(ref, context), do: request(ref, :binding, context)
 
+  @impl true
+  def signing_assignment(ref, context), do: request(ref, :signing_assignment, context)
+
   defp default_context do
     %RequestSeal.Custody.Context{
       owner: self(),
@@ -960,7 +963,7 @@ defmodule RequestSeal.Custody.Local do
     Support.signing_binding!(bound, purpose, context, admission != nil)
 
     if admission == nil do
-      Support.signing_bytes!(bytes, purpose, bound)
+      if purpose != nil, do: Support.signing_bytes!(bytes, bound)
       Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling())
     else
       Gate.sign(bytes, admission, context, algorithm, fn ->
@@ -977,7 +980,7 @@ defmodule RequestSeal.Custody.Local do
     ensure(algorithm == bound, :key_mismatch)
     ensure(:verify in capabilities, :unsupported_operation)
     Support.signing_binding!(bound, purpose, context, admission != nil)
-    Support.signing_bytes!(bytes, purpose, bound)
+    if purpose != nil or admission != nil, do: Support.signing_bytes!(bytes, bound)
 
     Crypto.verify(algorithm, bytes, signature, public || material,
       max_bytes: Crypto.max_bytes_ceiling()
@@ -997,6 +1000,9 @@ defmodule RequestSeal.Custody.Local do
   defp holder_operation(:public_key, {_, _, nil, _, _, _, _}), do: {:error, :no_public_key}
   defp holder_operation(:public_key, {_, _, public, _, _, _, _}), do: {:ok, public}
   defp holder_operation(:identity, {_, _, _, identity, _, _, _}), do: identity
+
+  defp holder_operation(:signing_assignment, {algorithm, _, _, _, _, issued_for, _}),
+    do: {:ok, {algorithm, issued_for}}
 
   defp holder_operation(:binding, {algorithm, _, public, _, _, issued_for, _}),
     do: {:ok, %{algorithm: algorithm, public_key: public, issued_for: issued_for}}

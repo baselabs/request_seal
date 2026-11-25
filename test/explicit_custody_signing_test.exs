@@ -36,6 +36,31 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
     def identity(_), do: %RequestSeal.KeyIdentity{kind: :unknown}
   end
 
+  defmodule LegacyCustodian do
+    @moduledoc false
+    @behaviour Custody
+
+    @impl true
+    def sign(ref, _, bytes, _) do
+      {key, observer} = ref.()
+      send(observer, :legacy_sign)
+      Custody.sign(key, bytes)
+    end
+
+    @impl true
+    def verify(ref, _, bytes, signature, _) do
+      {key, observer} = ref.()
+      send(observer, :legacy_verify)
+      Custody.verify(key, bytes, signature)
+    end
+
+    @impl true
+    def public_key(ref), do: Custody.public_key(elem(ref.(), 0))
+
+    @impl true
+    def identity(_), do: %RequestSeal.KeyIdentity{kind: :unknown}
+  end
+
   setup do
     # RFC 8032 Section 7.1, test 1: public independent Ed25519 seed.
     seed = Base.decode16!("9D61B19DEFFD5A60BA844AF492EC2CC44449C5697B326919703BAC031CAE7F60")
@@ -67,6 +92,35 @@ defmodule RequestSeal.ExplicitCustodySigningTest do
 
     assert {:ok, ^actual} =
              RequestSeal.sign(c.message, c.spec, c.handle, signing_timeout: 300_000)
+  end
+
+  test "legacy callbacks cannot use a purpose claimed only by the handle", c do
+    observer = self()
+
+    legacy = %KeyHandle{
+      custodian: LegacyCustodian,
+      algorithm: "ed25519",
+      capabilities: [:sign, :verify],
+      ref: fn -> {c.handle, observer} end
+    }
+
+    {:ok, bytes} = RequestSeal.SignatureBase.build(c.message, c.spec.signature_input)
+    assert {:ok, signature} = Custody.sign(legacy, bytes, operation: :http)
+    assert :ok = Custody.verify(legacy, bytes, signature, operation: :http)
+    assert_received :legacy_sign
+    assert_received :legacy_verify
+
+    assigned = %{legacy | issued_for: :build}
+    opts = [issued_for: :build, operation: :http]
+
+    assert {:error, %Custody.Error{reason: :unsupported_operation}} =
+             Custody.sign(assigned, bytes, opts)
+
+    assert {:error, %Custody.Error{reason: :unsupported_operation}} =
+             Custody.verify(assigned, bytes, signature, opts)
+
+    refute_received :legacy_sign
+    refute_received :legacy_verify
   end
 
   test "a signature input at the serialization ceiling returns :limit, never a crash" do

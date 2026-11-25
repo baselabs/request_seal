@@ -121,11 +121,22 @@ defmodule RequestSeal.CustodyGateTest do
     assert_received :record_called
   end
 
-  test "an unassigned gated key still refuses raw custody use", ctx do
+  test "an unassigned gated key refuses raw use and verifies only valid HTTP bases", ctx do
     {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
     {:ok, handle} = Gate.new("ed25519", {:ed25519, seed}, ctx.config)
     assert_error(Custody.sign(handle, ctx.base), :unsupported_operation)
-    assert {:ok, _} = Custody.sign(handle, ctx.base, operation: :http)
+    assert {:ok, signature} = Custody.sign(handle, ctx.base, operation: :http)
+    assert_error(Custody.verify(handle, ctx.base, signature), :unsupported_operation)
+    assert :ok = Custody.verify(handle, ctx.base, signature, operation: :http)
+
+    malformed = "not an HTTP signature base"
+    assert {:ok, invalid_signature} = Crypto.sign("ed25519", malformed, {:ed25519, seed})
+    assert {:ok, public} = Custody.public_key(handle)
+    assert :ok = Crypto.verify("ed25519", malformed, invalid_signature, public)
+    assert_error(
+      Custody.verify(handle, malformed, invalid_signature, operation: :http),
+      :invalid_data
+    )
   end
 
   test "port refusals, invalid replies, mismatches and time bounds are closed", ctx do

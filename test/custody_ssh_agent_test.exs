@@ -33,6 +33,62 @@ defmodule RequestSeal.CustodySSHAgentTest do
     {:ok, dir: dir, socket: socket, pid: pid, agent_owner: agent_owner, env: env}
   end
 
+  test "a transferred handle exposes public results and expires with its creator", ctx do
+    file = write_rfc_key(ctx.dir)
+
+    assert {_, 0} =
+             RequestSeal.SystemCommand.run("ssh-add", [file],
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
+
+    key = public_file(file)
+    recipient = self()
+
+    creator =
+      Task.async(fn ->
+        {:ok, handle} = SSHAgent.new("ed25519", ctx.socket, key, issued_for: :build)
+        send(recipient, {:handle, handle})
+
+        receive do
+          :finish -> :ok
+        end
+      end)
+
+    assert_receive {:handle, handle}, 1_000
+    assert {holder, token} = handle.ref.()
+    assert is_pid(holder) and is_reference(token)
+    monitor = Process.monitor(holder)
+    assert {:ok, ^key} = Custody.public_key(handle)
+    assert {:ok, %{issued_for: :build, thumbprint: thumbprint}} = Custody.binding(handle)
+    assert {:ok, ^thumbprint} = PublicKey.thumbprint(key)
+    assert {:ok, signature} =
+             Custody.sign(handle, @vector["base"], issued_for: :build, operation: :http)
+
+    assert signature == Base.decode64!(@vector["signature"])
+
+    reply = :erlang.alias()
+    context = byte_limit_context()
+
+    try do
+      send(holder, {:binding, token, :public, context, reply})
+      send(holder, {:request, token, self(), context, :public_key, reply})
+      assert_receive {^reply, {:ok, ^key}}, 1_000
+      refute_received {^reply, _}
+    after
+      :erlang.unalias(reply)
+    end
+
+    send(creator.pid, :finish)
+    assert :ok = Task.await(creator)
+    assert_receive {:DOWN, ^monitor, :process, ^holder, _}, 1_000
+    assert_error(Custody.public_key(handle), :key_not_found)
+    assert_error(
+      Custody.sign(handle, @vector["base"], issued_for: :build, operation: :http),
+      :key_not_found
+    )
+  end
+
   test "separate-process Ed25519 reproduces RFC 9421 B.2.6 bytes and explicit EdDSA", ctx do
     key_file = write_rfc_key(ctx.dir)
 

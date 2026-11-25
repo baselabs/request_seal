@@ -94,7 +94,13 @@ defmodule RequestSeal.Authentication do
           case built do
             {:ok, bytes} ->
               protect(fn ->
-                verify_bytes(algorithm, bytes, elem(signature.value, 1), key, policy.require_issued_for)
+                verify_bytes(
+                  algorithm,
+                  bytes,
+                  elem(signature.value, 1),
+                  key,
+                  Map.get(policy, :require_issued_for)
+                )
                 content = content(message, input, policy.content, opts)
 
                 replay =
@@ -407,21 +413,17 @@ defmodule RequestSeal.Authentication do
           :key
         )
 
-        handle_purpose = if is_struct(key, KeyHandle), do: key.issued_for
+        handle_purpose = if is_struct(key, KeyHandle), do: Map.get(key, :issued_for)
         purpose = Map.get(result, :issued_for, handle_purpose)
         ensure(KeyHandle.purpose?(purpose), :key_resolver_failed, :key)
 
         if is_struct(key, KeyHandle) do
           ensure(key.algorithm == algorithm, :algorithm_mismatch, :key)
-          ensure(
-            purpose == handle_purpose and policy.require_issued_for == handle_purpose,
-            :key_issued_for_mismatch,
-            :key
-          )
+          ensure(purpose == handle_purpose, :key_issued_for_mismatch, :key)
         end
 
         ensure(
-          policy.require_issued_for == nil or purpose == policy.require_issued_for,
+          Map.get(policy, :require_issued_for) == purpose,
           :key_issued_for_mismatch,
           :key
         )

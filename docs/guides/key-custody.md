@@ -160,6 +160,10 @@ practical limit. Observed with OpenSSH 9.9 and Ed25519: 262,000 bytes signed
 successfully; 262,200 returned `:custodian_protocol`. Raising `max_bytes:` does
 not raise the agent's limit.
 
+SSH custody keeps the agent socket path inside the holder and its operation
+workers. A transferred handle remains usable while its creator is alive.
+Creator exit or `Custody.release/1` ends the holder and its operations.
+
 ## Errors
 
 `RequestSeal.Custody.Error` uses bounded reasons. `:key_not_found` means the holder or agent key is gone. `:key_mismatch` means the material cannot serve the selected algorithm. `:unsupported_format` includes PKCS #8 v2 containers. `:deadline_exceeded` stops the operation. Agent `:custodian_unavailable` can describe a retryable pre-send connection failure; post-send `:custodian_protocol` is nonretryable because the signing request may already have reached the agent. `:custodian_rejected` means the agent does not hold the trusted key; `:unsupported_algorithm` means no implementation for that selection. Only `:deadline_exceeded` and `:custodian_unavailable` are retryable. Verification proves mathematical validity, not identity attribution or authority.
@@ -338,6 +342,12 @@ the operation against the retained family and checks the input format before
 using an assigned key. The high-level HTTP and JWS APIs set this operation
 for you. Raw bytes remain supported by unassigned, ungated keys.
 
+Custom custodians implement `signing_assignment/2` to report the retained
+algorithm and purpose under the same deadline. The custody facade compares
+that result with the requested assignment before dispatching. The signing
+and verification callbacks also enforce the assignment, operation family,
+and input format at key use. Assigned verification requires `verify/5`.
+
     alias RequestSeal.{Custody, Message, SignatureBase}
     alias RequestSeal.Custody.Gate
     alias RequestSeal.Replay.ETS
@@ -378,9 +388,13 @@ for you. Raw bytes remain supported by unassigned, ungated keys.
 purpose and public thumbprint. It observes the key at the time of the call.
 For HTTP verification, resolver entries returning a public key may include
 `:issued_for` from trusted configuration. A handle supplies its own purpose.
+Both must match the policy's `:require_issued_for`, with omitted and nil
+policies selecting unassigned keys.
 
 The gate rejects malformed bases, including parameters of the wrong wire
-type, before invoking the caller port. It matches
+type, before invoking the caller port. Verification with a gated key also
+validates the HTTP base, including when the key has no assigned purpose.
+The signing gate matches
 the approved component digest and optional nonce, then spends the decision
 through the configured store. With `:port_owned`, the port must perform the
 atomic spend itself. A failure after spending requires a new decision. Set

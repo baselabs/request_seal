@@ -20,8 +20,9 @@ defmodule RequestSeal.Custody do
 
   Purpose-bound keys require a matching `:issued_for` and the corresponding
   `:operation` (`:http` or `:jws`) on signing and verification.
-  Raw signing and verification are available for unbound keys. Custom custodians supporting purpose-bound handles must
-  compare it with held state via `RequestSeal.Custody.Context` before use.
+  Raw signing and verification are available for unbound keys. Purpose-bound
+  operations require `c:signing_assignment/2`. Custodians supporting them must
+  also compare the context with retained state before using the key.
 
   Custodians are trusted code: they must return only public keys and nonsecret
   identities, never log secrets, and must propagate the context deadline and
@@ -69,6 +70,19 @@ defmodule RequestSeal.Custody do
               {:ok, term()} | {:error, Error.reason()}
   @callback commit(term(), <<_::256>>, Context.t()) :: :ok | {:error, Error.reason()}
   @callback release(term(), Context.t()) :: :ok | {:error, Error.reason()}
+
+  @doc """
+  Report the retained algorithm and signing purpose for this reference.
+
+  Implement this callback to support assigned signing and verification. Read
+  the assignment from custody under the supplied deadline. The handle and
+  context supply the claims being checked. The signing and verification
+  callbacks must enforce the assignment, operation family, and input format
+  when using the key. Assigned verification requires `c:verify/5`.
+  """
+  @callback signing_assignment(term(), Context.t()) ::
+              {:ok, {algorithm(), atom() | nil}} | {:error, Error.reason()}
+
   @callback binding(term(), Context.t()) ::
               {:ok,
                %{
@@ -77,7 +91,14 @@ defmodule RequestSeal.Custody do
                  public_key: PublicKey.t() | nil
                }}
               | {:error, Error.reason()}
-  @optional_callbacks binding: 2, verify: 5, unwrap: 5, wrap: 4, derive: 3, commit: 3, release: 2
+  @optional_callbacks signing_assignment: 2,
+                      binding: 2,
+                      verify: 5,
+                      unwrap: 5,
+                      wrap: 4,
+                      derive: 3,
+                      commit: 3,
+                      release: 2
 
   @doc """
   Derive and atomically commit a caller-owned child without exporting its key.
@@ -516,7 +537,9 @@ defmodule RequestSeal.Custody do
   A custodian that implements the optional `c:verify/5` callback verifies inside
   its own boundary (HMAC custody uses this path). Otherwise the custodian's
   public key is resolved and the signature is checked with
-  `RequestSeal.Crypto.verify/5`. `:ok` establishes mathematical validity only.
+  `RequestSeal.Crypto.verify/5` for unassigned keys. Assigned verification
+  requires both `c:verify/5` and `c:signing_assignment/2`.
+  `:ok` establishes mathematical validity only.
 
   ## Parameters
 
@@ -736,7 +759,10 @@ defmodule RequestSeal.Custody do
 
         context = %{context | issued_for: purpose, operation: protocol}
 
-        case run(context, fn -> invoke(handle, op, args, context) end) do
+        case run(context, fn ->
+               check_signing_assignment!(handle, op, context)
+               invoke(handle, op, args, context)
+             end) do
           {:ok, :ok} when op in [:verify, :release] -> :ok
           result -> result
         end
@@ -815,12 +841,28 @@ defmodule RequestSeal.Custody do
 
   defp data!(bytes, max), do: ensure(is_binary(bytes) and byte_size(bytes) <= max, :invalid_data)
 
+  defp check_signing_assignment!(handle, op, %{issued_for: purpose} = context)
+       when op in [:sign, :verify] and purpose != nil do
+    ensure(function_exported?(handle.custodian, :signing_assignment, 2), :unsupported_operation)
+    ensure(op != :verify or function_exported?(handle.custodian, :verify, 5), :unsupported_operation)
+
+    case handle.custodian.signing_assignment(handle.ref, context) do
+      {:ok, {algorithm, retained}} ->
+        ensure(KeyHandle.purpose?(retained), :custodian_failure)
+        ensure(algorithm == handle.algorithm and retained == purpose, :key_mismatch)
+
+      result ->
+        Support.unwrap(normalize(:signing_assignment, result))
+    end
+  end
+
+  defp check_signing_assignment!(_, _, _), do: :ok
+
   defp invoke(handle, :verify, [bytes, signature], context) do
     result =
       if function_exported?(handle.custodian, :verify, 5) do
         handle.custodian.verify(handle.ref, handle.algorithm, bytes, signature, context)
       else
-        ensure(handle.issued_for == nil, :unsupported_operation)
         public = handle.custodian.public_key(handle.ref) |> Support.unwrap()
 
         RequestSeal.Crypto.verify(handle.algorithm, bytes, signature, public,

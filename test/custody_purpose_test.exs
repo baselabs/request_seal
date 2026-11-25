@@ -142,12 +142,43 @@ defmodule RequestSeal.CustodyPurposeTest do
       assert {:error, %{reason: :key_issued_for_mismatch, layer: :key}} =
                RequestSeal.verify(signed, policy(key, :build), label: "sig")
 
+      for purpose <- [:omitted, nil, :audit] do
+        assert {:error, %{reason: :key_issued_for_mismatch, layer: :key}} =
+                 RequestSeal.verify(
+                   signed,
+                   policy(key, purpose, %{issued_for: :build}),
+                   label: "sig"
+                 )
+      end
+
       assert {:error, %{reason: :key_issued_for_mismatch, layer: :key}} =
                RequestSeal.verify(
                  signed,
                  policy(ctx.handle, :audit, %{issued_for: :audit}),
                  label: "sig"
                )
+    end
+  end
+
+  test "a pre-upgrade HTTP policy keeps unassigned semantics", ctx do
+    spec = %{label: "sig", algorithm: "ed25519", signature_input: ~s[("@method" "@path")]}
+    {:ok, handle} = Local.new("ed25519", {:ed25519, ctx.seed})
+    assert {:ok, signed} = RequestSeal.sign(ctx.message, spec, handle)
+    assert {:ok, key} = Custody.public_key(handle)
+    legacy = Map.delete(policy(key, nil), :require_issued_for)
+    assert {:ok, _} = RequestSeal.verify(signed, legacy, label: "sig")
+
+    legacy_assigned =
+      key
+      |> policy(nil, %{issued_for: :build})
+      |> Map.delete(:require_issued_for)
+
+    assert {:error, %{reason: :key_issued_for_mismatch, layer: :key}} =
+             RequestSeal.verify(signed, legacy_assigned, label: "sig")
+
+    for malformed <- [Map.delete(legacy, :content), Map.put(legacy, :unknown, nil)] do
+      assert {:error, %{reason: :invalid_policy, layer: :input}} =
+               RequestSeal.verify(signed, malformed, label: "sig")
     end
   end
 
@@ -192,17 +223,17 @@ defmodule RequestSeal.CustodyPurposeTest do
   defp policy(key, purpose, extra \\ %{}) do
     entry = Map.merge(%{algorithm: "ed25519", key: key}, extra)
 
-    {:ok, policy} =
-      Policy.new(%{
-        algorithms: ["ed25519"],
-        components: ~s[("@method" "@path")],
-        key_resolver: fn _ -> {:ok, entry} end,
-        freshness: :not_evaluated,
-        content: :not_required,
-        replay: :not_required,
-        require_issued_for: purpose
-      })
+    attrs = %{
+      algorithms: ["ed25519"],
+      components: ~s[("@method" "@path")],
+      key_resolver: fn _ -> {:ok, entry} end,
+      freshness: :not_evaluated,
+      content: :not_required,
+      replay: :not_required
+    }
 
+    attrs = if purpose == :omitted, do: attrs, else: Map.put(attrs, :require_issued_for, purpose)
+    {:ok, policy} = Policy.new(attrs)
     policy
   end
 end

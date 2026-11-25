@@ -3,9 +3,16 @@
 ## Unreleased 2.0.0
 
 - Require matching purpose and operation family for assigned signing keys.
-  HTTP and JWS propagate that requirement into custody. Assigned and gated
-  keys refuse raw use. SSH custody retains its binding in a sensitive process,
-  and Local HTTP signing can require single-use admission for a valid typed base.
+  HTTP and JWS propagate that requirement into custody. Assigned operations
+  require a retained assignment from the custodian. HTTP verification matches
+  public-key resolver assignments against the policy. Assigned and gated keys
+  require protocol input validation. Local HTTP signing can require single-use
+  admission for a valid typed base.
+
+- Keep SSH socket operations within custody. SSH handles expire on creator
+  exit or release, including handles transferred to another process. Recreate
+  key handles and holders during upgrade. Previous HTTP policy structs continue
+  to select unassigned keys.
 
 - Bind Plug tenant context to a verified path and pass it through to Ash scope mapping.
 

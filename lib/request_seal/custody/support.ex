@@ -88,9 +88,7 @@ defmodule RequestSeal.Custody.Support do
     end
   end
 
-  def signing_bytes!(_, nil, _), do: :ok
-
-  def signing_bytes!(bytes, _, algorithm) when is_binary(algorithm) do
+  def signing_bytes!(bytes, algorithm) when is_binary(algorithm) do
     case RequestSeal.SignatureBase.parse(bytes) do
       {:ok, %{inner_list: input}} ->
         ensure(
@@ -104,7 +102,7 @@ defmodule RequestSeal.Custody.Support do
     end
   end
 
-  def signing_bytes!(bytes, _, {:jws, algorithm}) do
+  def signing_bytes!(bytes, {:jws, algorithm}) do
     result =
       RequestSeal.JOSE.Support.safe(fn ->
         [protected, payload] = RequestSeal.JOSE.Support.compact(bytes, 2)
@@ -116,5 +114,4 @@ defmodule RequestSeal.Custody.Support do
 
     ensure(result == :ok, :invalid_data)
   end
-
 end

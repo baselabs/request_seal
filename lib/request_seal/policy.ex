@@ -67,7 +67,7 @@ defmodule RequestSeal.Policy do
 
   ## Parameters
 
-    * `attrs` - map with all six required keys and any of the three optional
+    * `attrs` - map with all six required keys and any of the optional
       keys. Unknown keys reject.
       * `:algorithms` - nonempty unique list of at most 64 exact
         `RequestSeal.Crypto` HTTP tokens or supported `{:jws, name}`
@@ -120,6 +120,8 @@ defmodule RequestSeal.Policy do
         exact coverage.
       * `:max_signatures` - optional, default 16 (1 to 64). Counts dictionary
         encounters, including repeats, before duplicate-label rejection.
+      * `:require_issued_for` - optional, default nil. Requires the trusted
+        resolver assignment to equal this value. Nil selects unassigned keys.
 
   ## Returns
 
@@ -166,8 +168,11 @@ defmodule RequestSeal.Policy do
   end
 
   def new(_), do: invalid()
+
   @doc false
   def valid?(%__MODULE__{} = p) do
+    p = Map.put_new(p, :require_issued_for, nil)
+
     Enum.sort(Map.keys(p)) == Enum.sort(Map.keys(%__MODULE__{})) and
       list?(p.algorithms, &SignatureFields.algorithm?/1) and
       is_binary(p.components) and valid_components?(p.components) and

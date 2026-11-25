@@ -14,11 +14,13 @@ describes limiting a key's purpose.
 
 Retain each key's exact algorithm and trusted purpose in custody. The handle
 exposes the operation family and purpose for selection. Built-in custodians
-verify the binding before key use. SSH custody retains its assignment in a
-sensitive process and verifies the original agent binding independently of
-caller-visible fields. A binding read reports held public facts and an
-RFC 7638 thumbprint when public material exists. SSH binding reads confirm
-current agent membership.
+verify the binding before key use. Assigned use requires the custodian to
+report the retained algorithm and purpose through `signing_assignment/2`
+under the same deadline. Legacy callbacks cannot establish an assignment.
+SSH custody retains its assignment and socket path in a sensitive process
+and controls socket operations from there. A binding read reports held public
+facts and an RFC 7638 thumbprint when public material exists. SSH binding reads
+confirm current agent membership.
 
 Purpose assignments apply to signing and verification keys. An assigned key
 requires the matching purpose and protocol for both operations. An omitted
@@ -26,8 +28,9 @@ or nil purpose works for an unassigned key. Assigned keys accept canonical
 HTTP bases or compact JWS signing inputs according to their retained family.
 Raw use refuses, and a JWS-bound key cannot sign an HTTP message. Existing
 unassigned custody continues to support raw use and explicitly selected HTTP
-JWS algorithms. Gated keys require HTTP operation even with no purpose.
-Purposes stay outside the wire format.
+JWS algorithms. Gated keys require a valid HTTP base for both operations
+even with no purpose. For HTTP public keys, the policy purpose must equal
+the resolver's trusted assignment. Purposes stay outside the wire format.
 
 Local HTTP signing may require approval inside the sensitive key process.
 A gate validates the typed HTTP Inner List before extracting any parameter
@@ -48,3 +51,7 @@ The caller owns purpose assignments, admission policy, the claim boundary,
 clock and recording. A guarded key operation starts no background service.
 An external signer can consume an admission and bind its work to the returned
 base digest and exclusive expiry.
+
+SSH handles expire when their creator exits or the holder is released.
+Rebuild in-memory key handles and holders during upgrade. An HTTP policy
+with the exact previous shape continues to select unassigned keys.
