@@ -33,6 +33,8 @@ defmodule RequestSeal.Conformance.Surfaces do
     "crypto.verify" => :crypto_verify,
     "key.import" => :key_import,
     "custody.seed_check/v1" => :seed_check,
+    "fingerprint.digest/v1" => :framed_fingerprint,
+    "custody.mac/v1" => :framed_mac,
     "hpke.derive_key_pair/v1" => :hpke_derive_key_pair,
     "custody.derive/v1" => :custody_derive,
     "custody.purpose/v1" => :custody_purpose,
@@ -727,6 +729,32 @@ defmodule RequestSeal.Conformance.Surfaces do
     with {:ok, key} <- key,
          :ok <- Crypto.verify(i["algorithm"], C.bytes(i["data"]), C.bytes(i["signature"]), key),
          do: {:ok, %{"valid" => true}}
+  end
+
+  def framed_fingerprint(_root, c) do
+    i = c["inputs"]
+
+    case RequestSeal.Fingerprint.digest(i["domain"], Enum.map(i["fields"], &C.bytes/1)) do
+      {:ok, digest} -> {:ok, %{"digest" => C.b64(digest)}}
+      {:error, :invalid_input} -> {:error, "fingerprint/invalid_input"}
+    end
+  end
+
+  def framed_mac(_root, c) do
+    i = c["inputs"]
+
+    with {:ok, handle} <-
+           RequestSeal.Custody.Local.new("hmac-sha256", {:hmac, C.bytes(i["key"])},
+             capabilities: [:mac]
+           ) do
+      try do
+        with {:ok, tag} <-
+               RequestSeal.Custody.mac(handle, i["label"], Enum.map(i["fields"], &C.bytes/1)),
+             do: {:ok, %{"tag" => C.b64(tag)}}
+      after
+        RequestSeal.Custody.release(handle)
+      end
+    end
   end
 
   def seed_check(root, c) do

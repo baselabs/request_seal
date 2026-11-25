@@ -517,6 +517,7 @@ maps the changed calls, custom custody callbacks, and version and corpus pins.
 | Capability | Module | Standard |
 | --- | --- | --- |
 | HTTP request/response signatures | `RequestSeal` | [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) |
+| Framed SHA-256 and custody HMAC-SHA256 | `RequestSeal.Fingerprint`, `RequestSeal.Custody.mac/4` | [RFC 6234](https://www.rfc-editor.org/rfc/rfc6234.html) algorithms |
 | Public-key deny sets and seed thumbprint checks | `RequestSeal.DenySet`, `RequestSeal.Custody.Local` | [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html) |
 | Trusted clock intervals for HTTP freshness | `RequestSeal.Policy`, `RequestSeal.WebBotAuth.Policy` | [RFC 9421 Section 3.2.1](https://www.rfc-editor.org/rfc/rfc9421.html#section-3.2.1) |
 | Canonical signature-base parsing and ordered components | `RequestSeal.SignatureBase` | [RFC 9421 Section 2.5](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.5) |

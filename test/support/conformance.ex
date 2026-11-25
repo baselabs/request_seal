@@ -383,6 +383,9 @@ defmodule RequestSeal.Conformance do
   defp disagreement(state, false, id, actual),
     do: %{state | disagreements: [{id, actual} | state.disagreements]}
 
+  defp compare({:error, rule}, %{"rule_id" => expected}, "rejection") when is_binary(rule),
+    do: rule == expected
+
   defp compare({:error, error}, %{"rule_id" => expected}, "rejection"),
     do: rule_id(error) == expected
 

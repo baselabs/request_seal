@@ -120,6 +120,8 @@ defmodule RequestSeal.Custody.Local do
     * `:capabilities` - for JWE and derivation parents, a nonempty unique subset of the family's
       capabilities. AES-KW defaults to `[:wrap, :unwrap]`; other JWE families
       default to `[:unwrap]` and refuse `:wrap`.
+      For HMAC, `[:mac]` creates a handle dedicated to framed MAC. The default
+      HMAC handle grants `:sign` and `:verify`.
     * `:deny` or `:expected_thumbprint` - check the derived public key before
       constructing a handle. An active deny set rejects `:key_denied` for a
       match. An expected thumbprint rejects `:key_mismatch` on disagreement.
@@ -161,7 +163,11 @@ defmodule RequestSeal.Custody.Local do
           {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
   def new(algorithm, material, opts \\ []) do
     Support.safe(fn ->
-      {_, _, capabilities} = selection(algorithm)
+      {_, family, capabilities} = selection(algorithm)
+      capabilities =
+        if family == :hmac and is_list(opts) and Keyword.get(opts, :capabilities) == [:mac],
+          do: [:mac],
+          else: capabilities
       construct(algorithm, material, opts, nil, nil, capabilities)
     end)
   end
@@ -181,7 +187,8 @@ defmodule RequestSeal.Custody.Local do
   optional `:capabilities` narrowing its defaults (sign/verify, wrap/unwrap, or
   unwrap) and optional `:timeout` (1..300,000 ms, default 5,000) bounding holder
   startup and generation. RSA-4096 generation can take several seconds on a
-  loaded machine; pass a longer `:timeout` for it. Unknown, duplicate, misplaced, missing, or invalid options return
+  loaded machine; pass a longer `:timeout` for it. HMAC generation also accepts
+  `capabilities: [:mac]` for a dedicated framed MAC key. Unknown, duplicate, misplaced, missing, or invalid options return
   `:invalid_options`. GCMKW, `dir`, derivation parents, and unknown algorithms
   return `:unsupported_algorithm`; HKDF IKM is imported with `new/3`.
 
@@ -246,7 +253,12 @@ defmodule RequestSeal.Custody.Local do
         :ok
     end
 
-    {family, Derivation.capabilities(opts, defaults), timeout}
+    capabilities =
+      if family == :hmac and opts[:capabilities] == [:mac],
+        do: [:mac],
+        else: Derivation.capabilities(opts, defaults)
+
+    {family, capabilities, timeout}
   end
 
   defp generated_material(_, :rsa, opts),
@@ -392,7 +404,7 @@ defmodule RequestSeal.Custody.Local do
     {jose, family, _} = selection(algorithm)
 
     allowed =
-      if match?({:jwe, _}, algorithm) or match?({:derive, _}, algorithm),
+      if capabilities == [:mac] or match?({:jwe, _}, algorithm) or match?({:derive, _}, algorithm),
         do: [:equivalence, :capabilities],
         else: [:equivalence, :issued_for, :admission]
 
@@ -428,7 +440,13 @@ defmodule RequestSeal.Custody.Local do
       :invalid_key
     )
 
-    validate_operation(algorithm, material, public)
+    if capabilities == [:mac] do
+      ensure(match?({:hmac, _}, material), :key_mismatch)
+      {:hmac, key} = material
+      ensure(is_binary(key) and byte_size(key) in 32..16_384, :invalid_key)
+    else
+      validate_operation(algorithm, material, public)
+    end
     public = if is_struct(expected, PublicKey), do: PublicKey.validate!(expected), else: public
     Support.check_public_key(public, opts)
 
@@ -635,6 +653,10 @@ defmodule RequestSeal.Custody.Local do
   @doc false
   def unwrap(ref, algorithm, items, sink, context),
     do: request(ref, {:unwrap, algorithm, items, sink}, context)
+
+  @impl true
+  @doc false
+  def mac(ref, label, fields, context), do: request(ref, {:mac, label, fields}, context)
 
   @impl true
   @doc false
@@ -1019,6 +1041,17 @@ defmodule RequestSeal.Custody.Local do
       0 -> false
     end
   end
+
+  defp holder_operation({:mac, label, fields}, {_, {:hmac, key}, _, _, [:mac], nil, nil}) do
+    ensure(RequestSeal.Fingerprint.mac_label?(label), :invalid_options)
+
+    case RequestSeal.Fingerprint.frame(fields, 1_048_576) do
+      {:ok, data} -> {:ok, :crypto.mac(:hmac, :sha256, key, [label | data])}
+      :error -> {:error, :invalid_data}
+    end
+  end
+
+  defp holder_operation({:mac, _, _}, _), do: {:error, :unsupported_operation}
 
   defp holder_operation(:public_key, {_, _, nil, _, _, _, _}), do: {:error, :no_public_key}
   defp holder_operation(:public_key, {_, _, public, _, _, _, _}), do: {:ok, public}

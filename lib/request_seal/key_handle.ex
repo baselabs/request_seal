@@ -1,6 +1,6 @@
 defmodule RequestSeal.KeyHandle do
   @moduledoc """
-  Caller-owned, algorithm-bound signing, verification, wrapping, unwrapping, or derivation capability.
+  Caller-owned, algorithm-bound signing, verification, wrapping, unwrapping, derivation, or framed MAC capability.
 
   Construct handles through a custodian such as `RequestSeal.Custody.Local` or
   `RequestSeal.Custody.SSHAgent`. Only that custodian interprets `ref`, which is

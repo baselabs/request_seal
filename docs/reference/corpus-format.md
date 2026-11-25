@@ -66,6 +66,12 @@ thumbprints. The `custody.seed_check/v1` surface imports an Ed25519 JWK with a
 `deny` list and an `expected_thumbprint`; success returns `thumbprint` and
 releases the temporary handle.
 
+The `fingerprint.digest/v1` surface takes a string `domain` and an ordered
+array of byte descriptors `fields`; success returns `digest` as bytes.
+`custody.mac/v1` takes a string `label`, public test `key` bytes and
+`fields`; success returns `tag` as bytes. Each field is encoded with an
+unsigned four-byte big-endian length and its unchanged bytes.
+
 Format `request-seal-conformance-case/1` requires `id`, `surface`, `class`,
 `evidence_class`, `source`, `inputs` and `expected`. Source identity contains
 `document`, `section` and `url`. Evidence is `published_vector` or

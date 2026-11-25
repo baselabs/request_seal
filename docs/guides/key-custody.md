@@ -432,3 +432,20 @@ To exclude a retired key, create a set with
 verification policy. The set compares the selected public key's RFC 7638
 SHA-256 thumbprint, independent of its advertised key ID. An active set
 requires a public key.
+
+## Hash or authenticate framed bytes
+
+Use `RequestSeal.Fingerprint.digest("example v1", ["ab", "c", <<0, 255>>])`
+when you need a stable digest of ordered byte fields. To authenticate those
+bytes, generate a dedicated handle with
+`RequestSeal.Custody.Local.generate("hmac-sha256", capabilities: [:mac])`
+and pass it to `RequestSeal.Custody.mac(handle, "example v1", ["ab", "c", <<0, 255>>])`.
+Release the handle with `RequestSeal.Custody.release/1` when finished.
+
+For that input, the framed byte string in hex is `6578616d706c6520763100000002616200000001630000000200ff`.
+SHA-256 gives `7954fed7217396578b4f2d39f93ed01086e61b44d35492f2fbad3323827d7fab`.
+With the 131-byte test key of repeated `aa` bytes in
+[RFC 4231 Section 4.7](https://www.rfc-editor.org/rfc/rfc4231.html#section-4.7),
+the framed HMAC-SHA256 tag is `177e8624574728c0429489b62a9730c4ca8cd4e63e926e70eeceeeee5cada356`.
+The label bytes are followed by each field's four-byte big-endian length
+and bytes. Fix the label and field order in your application format.

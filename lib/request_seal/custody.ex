@@ -34,11 +34,11 @@ defmodule RequestSeal.Custody do
   `max_bytes: RequestSeal.Crypto.max_bytes_ceiling()` because custody has already
   enforced the caller's bound, which `RequestSeal.Custody.Context` does not carry.
   """
-  alias RequestSeal.{KeyHandle, KeyIdentity, PublicKey}
+  alias RequestSeal.{Fingerprint, KeyHandle, KeyIdentity, PublicKey}
   alias RequestSeal.Custody.{Cleanup, Context, Derivation, DeriveRequest, Error, Sink, Support}
   import Support, only: [fail: 1, ensure: 2]
 
-  @type capability :: :sign | :verify | :wrap | :unwrap | :derive
+  @type capability :: :sign | :verify | :wrap | :unwrap | :derive | :mac
   @type key_algorithm :: {:jwe, binary()}
   @type algorithm ::
           RequestSeal.Crypto.algorithm()
@@ -71,6 +71,8 @@ defmodule RequestSeal.Custody do
               {:ok, term()} | {:error, Error.reason()}
   @callback commit(term(), <<_::256>>, Context.t()) :: :ok | {:error, Error.reason()}
   @callback release(term(), Context.t()) :: :ok | {:error, Error.reason()}
+  @callback mac(term(), binary(), [binary()], Context.t()) ::
+              {:ok, <<_::256>>} | {:error, Error.reason()}
 
   @doc """
   Report the retained algorithm and signing purpose for this reference.
@@ -103,7 +105,8 @@ defmodule RequestSeal.Custody do
                       wrap: 4,
                       derive: 3,
                       commit: 3,
-                      release: 2
+                      release: 2,
+                      mac: 4
 
   @doc """
   Derive and atomically commit a caller-owned child without exporting its key.
@@ -738,6 +741,36 @@ defmodule RequestSeal.Custody do
     operation(handle, :binding, opts, fn _ -> [] end)
   end
 
+  @doc """
+  Compute a framed HMAC-SHA256 through a handle that grants `:mac`.
+
+  The label is 1–64 printable ASCII bytes, contains a space, and cannot begin
+  with a quote or the reserved prefix `request-seal `. The 1–256 binary fields
+  total at most 1 MiB. The input is the label followed by each field's
+  four-byte big-endian byte count and exact bytes.
+
+  The optional `:timeout` bounds custody work (1–300,000 ms, default 5,000).
+  Returns a 32-byte tag. Unsupported capability or a missing callback yields
+  `:unsupported_operation`. Invalid labels or options yield `:invalid_options`.
+  Invalid fields yield `:invalid_data`. The operation emits no telemetry.
+
+      iex> {:ok, handle} = RequestSeal.Custody.Local.generate("hmac-sha256", capabilities: [:mac])
+      iex> {:ok, tag} = RequestSeal.Custody.mac(handle, "example v1", ["abc", "def"])
+      iex> byte_size(tag)
+      32
+      iex> RequestSeal.Custody.release(handle)
+      :ok
+  """
+  @spec mac(KeyHandle.t(), binary(), [binary()], keyword()) ::
+          {:ok, <<_::256>>} | {:error, Error.t()}
+  def mac(handle, label, fields, opts \\ []) do
+    operation(handle, :mac, opts, fn _ ->
+      ensure(Fingerprint.mac_label?(label), :invalid_options)
+      ensure(match?({:ok, _}, Fingerprint.frame(fields, 1_048_576)), :invalid_data)
+      [label, fields]
+    end)
+  end
+
   defp operation(handle, op, opts, args, allowed \\ [:timeout]) do
     Support.safe(
       fn ->
@@ -758,12 +791,17 @@ defmodule RequestSeal.Custody do
         end
 
         ensure(
-          op not in [:sign, :verify, :wrap] or op in handle.capabilities,
+          op not in [:sign, :verify, :wrap, :mac] or op in handle.capabilities,
           :unsupported_operation
         )
 
         ensure(
           op not in [:release, :binding] or function_exported?(handle.custodian, op, 2),
+          :unsupported_operation
+        )
+
+        ensure(
+          op != :mac or function_exported?(handle.custodian, :mac, 4),
           :unsupported_operation
         )
 
@@ -801,7 +839,7 @@ defmodule RequestSeal.Custody do
 
     ensure(
       is_list(handle.capabilities) and handle.capabilities != [] and
-        Enum.all?(handle.capabilities, &(&1 in [:sign, :verify, :wrap, :unwrap, :derive])) and
+        Enum.all?(handle.capabilities, &(&1 in [:sign, :verify, :wrap, :unwrap, :derive, :mac])) and
         Enum.uniq(handle.capabilities) == handle.capabilities,
       :invalid_handle
     )
@@ -812,6 +850,13 @@ defmodule RequestSeal.Custody do
         function_exported?(handle.custodian, :identity, 1),
       :invalid_handle
     )
+
+    if :mac in handle.capabilities do
+      ensure(
+        handle.capabilities == [:mac] and handle.algorithm in ["hmac-sha256", {:jws, "HS256"}],
+        :invalid_handle
+      )
+    end
 
     if :derive in handle.capabilities do
       ensure(
@@ -930,6 +975,9 @@ defmodule RequestSeal.Custody do
      }}
   end
 
+  defp invoke(handle, :mac, [label, fields], context),
+    do: normalize(:mac, handle.custodian.mac(handle.ref, label, fields, context))
+
   defp invoke(handle, :release, [], context),
     do: normalize(:release, handle.custodian.release(handle.ref, context))
 
@@ -963,6 +1011,8 @@ defmodule RequestSeal.Custody do
     do: {:ok, bytes}
 
   defp normalize(:sign, {:ok, _}), do: {:error, Error.new(:invalid_signing_output)}
+
+  defp normalize(:mac, {:ok, <<_::256>> = tag}), do: {:ok, tag}
 
   defp normalize(op, :ok) when op in [:unwrap, :release], do: :ok
 

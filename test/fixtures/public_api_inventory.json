@@ -52,6 +52,7 @@
     "callback commit/3",
     "callback derive/3",
     "callback identity/1",
+    "callback mac/4",
     "callback public_key/1",
     "callback release/2",
     "callback sign/4",
@@ -63,6 +64,8 @@
     "function cleanup/2",
     "function derive/4",
     "function identity/1",
+    "function mac/3",
+    "function mac/4",
     "function public_key/1",
     "function release/1",
     "function run/2",
@@ -201,6 +204,12 @@
     "function sign/4",
     "function verify/4",
     "type spec/0"
+  ],
+  "RequestSeal.Fingerprint": [
+    "function digest/2",
+    "function prefixed/1",
+    "function read_prefixed/1",
+    "function read_prefixed/2"
   ],
   "RequestSeal.JOSE": [
     "function decode_object/2",
