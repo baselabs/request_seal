@@ -11,15 +11,21 @@ that a tenant selector was covered by the verified signature.
 ## Decision
 
 After Plug verification, require unparameterized `@path`. Check that the
-captured path and Plug's segment split agree. Decode segments once under
-[RFC 3986 Section 2.4](https://www.rfc-editor.org/rfc/rfc3986.html#section-2.4)
-and refuse empty segments, dot segments, delimiters, and residual escapes.
-The caller's template nominates one capture as the tenant. Reject competing
-headers, query parameters and fetched body fields. Compare the selected tenant
-with the mapping supplied by the caller's trusted principal binding.
+captured path and Plug's segment split agree. Match the path in its original
+spelling using unreserved ASCII. Refuse percent escapes, empty segments and
+dot segments. Tenant captures use lowercase tokens or lowercase UUID text.
+[RFC 3986 Section 2](https://www.rfc-editor.org/rfc/rfc3986.html#section-2)
+defines percent encoding and unreserved characters.
+
+Reject competing headers and recursively inspect query and parsed body maps
+and lists. A nonempty body requires a configured parser that fully consumes
+the captured bytes before verification. The principal lookup runs within a
+finite deadline and must return exactly the selected tenant.
 
 Pass the resulting tenant to the existing Ash scope construction. The resource's
 multitenancy strategy and policies decide which data operations may proceed.
+Tenant agreement supplies context. Signer attribution remains a separate
+property of the selected verification profile or trusted configuration.
 
 ## Alternatives
 

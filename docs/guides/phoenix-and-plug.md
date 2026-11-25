@@ -25,12 +25,22 @@ closed over an independently established tenant for the trusted verifier; reject
 when the policy cannot establish one tenant. Never take that value from the
 route, headers, query, body, or sender-supplied key ID.
 
-Path captures are decoded once. The scope rejects competing selectors named
-`tenant`, `tenant_id`, or the nominated capture, and the `x-tenant` and
-`x-tenant-id` headers. Add application aliases to `:refuse_names` and
-`:refuse_headers`. To check a body, install its parser before Scope. The
-captured path is the source of tenant context; use the returned tenant in the
-data layer's authorization checks.
+Use lowercase tokens or lowercase UUID text for tenant captures. Percent
+escapes, dot segments, empty segments and case variants of captures are
+refused. The scope rejects competing selectors named `tenant`, `tenant_id`,
+or the nominated capture in query or body maps and lists at any depth. It
+also refuses the `x-tenant` and `x-tenant-id` headers. Add application aliases
+with `:refuse_names` and `:refuse_headers`.
+
+Place the configured body parser between Capture and Verify. A nonempty body
+must be fully read through Capture's retained adapter and parsed into a map
+before Scope runs. A pass-through parser leaves the body indeterminate and
+Scope refuses it. Multipart uploads are opaque leaves. The trusted mapping
+uses a 1,000 ms deadline by default, selectable with `:lookup_timeout`.
+
+Tenant agreement supplies the data layer with routing context. Signer
+attribution comes from a trusted verification profile or independently
+established application configuration. Ash policies still decide access.
 
 ## 1. Configure the trusted policy
 

@@ -83,18 +83,20 @@ defmodule RequestSeal.Conformance.Surfaces do
   def signed_path(_root, %{"inputs" => inputs}) do
     alias RequestSeal.Plug.Scope
 
+    body = if inputs["body"] == nil, do: "", else: Jason.encode!(inputs["body"])
+
     conn =
       RequestSeal.SignedPathTestSupport.verified(
         C.bytes(inputs["target"]),
-        inputs["components"]
+        inputs["components"],
+        body: body,
+        parse_body: Map.get(inputs, "parse_body", body != "")
       )
 
     conn =
       Enum.reduce(inputs["headers"], conn, fn [name, value], conn ->
         Plug.Conn.put_req_header(conn, name, C.bytes(value))
       end)
-
-    conn = if inputs["body"] == nil, do: conn, else: %{conn | body_params: inputs["body"]}
 
     options =
       Scope.init(

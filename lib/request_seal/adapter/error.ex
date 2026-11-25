@@ -18,8 +18,8 @@ defmodule RequestSeal.Adapter.Error do
   `:untrusted_proxy`, and `:request_rejected` (with a bounded core source error).
   Scope reports `:unverified`, `:path_not_covered`, `:path_rewritten`,
   `:ambiguous_path`, `:template_mismatch`, `:invalid_scope`, `:scope_in_header`,
-  `:scope_in_query`, `:invalid_query`, `:scope_in_body`, `:tenant_mismatch`, or
-  `:already_scoped` at stage `:scope`.
+  `:scope_in_query`, `:invalid_query`, `:scope_in_body`, `:body_uninspected`,
+  `:tenant_mismatch`, `:tenant_lookup_timeout`, or `:already_scoped` at stage `:scope`.
   Plug uses `:unsupported_component` when required or covered exact-target
   evidence is unavailable, including target-dependent related-request signing.
   `source` is a bounded core, custody, or message error, never a framework exception.
@@ -75,6 +75,8 @@ defmodule RequestSeal.Adapter.Error do
           | :scope_in_query
           | :invalid_query
           | :scope_in_body
+          | :body_uninspected
+          | :tenant_lookup_timeout
           | :tenant_mismatch
           | :already_scoped
   @type t :: %__MODULE__{

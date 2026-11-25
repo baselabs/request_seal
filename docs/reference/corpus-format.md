@@ -108,7 +108,7 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `jws.sign`, `jws.verify`, `jwe.decrypt`, `nested.decrypt` | Compact bytes or protected occurrence pairs, keys and pinned policy | Exact compact bytes or verified/decrypted `payload` |
 | `web_bot_auth.verify` | Message, injected directory body, trusted origins, explicit clock and policy | Per-label canonical verification facts |
 | `discovery.body` | Injected body, source kind/location, limits and evaluation clock | Public key thumbprints |
-| `plug.signed_path/v1` | Origin-form target bytes, Signature-Input component list, route template and capture name, trusted principal tenant bytes, ordered header pairs and optional parsed body | Tenant byte tag |
+| `plug.signed_path/v1` | Origin-form target bytes, Signature-Input component list, route template and capture name, trusted principal tenant bytes, ordered header pairs and optional JSON body with a parser enabled by default | Tenant byte tag |
 | `replay.claim` | Namespace/key bytes, created/expires/max-age/skew, clock | Retention end and optional lowercase hexadecimal row |
 | `profile.name` | Package/kind pair and bounded metadata | `valid` |
 

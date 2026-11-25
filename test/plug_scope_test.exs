@@ -1,16 +1,42 @@
+defmodule RequestSeal.PlugScopeTest.Forwarded do
+  @moduledoc false
+  @behaviour Plug
+
+  @impl true
+  def init(opts), do: opts
+
+  @impl true
+  def call(conn, _opts) do
+    conn
+    |> Plug.Conn.put_private(:scope_forward, {conn.script_name, conn.path_info})
+    |> RequestSeal.Plug.Scope.call(conn.private.scope_options)
+  end
+end
+
+defmodule RequestSeal.PlugScopeTest.Router do
+  @moduledoc false
+  use Plug.Router
+
+  plug :match
+  plug :dispatch
+
+  forward "/teams", to: RequestSeal.PlugScopeTest.Forwarded
+end
+
 defmodule RequestSeal.PlugScopeTest do
   use ExUnit.Case, async: true
 
   alias RequestSeal.Plug, as: SealPlug
   alias RequestSeal.Plug.{Scope, Verify}
+  alias RequestSeal.PlugScopeTest.Router
+  alias RequestSeal.Test.Ash.PathRecord
   import RequestSeal.SignedPathTestSupport
 
   @covered ~s[("@method" "@path")]
 
   test "uses covered bytes across a router forward and maps the tenant into Ash" do
-    conn = verified("/teams/%61lpha/items", @covered)
-    conn = %{conn | script_name: ["teams"], path_info: ["%61lpha", "items"]}
-    conn = Scope.call(conn, options())
+    conn = verified("/teams/alpha/items", @covered) |> forward_through_router()
+    assert conn.private.scope_forward == {["teams"], ["alpha", "items"]}
 
     assert {:ok, %{tenant: "alpha", captures: %{"tenant" => "alpha"}}} = SealPlug.scope(conn)
 
@@ -45,7 +71,8 @@ defmodule RequestSeal.PlugScopeTest do
           "/teams/al%2Fpha",
           "/teams/%252F",
           "/teams/%00",
-          "/teams/alpha/%5C"
+          "/teams/alpha/%5C",
+          "/teams/%61lpha"
         ] do
       assert refused(verified(path, @covered), :ambiguous_path)
     end
@@ -59,6 +86,64 @@ defmodule RequestSeal.PlugScopeTest do
 
     assert {:error, %{reason: :invalid_options}} = Scope.new(attrs(principal_tenant: nil))
     assert {:error, %{reason: :invalid_options}} = Scope.new(attrs() ++ [tenant: :tenant])
+  end
+
+  test "the router rejects alternate spellings before binding a tenant" do
+    for {path, reason} <- [
+          {"/teams/%61lpha/items", :ambiguous_path},
+          {"/teams/Alpha/items", :invalid_scope}
+        ] do
+      conn = verified(path, @covered) |> forward_through_router()
+      assert :error = SealPlug.scope(conn)
+      assert {:error, %{reason: ^reason}} = conn.private.request_seal.scope
+    end
+  end
+
+  test "a fully parsed JSON body is inspected recursively before lookup" do
+    target = "/teams/alpha/items"
+    accepted = verified(target, @covered, body: ~s({"items":[{"count":1}]}))
+    assert {:ok, %{tenant: "alpha"}} = SealPlug.scope(Scope.call(accepted, options()))
+
+    nested = ~s({"items":[{"tenant_id":"other"}]})
+    assert refused(verified(target, @covered, body: nested), :scope_in_body)
+    assert refused(
+             verified(target, @covered, body: nested, parse_body: false),
+             :body_uninspected
+           )
+  end
+
+  test "the principal lookup is cancelled at its configured deadline" do
+    parent = self()
+
+    lookup = fn _ ->
+      send(parent, {:lookup, self()})
+
+      receive do
+        :complete -> {:ok, "alpha"}
+      end
+    end
+
+    conn = verified("/teams/alpha/items", @covered)
+    assert refused(conn, :tenant_lookup_timeout, options(principal_tenant: lookup, lookup_timeout: 100))
+    assert_received {:lookup, worker}
+    refute Process.alive?(worker)
+  end
+
+  test "a forwarded signed path scopes a real Ash policy on own and foreign records" do
+    conn = verified("/teams/alpha/items", @covered) |> forward_through_router()
+    binding = %{actor: fn _ -> :error end, unattributed: :anonymous}
+    assert {:ok, %{tenant: "alpha", actor: nil, principal: :unattributed} = scope} =
+             Scope.ash_scope(conn, binding)
+
+    own = row("alpha")
+    foreign = row("beta")
+    opts = RequestSeal.Ash.Scope.to_opts(scope)
+    assert {:error, %Ash.Error.Forbidden{}} = Ash.destroy(foreign, opts)
+    assert :ok = Ash.destroy(own, opts)
+
+    assert {:ok, []} = Ash.read(PathRecord, tenant: "alpha", authorize?: false)
+    assert {:ok, [%{id: id}]} = Ash.read(PathRecord, tenant: "beta", authorize?: false)
+    assert id == foreign.id
   end
 
   test "refuses competing selectors in header, encoded query, and fetched body" do
@@ -95,6 +180,18 @@ defmodule RequestSeal.PlugScopeTest do
     assert {:ok, %{tenant: ^uuid}} =
              SealPlug.scope(Scope.call(verified("/teams/" <> uuid, @covered), opts))
     assert refused(verified("/teams/" <> String.upcase(uuid), @covered), :invalid_scope, opts)
+  end
+
+  defp forward_through_router(conn) do
+    conn
+    |> Plug.Conn.put_private(:scope_options, options())
+    |> Router.call(Router.init([]))
+  end
+
+  defp row(tenant) do
+    PathRecord
+    |> Ash.Changeset.for_create(:create, %{}, tenant: tenant, authorize?: false)
+    |> Ash.create!()
   end
 
   defp refused(conn, reason, options \\ options()) do

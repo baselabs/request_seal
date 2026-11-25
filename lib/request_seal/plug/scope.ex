@@ -9,7 +9,9 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     @behaviour Plug
     alias RequestSeal.Adapter.Error
-    alias RequestSeal.Plug.State
+    alias RequestSeal.Custody
+    alias RequestSeal.Custody.Context
+    alias RequestSeal.Plug.{Delivery, State}
 
     @enforce_keys [:template, :tenant, :principal_tenant, :on_reject]
     @derive {Inspect, only: [:validator]}
@@ -19,6 +21,7 @@ if Code.ensure_loaded?(Plug.Conn) do
       :principal_tenant,
       :on_reject,
       validator: :token,
+      lookup_timeout: 1_000,
       refuse_names: ["tenant", "tenant_id"],
       refuse_headers: ["x-tenant", "x-tenant-id"]
     ]
@@ -31,9 +34,9 @@ if Code.ensure_loaded?(Plug.Conn) do
           }
 
     @required [:template, :tenant, :principal_tenant, :on_reject]
-    @keys @required ++ [:validator, :refuse_names, :refuse_headers]
+    @keys @required ++ [:validator, :lookup_timeout, :refuse_names, :refuse_headers]
     @literal ~r/\A[A-Za-z0-9._~-]{1,128}\z/
-    @token ~r/\A[A-Za-z0-9_-]{1,128}\z/
+    @token ~r/\A[a-z0-9_-]{1,128}\z/
     @uuid ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/
 
     @doc """
@@ -47,7 +50,9 @@ if Code.ensure_loaded?(Plug.Conn) do
     Literal segments use URI unreserved characters. Capture names are unique
     lowercase names with digits and underscores. A final `*` permits additional
     safe segments. The optional `:validator` is `:token` by default or `:uuid`
-    for lowercase UUID text. Optional `:refuse_names` and `:refuse_headers` add
+    for lowercase UUID text. Token captures also use lowercase ASCII.
+    `:lookup_timeout` bounds principal mapping in milliseconds (1–30,000,
+    default 1,000). Optional `:refuse_names` and `:refuse_headers` add
     competing selectors to the defaults. Malformed options return
     `{:error, %RequestSeal.Adapter.Error{reason: :invalid_options}}`.
     """
@@ -68,6 +73,7 @@ if Code.ensure_loaded?(Plug.Conn) do
            true <- is_function(opts.principal_tenant, 1),
            true <- valid_rejection?(opts.on_reject),
            true <- opts.validator in [:token, :uuid],
+           true <- is_integer(opts.lookup_timeout) and opts.lookup_timeout in 1..30_000,
            true <- names?(opts.refuse_names),
            true <- names?(opts.refuse_headers) and Enum.all?(opts.refuse_headers, &header?/1) do
         {:ok,
@@ -99,6 +105,11 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     @doc """
     Binds scope once using the captured path and the verified signature coverage.
+
+    Nonempty bodies must have been fully read from Capture's retained adapter
+    and parsed into a map by a configured parser. Nested maps and lists are
+    inspected for selectors. Percent escapes and empty or dot segments refuse
+    before any capture is bound.
 
     Refusals are stored as bounded adapter errors at stage `:scope`. With
     `{:halt, status}` the plug sends an empty response and halts. Read an accepted
@@ -153,9 +164,9 @@ if Code.ensure_loaded?(Plug.Conn) do
            :ok <- validate(captures, opts.validator),
            :ok <- refuse_header(conn, opts.refuse_headers),
            :ok <- refuse_query(conn, query, opts.refuse_names),
-           :ok <- refuse_body(conn.body_params, opts.refuse_names),
+           :ok <- refuse_body(conn, state.capture.message.body.bytes, opts.refuse_names),
            tenant = Map.fetch!(captures, opts.tenant),
-           :ok <- agree(opts.principal_tenant, verification.principal, tenant) do
+           :ok <- agree(opts, verification.principal, tenant) do
         {:ok, %{tenant: tenant, captures: captures}}
       end
     end
@@ -178,26 +189,10 @@ if Code.ensure_loaded?(Plug.Conn) do
     defp segments("/" <> path, conn) do
       raw = :binary.split(path, "/", [:global])
 
-      if Enum.reject(raw, &(&1 == "")) == conn.script_name ++ conn.path_info do
-        decode_segments(raw)
-      else
-        reject(:path_rewritten)
-      end
-    end
-
-    defp decode_segments(raw) do
-      Enum.reduce_while(raw, {:ok, []}, fn segment, {:ok, acc} ->
-        decoded = URI.decode(segment)
-
-        if safe_segment?(decoded) do
-          {:cont, {:ok, [decoded | acc]}}
-        else
-          {:halt, reject(:ambiguous_path)}
-        end
-      end)
-      |> case do
-        {:ok, decoded} -> {:ok, Enum.reverse(decoded)}
-        error -> error
+      cond do
+        not Enum.all?(raw, &safe_segment?/1) -> reject(:ambiguous_path)
+        raw != conn.script_name ++ conn.path_info -> reject(:path_rewritten)
+        true -> {:ok, raw}
       end
     end
 
@@ -242,25 +237,49 @@ if Code.ensure_loaded?(Plug.Conn) do
       _ in [Plug.Conn.InvalidQueryError] -> reject(:invalid_query)
     end
 
-    defp refuse_body(params, names) do
-      if selector?(params, names), do: reject(:scope_in_body), else: :ok
+    defp refuse_body(conn, bytes, names) do
+      params = conn.body_params
+
+      cond do
+        bytes != "" and
+            (is_struct(params, Plug.Conn.Unfetched) or not is_map(params) or
+               not Delivery.replayed?(conn.adapter) or
+               not Delivery.replay_matches?(conn.adapter, bytes)) ->
+          reject(:body_uninspected)
+
+        selector?(params, names) ->
+          reject(:scope_in_body)
+
+        true ->
+          :ok
+      end
     end
 
-    defp selector?(%Plug.Conn.Unfetched{}, _), do: false
+    defp selector?(params, _) when is_struct(params), do: false
 
-    defp selector?(params, names) do
-      Enum.any?(Map.keys(params), fn
-        key when is_atom(key) -> Atom.to_string(key) in names
-        key -> key in names
+    defp selector?(params, names) when is_map(params) do
+      Enum.any?(params, fn {key, value} ->
+        name = if is_atom(key), do: Atom.to_string(key), else: key
+        name in names or selector?(value, names)
       end)
     end
 
-    defp agree(fun, principal, tenant) do
-      if fun.(principal) == {:ok, tenant}, do: :ok, else: reject(:tenant_mismatch)
-    rescue
-      _ -> reject(:tenant_mismatch)
-    catch
-      _, _ -> reject(:tenant_mismatch)
+    defp selector?(params, names) when is_list(params),
+      do: Enum.any?(params, &selector?(&1, names))
+
+    defp selector?(_, _), do: false
+
+    defp agree(opts, principal, tenant) do
+      context = %Context{
+        owner: self(),
+        deadline: System.monotonic_time(:millisecond) + opts.lookup_timeout
+      }
+
+      case Custody.run(context, fn -> {:ok, opts.principal_tenant.(principal)} end) do
+        {:ok, {:ok, ^tenant}} -> :ok
+        {:error, %{reason: :deadline_exceeded}} -> reject(:tenant_lookup_timeout)
+        _ -> reject(:tenant_mismatch)
+      end
     end
 
     defp compile("/" <> path) when byte_size(path) in 1..2048 do

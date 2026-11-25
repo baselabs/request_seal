@@ -126,7 +126,10 @@ This ETS resource stores documents by tenant and permits reads by a reader actor
 For a Plug connection with an accepted [signed-path binding](phoenix-and-plug.md),
 call `RequestSeal.Plug.Scope.ash_scope(conn, binding)` with the usual actor and
 unattributed choices. The tenant comes from the bound path and still flows through
-the resource's multitenancy and policy checks.
+the resource's multitenancy and policy checks. Tenant agreement does not
+create an attributed signer. For loaded records, use `Scope.to_opts/1` or
+pass the bound tenant explicitly so record metadata cannot select a different
+tenant. Keep a resource policy that checks the original record's tenant.
 
 ## 2. Map the trusted principal and run an authorized read
 
