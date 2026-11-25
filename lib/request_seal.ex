@@ -222,10 +222,9 @@ defmodule RequestSeal do
   be computed or checked, and both signer kinds run through custody's
   monitored deadline and cancellation workers. Any other map is the explicit
   `t:signature_spec/0`: a caller-built Signature-Input is signed as given and
-  no metadata is generated. The explicit form preserves caller metadata
-  beyond what `verify/3` accepts — a `nonce` parameter above verification's
-  1,024-byte bound still signs, and the verifier rejects it with `:limit` —
-  so keep nonces within that bound when signing for RequestSeal verifiers.
+  no metadata is generated. Both forms limit a `nonce` to 1,024 bytes.
+  An oversized nonce in the explicit form returns `:signature_base_failed`
+  with detail `:limit` before custody signs.
   Both forms append a `Signature-Input` and a
   `Signature` header occurrence with caller provenance, then revalidate the
   message and both dictionaries. No framework is required; Req and Finch

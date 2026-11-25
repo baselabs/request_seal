@@ -5,6 +5,7 @@ defmodule RequestSeal.ReplayTest do
   alias RequestSeal.Custody.Context
   @root Path.join(__DIR__, "fixtures")
   @vectors :json.decode(File.read!(Path.join(@root, "verification/rfc9421.json")))
+  @oversized_nonce :json.decode(File.read!(Path.join(@root, "verification/oversized-nonce.json")))
   @bases :json.decode(File.read!(Path.join(@root, "signature_base/rfc9421.json")))
   @created 1_618_884_473
 
@@ -269,7 +270,7 @@ defmodule RequestSeal.ReplayTest do
       error(verify(resign(message(), "", value), p), :missing_replay_identifier, :replay)
     end
 
-    error(verify(resign(message(), "", String.duplicate("n", 1025)), p), :limit, :input)
+    error(verify(oversized_nonce_message(), p), :limit, :input)
     refute_received :committed
     assert {:ok, 0} = ETS.sweep(ctx.pid, @created + 1000)
   end
@@ -300,7 +301,7 @@ defmodule RequestSeal.ReplayTest do
         end
     }
 
-    oversized = resign(message(), "", String.duplicate("n", 1025))
+    oversized = oversized_nonce_message()
 
     for replay <- [p.replay, :not_required] do
       error(verify(oversized, %{p | replay: replay}), :limit, :input)
@@ -749,6 +750,12 @@ defmodule RequestSeal.ReplayTest do
     do: %{m | fields: Enum.reject(m.fields, &(String.downcase(&1.name) == n)) ++ [field(n, v)]}
 
   defp verify(m, p), do: RequestSeal.verify(m, p, label: "sig-b21")
+
+  defp oversized_nonce_message do
+    message()
+    |> rewrite("signature-input", @oversized_nonce["signature_input"])
+    |> rewrite("signature", @oversized_nonce["signature"])
+  end
 
   defp error(result, reason, layer),
     do: assert(match?({:error, %{reason: ^reason, layer: ^layer, retryable: false}}, result))
