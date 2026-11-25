@@ -50,7 +50,7 @@ defmodule RequestSeal.CustodyGateTest do
 
     results =
       1..4
-      |> Task.async_stream(fn _ -> Custody.sign(handle, ctx.base, issued_for: :release) end)
+      |> Task.async_stream(fn _ -> sign(handle, ctx.base) end)
       |> Enum.map(fn {:ok, result} -> result end)
 
     assert [{:ok, signature}] = Enum.filter(results, &match?({:ok, _}, &1))
@@ -69,7 +69,7 @@ defmodule RequestSeal.CustodyGateTest do
     {:ok, handle} =
       gated(%{ctx.config | port: fn _, _ -> send(owner, :port_called) end})
 
-    assert_error(Custody.sign(handle, "invalid"), :gate_malformed_base)
+    assert_error(sign(handle, "invalid"), :gate_malformed_base)
 
     for input <- [
           String.replace(@input, ~s[ "@path"], ""),
@@ -78,10 +78,54 @@ defmodule RequestSeal.CustodyGateTest do
           String.replace(@input, ~s[keyid="local"], ~s[keyid="other"])
         ] do
       {:ok, base} = SignatureBase.build(ctx.message, input)
-      assert_error(Custody.sign(handle, base), :gate_coverage)
+      assert_error(sign(handle, base), :gate_coverage)
     end
 
     refute_received :port_called
+  end
+
+  test "invalid wire types leave the port, replay store and recorder untouched", ctx do
+    owner = self()
+    admission = ctx.admission
+
+    config =
+      ctx.config
+      |> Map.put(:port, fn _, _ ->
+        send(owner, :port_called)
+        {:allow, admission}
+      end)
+      |> Map.put(:record, fn _, _ ->
+        send(owner, :record_called)
+        :ok
+      end)
+
+    {:ok, handle} = gated(config)
+
+    for {from, to} <- [
+          {~s[tag="release"], "tag=release"},
+          {~s[nonce="one"], "nonce=one"},
+          {~s[keyid="local"], "keyid=local"},
+          {"created=1700000000", ~s[created="1700000000"]}
+        ] do
+      malformed = String.replace(ctx.base, from, to)
+      assert {:ok, _} = SignatureBase.parse(malformed)
+      assert_error(sign(handle, malformed), :gate_malformed_base)
+    end
+
+    refute_received :port_called
+    refute_received :record_called
+    assert {:ok, 0} = ETS.sweep(ctx.store, @now + 31)
+
+    assert {:ok, _} = sign(handle, ctx.base)
+    assert_received :port_called
+    assert_received :record_called
+  end
+
+  test "an unassigned gated key still refuses raw custody use", ctx do
+    {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+    {:ok, handle} = Gate.new("ed25519", {:ed25519, seed}, ctx.config)
+    assert_error(Custody.sign(handle, ctx.base), :unsupported_operation)
+    assert {:ok, _} = Custody.sign(handle, ctx.base, operation: :http)
   end
 
   test "port refusals, invalid replies, mismatches and time bounds are closed", ctx do
@@ -93,27 +137,27 @@ defmodule RequestSeal.CustodyGateTest do
           {{:allow, %{ctx.admission | not_after: @now + 29}}, :gate_window}
         ] do
       {:ok, handle} = gated(%{ctx.config | port: fn _, _ -> response end})
-      assert_error(Custody.sign(handle, ctx.base), reason)
+      assert_error(sign(handle, ctx.base), reason)
       assert :ok = Local.release(handle)
     end
 
     {:ok, faulted} = gated(%{ctx.config | port: fn _, _ -> raise "unexpected" end})
-    assert_error(Custody.sign(faulted, ctx.base), :gate_unavailable)
+    assert_error(sign(faulted, ctx.base), :gate_unavailable)
 
     {:ok, expired} = gated(%{ctx.config | clock: fn -> @now + 30 end})
-    assert_error(Custody.sign(expired, ctx.base), :gate_window)
+    assert_error(sign(expired, ctx.base), :gate_window)
 
     {:ok, wrong_clock} = gated(%{ctx.config | clock: fn -> :bad end})
-    assert_error(Custody.sign(wrong_clock, ctx.base), :gate_window)
+    assert_error(sign(wrong_clock, ctx.base), :gate_window)
   end
 
   test "record failure keeps the claim spent and store failures refuse signing", ctx do
     {:ok, handle} = gated(Map.put(ctx.config, :record, fn _, _ -> :error end))
-    assert_error(Custody.sign(handle, ctx.base), :gate_unrecorded)
-    assert_error(Custody.sign(handle, ctx.base), :gate_spent)
+    assert_error(sign(handle, ctx.base), :gate_unrecorded)
+    assert_error(sign(handle, ctx.base), :gate_spent)
 
     GenServer.stop(ctx.store)
-    assert_error(Custody.sign(handle, ctx.base), :gate_store_failed)
+    assert_error(sign(handle, ctx.base), :gate_store_failed)
   end
 
   test "externally checked admission returns the exact base digest and spends atomically", ctx do
@@ -146,6 +190,9 @@ defmodule RequestSeal.CustodyGateTest do
       :unsupported_algorithm
     )
   end
+
+  defp sign(handle, bytes),
+    do: Custody.sign(handle, bytes, operation: :http, issued_for: :release)
 
   defp gated(config) do
     {_, seed} = :crypto.generate_key(:eddsa, :ed25519)

@@ -13,7 +13,8 @@ defmodule RequestSeal.Custody.SSHAgent do
   an agent, loads keys, or accesses private files. The caller owns agent access and
   authorization. An OpenSSH agent is a separate process, not an HSM guarantee.
 
-  The optional `:issued_for` purpose is retained with the agent reference.
+  A sensitive process retains the algorithm, socket, public key and optional
+  purpose. It ends on creator exit or `RequestSeal.Custody.release/1`.
   `RequestSeal.Custody.binding/2` checks live agent membership.
 
   `new/4` lists the supported algorithms; RSA PKCS #1 v1.5 SHA-256 signing uses
@@ -109,7 +110,7 @@ defmodule RequestSeal.Custody.SSHAgent do
           {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
   def new(algorithm, socket_path, public, opts \\ []) do
     Support.safe(fn ->
-      Support.timeout(opts, [:timeout, :issued_for])
+      timeout = Support.timeout(opts, [:timeout, :issued_for])
       issued_for = Keyword.get(opts, :issued_for)
       ensure(KeyHandle.purpose?(issued_for), :invalid_options)
       {jose, _} = resolved = Algorithm.resolve(algorithm)
@@ -122,30 +123,143 @@ defmodule RequestSeal.Custody.SSHAgent do
       )
 
       PublicKey.bind!(public, resolved)
-      provisional = handle(algorithm, socket_path, public, false, issued_for)
-      Custody.sign(provisional, "", Keyword.take(opts, [:timeout])) |> unwrap()
-      {:ok, handle(algorithm, socket_path, public, true, issued_for)}
+      context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
+      Custody.run(context, fn -> sign_at(socket_path, public, algorithm, "", false, context) end)
+      |> unwrap()
+
+      {:ok,
+       %KeyHandle{
+         custodian: __MODULE__,
+         algorithm: algorithm,
+         capabilities: [:sign, :verify],
+         issued_for: issued_for,
+         operation_family: KeyHandle.family(algorithm),
+         ref: retain({algorithm, socket_path, public, issued_for})
+       }}
     end)
   end
 
-  defp handle(algorithm, socket, public, check, issued_for) do
-    state = {algorithm, socket, public, check, issued_for}
+  defp retain(state) do
+    owner = self()
+    token = make_ref()
 
-    %KeyHandle{
-      custodian: __MODULE__,
-      algorithm: algorithm,
-      capabilities: [:sign, :verify],
-      issued_for: issued_for,
-      operation_family: KeyHandle.family(algorithm),
-      ref: fn -> state end
-    }
+    pid =
+      spawn(fn ->
+        Process.flag(:sensitive, true)
+        loop(Process.monitor(owner), token, state)
+      end)
+
+    address({pid, token})
+  end
+
+  defp loop(owner, token, state) do
+    receive do
+      {:DOWN, ^owner, :process, _, _} ->
+        :ok
+
+      {:release, ^token} ->
+        :ok
+
+      {:binding, ^token, use, context, reply} when is_reference(reply) ->
+        result = Support.safe(fn -> retained_binding(state, use, context) end, :invalid_handle)
+        send(reply, {reply, result})
+        loop(owner, token, state)
+
+      _ ->
+        loop(owner, token, state)
+    end
+  end
+
+  # Compare the constructor's closure identity without calling a replacement.
+  # Its environment contains only the address of the custodian's retained state.
+  defp address(value), do: fn -> value end
+
+  defp address!(ref) when is_function(ref, 0) do
+    case :erlang.fun_info(ref, :env) do
+      {:env, [{pid, token} = value]} when is_pid(pid) and is_reference(token) ->
+        ensure(ref === address(value), :invalid_handle)
+        value
+
+      _ ->
+        fail(:invalid_handle)
+    end
+  end
+
+  defp address!(_), do: fail(:invalid_handle)
+
+  defp retained_binding({algorithm, _, _, purpose} = state, use, context) do
+    case use do
+      {:signing, requested} ->
+        ensure(algorithm == requested, :key_mismatch)
+        Support.signing_binding!(algorithm, purpose, context, false)
+
+      :binding ->
+        Support.held_binding!(algorithm, purpose, context)
+
+      :public ->
+        :ok
+    end
+
+    {:ok, state}
+  end
+
+  defp held!(ref, context, use) do
+    {pid, token} = address!(ref)
+    monitor = Process.monitor(pid)
+    reply = :erlang.alias()
+
+    try do
+      send(pid, {:binding, token, use, context, reply})
+
+      receive do
+        {^reply, result} ->
+          ensure(Context.remaining(context) > 0, :deadline_exceeded)
+          unwrap(result)
+
+
+        {:DOWN, ^monitor, :process, ^pid, _} -> fail(:key_not_found)
+      after
+        Context.remaining(context) -> fail(:deadline_exceeded)
+      end
+    after
+      :erlang.unalias(reply)
+      Process.demonitor(monitor, [:flush])
+    end
+  end
+
+  defp lookup_context do
+    %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 5_000}
+  end
+
+  @impl true
+  def release(ref, context) do
+    {pid, token} = address!(ref)
+    monitor = Process.monitor(pid)
+
+    try do
+      send(pid, {:release, token})
+
+      receive do
+        {:DOWN, ^monitor, :process, ^pid, _} -> :ok
+      after
+        Context.remaining(context) -> {:error, :deadline_exceeded}
+      end
+    after
+      Process.demonitor(monitor, [:flush])
+    end
   end
 
   @impl true
   def sign(ref, algorithm, bytes, context)
       when is_binary(bytes) and byte_size(bytes) <= @max_bytes_ceiling do
-    {bound, socket_path, public, check, issued_for} = ref.()
-    check_binding!(algorithm, bound, issued_for, context)
+    {bound, socket_path, public, issued_for} = held!(ref, context, {:signing, algorithm})
+    Support.signing_bytes!(bytes, issued_for, bound)
+    sign_at(socket_path, public, bound, bytes, true, context)
+  end
+
+  def sign(_, _, _, _), do: {:error, :invalid_data}
+
+  defp sign_at(socket_path, public, algorithm, bytes, check, context) do
     blob = Wire.key_blob(public)
     {:ok, socket} = connect(socket_path, context)
 
@@ -171,13 +285,11 @@ defmodule RequestSeal.Custody.SSHAgent do
     end
   end
 
-  def sign(_, _, _, _), do: {:error, :invalid_data}
-
   @impl true
   def verify(ref, algorithm, bytes, signature, context)
       when is_binary(bytes) and byte_size(bytes) <= @max_bytes_ceiling do
-    {bound, _, public, _, issued_for} = ref.()
-    check_binding!(algorithm, bound, issued_for, context)
+    {bound, _, public, issued_for} = held!(ref, context, {:signing, algorithm})
+    Support.signing_bytes!(bytes, issued_for, bound)
     Crypto.verify(algorithm, bytes, signature, public, max_bytes: Crypto.max_bytes_ceiling())
   end
 
@@ -185,19 +297,19 @@ defmodule RequestSeal.Custody.SSHAgent do
 
   @impl true
   def public_key(ref) do
-    {_, _, public, _, _} = ref.()
+    {_, _, public, _} = held!(ref, lookup_context(), :public)
     {:ok, public}
   end
 
   @impl true
   def identity(ref) do
-    {_, _, public, _, _} = ref.()
+    {_, _, public, _} = held!(ref, lookup_context(), :public)
     %KeyIdentity{kind: :public, value: KeyIdentity.normalize(public.material)}
   end
 
   @impl true
   def binding(ref, context) do
-    {algorithm, socket_path, public, _, issued_for} = ref.()
+    {algorithm, socket_path, public, issued_for} = held!(ref, context, :binding)
     blob = Wire.key_blob(public)
     {:ok, socket} = connect(socket_path, context)
 
@@ -208,14 +320,6 @@ defmodule RequestSeal.Custody.SSHAgent do
     after
       :gen_tcp.close(socket)
     end
-  end
-
-  defp check_binding!(algorithm, bound, purpose, context) do
-    ensure(
-      algorithm == bound and context.issued_for == purpose and
-        context.operation_family in [nil, KeyHandle.family(bound)],
-      :key_mismatch
-    )
   end
 
   defp connect(path, context) do

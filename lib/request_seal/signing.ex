@@ -344,7 +344,7 @@ defmodule RequestSeal.Signing do
 
     purpose = Map.get(spec, :issued_for)
 
-    if purpose != nil and purpose != signer.issued_for,
+    if purpose != signer.issued_for,
       do: fail(:invalid_options, RequestSeal.Error.new(:issued_for_mismatch, :input))
 
     ensure(not body_required?(input, spec) or message.body.state == :retained, :body_unavailable)
@@ -383,10 +383,10 @@ defmodule RequestSeal.Signing do
   end
 
   # Both HTTP signing forms share output bounds and custody error normalization.
-  def custody_sign(handle, base, timeout) do
+  def custody_sign(handle, base, timeout, purpose) do
     start = System.monotonic_time()
 
-    result = custody_sign_result(handle, base, timeout)
+    result = custody_sign_result(handle, base, timeout, purpose)
 
     meta =
       case result do
@@ -403,8 +403,8 @@ defmodule RequestSeal.Signing do
     result
   end
 
-  defp custody_sign_result(handle, base, timeout) do
-    case Custody.sign(handle, base, timeout: timeout) do
+  defp custody_sign_result(handle, base, timeout, purpose) do
+    case Custody.sign(handle, base, timeout: timeout, issued_for: purpose, operation: :http) do
       {:ok, signature} when is_binary(signature) and byte_size(signature) in 1..1024 ->
         {:ok, signature}
 

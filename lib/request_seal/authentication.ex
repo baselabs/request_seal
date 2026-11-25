@@ -94,7 +94,7 @@ defmodule RequestSeal.Authentication do
           case built do
             {:ok, bytes} ->
               protect(fn ->
-                verify_bytes(algorithm, bytes, elem(signature.value, 1), key)
+                verify_bytes(algorithm, bytes, elem(signature.value, 1), key, policy.require_issued_for)
                 content = content(message, input, policy.content, opts)
 
                 replay =
@@ -191,7 +191,7 @@ defmodule RequestSeal.Authentication do
 
       ensure(signer.algorithm == spec.algorithm, :signer_algorithm_mismatch, :input)
       purpose = Map.get(spec, :issued_for)
-      ensure(purpose == nil or purpose == signer.issued_for, :issued_for_mismatch, :input)
+      ensure(purpose == signer.issued_for, :issued_for_mismatch, :input)
 
       ensure(Message.validate(message) == :ok, :invalid_message, :input)
       inputs = dictionary(message, "signature-input", 16, false)
@@ -215,7 +215,7 @@ defmodule RequestSeal.Authentication do
       match_algorithm(params, spec.algorithm, :input)
       bytes = build(message, input, schemas)
 
-      signature = sign_bytes(signer, spec.algorithm, bytes, timeout)
+      signature = sign_bytes(signer, purpose, bytes, timeout)
 
       input_wire =
         case SF.serialize(
@@ -253,8 +253,8 @@ defmodule RequestSeal.Authentication do
     end)
   end
 
-  defp sign_bytes(%KeyHandle{} = handle, _, bytes, timeout) do
-    case RequestSeal.Signing.custody_sign(handle, bytes, timeout) do
+  defp sign_bytes(%KeyHandle{} = handle, purpose, bytes, timeout) do
+    case RequestSeal.Signing.custody_sign(handle, bytes, timeout, purpose) do
       {:ok, sig} -> sig
       {:error, %Custody.Error{} = source} -> fail(:signing_failed, :crypto, nil, source)
     end
@@ -413,7 +413,11 @@ defmodule RequestSeal.Authentication do
 
         if is_struct(key, KeyHandle) do
           ensure(key.algorithm == algorithm, :algorithm_mismatch, :key)
-          ensure(purpose == handle_purpose, :key_issued_for_mismatch, :key)
+          ensure(
+            purpose == handle_purpose and policy.require_issued_for == handle_purpose,
+            :key_issued_for_mismatch,
+            :key
+          )
         end
 
         ensure(
@@ -436,15 +440,15 @@ defmodule RequestSeal.Authentication do
     end
   end
 
-  defp verify_bytes(_, bytes, signature, %KeyHandle{} = handle) do
-    case Custody.verify(handle, bytes, signature) do
+  defp verify_bytes(_, bytes, signature, %KeyHandle{} = handle, purpose) do
+    case Custody.verify(handle, bytes, signature, issued_for: purpose, operation: :http) do
       :ok -> :ok
       {:error, %{reason: :invalid_signature}} -> fail(:invalid_signature, :crypto)
       _ -> fail(:verifier_failed, :crypto)
     end
   end
 
-  defp verify_bytes(algorithm, bytes, signature, key) do
+  defp verify_bytes(algorithm, bytes, signature, key, _) do
     case Crypto.verify(algorithm, bytes, signature, key) do
       :ok -> :ok
       {:error, %{reason: :invalid_signature}} -> fail(:invalid_signature, :crypto)

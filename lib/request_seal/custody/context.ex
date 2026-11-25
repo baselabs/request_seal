@@ -6,15 +6,17 @@ defmodule RequestSeal.Custody.Context do
   cancellation. The custody boundary also terminates its worker on either event.
   Closing a client connection does not undo a signature already produced by a peer.
 
-  The library stamps the handle's purpose and operation family on key-use
-  callbacks. Built-in custodians compare them with their retained binding.
+  The library stamps the requested purpose and operation independently of
+  the handle's metadata. Built-in custodians compare both with retained state.
   """
-  defstruct [:deadline, :owner, :issued_for, :operation_family]
+  defstruct [:deadline, :owner, :issued_for, :handle_purpose, :operation_family, operation: :raw]
 
   @type t :: %__MODULE__{
           deadline: integer(),
           owner: pid(),
           issued_for: atom() | nil,
+          handle_purpose: atom() | nil,
+          operation: :raw | :http | :jws,
           operation_family: RequestSeal.KeyHandle.family() | nil
         }
   @doc """

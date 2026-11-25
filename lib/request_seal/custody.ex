@@ -18,8 +18,9 @@ defmodule RequestSeal.Custody do
   Signing returns bytes; verification establishes mathematical validity only.
   Neither establishes identity attribution, authorization, or replay protection.
 
-  A signing or verification call can pass `:issued_for` to require a specific
-  handle purpose. Custom custodians supporting purpose-bound handles must
+  Purpose-bound keys require a matching `:issued_for` and the corresponding
+  `:operation` (`:http` or `:jws`) on signing and verification.
+  Raw signing and verification are available for unbound keys. Custom custodians supporting purpose-bound handles must
   compare it with held state via `RequestSeal.Custody.Context` before use.
 
   Custodians are trusted code: they must return only public keys and nonsecret
@@ -453,6 +454,10 @@ defmodule RequestSeal.Custody do
       (`:infinity` is refused). Default `5_000`.
     * `:max_bytes` - largest accepted `bytes` size, integer
       1–16,777,216 (`RequestSeal.Crypto.max_bytes_ceiling/0`). Default `1_048_576`.
+    * `:issued_for` - matches the retained purpose. Omission and nil select
+      unassigned custody.
+    * `:operation` - `:http` for canonical HTTP bases, `:jws` for compact JWS
+      signing input, or `:raw` (the default) for unassigned, ungated custody.
 
   Unknown, duplicate, out-of-range, or non-integer options return
   `:invalid_options` before the handle is checked.
@@ -501,7 +506,7 @@ defmodule RequestSeal.Custody do
         data!(bytes, max)
         [bytes]
       end,
-      [:timeout, :max_bytes, :issued_for]
+      [:timeout, :max_bytes, :issued_for, :operation]
     )
   end
 
@@ -526,6 +531,10 @@ defmodule RequestSeal.Custody do
       (`:infinity` is refused). Default `5_000`.
     * `:max_bytes` - largest accepted `bytes` size, integer
       1–16,777,216 (`RequestSeal.Crypto.max_bytes_ceiling/0`). Default `1_048_576`.
+    * `:issued_for` - matches the retained purpose. Omission and nil select
+      unassigned custody.
+    * `:operation` - `:http` for canonical HTTP bases, `:jws` for compact JWS
+      signing input, or `:raw` (the default) for unassigned, ungated custody.
 
   Unknown, duplicate, out-of-range, or non-integer options return
   `:invalid_options` before handle or capability validation.
@@ -577,7 +586,7 @@ defmodule RequestSeal.Custody do
         ensure(byte_size(signature) <= 16_384, :limit)
         [bytes, signature]
       end,
-      [:timeout, :max_bytes, :issued_for]
+      [:timeout, :max_bytes, :issued_for, :operation]
     )
   end
 
@@ -697,7 +706,16 @@ defmodule RequestSeal.Custody do
         handle!(handle)
         purpose = Keyword.get(opts, :issued_for)
         ensure(KeyHandle.purpose?(purpose), :invalid_options)
-        ensure(purpose == nil or purpose == handle.issued_for, :issued_for_mismatch)
+        protocol = Keyword.get(opts, :operation, :raw)
+        ensure(protocol in [:raw, :http, :jws], :invalid_options)
+
+        if op in [:sign, :verify] do
+          ensure(purpose == handle.issued_for, :issued_for_mismatch)
+
+          if purpose != nil do
+            ensure(protocol == KeyHandle.family(handle.algorithm), :unsupported_operation)
+          end
+        end
 
         ensure(
           op not in [:sign, :verify, :wrap] or op in handle.capabilities,
@@ -715,6 +733,8 @@ defmodule RequestSeal.Custody do
             %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout},
             handle
           )
+
+        context = %{context | issued_for: purpose, operation: protocol}
 
         case run(context, fn -> invoke(handle, op, args, context) end) do
           {:ok, :ok} when op in [:verify, :release] -> :ok
@@ -788,7 +808,7 @@ defmodule RequestSeal.Custody do
   defp bind_context(context, handle) do
     %{
       context
-      | issued_for: handle.issued_for,
+      | handle_purpose: handle.issued_for,
         operation_family: KeyHandle.family(handle.algorithm)
     }
   end
@@ -822,7 +842,8 @@ defmodule RequestSeal.Custody do
     case handle.custodian.binding(handle.ref, context) do
       {:ok, %{algorithm: algorithm, issued_for: issued_for, public_key: public} = binding}
       when map_size(binding) == 3 ->
-        ensure(algorithm == handle.algorithm and KeyHandle.purpose?(issued_for), :custodian_failure)
+        ensure(KeyHandle.purpose?(issued_for), :custodian_failure)
+        ensure(algorithm == handle.algorithm and issued_for == handle.issued_for, :key_mismatch)
 
         thumbprint =
           case public do

@@ -58,7 +58,6 @@ defmodule RequestSeal.Custody.Support do
   end
 
   def max_bytes(opts) do
-    options(opts, [:timeout, :max_bytes])
     value = Keyword.get(opts, :max_bytes, 1_048_576)
 
     ensure(
@@ -68,4 +67,54 @@ defmodule RequestSeal.Custody.Support do
 
     value
   end
+
+  # An operation context presents the requested use and the outer metadata
+  # separately. Only the custodian's retained state supplies the comparison.
+  def held_binding!(algorithm, purpose, context) do
+    ensure(
+      context.handle_purpose == purpose and
+        context.operation_family in [nil, RequestSeal.KeyHandle.family(algorithm)],
+      :key_mismatch
+    )
+  end
+
+  def signing_binding!(algorithm, purpose, context, gated?) do
+    held_binding!(algorithm, purpose, context)
+    ensure(context.issued_for == purpose, :issued_for_mismatch)
+
+    if purpose != nil or gated? do
+      family = RequestSeal.KeyHandle.family(algorithm)
+      ensure(context.operation == family and family in [:http, :jws], :unsupported_operation)
+    end
+  end
+
+  def signing_bytes!(_, nil, _), do: :ok
+
+  def signing_bytes!(bytes, _, algorithm) when is_binary(algorithm) do
+    case RequestSeal.SignatureBase.parse(bytes) do
+      {:ok, %{inner_list: input}} ->
+        ensure(
+          RequestSeal.SignatureFields.valid_inner?(input) and
+            RequestSeal.SignatureFields.parameters(input)["alg"] in [nil, algorithm],
+          :invalid_data
+        )
+
+      _ ->
+        fail(:invalid_data)
+    end
+  end
+
+  def signing_bytes!(bytes, _, {:jws, algorithm}) do
+    result =
+      RequestSeal.JOSE.Support.safe(fn ->
+        [protected, payload] = RequestSeal.JOSE.Support.compact(bytes, 2)
+        header = RequestSeal.JOSE.Header.parse(protected)
+        ensure(payload != "" and header["alg"] == algorithm, :invalid_data)
+        _ = RequestSeal.JOSE.Support.decode(payload)
+        :ok
+      end)
+
+    ensure(result == :ok, :invalid_data)
+  end
+
 end

@@ -14,16 +14,24 @@ describes limiting a key's purpose.
 
 Retain each key's exact algorithm and trusted purpose in custody. The handle
 exposes the operation family and purpose for selection. Built-in custodians
-verify the binding before key use. A binding read reports held public facts
-and an RFC 7638 thumbprint when public material exists. SSH identity reads
-confirm current membership.
+verify the binding before key use. SSH custody retains its assignment in a
+sensitive process and verifies the original agent binding independently of
+caller-visible fields. A binding read reports held public facts and an
+RFC 7638 thumbprint when public material exists. SSH binding reads confirm
+current agent membership.
 
-HTTP and compact JWS signing can require the assigned purpose. Generic HTTP
-verification can require a purpose from the trusted resolver. Purposes stay
-outside the wire format.
+Purpose assignments apply to signing and verification keys. An assigned key
+requires the matching purpose and protocol for both operations. An omitted
+or nil purpose works for an unassigned key. Assigned keys accept canonical
+HTTP bases or compact JWS signing inputs according to their retained family.
+Raw use refuses, and a JWS-bound key cannot sign an HTTP message. Existing
+unassigned custody continues to support raw use and explicitly selected HTTP
+JWS algorithms. Gated keys require HTTP operation even with no purpose.
+Purposes stay outside the wire format.
 
 Local HTTP signing may require approval inside the sensitive key process.
-A gate compares canonical covered components, tag, algorithm, optional key ID,
+A gate validates the typed HTTP Inner List before extracting any parameter
+value. It compares canonical covered components, tag, algorithm, optional key ID,
 and the approved digest, nonce, and time window. It consumes the decision
 under the operation deadline before signing. A configured recorder must
 succeed before return. Claims survive every subsequent failure.

@@ -40,7 +40,8 @@ defmodule RequestSeal.JOSE.JWS do
   ## Options
 
     * `:timeout` - integer milliseconds, 1 to 300,000. Default 5,000.
-    * `:issued_for` - optional purpose to match against the signing handle.
+    * `:issued_for` - required for an assigned handle. Omission and nil select
+      unassigned custody.
 
   ## Returns
 
@@ -83,14 +84,14 @@ defmodule RequestSeal.JOSE.JWS do
         ) :: {:ok, binary()} | {:error, RequestSeal.JOSE.Error.t()}
   def sign(header, payload, signer, opts \\ []) do
     safe(fn ->
-      timeout = signing_timeout(opts, signer)
+      {timeout, purpose} = signing_options(opts, signer)
       bytes(payload)
       ensure(payload != "", :detached_payload)
       {protected, h} = Header.serialize(header)
       alg = selected(h, :jws, algorithms(:jws))
       base = protected <> "." <> b64(payload)
       bytes(base)
-      signature = Support.sign(signer, alg, base, timeout)
+      signature = Support.sign(signer, alg, base, timeout, purpose)
       compact = base <> "." <> b64(signature)
       bytes(compact)
       {:ok, compact}
@@ -119,7 +120,8 @@ defmodule RequestSeal.JOSE.JWS do
   ## Options
 
     * `:timeout` - integer milliseconds, 1 to 300,000. Default 5,000.
-    * `:issued_for` - optional purpose to match against the signing handle.
+    * `:issued_for` - required for an assigned handle. Omission and nil select
+      unassigned custody.
 
   ## Returns
 
@@ -156,36 +158,38 @@ defmodule RequestSeal.JOSE.JWS do
           {:ok, binary()} | {:error, RequestSeal.JOSE.Error.t()}
   def sign_protected(protected_json, payload, signer, opts \\ []) do
     safe(fn ->
-      timeout = signing_timeout(opts, signer)
+      {timeout, purpose} = signing_options(opts, signer)
       bytes(payload)
       ensure(payload != "", :detached_payload)
       h = Header.json(protected_json)
       alg = selected(h, :jws, algorithms(:jws))
       base = b64(protected_json) <> "." <> b64(payload)
       bytes(base)
-      signature = Support.sign(signer, alg, base, timeout)
+      signature = Support.sign(signer, alg, base, timeout, purpose)
       compact = base <> "." <> b64(signature)
       bytes(compact)
       {:ok, compact}
     end)
   end
 
-  defp signing_timeout(opts, signer) do
+  defp signing_options(opts, signer) do
     timeout = timeout(opts, [:timeout, :issued_for])
     purpose = Keyword.get(opts, :issued_for)
     ensure(KeyHandle.purpose?(purpose), :invalid_options)
 
-    ensure(
-      purpose == nil or match?(%KeyHandle{issued_for: ^purpose}, signer),
-      :issued_for_mismatch,
-      :key
-    )
+    case signer do
+      %KeyHandle{issued_for: assigned} -> ensure(purpose == assigned, :issued_for_mismatch, :key)
+      _ -> ensure(purpose == nil, :issued_for_mismatch, :key)
+    end
 
-    timeout
+    {timeout, purpose}
   end
 
   @doc """
   Verify a compact JWS over its received protected and payload segments (RFC 7515).
+
+  Set `:require_issued_for` in the policy to verify with an assigned handle.
+  Omission and nil select keys without a purpose assignment.
 
   Key resolution and verification run in a sensitive custody worker under one
   absolute deadline, with caller cancellation. Protected bytes are never
@@ -304,6 +308,12 @@ defmodule RequestSeal.JOSE.JWS do
         entry.key
       end
 
+    purpose = Map.get(p, :require_issued_for)
+
+    if purpose != nil do
+      ensure(match?(%KeyHandle{issued_for: ^purpose}, key), :issued_for_mismatch, :key)
+    end
+
     result =
       case key do
         %RequestSeal.PublicKey{} = key ->
@@ -312,7 +322,13 @@ defmodule RequestSeal.JOSE.JWS do
 
         %RequestSeal.KeyHandle{} = handle ->
           ensure(handle.algorithm == {:jws, alg}, :algorithm_mismatch, :key)
-          RequestSeal.Custody.verify(handle, base, signature, timeout: p.timeout)
+          ensure(handle.issued_for == purpose, :issued_for_mismatch, :key)
+
+          RequestSeal.Custody.verify(handle, base, signature,
+            timeout: p.timeout,
+            issued_for: purpose,
+            operation: :jws
+          )
 
         _ ->
           fail(:key_resolver_failed, :key)

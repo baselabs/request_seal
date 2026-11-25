@@ -58,7 +58,25 @@ defmodule RequestSeal.CustodySSHAgentTest do
     assert {:ok, thumbprint} = PublicKey.thumbprint(key)
     assert {:ok, %{issued_for: :build, thumbprint: ^thumbprint}} = Custody.binding(bound)
 
-    assert_error(Custody.sign(%{bound | issued_for: :audit}, @vector["base"]), :key_mismatch)
+    bytes = @vector["base"]
+    signature = Base.decode64!(@vector["signature"])
+    assert {:ok, ^signature} = Custody.sign(bound, bytes, issued_for: :build, operation: :http)
+
+    edited = %{bound | issued_for: :audit}
+    forged = %{edited | ref: fn -> {"ed25519", ctx.socket, key, :audit} end}
+
+    for {handle, reason} <- [{edited, :key_mismatch}, {forged, :invalid_handle}] do
+      assert_error(Custody.binding(handle), reason)
+      assert_error(Custody.sign(handle, bytes, issued_for: :audit, operation: :http), reason)
+      assert_error(Custody.verify(handle, bytes, signature, issued_for: :audit, operation: :http), reason)
+    end
+
+    edited_algorithm = %{bound | algorithm: {:jws, "EdDSA"}, operation_family: :jws}
+    assert_error(Custody.binding(edited_algorithm), :key_mismatch)
+    assert_error(
+      Custody.sign(edited_algorithm, bytes, issued_for: :build, operation: :jws),
+      :key_mismatch
+    )
 
     assert {_, 0} =
              RequestSeal.SystemCommand.run("ssh-add", ["-D"], env: ctx.env, stderr_to_stdout: true)
@@ -137,8 +155,8 @@ defmodule RequestSeal.CustodySSHAgentTest do
     end
 
     signature = :crypto.sign(:eddsa, :none, "x", [seed, :ed25519])
-    assert :ok = SSHAgent.verify(observed, "ed25519", "x", signature, byte_limit_context())
-    assert_receive :reference_read
+    assert :ok = SSHAgent.verify(handle.ref, "ed25519", "x", signature, byte_limit_context())
+    refute_received :reference_read
 
     for bytes <- [:binary.copy(<<0>>, 16_777_217), :not_binary] do
       assert {:error, error} =
@@ -407,7 +425,9 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
     key = public_file(file)
     assert {:ok, handle} = SSHAgent.new("ed25519", ctx.socket, key)
-    path = Path.join(ctx.dir, "nonreading")
+    path = ctx.socket
+    backend = Path.join(ctx.dir, "backend")
+    File.rename!(path, backend)
 
     assert {:ok, listener} =
              :gen_tcp.listen(0, [
@@ -437,35 +457,26 @@ defmodule RequestSeal.CustodySSHAgentTest do
         end
       end)
 
-    original = handle.ref
-
-    provisional = %{
-      handle
-      | ref: fn ->
-          send(parent, {:socket_runner, self()})
-          {algorithm, _, public, _, issued_for} = original.()
-          {algorithm, path, public, false, issued_for}
-        end
-    }
-
     caller =
       Task.async(fn ->
         receive do
-          :start -> Custody.sign(provisional, "sample", timeout: 2_000)
+          :start -> Custody.sign(handle, "sample", timeout: 2_000)
         end
       end)
 
     try do
       start = System.monotonic_time(:millisecond)
+      existing = socket_ports()
       send(caller.pid, :start)
-      assert_receive {:socket_runner, runner}, 1_000
       assert_receive :nonreading_peer_accepted, 1_000
-      # Sensitive runners suppress call traces; observe their actual owned socket.
-      assert eventually(fn ->
-               Enum.any?(socket_ports(), &(Port.info(&1, :connected) == {:connected, runner}))
-             end)
 
-      [socket] = Enum.filter(socket_ports(), &(Port.info(&1, :connected) == {:connected, runner}))
+      client_ports = fn ->
+        (socket_ports() -- existing)
+        |> Enum.reject(&(Port.info(&1, :connected) == {:connected, peer.pid}))
+      end
+
+      assert eventually(fn -> length(client_ports.()) == 1 end)
+      [socket] = client_ports.()
       close_option = :inet.getopts(socket, [:send_timeout_close])
       assert :ok = :inet.setopts(socket, send_timeout: 80)
 
@@ -494,6 +505,7 @@ defmodule RequestSeal.CustodySSHAgentTest do
       Task.shutdown(peer, :brutal_kill)
       :gen_tcp.close(listener)
       File.rm(path)
+      File.rename!(backend, path)
     end
   end
 
@@ -517,7 +529,9 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
     key = public_file(file)
     assert {:ok, handle} = SSHAgent.new("ed25519", ctx.socket, key)
-    path = Path.join(ctx.dir, "hostile")
+    path = ctx.socket
+    backend = Path.join(ctx.dir, "backend")
+    File.rename!(path, backend)
 
     assert {:ok, listener} =
              :gen_tcp.listen(0, [:binary, active: false, packet: 0, ifaddr: {:local, path}])
@@ -533,7 +547,7 @@ defmodule RequestSeal.CustodySSHAgentTest do
 
           assert {:ok, agent} =
                    :gen_tcp.connect(
-                     {:local, ctx.socket},
+                     {:local, backend},
                      0,
                      [:binary, active: false, packet: 4],
                      1_000
@@ -571,28 +585,20 @@ defmodule RequestSeal.CustodySSHAgentTest do
         :ok
       end)
 
-    original = handle.ref
-
-    hostile = %{
-      handle
-      | ref: fn ->
-          {algorithm, _, public, check, issued_for} = original.()
-          {algorithm, path, public, check, issued_for}
-        end
-    }
-
     try do
       start = System.monotonic_time(:millisecond)
-      assert_error(Custody.sign(hostile, @vector["base"], timeout: 300), reason)
+      assert_error(Custody.sign(handle, @vector["base"], timeout: 300), reason)
       assert System.monotonic_time(:millisecond) - start < 1_500
       assert :ok = Task.await(peer, 3_000)
-      assert {:ok, signature} = Custody.sign(handle, @vector["base"])
-      assert signature == Base.decode64!(@vector["signature"])
     after
       Task.shutdown(peer, :brutal_kill)
       :gen_tcp.close(listener)
       File.rm(path)
+      File.rename!(backend, path)
     end
+
+    assert {:ok, signature} = Custody.sign(handle, @vector["base"])
+    assert signature == Base.decode64!(@vector["signature"])
   end
 
   defp read_frame(socket) do

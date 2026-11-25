@@ -385,7 +385,7 @@ defmodule RequestSeal.Custody.Local do
 
     allowed =
       if match?({:jwe, _}, algorithm) or match?({:derive, _}, algorithm),
-        do: [:equivalence, :capabilities, :issued_for],
+        do: [:equivalence, :capabilities],
         else: [:equivalence, :issued_for, :admission]
 
     Support.options(opts, allowed)
@@ -447,7 +447,9 @@ defmodule RequestSeal.Custody.Local do
   end
 
   defp binding_options(algorithm, opts) do
-    ensure(KeyHandle.purpose?(Keyword.get(opts, :issued_for)), :invalid_options)
+    purpose = Keyword.get(opts, :issued_for)
+    ensure(KeyHandle.purpose?(purpose), :invalid_options)
+    ensure(purpose == nil or KeyHandle.family(algorithm) in [:http, :jws], :invalid_options)
 
     if Keyword.has_key?(opts, :admission) do
       Gate.validate!(Keyword.fetch!(opts, :admission), algorithm)
@@ -887,11 +889,7 @@ defmodule RequestSeal.Custody.Local do
          %Context{} = context
        )
        when is_tuple(operation) do
-    ensure(
-      context.issued_for == purpose and
-        context.operation_family in [nil, KeyHandle.family(algorithm)],
-      :key_mismatch
-    )
+    Support.held_binding!(algorithm, purpose, context)
   end
 
   defp check_binding(_, _, _), do: :ok
@@ -954,19 +952,36 @@ defmodule RequestSeal.Custody.Local do
 
   defp holder_operation(
          {:sign, algorithm, bytes},
-         {bound, material, _, _, capabilities, _, admission},
+         {bound, material, _, _, capabilities, purpose, admission},
          context
        ) do
     ensure(algorithm == bound, :key_mismatch)
     ensure(:sign in capabilities, :unsupported_operation)
+    Support.signing_binding!(bound, purpose, context, admission != nil)
 
     if admission == nil do
+      Support.signing_bytes!(bytes, purpose, bound)
       Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling())
     else
       Gate.sign(bytes, admission, context, algorithm, fn ->
         Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling())
       end)
     end
+  end
+
+  defp holder_operation(
+         {:verify, algorithm, bytes, signature},
+         {bound, material, public, _, capabilities, purpose, admission},
+         context
+       ) do
+    ensure(algorithm == bound, :key_mismatch)
+    ensure(:verify in capabilities, :unsupported_operation)
+    Support.signing_binding!(bound, purpose, context, admission != nil)
+    Support.signing_bytes!(bytes, purpose, bound)
+
+    Crypto.verify(algorithm, bytes, signature, public || material,
+      max_bytes: Crypto.max_bytes_ceiling()
+    )
   end
 
   defp holder_operation(operation, state, _context), do: holder_operation(operation, state)
@@ -977,18 +992,6 @@ defmodule RequestSeal.Custody.Local do
     after
       0 -> false
     end
-  end
-
-  defp holder_operation(
-         {:verify, algorithm, bytes, signature},
-         {bound, material, public, _, capabilities, _, _}
-       ) do
-    ensure(algorithm == bound, :key_mismatch)
-    ensure(:verify in capabilities, :unsupported_operation)
-
-    Crypto.verify(algorithm, bytes, signature, public || material,
-      max_bytes: Crypto.max_bytes_ceiling()
-    )
   end
 
   defp holder_operation(:public_key, {_, _, nil, _, _, _, _}), do: {:error, :no_public_key}

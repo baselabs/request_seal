@@ -2,7 +2,10 @@
 
 ## Unreleased 2.0.0
 
-- Bind custody to a key purpose and operation family. Add single-use admission for Local HTTP signing.
+- Require matching purpose and operation family for assigned signing keys.
+  HTTP and JWS propagate that requirement into custody. Assigned and gated
+  keys refuse raw use. SSH custody retains its binding in a sensitive process,
+  and Local HTTP signing can require single-use admission for a valid typed base.
 
 - Bind Plug tenant context to a verified path and pass it through to Ash scope mapping.
 

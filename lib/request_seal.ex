@@ -242,9 +242,9 @@ defmodule RequestSeal do
 
   ### Signing spec
 
-  Either signing form accepts `:issued_for` as an optional non-Boolean atom
-  that must equal the handle's purpose. A difference returns `:issued_for_mismatch`.
-  This option contributes no wire metadata.
+  Both signing forms require an exact `:issued_for` match for assigned custody.
+  Omission and nil select unassigned custody. A mismatch returns
+  `:issued_for_mismatch`. Purpose contributes no wire metadata.
 
   A `t:signing_spec/0` requires `:label`, `:algorithm`, serialized
   `:components` (an Inner List without list parameters), and `:expires_in` (a

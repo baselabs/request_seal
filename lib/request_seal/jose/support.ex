@@ -79,7 +79,14 @@ defmodule RequestSeal.JOSE.Support do
             ]
       end
 
-    ensure(is_map(p) and Enum.sort(Map.keys(p)) == Enum.sort(keys), :invalid_policy)
+    ensure(is_map(p), :invalid_policy)
+
+    actual = if kind == :jws, do: Map.delete(p, :require_issued_for), else: p
+    ensure(Enum.sort(Map.keys(actual)) == Enum.sort(keys), :invalid_policy)
+
+    if kind == :jws do
+      ensure(KeyHandle.purpose?(Map.get(p, :require_issued_for)), :invalid_policy)
+    end
 
     ensure(
       is_integer(p.timeout) and p.timeout in 1..300_000 and is_function(p.key_resolver, 1),
@@ -331,15 +338,15 @@ defmodule RequestSeal.JOSE.Support do
     end
   end
 
-  def sign(%KeyHandle{} = handle, alg, bytes, timeout) do
+  def sign(%KeyHandle{} = handle, alg, bytes, timeout, purpose) do
     ensure(handle.algorithm == {:jws, alg}, :algorithm_mismatch, :key)
 
-    case Custody.sign(handle, bytes, timeout: timeout) do
+    case Custody.sign(handle, bytes, timeout: timeout, issued_for: purpose, operation: :jws) do
       {:ok, signature} -> signature
       {:error, %{reason: :deadline_exceeded}} -> fail(:deadline_exceeded, :crypto)
       _ -> fail(:signer_failed, :crypto)
     end
   end
 
-  def sign(_, _, _, _), do: fail(:invalid_options)
+  def sign(_, _, _, _, _), do: fail(:invalid_options)
 end

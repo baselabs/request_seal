@@ -327,9 +327,16 @@ Module docs: `RequestSeal.Custody`, `RequestSeal.Custody.Local`, `RequestSeal.Cu
 ## Bind a key purpose and approve exact covered values
 
 Use a purpose atom when a signing key is assigned to a specific workflow.
-A signing specification can require the same purpose through `:issued_for`.
-JWS uses the `:issued_for` option on both signing forms. The verification
-policy can set `:require_issued_for` from trusted configuration.
+An assigned key requires the same purpose in the signing specification.
+JWS takes `:issued_for` as an option on both signing forms. HTTP and compact
+JWS verification policies name `:require_issued_for` to use a bound handle.
+An omitted or nil purpose only selects unassigned custody.
+
+In direct custody calls, pass `:operation` as `:http` with a canonical RFC 9421
+base or `:jws` with a compact JWS signing input. The built-in custodian checks
+the operation against the retained family and checks the input format before
+using an assigned key. The high-level HTTP and JWS APIs set this operation
+for you. Raw bytes remain supported by unassigned, ungated keys.
 
     alias RequestSeal.{Custody, Message, SignatureBase}
     alias RequestSeal.Custody.Gate
@@ -361,8 +368,9 @@ policy can set `:require_issued_for` from trusted configuration.
     {:ok, signer} = Gate.new("ed25519", {:ed25519, seed}, config, issued_for: :build)
     params = components <> ~s[;created=1700000000;expires=1700000030;nonce="build-1";tag="build"]
     {:ok, base} = SignatureBase.build(message, params)
-    {:ok, _signature} = Custody.sign(signer, base, issued_for: :build)
-    {:error, %{reason: :gate_spent}} = Custody.sign(signer, base, issued_for: :build)
+    sign_opts = [issued_for: :build, operation: :http]
+    {:ok, _signature} = Custody.sign(signer, base, sign_opts)
+    {:error, %{reason: :gate_spent}} = Custody.sign(signer, base, sign_opts)
     :ok = Custody.release(signer)
     :ok = GenServer.stop(store)
 
@@ -371,7 +379,8 @@ purpose and public thumbprint. It observes the key at the time of the call.
 For HTTP verification, resolver entries returning a public key may include
 `:issued_for` from trusted configuration. A handle supplies its own purpose.
 
-The gate rejects malformed bases before invoking the caller port. It matches
+The gate rejects malformed bases, including parameters of the wrong wire
+type, before invoking the caller port. It matches
 the approved component digest and optional nonce, then spends the decision
 through the configured store. With `:port_owned`, the port must perform the
 atomic spend itself. A failure after spending requires a new decision. Set

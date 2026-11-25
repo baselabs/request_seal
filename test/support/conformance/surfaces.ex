@@ -58,11 +58,11 @@ defmodule RequestSeal.Conformance.Surfaces do
     alias RequestSeal.Custody
     alias RequestSeal.Custody.Local
 
-    seed = root |> C.load(inputs["seed"]) |> Base.decode16!(case: :lower)
-    message = root |> C.load(inputs["message"]) |> Base.decode16!(case: :lower)
+    key = C.read_file(root, inputs["key_file"])
+    message = C.load(root, inputs["message"])
 
     with {:ok, handle} <-
-           Local.new("ed25519", {:ed25519, seed}, issued_for: purpose(inputs["issued_for"])) do
+           Local.import("ed25519", key, :pem, issued_for: purpose(inputs["issued_for"])) do
       try do
         requested_handle = %{
           handle
@@ -70,7 +70,14 @@ defmodule RequestSeal.Conformance.Surfaces do
             operation_family: purpose_family(inputs["operation_family"])
         }
 
-        case Custody.sign(requested_handle, message, issued_for: purpose(inputs["required"])) do
+        options = [operation: purpose_operation(inputs["operation"])]
+
+        options =
+          if Map.has_key?(inputs, "required"),
+            do: Keyword.put(options, :issued_for, purpose(inputs["required"])),
+            else: options
+
+        case Custody.sign(requested_handle, message, options) do
           {:ok, signature} -> {:ok, %{"signature" => C.b64(signature)}}
           {:error, _} = error -> error
         end
@@ -121,6 +128,9 @@ defmodule RequestSeal.Conformance.Surfaces do
 
   defp purpose_family("http"), do: :http
   defp purpose_family("jws"), do: :jws
+  defp purpose_operation("http"), do: :http
+  defp purpose_operation("jws"), do: :jws
+  defp purpose_operation("raw"), do: :raw
 
   def parse_signature_base(root, case_) do
     bytes = root |> C.load(case_["inputs"]["base"]) |> C.bytes()
