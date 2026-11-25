@@ -8,16 +8,18 @@ After Capture, the applicable body parsers, and Verify, apply a scope template
 to a route whose policy requires `"@path"`. The application supplies a tenant
 mapping backed by its trusted verification policy.
 
-    scope =
-      RequestSeal.Plug.Scope.init(
-        template: "/teams/:team/*",
-        tenant: :team,
-        principal_tenant: &MyApp.Trust.tenant_for/1,
-        on_reject: {:halt, 403}
-      )
+```elixir
+scope =
+  RequestSeal.Plug.Scope.init(
+    template: "/teams/:team/*",
+    tenant: :team,
+    principal_tenant: fn :unattributed -> {:ok, "alpha"}; _ -> :error end,
+    on_reject: {:halt, 403}
+  )
 
-    conn = RequestSeal.Plug.Scope.call(conn, scope)
-    {:ok, %{tenant: tenant}} = RequestSeal.Plug.scope(conn)
+conn = RequestSeal.Plug.Scope.call(conn, scope)
+{:ok, %{tenant: tenant}} = RequestSeal.Plug.scope(conn)
+```
 
 The callback returns `{:ok, tenant}` from trusted context or `:error`. Generic
 RFC 9421 verification returns `:unattributed`. For such policies, use a mapping
@@ -37,12 +39,13 @@ Scope checks each captured query name before the decoder merges parameters.
 A repeated parent or a mix of list and named entries cannot hide a selector.
 
 Place the configured body parser between Capture and Verify. A nonempty body
-must be fully read through Capture's retained adapter and parsed into a plain
-map before Scope runs. A pass-through parser leaves the body indeterminate and
-Scope refuses it. Nested unfetched values and opaque structs also make the
-query or body indeterminate. Multipart uploads are opaque leaves, and their
-parameter names remain subject to selector refusal. The trusted mapping uses
-a 1,000 ms deadline by default, selectable with `:lookup_timeout`.
+must be fully read through Capture and parsed into a plain map. Scope
+inspects raw JSON object members and form names before decoders can merge
+them. Other nonempty body formats, including multipart, return
+`:body_uninspected`. Nested unfetched values and opaque structs make
+inspection indeterminate. Upload leaves already present in parsed parameters
+are opaque, and their parameter names remain subject to selector refusal.
+The trusted mapping default is 1,000 ms, selectable with `:lookup_timeout`.
 
 Tenant agreement supplies the data layer with routing context. Signer
 attribution comes from a trusted verification profile or independently

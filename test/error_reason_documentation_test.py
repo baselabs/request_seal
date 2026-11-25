@@ -39,6 +39,20 @@ class ErrorReasonDocumentationTest(unittest.TestCase):
                                          'replay')
         self.assertFalse(any(emitted.values()))
 
+    def test_scope_reject_and_gate_callback_track_literal_and_unknown_flows(self):
+        for path, kind, source in [
+            ("lib/request_seal/plug/scope.ex", "adapter",
+             "reject(:literal)\nreject(selected)"),
+            ("lib/request_seal/custody/gate.ex", "custody",
+             "callback(context, fn -> port.() end, :literal)\ncallback(context, clock, selected)"),
+        ]:
+            with self.subTest(path=path):
+                flows = []
+                self.assertEqual({kind: {"literal"}},
+                                 dict(reasons.source_reasons(source, kind, path, flows)))
+                self.assertEqual([{"file": path, "line": 2, "expression": "selected", "kind": kind}],
+                                 flows)
+
     def test_new_reason_removed_emission_duplicate_type_stale_docs_and_unlisted_flow_fail(self):
         with tempfile.TemporaryDirectory(prefix='.reason-check-', dir=ROOT) as directory:
             root = Path(directory)

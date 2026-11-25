@@ -128,6 +128,47 @@ defmodule RequestSeal.PlugScopeTest do
     assert refused(%{conn | body_params: %{"items" => [%{"tenant_id" => upload}]}}, :scope_in_body)
   end
 
+  test "body inspection finds selectors discarded by form and JSON parsers" do
+    target = "/teams/alpha"
+    forms = [content_type: "application/x-www-form-urlencoded", parsers: [:urlencoded]]
+
+    for {encoded, merged} <- [
+          {"filters%5Btenant_id%5D=other&filters=plain", "plain"},
+          {"filters%5Btenant_id%5D=other&filters%5B%5D=plain", ["plain"]}
+        ] do
+      conn = verified(target, @covered, [body: encoded] ++ forms)
+      assert conn.body_params == %{"filters" => merged}
+      assert refused(conn, :scope_in_body)
+    end
+
+    json =
+      for body <- [
+            ~s({"filters":"plain","filters":{"tenant_id":"other"}}),
+            ~s({"filters":{"tenant_id":"other"},"filters":"plain"})
+          ],
+          do: verified(target, @covered, body: body)
+
+    assert Enum.any?(json, &(&1.body_params == %{"filters" => "plain"}))
+    Enum.each(json, &assert(refused(&1, :scope_in_body)))
+
+    clean = verified(target, @covered, [body: "filters=tenant_id"] ++ forms)
+    assert {:ok, %{tenant: "alpha"}} = SealPlug.scope(Scope.call(clean, options()))
+  end
+
+  test "refuses a fully parsed multipart body without raw selector evidence" do
+    body = "--sample\r\ncontent-disposition: form-data; name=\"note\"\r\n\r\nok\r\n--sample--\r\n"
+
+    conn =
+      verified("/teams/alpha", @covered,
+        body: body,
+        content_type: "multipart/form-data; boundary=sample",
+        parsers: [:multipart]
+      )
+
+    assert conn.body_params == %{"note" => "ok"}
+    assert refused(conn, :body_uninspected)
+  end
+
   test "the principal lookup is cancelled at its configured deadline" do
     parent = self()
 

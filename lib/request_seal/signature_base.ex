@@ -249,6 +249,64 @@ defmodule RequestSeal.SignatureBase do
   defp printable?(<<byte, rest::binary>>) when byte in 32..126, do: printable?(rest)
   defp printable?(_), do: false
 
+  @doc false
+  def parse_protocol(bytes) do
+    with {:ok, parts} <- parse(bytes),
+         true <-
+           Enum.zip(parts.inner_list.value, parts.components)
+           |> Enum.all?(fn {item, {_, value}} ->
+             {name, params} = component(item)
+             protocol_value?(name, params, value)
+           end) do
+      {:ok, parts}
+    else
+      _ -> {:error, %Error{reason: :malformed}}
+    end
+  catch
+    {:signature_base, _} -> {:error, %Error{reason: :malformed}}
+  end
+
+  defp protocol_value?("@method", _, value), do: Validation.token?(value, 256)
+  defp protocol_value?("@status", _, value), do: Regex.match?(~r/\A[1-5][0-9]{2}\z/, value)
+
+  defp protocol_value?("@scheme", _, value),
+    do: Validation.scheme?(value) and value == String.downcase(value)
+
+  defp protocol_value?("@authority", _, value),
+    do: Validation.authority?(value) and value == String.downcase(value)
+
+  defp protocol_value?("@path", _, "/" <> _ = value),
+    do: path_query_bytes?(value) and :binary.match(value, "?") == :nomatch
+
+  defp protocol_value?("@query", _, "?" <> value), do: path_query_bytes?(value)
+
+  defp protocol_value?("@query-param", %{"name" => {:string, name}}, value),
+    do: encode_query(decode_query(name)) == name and encode_query(decode_query(value)) == value
+
+  defp protocol_value?("@target-uri", _, value), do: absolute_target?(value)
+
+  defp protocol_value?("@request-target", _, "/" <> _ = value), do: path_query_bytes?(value)
+  defp protocol_value?("@request-target", _, "*"), do: true
+
+  defp protocol_value?("@request-target", _, value),
+    do: Validation.authority?(value, true) or absolute_target?(value)
+
+  defp protocol_value?(name, _, _), do: name not in @derived
+
+  defp absolute_target?(value) do
+    case Regex.run(~r/\A([A-Za-z][A-Za-z0-9+.-]*):\/\/([^\/?]+)([\/?].*)?\z/, value) do
+      [_, scheme, authority | tail] ->
+        Validation.scheme?(scheme) and Validation.authority?(authority) and
+          Enum.all?(tail, &path_query_bytes?/1)
+
+      _ ->
+        false
+    end
+  end
+
+  defp path_query_bytes?(value),
+    do: Validation.uri_bytes?(value) and :binary.match(value, ["[", "]"]) == :nomatch
+
   defp rebuild(parts) do
     lines = Enum.map(parts.components, fn {id, value} -> [id, ": ", value, "\n"] end)
     IO.iodata_to_binary([lines, "\"@signature-params\": ", parts.signature_params])

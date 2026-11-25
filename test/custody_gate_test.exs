@@ -167,6 +167,27 @@ defmodule RequestSeal.CustodyGateTest do
     )
   end
 
+  test "derived values are checked before signing, verification, or admission", ctx do
+    observer = self()
+    {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+    {:ok, assigned} = Local.new("ed25519", {:ed25519, seed}, issued_for: :release)
+    {:ok, gated} = gated(%{ctx.config | port: fn _, _ -> send(observer, :admitted) end})
+    opts = [issued_for: :release, operation: :http]
+
+    for {from, to} <- [{~s["@method": GET], ~s["@method": GET ]},
+                       {~s["@path": /items], ~s["@path": /items?query]}] do
+      invalid = String.replace(ctx.base, from, to)
+      assert {:ok, _} = SignatureBase.parse(invalid)
+      assert {:ok, signature} = Crypto.sign("ed25519", invalid, {:ed25519, seed})
+      assert_error(Custody.sign(assigned, invalid, opts), :invalid_data)
+      assert_error(Custody.verify(assigned, invalid, signature, opts), :invalid_data)
+      assert_error(Custody.sign(gated, invalid, opts), :gate_malformed_base)
+    end
+
+    refute_received :admitted
+    assert {:ok, 0} = ETS.sweep(ctx.store, @now + 31)
+  end
+
   test "port refusals, invalid replies, mismatches and time bounds are closed", ctx do
     for {response, reason} <- [
           {:deny, :gate_denied},
@@ -218,6 +239,42 @@ defmodule RequestSeal.CustodyGateTest do
       assert :ok = Local.release(handle)
       assert :ok = GenServer.stop(store)
     end
+  end
+
+  test "creator death cancels admission on a transferred handle", ctx do
+    observer = self()
+
+    config = %{
+      ctx.config
+      | port: fn _, _ ->
+          send(observer, {:pending_admission, self()})
+
+          receive do
+            :allow -> {:allow, ctx.admission}
+          end
+        end
+    }
+
+    creator =
+      Task.async(fn ->
+        {:ok, handle} = gated(config)
+        send(observer, {:transferred, handle})
+
+        receive do
+          :finish -> :ok
+        end
+      end)
+
+    assert_receive {:transferred, handle}, 1_000
+    caller = Task.async(fn -> sign(handle, ctx.base) end)
+    assert_receive {:pending_admission, worker}, 1_000
+    monitor = Process.monitor(worker)
+    assert Process.alive?(caller.pid)
+    Task.shutdown(creator, :brutal_kill)
+
+    assert_receive {:DOWN, ^monitor, :process, ^worker, :killed}, 1_000
+    assert_error(Task.await(caller, 1_000), :key_not_found)
+    assert {:ok, 0} = ETS.sweep(ctx.store, @now + 31)
   end
 
   test "externally checked admission returns the exact base digest and spends atomically", ctx do

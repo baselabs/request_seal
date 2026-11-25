@@ -347,43 +347,46 @@ algorithm and purpose under the same deadline. The custody facade compares
 that result before dispatching, including when the caller omits a purpose.
 The signing and verification callbacks also enforce the assignment, operation
 family, and input format at key use. Assigned verification requires `verify/5`.
-The public-key fallback is available for unassigned custody.
+Unassigned fallback for assignment-aware custodians uses one `binding/2`
+call that supplies the retained algorithm, nil purpose, and public key.
 
-    alias RequestSeal.{Custody, Message, SignatureBase}
-    alias RequestSeal.Custody.Gate
-    alias RequestSeal.Replay.ETS
+```elixir
+alias RequestSeal.{Custody, Message, SignatureBase}
+alias RequestSeal.Custody.Gate
+alias RequestSeal.Replay.ETS
 
-    {:ok, store} = ETS.start_link(max_entries: 100)
-    {:ok, message} = Message.request("GET", "https://example.test/builds", [], "")
-    components = ~s[("@method" "@path")]
-    {:ok, digest} = Gate.commitment(message, components)
-    now = 1_700_000_000
-    decision = %Gate.Admission{
-      decision: "build-approval-1",
-      commitment: digest,
-      not_after: now + 30,
-      nonce: "build-1"
-    }
+{:ok, store} = ETS.start_link(max_entries: 100)
+{:ok, message} = Message.request("GET", "https://example.test/builds", [], "")
+components = ~s[("@method" "@path")]
+{:ok, digest} = Gate.commitment(message, components)
+now = 1_700_000_000
+decision = %Gate.Admission{
+  decision: "build-approval-1",
+  commitment: digest,
+  not_after: now + 30,
+  nonce: "build-1"
+}
 
-    config = %{
-      port: fn _, _ -> {:allow, decision} end,
-      once: {:store, ETS.store(store), "builds"},
-      required_components: [~s["@method"], ~s["@path"]],
-      max_lifetime: 30,
-      clock: fn -> now end,
-      skew: 0,
-      tag: "build"
-    }
+config = %{
+  port: fn _, _ -> {:allow, decision} end,
+  once: {:store, ETS.store(store), "builds"},
+  required_components: [~s["@method"], ~s["@path"]],
+  max_lifetime: 30,
+  clock: fn -> now end,
+  skew: 0,
+  tag: "build"
+}
 
-    {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
-    {:ok, signer} = Gate.new("ed25519", {:ed25519, seed}, config, issued_for: :build)
-    params = components <> ~s[;created=1700000000;expires=1700000030;nonce="build-1";tag="build"]
-    {:ok, base} = SignatureBase.build(message, params)
-    sign_opts = [issued_for: :build, operation: :http]
-    {:ok, _signature} = Custody.sign(signer, base, sign_opts)
-    {:error, %{reason: :gate_spent}} = Custody.sign(signer, base, sign_opts)
-    :ok = Custody.release(signer)
-    :ok = GenServer.stop(store)
+{_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+{:ok, signer} = Gate.new("ed25519", {:ed25519, seed}, config, issued_for: :build)
+params = components <> ~s[;created=1700000000;expires=1700000030;nonce="build-1";tag="build"]
+{:ok, base} = SignatureBase.build(message, params)
+sign_opts = [issued_for: :build, operation: :http]
+{:ok, _signature} = Custody.sign(signer, base, sign_opts)
+{:error, %{reason: :gate_spent}} = Custody.sign(signer, base, sign_opts)
+:ok = Custody.release(signer)
+:ok = GenServer.stop(store)
+```
 
 `RequestSeal.Custody.binding/2` reports the held algorithm, operation family,
 purpose and public thumbprint. It observes the key at the time of the call.
@@ -395,7 +398,8 @@ must use an HTTP algorithm, whether resolved as a handle or a public key.
 For an unassigned key, a policy may explicitly select a JWS algorithm for HTTP.
 
 The gate rejects malformed bases, including parameters of the wrong wire
-type, before invoking the caller port. Verification with a gated key also
+type and invalid HTTP derived values, before invoking the caller port.
+Verification with a gated key also
 validates the HTTP base, including when the key has no assigned purpose.
 The signing gate matches
 the approved component digest and optional nonce, then spends the decision
@@ -405,6 +409,7 @@ atomic spend itself. A failure after spending requires a new decision. Set
 digest before releasing bytes. Use `:admission` on Local key generation to
 keep fresh private material inside custody from construction.
 
-For a store-backed admission, the worker follows the original signing caller's
-lifetime as well as the holder's. Caller exit cancels pending worker activity.
-The store may already have received the request, and committed spends remain spent.
+Gate work follows the key creator's lifetime as well as the signing caller's.
+Either can cancel pending work. With a transferred handle, keep its creator
+alive until the operation returns. The store may already have received a
+request when cancellation occurs, and committed spends remain spent.

@@ -146,7 +146,9 @@ def source_reasons(source, kind, path="", flows=None):
             if name == 'safe' and (not receiver or receiver.endswith('Support')):
                 index = 0 if target == 'crypto' else 1
             if name == 'validated!' and kind == 'jose': index = 1
-            if name == 'callback': index = 2 if path.endswith('/ash.ex') else 1
+            if name == 'callback':
+                index = 2 if path.endswith(('/ash.ex', '/custody/gate.ex')) else 1
+            if name == 'reject' and path.endswith('/plug/scope.ex'): index = 0
             if name == 'serialize' and not receiver and kind == 'signature_base': index = 2
             if name == 'error' and receiver == 'Codec': target = 'jose'
             if index is not None:

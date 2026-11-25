@@ -25,7 +25,10 @@ Inspect every captured query parameter name independently using Plug's
 decoding rules. Scalar replacement and list finalization can erase named
 entries from the merged query map.
 A nonempty body requires a configured parser that fully consumes the captured
-bytes before Scope runs. The principal lookup runs within a finite deadline
+bytes before Scope runs. Inspect raw form names and JSON object members before
+their decoders can merge them away. Refuse other body formats because the
+finalized parameters cannot establish which names were present.
+The principal lookup runs within a finite deadline
 and must return exactly the selected tenant.
 
 Pass the resulting tenant to the existing Ash scope construction. The resource's

@@ -167,6 +167,53 @@ defmodule RequestSeal.GuideKeyCustodyTest do
 
     assert Keyword.fetch!(binding, :example_result) == ["Signature-Input", "Signature"]
     Supervisor.stop(Keyword.fetch!(binding, :supervisor))
-    E.assert_fences("docs/guides/key-custody.md", 6)
+    binding = []
+
+    example =
+      E.eval(
+        ~S'''
+        alias RequestSeal.{Custody, Message, SignatureBase}
+        alias RequestSeal.Custody.Gate
+        alias RequestSeal.Replay.ETS
+
+        {:ok, store} = ETS.start_link(max_entries: 100)
+        {:ok, message} = Message.request("GET", "https://example.test/builds", [], "")
+        components = ~s[("@method" "@path")]
+        {:ok, digest} = Gate.commitment(message, components)
+        now = 1_700_000_000
+        decision = %Gate.Admission{
+          decision: "build-approval-1",
+          commitment: digest,
+          not_after: now + 30,
+          nonce: "build-1"
+        }
+
+        config = %{
+          port: fn _, _ -> {:allow, decision} end,
+          once: {:store, ETS.store(store), "builds"},
+          required_components: [~s["@method"], ~s["@path"]],
+          max_lifetime: 30,
+          clock: fn -> now end,
+          skew: 0,
+          tag: "build"
+        }
+
+        {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+        {:ok, signer} = Gate.new("ed25519", {:ed25519, seed}, config, issued_for: :build)
+        params = components <> ~s[;created=1700000000;expires=1700000030;nonce="build-1";tag="build"]
+        {:ok, base} = SignatureBase.build(message, params)
+        sign_opts = [issued_for: :build, operation: :http]
+        {:ok, _signature} = Custody.sign(signer, base, sign_opts)
+        {:error, %{reason: :gate_spent}} = Custody.sign(signer, base, sign_opts)
+        :ok = Custody.release(signer)
+        :ok = GenServer.stop(store)
+        ''',
+        binding,
+        "docs/guides/key-custody.md",
+        7
+      )
+
+    assert Keyword.fetch!(example, :example_result) == :ok
+    E.assert_fences("docs/guides/key-custody.md", 7)
   end
 end

@@ -105,6 +105,49 @@ RequestSeal.Replay.ETS.sweep(replay_pid, retain_until)
 
 Use a trusted clock consistent with verification. Retention ends at the first rejected second: the minimum of expiration plus skew and created plus max-age plus skew plus one. Multi-node operators sweep at `now - max_internode_skew`, so a claim remains while any verifier can still accept it. Use one freshness bound per namespace; duplicate claims never extend retention. Claims never evict entries, and no RequestSeal adapter schedules a background sweep.
 
+## Move replay claims to a new store
+
+Use `RequestSeal.Replay.Pair.store/2` while moving live claims to a destination
+that can see every attempt at the same claim. For a distributed verifier, use a
+shared durable destination such as PostgreSQL or AshOnetime. Every verifier
+that may receive a claim, including after routing changes or restarts, must see
+entries already written at the destination until their retention ends.
+Independent node-local ETS destinations cannot satisfy this: after cutover a
+retry routed to another node could find an empty destination there. The pair
+refuses an ETS destination when the retiring adapter is anything other than
+ETS. The two-ETS example applies to one verifier whose state remains live.
+
+Put the destination first and use the returned handle as the policy's `store`.
+
+```elixir
+alias RequestSeal.Replay.{ETS, Pair}
+{:ok, destination} = ETS.start_link(max_entries: 100)
+{:ok, retiring} = ETS.start_link(max_entries: 100)
+{:ok, store} = Pair.store(ETS.store(destination), ETS.store(retiring))
+```
+
+Keep the namespace, commitment function and freshness rules consistent during the
+move. Start the retention clock when the last retiring-only verifier has finished
+its last claim. Wait through the longest retention of any claim it could have
+written, including skew and the exclusive endpoint, before switching any
+verifier to destination only. When a policy admits arbitrarily distant expiry,
+use the greatest possible retention endpoint or first establish a finite bound
+and wait for previous claims to expire. Finish draining paired verifiers before
+stopping the retiring store. A node-local store contributes its existing local
+history, so keep it alive across the switch to paired operation.
+
+A claim succeeds after two new writes. A retirement-side refusal leaves the
+destination entry spent. Budget the policy timeout for two sequential operations
+and continue sweeping both stores under their existing retention rules.
+The shared deadline covers both adapters and synchronous telemetry, even on
+direct pair calls. A blocked adapter, blocked event handler, or late reply
+reports timeout. Direct calls require an integer deadline and an owner PID.
+A completed write stays spent.
+`RequestSeal.Replay.Pair.sweep/3` handles stores whose cleanup is external.
+The receipt names the pair during migration. When an adapter returns within
+the shared budget, the `[:request_seal, :replay, :pair]` event identifies its
+position without logging claim data.
+
 ## Choose local or persistent storage
 
 Supervise `RequestSeal.Replay.ETS` with an explicit `max_entries:` capacity (1 to 10,000,000) in your application. It serializes atomic claims and sweeps; owner termination loses the claims. It is local, not a distributed store.
@@ -144,47 +187,6 @@ call `AshOnetime.Transaction.nonce/2` inside that application's transaction.
 The Postgrex-only adapter remains available. For PostgreSQL, add `:postgrex` (`>= 0.22.4 and < 0.24.0`), start the Postgrex application and your connection, execute the SQL returned by `RequestSeal.Replay.Postgres.ddl("signature_replay")` and `RequestSeal.Replay.Postgres.ddl_index("signature_replay")`, and select `RequestSeal.Replay.Postgres.store(connection, table: "signature_replay")`. The adapter starts no database or pool. Table names are explicit lowercase ASCII identifiers; namespace/key columns form a primary key, and the index keeps caller-scheduled `sweep/3` deletes from scanning the whole table (`ddl_index/1` accepts names of at most 46 bytes so its derived index identifier fits PostgreSQL's 63-byte limit). Persistence follows your database configuration. See [replay-store testing](testing.md#replay-stores) for actual database, concurrency, and restart checks.
 
 For Web Bot Auth, give `RequestSeal.WebBotAuth.Policy` the same replay map. Its commitment receives the same facts map, with the signing agent as `agent` in place of `tag`; commit to `identifier`, `keyid`, and `agent[:identifier]`, as the [Web Bot Auth guide](web-bot-auth.md) shows in a runnable example. Required replay accepts exactly one selected Web Bot Auth signature per message and rejects more with `:unexpected_signature`; its claim follows that verified signature, and the facts never include the uncovered label. Generic single-label verification requires bounded freshness and a nonempty nonce.
-
-## Move replay claims to a new store
-
-Use `RequestSeal.Replay.Pair.store/2` while moving live claims to a destination
-that can see every attempt at the same claim. For a distributed verifier, use a
-shared durable destination such as PostgreSQL or AshOnetime. Every verifier
-that may receive a claim, including after routing changes or restarts, must see
-entries already written at the destination until their retention ends.
-Independent node-local ETS destinations cannot satisfy this: after cutover a
-retry routed to another node could find an empty destination there. The pair
-refuses an ETS destination when the retiring adapter is anything other than
-ETS. The two-ETS example applies to one verifier whose state remains live.
-
-Put the destination first and use the returned handle as the policy's `store`.
-
-    alias RequestSeal.Replay.{ETS, Pair}
-    {:ok, destination} = ETS.start_link(max_entries: 100)
-    {:ok, retiring} = ETS.start_link(max_entries: 100)
-    {:ok, store} = Pair.store(ETS.store(destination), ETS.store(retiring))
-
-Keep the namespace, commitment function and freshness rules consistent during the
-move. Start the retention clock when the last retiring-only verifier has finished
-its last claim. Wait through the longest retention of any claim it could have
-written, including skew and the exclusive endpoint, before switching any
-verifier to destination only. When a policy admits arbitrarily distant expiry,
-use the greatest possible retention endpoint or first establish a finite bound
-and wait for previous claims to expire. Finish draining paired verifiers before
-stopping the retiring store. A node-local store contributes its existing local
-history, so keep it alive across the switch to paired operation.
-
-A claim succeeds after two new writes. A retirement-side refusal leaves the
-destination entry spent. Budget the policy timeout for two sequential operations
-and continue sweeping both stores under their existing retention rules.
-The shared deadline covers both adapters and synchronous telemetry, even on
-direct pair calls. A blocked adapter, blocked event handler, or late reply
-reports timeout. Direct calls require an integer deadline and an owner PID.
-A completed write stays spent.
-`RequestSeal.Replay.Pair.sweep/3` handles stores whose cleanup is external.
-The receipt names the pair during migration. When an adapter returns within
-the shared budget, the `[:request_seal, :replay, :pair]` event identifies its
-position without logging claim data.
 
 ## Errors
 

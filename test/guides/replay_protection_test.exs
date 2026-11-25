@@ -152,8 +152,27 @@ defmodule RequestSeal.GuideReplayProtectionTest do
     assert example_result == {:ok, 1}
     E.assert_rejected_signature(binding)
 
+    example =
+      E.eval(
+        ~S'''
+        alias RequestSeal.Replay.{ETS, Pair}
+        {:ok, destination} = ETS.start_link(max_entries: 100)
+        {:ok, retiring} = ETS.start_link(max_entries: 100)
+        {:ok, store} = Pair.store(ETS.store(destination), ETS.store(retiring))
+        ''',
+        binding,
+        "docs/guides/replay-protection.md",
+        9
+      )
+
+    assert {:ok, %RequestSeal.Replay.Store{adapter: RequestSeal.Replay.Pair}} =
+             Keyword.fetch!(example, :example_result)
+
+    :ok = GenServer.stop(Keyword.fetch!(example, :destination))
+    :ok = GenServer.stop(Keyword.fetch!(example, :retiring))
+
     executed = Process.get({RequestSeal.DocsExamples, "docs/guides/replay-protection.md"})
-    assert executed == Enum.to_list(1..8)
+    assert executed == Enum.to_list(1..9)
 
     on_exit(fn ->
       RequestSeal.Custody.Local.release(Keyword.fetch!(binding, :handle))
@@ -173,7 +192,7 @@ defmodule RequestSeal.GuideReplayProtectionTest do
     binding: binding,
     executed: executed
   } do
-    assert executed == Enum.to_list(1..8)
+    assert executed == Enum.to_list(1..9)
 
     assert %RequestSeal.Replay.Receipt{store: RequestSeal.Replay.ETS} =
              Keyword.fetch!(binding, :accepted).replay
@@ -199,13 +218,13 @@ defmodule RequestSeal.GuideReplayProtectionTest do
           ''',
           binding,
           "docs/guides/replay-protection.md",
-          9
+          10
         )
 
       assert %RequestSeal.Replay.Receipt{store: RequestSeal.Replay.AshOnetime} =
                Keyword.fetch!(binding, :durable_accepted).replay
 
-      E.assert_fences("docs/guides/replay-protection.md", 9)
+      E.assert_fences("docs/guides/replay-protection.md", 10)
       assert is_list(binding)
     end
   end

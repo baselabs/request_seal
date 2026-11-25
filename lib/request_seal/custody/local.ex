@@ -315,6 +315,8 @@ defmodule RequestSeal.Custody.Local do
   ## Options
 
     * `:capabilities` - as in `new/3`, additionally narrowed by JWK `key_ops`.
+    * `:issued_for` - optional signing purpose atom or nil, as in `new/3`.
+    * `:admission` - optional signing admission for an HTTP key, as in `new/3`.
     * `:equivalence` - as in `new/3`: a nonsecret binary of 1–256 bytes, accepted
       only for HMAC algorithms. No default.
 
@@ -862,6 +864,8 @@ defmodule RequestSeal.Custody.Local do
     if Process.alive?(owner) and Process.alive?(context.owner) and Context.remaining(context) > 0 do
       result =
         if pending == :committed do
+          context = operation_context(operation, context, state, owner)
+
           Support.safe(
             fn ->
               check_binding(operation, state, context)
@@ -873,11 +877,19 @@ defmodule RequestSeal.Custody.Local do
           {:error, :unavailable}
         end
 
-      if Context.remaining(context) > 0, do: send(reply, {reply, result})
+      if Process.alive?(owner) and Process.alive?(context.owner) and
+           Context.remaining(context) > 0,
+         do: send(reply, {reply, result})
     end
 
     pending
   end
+
+  defp operation_context({:sign, _, _}, context, {_, _, _, _, _, _, admission}, owner)
+       when admission != nil,
+       do: %{context | key_owner: owner}
+
+  defp operation_context(_, context, _, _), do: context
 
   defp valid_token?(candidate, token)
        when is_binary(candidate) and byte_size(candidate) == 32 and
@@ -966,9 +978,13 @@ defmodule RequestSeal.Custody.Local do
       if purpose != nil, do: Support.signing_bytes!(bytes, bound)
       Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling())
     else
-      Gate.sign(bytes, admission, context, algorithm, fn ->
-        Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling())
-      end)
+      admitted = Gate.admit(bytes, admission, context, algorithm)
+      Gate.live!(context)
+      signature =
+        unwrap(Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling()))
+
+      Gate.finish(admission, admitted, signature, context)
+      {:ok, signature}
     end
   end
 

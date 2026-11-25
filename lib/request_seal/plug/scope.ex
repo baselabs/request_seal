@@ -107,12 +107,11 @@ if Code.ensure_loaded?(Plug.Conn) do
     Binds scope once using the captured path and the verified signature coverage.
 
     Nonempty bodies must have been fully read from Capture's retained adapter
-    and parsed into a map by a configured parser. Competing headers refuse
-    in both the captured and current headers. Nested maps and lists are
-    inspected for selectors, including query names discarded during decoding.
-    Unfetched and opaque nested values refuse,
-    except for uploads. Percent escapes and empty or dot segments refuse
-    before any capture is bound.
+    and parsed into a map by a configured parser. Scope supports JSON objects
+    and URL-encoded forms and inspects their captured names before merging.
+    Competing headers refuse in both the captured and current headers. Nested
+    unfetched and opaque values refuse, except for upload leaves. Percent
+    escapes and empty or dot segments refuse before any capture is bound.
 
     Refusals are stored as bounded adapter errors at stage `:scope`. With
     `{:halt, status}` the plug sends an empty response and halts. Read an accepted
@@ -167,7 +166,7 @@ if Code.ensure_loaded?(Plug.Conn) do
            :ok <- validate(captures, opts.validator),
            :ok <- refuse_header(conn, state.capture.message.fields, opts.refuse_headers),
            :ok <- refuse_query(conn, query, opts.refuse_names),
-           :ok <- refuse_body(conn, state.capture.message.body.bytes, opts.refuse_names),
+           :ok <- refuse_body(conn, state.capture.message, opts.refuse_names),
            tenant = Map.fetch!(captures, opts.tenant),
            :ok <- agree(opts, verification.principal, tenant) do
         {:ok, %{tenant: tenant, captures: captures}}
@@ -236,7 +235,7 @@ if Code.ensure_loaded?(Plug.Conn) do
       _ = Plug.Conn.fetch_query_params(fresh)
 
       result =
-        if raw_query_selector?(query, names),
+        if form_selector?(query, names),
           do: :selector,
           else: inspect_optional(conn.query_params, names)
 
@@ -253,7 +252,7 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     # Decode each name separately with Plug's bracket rules so merging
     # repeated parents or finalizing lists cannot erase a selector.
-    defp raw_query_selector?(query, names) do
+    defp form_selector?(query, names) do
       query
       |> :binary.split("&", [:global])
       |> Enum.any?(fn pair ->
@@ -262,21 +261,68 @@ if Code.ensure_loaded?(Plug.Conn) do
       end)
     end
 
-    defp refuse_body(conn, bytes, names) do
+    defp refuse_body(conn, message, names) do
       params = conn.body_params
+      bytes = message.body.bytes
 
-      if bytes != "" and
-           (is_struct(params) or not is_map(params) or
-              not Delivery.replayed?(conn.adapter) or
-              not Delivery.replay_matches?(conn.adapter, bytes)) do
-        reject(:body_uninspected)
-      else
-        case inspect_optional(params, names) do
-          :selector -> reject(:scope_in_body)
-          :indeterminate -> reject(:body_uninspected)
-          :clean -> :ok
+      raw =
+        cond do
+          bytes == "" -> :clean
+          is_struct(params) or not is_map(params) -> :indeterminate
+          not Delivery.replayed?(conn.adapter) -> :indeterminate
+          not Delivery.replay_matches?(conn.adapter, bytes) -> :indeterminate
+          true -> inspect_body_bytes(conn, message.fields, bytes, names)
         end
+
+      case combine(raw, inspect_optional(params, names)) do
+        :selector -> reject(:scope_in_body)
+        :indeterminate -> reject(:body_uninspected)
+        :clean -> :ok
       end
+    end
+
+    defp inspect_body_bytes(conn, fields, bytes, names) do
+      captured = for field <- fields, String.downcase(field.name) == "content-type", do: field.value
+
+      with [type] <- captured,
+           [^type] <- Plug.Conn.get_req_header(conn, "content-type") do
+        case Plug.Conn.Utils.content_type(type) do
+          {:ok, "application", "x-www-form-urlencoded", _} ->
+            _ = Plug.Conn.Query.decode(bytes)
+            if form_selector?(bytes, names), do: :selector, else: :clean
+
+          {:ok, "application", subtype, _} ->
+            if subtype == "json" or String.ends_with?(subtype, "+json"),
+              do: inspect_json(bytes, names),
+              else: :indeterminate
+
+          _ ->
+            :indeterminate
+        end
+      else
+        _ -> :indeterminate
+      end
+    rescue
+      _ in [Plug.Conn.InvalidQueryError] -> :indeterminate
+    end
+
+    defp inspect_json(bytes, names) do
+      # Observe every object member before the decoder can overwrite a parent.
+      {value, _, rest} =
+        :json.decode(bytes, nil, %{
+          object_push: fn key, value, acc ->
+            if key in names, do: throw(:scope_selector)
+            [{key, value} | acc]
+          end
+        })
+
+      if is_map(value) and Regex.match?(~r/\A[ \t\r\n]*\z/, rest),
+        do: :clean,
+        else: :indeterminate
+    rescue
+      _ -> :indeterminate
+    catch
+      :scope_selector -> :selector
     end
 
     # The raw query was parsed separately, and a nonempty body is required

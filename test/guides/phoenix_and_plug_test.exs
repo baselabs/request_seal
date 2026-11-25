@@ -3,6 +3,35 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
   alias RequestSeal.DocsExamples, as: E
 
   test "documented examples execute against real cryptography and integrations" do
+    conn =
+      RequestSeal.SignedPathTestSupport.verified(
+        "/teams/alpha/items",
+        ~s[("@method" "@path")]
+      )
+
+    binding = [conn: conn]
+
+    example =
+      E.eval(
+        ~S'''
+        scope =
+          RequestSeal.Plug.Scope.init(
+            template: "/teams/:team/*",
+            tenant: :team,
+            principal_tenant: fn :unattributed -> {:ok, "alpha"}; _ -> :error end,
+            on_reject: {:halt, 403}
+          )
+
+        conn = RequestSeal.Plug.Scope.call(conn, scope)
+        {:ok, %{tenant: tenant}} = RequestSeal.Plug.scope(conn)
+        ''',
+        binding,
+        "docs/guides/phoenix-and-plug.md",
+        1
+      )
+
+    assert Keyword.fetch!(example, :tenant) == "alpha"
+
     binding = []
 
     binding =
@@ -13,7 +42,7 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
         ''',
         binding,
         "docs/guides/phoenix-and-plug.md",
-        1
+        2
       )
 
     binding =
@@ -39,7 +68,7 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
         ''',
         binding,
         "docs/guides/phoenix-and-plug.md",
-        2
+        3
       )
 
     assert RequestSeal.Policy.valid?(Keyword.fetch!(binding, :policy))
@@ -53,7 +82,7 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
         ''',
         binding,
         "docs/guides/phoenix-and-plug.md",
-        3
+        4
       )
 
     binding =
@@ -89,7 +118,7 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
         ''',
         binding,
         "docs/guides/phoenix-and-plug.md",
-        4
+        5
       )
 
     binding =
@@ -106,7 +135,7 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
         ''',
         binding,
         "docs/guides/phoenix-and-plug.md",
-        5
+        6
       )
 
     binding =
@@ -130,7 +159,7 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
         ''',
         binding,
         "docs/guides/phoenix-and-plug.md",
-        6
+        7
       )
 
     binding =
@@ -153,7 +182,7 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
         ''',
         binding,
         "docs/guides/phoenix-and-plug.md",
-        7
+        8
       )
 
     signing = %{
@@ -232,7 +261,7 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
     assert verified_response.signature.crypto == :valid
     E.assert_received_request()
     E.assert_rejected_request(binding)
-    E.assert_fences("docs/guides/phoenix-and-plug.md", 7)
+    E.assert_fences("docs/guides/phoenix-and-plug.md", 8)
     assert is_list(binding)
   end
 end

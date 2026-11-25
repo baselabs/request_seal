@@ -201,7 +201,7 @@ defmodule RequestSeal.JOSE.JWS do
       segments, a nonempty payload, and a protected segment of at most 21,846
       bytes. JSON serializations (input starting with `{` or `[`) reject.
       The protected header follows the bounds in `sign_protected/4`.
-    * `policy` - a map containing exactly these atom keys:
+    * `policy` - a map containing these required atom keys and optional `:require_issued_for`:
       * `:algorithms` - nonempty unique list selected from `"RS256"`,
         `"PS256"`, `"PS384"`, `"PS512"`, `"HS256"`, `"ES256"`, `"ES384"`, and
         `"EdDSA"`. The received `alg` must be in this list.
@@ -222,6 +222,8 @@ defmodule RequestSeal.JOSE.JWS do
         key is a PublicKey or a :verify KeyHandle bound to `{:jws, alg}`;
         closures and :embedded return `:key_resolver_failed`. Under :require,
         only `key: :embedded` is accepted; public keys and handles are refused.
+      * `:require_issued_for` - an optional purpose atom. Omission and nil
+        select unassigned keys.
 
   Admission checks header refusals and algorithm selection, then the member
   set and expected values before resolution. Under :refuse, jwk is unsupported.
@@ -249,7 +251,8 @@ defmodule RequestSeal.JOSE.JWS do
       value, and `"jwk"` under `:refuse`), `:algorithm_not_permitted`, `:detached_payload` (empty payload
       segment), `:unknown_key` (resolver returned `:error`), `:algorithm_mismatch`
       (resolver returned another algorithm, embedded binding mismatch, or selected an X25519 key), `:key_resolver_failed` (resolver
-      exception or invalid entry), `:invalid_signature` (empty or invalid
+      exception or invalid entry), `:issued_for_mismatch` (the selected key purpose
+      differs from the policy), `:invalid_signature` (empty or invalid
       signature, or custody verification failure), and `:deadline_exceeded` (the
       only retryable reason). Meanings: `RequestSeal.JOSE.Error`.
 

@@ -11,7 +11,7 @@ defmodule RequestSeal.Custody.Gate do
   alias RequestSeal.{Custody, KeyHandle, Message, Policy, Replay, SignatureBase, SignatureFields}
   alias RequestSeal.Custody.{Context, Error, Support}
   alias RequestSeal.Replay.{Claim, Store}
-  import Support, only: [ensure: 2, fail: 1, unwrap: 1]
+  import Support, only: [ensure: 2, fail: 1]
 
   @max_clock 253_402_300_799
   @required [:port, :once, :required_components, :max_lifetime, :clock, :skew, :tag]
@@ -206,21 +206,19 @@ defmodule RequestSeal.Custody.Gate do
   end
 
   @doc false
-  def sign(bytes, config, context, algorithm, signer) do
-    admitted = admit(bytes, config, context, algorithm)
+  def finish(config, admitted, signature, context) do
     live!(context)
-    signature = unwrap(signer.())
     record(config, admitted, signature, context)
     ensure(admitted.not_after > clock(config, context), :gate_window)
     live!(context)
-    {:ok, signature}
   end
 
-  defp admit(bytes, config, context, algorithm) do
+  @doc false
+  def admit(bytes, config, context, algorithm) do
     live!(context)
 
     parts =
-      case SignatureBase.parse(bytes) do
+      case SignatureBase.parse_protocol(bytes) do
         {:ok, parts} -> parts
         _ -> fail(:gate_malformed_base)
       end
@@ -345,9 +343,14 @@ defmodule RequestSeal.Custody.Gate do
     now
   end
 
-  defp live!(context) do
+  @doc false
+  def live!(context) do
     ensure(Context.remaining(context) > 0, :deadline_exceeded)
-    ensure(Process.alive?(context.owner), :custodian_failure)
+    ensure(
+      Process.alive?(context.owner) and
+        (context.key_owner == nil or Process.alive?(context.key_owner)),
+      :custodian_failure
+    )
   end
 
   defp valid_context?(%Context{deadline: deadline, owner: owner}),

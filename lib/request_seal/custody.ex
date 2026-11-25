@@ -75,11 +75,13 @@ defmodule RequestSeal.Custody do
   Report the retained algorithm and signing purpose for this reference.
 
   Implement this callback to support assigned signing and verification. Read
-  the assignment from custody under the supplied deadline. The facade calls
-  it for every signing and verification request when implemented, including
-  requests with no purpose. The signing and verification callbacks must
+  the assignment from custody under the supplied deadline. The facade checks
+  it for signing and in-custodian verification, including requests with no
+  purpose. The signing and verification callbacks must
   enforce the assignment, operation family, and input format when using the
-  key. Assigned verification requires `c:verify/5`.
+  key. Assigned verification requires `c:verify/5`. Its unassigned fallback
+  requires `c:binding/2` to return the algorithm, nil purpose, and public key
+  from a single authoritative read.
   """
   @callback signing_assignment(term(), Context.t()) ::
               {:ok, {algorithm(), atom() | nil}} | {:error, Error.reason()}
@@ -760,10 +762,7 @@ defmodule RequestSeal.Custody do
 
         context = %{context | issued_for: purpose, operation: protocol}
 
-        case run(context, fn ->
-               check_signing_assignment!(handle, op, context)
-               invoke(handle, op, args, context)
-             end) do
+        case run(context, fn -> invoke(handle, op, args, context) end) do
           {:ok, :ok} when op in [:verify, :release] -> :ok
           result -> result
         end
@@ -842,8 +841,7 @@ defmodule RequestSeal.Custody do
 
   defp data!(bytes, max), do: ensure(is_binary(bytes) and byte_size(bytes) <= max, :invalid_data)
 
-  defp check_signing_assignment!(handle, op, %{issued_for: purpose} = context)
-       when op in [:sign, :verify] do
+  defp check_signing_assignment!(handle, %{issued_for: purpose} = context) do
     if function_exported?(handle.custodian, :signing_assignment, 2) do
       case handle.custodian.signing_assignment(handle.ref, context) do
         {:ok, {algorithm, retained}} ->
@@ -858,15 +856,14 @@ defmodule RequestSeal.Custody do
     end
   end
 
-  defp check_signing_assignment!(_, _, _), do: :ok
-
   defp invoke(handle, :verify, [bytes, signature], context) do
     result =
       if function_exported?(handle.custodian, :verify, 5) do
+        check_signing_assignment!(handle, context)
         handle.custodian.verify(handle.ref, handle.algorithm, bytes, signature, context)
       else
         ensure(context.issued_for == nil, :unsupported_operation)
-        public = handle.custodian.public_key(handle.ref) |> Support.unwrap()
+        public = verification_key!(handle, context)
 
         RequestSeal.Crypto.verify(handle.algorithm, bytes, signature, public,
           max_bytes: RequestSeal.Crypto.max_bytes_ceiling()
@@ -876,11 +873,16 @@ defmodule RequestSeal.Custody do
     normalize(:verify, result)
   end
 
-  defp invoke(handle, op, args, context) when op in [:sign, :wrap],
+  defp invoke(handle, :sign, [bytes], context) do
+    check_signing_assignment!(handle, context)
+    normalize(:sign, handle.custodian.sign(handle.ref, handle.algorithm, bytes, context))
+  end
+
+  defp invoke(handle, :wrap, args, context),
     do:
       normalize(
-        op,
-        apply(handle.custodian, op, [handle.ref, handle.algorithm | args] ++ [context])
+        :wrap,
+        apply(handle.custodian, :wrap, [handle.ref, handle.algorithm | args] ++ [context])
       )
 
   defp invoke(handle, :binding, [], context) do
@@ -922,6 +924,25 @@ defmodule RequestSeal.Custody do
     do: normalize(:release, handle.custodian.release(handle.ref, context))
 
   defp invoke(handle, op, [], _), do: normalize(op, apply(handle.custodian, op, [handle.ref]))
+
+  defp verification_key!(handle, context) do
+    if function_exported?(handle.custodian, :signing_assignment, 2) do
+      ensure(function_exported?(handle.custodian, :binding, 2), :unsupported_operation)
+
+      case handle.custodian.binding(handle.ref, context) do
+        {:ok, %{algorithm: algorithm, issued_for: purpose, public_key: public} = binding}
+        when map_size(binding) == 3 ->
+          ensure(algorithm == handle.algorithm and purpose == nil, :key_mismatch)
+          ensure(public != nil, :no_public_key)
+          Support.unwrap(normalize(:public_key, {:ok, public}))
+
+        result ->
+          Support.unwrap(normalize(:binding, result))
+      end
+    else
+      Support.unwrap(handle.custodian.public_key(handle.ref))
+    end
+  end
 
   defp normalize(_, {:error, %{reason: reason}}), do: {:error, Error.new(reason)}
   defp normalize(_, {:error, reason}) when is_atom(reason), do: {:error, Error.new(reason)}
@@ -1027,15 +1048,16 @@ defmodule RequestSeal.Custody do
   @spec run(Context.t(), (-> :ok | {:ok, term()} | {:error, term()})) ::
           {:ok, term()} | {:error, term()}
   def run(
-        %Context{deadline: deadline, owner: owner} = context,
+        %Context{deadline: deadline, owner: owner, key_owner: key_owner} = context,
         callback
       )
-      when is_integer(deadline) and is_pid(owner) and is_function(callback, 0) do
+      when is_integer(deadline) and is_pid(owner) and (is_nil(key_owner) or is_pid(key_owner)) and
+             is_function(callback, 0) do
     cond do
       Context.remaining(context) <= 0 ->
         {:error, Error.new(:deadline_exceeded)}
 
-      owner_dead?(owner) ->
+      owner_dead?(owner) or owner_dead?(key_owner) ->
         {:error, Error.new(:custodian_failure)}
 
       true ->
@@ -1097,19 +1119,26 @@ defmodule RequestSeal.Custody do
   defp watch_owner(caller, reply, context, callback) do
     Process.flag(:trap_exit, true)
     caller_ref = Process.monitor(caller)
-    owner_ref = if context.owner == caller, do: caller_ref, else: Process.monitor(context.owner)
+    owners = [context.owner, context.key_owner] -- [nil]
+
+    owner_refs =
+      owners
+      |> Enum.uniq()
+      |> Enum.reject(&(&1 == caller))
+      |> Map.new(&{Process.monitor(&1), true})
+
     middle = self()
 
     cond do
       Context.remaining(context) <= 0 ->
         send(reply, {reply, {:error, Error.new(:deadline_exceeded)}})
 
-      owner_dead?(context.owner) ->
+      Enum.any?(owners, &owner_dead?/1) ->
         send(reply, {reply, {:error, Error.new(:custodian_failure)}})
 
       true ->
         receive do
-          {:DOWN, ^owner_ref, :process, _, _} ->
+          {:DOWN, ref, :process, _, _} when is_map_key(owner_refs, ref) ->
             send(reply, {reply, {:error, Error.new(:custodian_failure)}})
 
           {:DOWN, ^caller_ref, :process, ^caller, _} ->
@@ -1123,15 +1152,17 @@ defmodule RequestSeal.Custody do
                 send(middle, {reply, result})
               end)
 
-            watch_runner(caller, caller_ref, owner_ref, reply, context, runner)
+            watch_runner(caller, caller_ref, owner_refs, reply, context, runner)
         end
     end
   end
 
-  defp owner_dead?(owner) when node(owner) == node(), do: not Process.alive?(owner)
+  defp owner_dead?(owner) when is_pid(owner) and node(owner) == node(),
+    do: not Process.alive?(owner)
+
   defp owner_dead?(_), do: false
 
-  defp watch_runner(caller, caller_ref, owner_ref, reply, context, runner) do
+  defp watch_runner(caller, caller_ref, owner_refs, reply, context, runner) do
     receive do
       {^reply, result} ->
         stop_runner(runner)
@@ -1140,7 +1171,7 @@ defmodule RequestSeal.Custody do
       {:DOWN, ^caller_ref, :process, ^caller, _} ->
         stop_runner(runner)
 
-      {:DOWN, ^owner_ref, :process, _, _} ->
+      {:DOWN, ref, :process, _, _} when is_map_key(owner_refs, ref) ->
         stop_runner(runner)
         send(reply, {reply, {:error, Error.new(:custodian_failure)}})
 
@@ -1152,7 +1183,7 @@ defmodule RequestSeal.Custody do
     after
       context |> Context.remaining() |> max(0) |> min(4_294_967_295) ->
         if Context.remaining(context) > 0 do
-          watch_runner(caller, caller_ref, owner_ref, reply, context, runner)
+          watch_runner(caller, caller_ref, owner_refs, reply, context, runner)
         else
           stop_runner(runner)
           send(reply, {reply, {:error, Error.new(:deadline_exceeded)}})

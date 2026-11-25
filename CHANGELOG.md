@@ -8,7 +8,10 @@
   assignment do so even for operations that omit a purpose. HTTP verification
   checks the assignment and family for handles and public-key resolver entries.
   Assigned and gated keys require protocol input validation. Local HTTP signing
-  can require single-use admission for a valid typed base.
+  can require single-use admission for a valid typed base. Assignment-aware
+  public verification uses one custody read. Signing admission follows the key
+  creator's lifetime. Validate derived HTTP values before assigned key use or
+  admission and pin commitment bytes in the corpus.
 
 - Keep SSH socket operations within custody. SSH handles expire on creator
   exit or release, including handles transferred to another process. Recreate
@@ -18,12 +21,14 @@
 - Bind Plug tenant context to a verified path and pass it through to Ash scope
   mapping. Reject conflicting captured or current headers and indeterminate
   nested request parameters. Check every captured query name for selectors
-  that the merged query map can discard.
+  that the merged query map can discard. Inspect raw JSON and form selectors
+  before merging and refuse other nonempty body formats.
 
 - Add paired replay stores for migrations that require both stores to admit
   each claim. Direct claims and sweeps validate the context and bound both
   adapters and telemetry by the shared deadline. A store-backed signing
   admission also cancels the claim worker when the signing caller exits.
+  The corpus covers both stores' state after fresh and duplicate claims.
 
 - Document RequestSeal's steward, license, and name policy, and require matching
   Developer Certificate of Origin sign-offs in qualification.

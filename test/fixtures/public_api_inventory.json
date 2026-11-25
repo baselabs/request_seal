@@ -48,15 +48,18 @@
     "type t/0"
   ],
   "RequestSeal.Custody": [
+    "callback binding/2",
     "callback commit/3",
     "callback derive/3",
     "callback identity/1",
     "callback public_key/1",
     "callback release/2",
     "callback sign/4",
+    "callback signing_assignment/2",
     "callback unwrap/5",
     "callback verify/5",
     "callback wrap/4",
+    "function binding/2",
     "function cleanup/2",
     "function derive/4",
     "function identity/1",
@@ -85,6 +88,24 @@
   ],
   "RequestSeal.Custody.Error": [
     "type reason/0",
+    "type t/0"
+  ],
+  "RequestSeal.Custody.Gate": [
+    "function check/3",
+    "function commitment/3",
+    "function new/4",
+    "type config/0"
+  ],
+  "RequestSeal.Custody.Gate.Admission": [
+    "type t/0"
+  ],
+  "RequestSeal.Custody.Gate.Admitted": [
+    "type t/0"
+  ],
+  "RequestSeal.Custody.Gate.Request": [
+    "type t/0"
+  ],
+  "RequestSeal.Custody.Gate.Signed": [
     "type t/0"
   ],
   "RequestSeal.Custody.Local": [
@@ -211,6 +232,7 @@
     "function verify/4"
   ],
   "RequestSeal.KeyHandle": [
+    "type family/0",
     "type t/0"
   ],
   "RequestSeal.KeyIdentity": [
@@ -230,12 +252,22 @@
   ],
   "RequestSeal.Plug": [
     "function capture/1",
+    "function scope/1",
     "function verification/1"
   ],
   "RequestSeal.Plug.Capture": [
     "function call/2",
     "function init/1",
     "function read_body/2",
+    "type t/0"
+  ],
+  "RequestSeal.Plug.Scope": [
+    "function ash_scope/2",
+    "function call/2",
+    "function init/1",
+    "function new/1",
+    "type ash_binding/0",
+    "type result/0",
     "type t/0"
   ],
   "RequestSeal.Plug.SignResponse": [
@@ -289,6 +321,11 @@
   "RequestSeal.Replay.Error": [
     "type reason/0",
     "type t/0"
+  ],
+  "RequestSeal.Replay.Pair": [
+    "function claim/3",
+    "function store/2",
+    "function sweep/3"
   ],
   "RequestSeal.Replay.Postgres": [
     "function claim/3",

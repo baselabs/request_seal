@@ -8,14 +8,18 @@ defmodule RequestSeal.SignedPathTestSupport do
     url = "https://example.test" <> target
     body = Keyword.get(opts, :body, "")
     method = if body == "", do: :get, else: :post
-    body_headers = if body == "", do: [], else: [{"content-type", "application/json"}]
+    content_type = Keyword.get(opts, :content_type, "application/json")
+    body_headers = if body == "", do: [], else: [{"content-type", content_type}]
     headers = body_headers ++ Keyword.get(opts, :headers, [])
+    parse? = Keyword.get(opts, :parse_body, body != "")
+    parsers = Keyword.get(opts, :parsers, [:json])
     {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
     {:ok, handle} = Local.new("ed25519", {:ed25519, seed})
 
     try do
       {:ok, key} = Custody.public_key(handle)
-      {:ok, message} = Message.request(method |> Atom.to_string() |> String.upcase(), url, headers, body)
+      method_name = method |> Atom.to_string() |> String.upcase()
+      {:ok, message} = Message.request(method_name, url, headers, body)
 
       {:ok, signed} =
         RequestSeal.sign(
@@ -42,7 +46,7 @@ defmodule RequestSeal.SignedPathTestSupport do
           Plug.Conn.put_req_header(conn, String.downcase(field.name), field.value)
         end)
         |> Capture.call(capture)
-        |> parse_body(Keyword.get(opts, :parse_body, body != ""))
+        |> parse_body(parse?, parsers)
         |> Verify.call(verify)
 
       {:ok, _} = RequestSeal.Plug.verification(conn)
@@ -52,11 +56,10 @@ defmodule RequestSeal.SignedPathTestSupport do
     end
   end
 
-  defp parse_body(conn, true) do
-    parser = Plug.Parsers.init(parsers: [:json], json_decoder: Jason)
+  defp parse_body(conn, true, parsers) do
+    parser = Plug.Parsers.init(parsers: parsers, json_decoder: Jason)
     Plug.Parsers.call(conn, parser)
   end
 
-  defp parse_body(conn, false), do: conn
-
+  defp parse_body(conn, false, _), do: conn
 end

@@ -2,6 +2,7 @@
 from pathlib import Path
 import sys
 import importlib.util
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 
+@unittest.skipUnless(shutil.which("mix"), "requires the hosted Mix runtime")
 class DialyzerGateTest(unittest.TestCase):
     def assert_suppression(self, result, mechanism):
         self.assertNotEqual(0, result.returncode, result.stdout)

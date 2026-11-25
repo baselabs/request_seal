@@ -19,7 +19,8 @@ report the retained algorithm and purpose through `signing_assignment/2`
 under the same deadline. Legacy callbacks cannot establish an assignment.
 When a custodian provides the callback, the facade also checks requests with
 an omitted purpose. Public-key verification fallback requires an unassigned
-reference.
+reference. Assignment-aware fallback reads the assignment and public key
+together through `binding/2`.
 SSH custody retains its assignment and socket path in a sensitive process
 and controls socket operations from there. A binding read reports held public
 facts and an RFC 7638 thumbprint when public material exists. SSH binding reads
@@ -38,12 +39,13 @@ must equal the resolver's trusted assignment. Purposes stay outside the wire
 format.
 
 Local HTTP signing may require approval inside the sensitive key process.
-A gate validates the typed HTTP Inner List before extracting any parameter
-value. It compares canonical covered components, tag, algorithm, optional key ID,
+A gate validates the typed HTTP Inner List and derived values before extracting
+any parameter value. Direct assigned HTTP operations share that validation. It compares canonical covered components, tag, algorithm, optional key ID,
 and the approved digest, nonce, and time window. It consumes the decision
 under the operation deadline before signing. The claim worker monitors the
-holder that calls it and the original signing caller. Either process's exit
-cancels pending worker activity. A configured recorder must succeed before
+holder that calls it, the original signing caller, and the creator of the key.
+Their lifetimes also bound admission and recording. Key use and result
+delivery require a live creator. A configured recorder must succeed before
 return. Committed claims survive every subsequent failure.
 
 ## Alternatives

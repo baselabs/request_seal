@@ -16,12 +16,15 @@ ALLOWED = {
     'lib/request_seal/accept_signature.ex': {'chooser1': 1},
     'lib/request_seal/ash.ex': {'actor1': 1, 'tenant1': 1},
     'lib/request_seal/ash_hooks.ex': {'fun2': 1, 'signing[:clock]0': 1},
+    'lib/request_seal/custody/gate.ex': {'config.port2': 1, 'config.clock0': 1, 'config.record2': 1},
     'lib/request_seal/custody/local.ex': {'handle.ref0': 1},
+    'lib/request_seal/custody/ssh_agent.ex': {'ref0': 1},
     'lib/request_seal/custody.ex': {'ref0': 1, 'handle.ref0': 1, 'callback0': 1},
     'lib/request_seal/discovery/support.ex': {'clock0': 1},
     'lib/request_seal/jose/jwe/bounds.ex': {'v': 1},
     'lib/request_seal/jose/jwe/codec.ex': {':erlang.map_get(:key_resolver,p)1': 1},
     'lib/request_seal/jose/support.ex': {'p.key_resolver1': 1},
+    'lib/request_seal/plug/scope.ex': {'opts.principal_tenant1': 1},
     'lib/request_seal/plug/sign_response.ex': {'callback1': 1},
     'lib/request_seal/plug/verify.ex': {'policy0': 1, 'function0': 1},
     'lib/request_seal/policy.ex': {'p.key_resolver1': 1, 'clock0': 1},
@@ -81,9 +84,9 @@ class KeyClosureGuardTest(unittest.TestCase):
             ("Plug response signer", "lib/request_seal/plug/sign_response.ex", "    def init(opts)",
              "match?(%KeyHandle{}, opts[:signer])", "is_function(opts[:signer], 2)"),
             ("JWS signer", "lib/request_seal/jose/jws.ex", "  def sign(header,",
-             "Support.sign(signer, alg, base, timeout)", "callback(fn -> signer.({:jws, alg}, base) end, :signer_failed, :crypto)"),
+             "Support.sign(signer, alg, base, timeout, purpose)", "callback(fn -> signer.({:jws, alg}, base) end, :signer_failed, :crypto)"),
             ("JWS exact protected signer", "lib/request_seal/jose/jws.ex", "  def sign_protected(",
-             "Support.sign(signer, alg, base, timeout)", "callback(fn -> signer.({:jws, alg}, base) end, :signer_failed, :crypto)"),
+             "Support.sign(signer, alg, base, timeout, purpose)", "callback(fn -> signer.({:jws, alg}, base) end, :signer_failed, :crypto)"),
             ("JWS verification key", "lib/request_seal/jose/jws.ex", "  defp verify_internal(",
              "      case key do", "      case key do\n        fun when is_function(fun, 3) -> fun.({:jws, alg}, base, signature)"),
             ("JWE wrapper", "lib/request_seal/jose/jwe.ex", "  defp wrap_recipient(",
@@ -92,11 +95,16 @@ class KeyClosureGuardTest(unittest.TestCase):
             ("JWE unwrapper", "lib/request_seal/jose/jwe/resolver.ex", "  defp normalize(_, _)",
              "  defp normalize(_, _)",
              "  defp normalize({:ok, %{algorithm: a, unwrap: unwrap}}, a) when is_function(unwrap, 2), do: unwrap.(a, <<>>)\n  defp normalize(_, _)"),
-            ("shared JOSE signer", "lib/request_seal/jose/support.ex", "  def sign(_, _, _, _)",
-             "  def sign(_, _, _, _), do: fail(:invalid_options)",
-             "  def sign(signer, alg, bytes, _), do: signer.({:jws, alg}, bytes)"),
+            ("shared JOSE signer", "lib/request_seal/jose/support.ex", "  def sign(_, _, _, _, _)",
+             "  def sign(_, _, _, _, _), do: fail(:invalid_options)",
+             "  def sign(signer, alg, bytes, _, _), do: signer.({:jws, alg}, bytes)"),
         ]
         sources = self.sources()
+        self.assertEqual([], violations(sources))
+        invocation_cases = {
+            "Finch signer", "JWS signer", "JWS exact protected signer", "shared JOSE signer",
+            "generated metadata signer",
+        }
         for name, path, anchor, before, after in surfaces:
             with self.subTest(surface=name):
                 source = sources[path]
@@ -105,10 +113,19 @@ class KeyClosureGuardTest(unittest.TestCase):
                 changed_source = source[:at] + after + source[at + len(before):]
                 self.assertNotEqual(source, changed_source)
                 changed = dict(sources, **{path: changed_source})
-                self.assertNotEqual([], violations(changed))
+                actual = violations(changed)
+                if name in invocation_cases:
+                    expected = [path + ": key closure invocation"]
+                    if name == "generated metadata signer":
+                        expected.append("generated metadata signing manufactures a closure")
+                    self.assertEqual(expected, actual)
+                else:
+                    self.assertEqual(1, len(actual), actual)
+                    self.assertTrue(actual[0].startswith(path + ": forbidden function admission "), actual)
 
     def test_removed_policy_types_and_direct_invocations_are_caught(self):
         sources = self.sources()
+        self.assertEqual([], violations(sources))
         for path, mutation in [
             ("lib/request_seal/policy.ex", "@type signer :: function()"),
             ("lib/request_seal/policy.ex", "@type verify_fun :: function()"),
@@ -118,7 +135,8 @@ class KeyClosureGuardTest(unittest.TestCase):
         ]:
             with self.subTest(mutation=mutation):
                 changed = dict(sources, **{path: sources[path] + "\n" + mutation})
-                self.assertNotEqual([], violations(changed))
+                reason = "removed closure contract" if mutation.startswith("@type") else "key closure invocation"
+                self.assertEqual([path + ": " + reason], violations(changed))
 
 
 if __name__ == "__main__":

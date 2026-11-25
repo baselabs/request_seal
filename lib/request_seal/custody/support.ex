@@ -89,7 +89,7 @@ defmodule RequestSeal.Custody.Support do
   end
 
   def signing_bytes!(bytes, algorithm) when is_binary(algorithm) do
-    case RequestSeal.SignatureBase.parse(bytes) do
+    case RequestSeal.SignatureBase.parse_protocol(bytes) do
       {:ok, %{inner_list: input}} ->
         ensure(
           RequestSeal.SignatureFields.valid_inner?(input) and

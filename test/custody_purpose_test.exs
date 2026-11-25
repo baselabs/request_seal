@@ -13,6 +13,9 @@ defmodule RequestSeal.CustodyPurposeTest do
     def signing_assignment(ref, context), do: Local.signing_assignment(ref.().ref, context)
 
     @impl true
+    def binding(ref, context), do: Local.binding(ref.().ref, context)
+
+    @impl true
     def public_key(ref), do: Custody.public_key(ref.())
 
     @impl true
@@ -252,6 +255,30 @@ defmodule RequestSeal.CustodyPurposeTest do
     for key <- [unassigned, public] do
       assert {:ok, _} = RequestSeal.verify(signed, policy(key, nil, %{}, algorithm), label: "sig")
     end
+  end
+
+  test "fallback verifies only with the key returned in the atomic assignment", ctx do
+    {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+    {:ok, unassigned} = Local.new("ed25519", {:ed25519, seed})
+    bytes = base(ctx.message)
+    opts = [issued_for: :build, operation: :http]
+    assert {:ok, signature} = Custody.sign(ctx.handle, bytes, opts)
+    observer = self()
+    rotation = make_ref()
+
+    reference = %KeyHandle{
+      custodian: PublicKeyCustodian,
+      algorithm: "ed25519",
+      capabilities: [:verify],
+      ref: fn ->
+        send(observer, :reference_read)
+        if Process.put(rotation, true), do: ctx.handle, else: unassigned
+      end
+    }
+
+    assert {:error, %{reason: :invalid_signature}} = Custody.verify(reference, bytes, signature)
+    assert_received :reference_read
+    refute_received :reference_read
   end
 
   test "JWS enforces purpose in both signing forms", ctx do
