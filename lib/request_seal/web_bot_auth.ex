@@ -718,6 +718,8 @@ defmodule RequestSeal.WebBotAuth do
       * `:nonce` - binary of 1 to 1,024 bytes, or nil.
       * `:components` - optional serialized Inner List of additional component
         identifiers, without parameters. Default `"()"`.
+      * `:issued_for` - optional trusted local signing purpose atom. Omission
+        and nil select unassigned signing.
     * `signer` - a `RequestSeal.KeyHandle` binding the chosen algorithm and
       granting `:sign`.
     * `opts` - keyword list.
@@ -739,7 +741,7 @@ defmodule RequestSeal.WebBotAuth do
       `:duplicate_label`, `:duplicate_parameter`, `:invalid_signature_input`,
       `:invalid_signature_field`, and from `RequestSeal.sign/4` `:label_in_use`,
       `:signature_base_failed`, `:signer_algorithm_mismatch`, `:signing_failed`,
-      and `:signer_failed`. Other reasons: see
+      `:issued_for_mismatch`, and `:signer_failed`. Other reasons: see
       `RequestSeal.Error`.
 
   ## Examples
@@ -784,7 +786,17 @@ defmodule RequestSeal.WebBotAuth do
           ) and
           Enum.all?(
             Map.keys(spec),
-            &(&1 in [:label, :agent, :key, :algorithm, :created, :expires, :nonce, :components])
+            &(&1 in [
+                :label,
+                :agent,
+                :key,
+                :algorithm,
+                :created,
+                :expires,
+                :nonce,
+                :components,
+                :issued_for
+              ])
           ),
         :invalid_options,
         :input
@@ -846,7 +858,8 @@ defmodule RequestSeal.WebBotAuth do
         %{
           label: spec.label,
           signature_input: %{items | parameters: params},
-          algorithm: spec.algorithm
+          algorithm: spec.algorithm,
+          issued_for: Map.get(spec, :issued_for)
         },
         signer,
         field_schemas: schemas(Keyword.get(opts, :field_schemas, %{}))

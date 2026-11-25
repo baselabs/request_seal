@@ -136,7 +136,7 @@ defmodule RequestSeal.CustodyGateTest do
           {"created=1700000000", ~s[created="1700000000"]}
         ] do
       malformed = String.replace(ctx.base, from, to)
-      assert {:ok, _} = SignatureBase.parse(malformed)
+      assert {:error, %{reason: :malformed}} = SignatureBase.parse(malformed)
       assert_error(sign(handle, malformed), :gate_malformed_base)
     end
 
@@ -174,10 +174,12 @@ defmodule RequestSeal.CustodyGateTest do
     {:ok, gated} = gated(%{ctx.config | port: fn _, _ -> send(observer, :admitted) end})
     opts = [issued_for: :release, operation: :http]
 
-    for {from, to} <- [{~s["@method": GET], ~s["@method": GET ]},
-                       {~s["@path": /items], ~s["@path": /items?query]}] do
+    for {from, to} <- [
+          {~s["@method": GET], ~s["@method": GET ]},
+          {~s["@path": /items], ~s["@path": /items?query]}
+        ] do
       invalid = String.replace(ctx.base, from, to)
-      assert {:ok, _} = SignatureBase.parse(invalid)
+      assert {:error, %{reason: :malformed}} = SignatureBase.parse(invalid)
       assert {:ok, signature} = Crypto.sign("ed25519", invalid, {:ed25519, seed})
       assert_error(Custody.sign(assigned, invalid, opts), :invalid_data)
       assert_error(Custody.verify(assigned, invalid, signature, opts), :invalid_data)
@@ -186,6 +188,49 @@ defmodule RequestSeal.CustodyGateTest do
 
     refute_received :admitted
     assert {:ok, 0} = ETS.sweep(ctx.store, @now + 31)
+  end
+
+  test "impossible component and modifier forms fail before custody or admission", ctx do
+    observer = self()
+    {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
+    {:ok, assigned} = Local.new("ed25519", {:ed25519, seed}, issued_for: :release)
+    {:ok, gated} = gated(%{ctx.config | port: fn _, _ -> send(observer, :admitted) end})
+    opts = [issued_for: :release, operation: :http]
+
+    for {identifier, value} <- [
+          {~s["@status";req], "204"},
+          {~s["@status"], "204"},
+          {~s["@path";tr], "/items"},
+          {~s["@request-target"], "/another-path"},
+          {~s["@target-uri"], "https://example.test/another-path"},
+          {~s["@request-target"], "*"},
+          {~s["@query-param"], "value"},
+          {~s["@query-param";name="q"], "a%2fb"},
+          {~s["@query-param";name="q"], String.duplicate("a", 16_384)},
+          {~s["x-test";bs], "word"},
+          {~s["x-test";bs], ":YQ==:,:Yg==:"},
+          {~s["x-test";bs], ":IA==:"},
+          {~s["x-test";bs;sf], ":YQ==:"},
+          {~s["x-test";sf], "a,b"},
+          {~s["x-test";key="BAD"], "1"},
+          {~s["x-test";key="a"], "1, 2"},
+          {~s["x-test";tr=?0], "value"},
+          {~s["x-test"], " value"},
+          {~s["x-test"], String.duplicate("a", 65_537)}
+        ] do
+      invalid =
+        ~s["@method": GET\n"@path": /items\n#{identifier}: #{value}\n] <>
+          ~s["@signature-params": ("@method" "@path" #{identifier});created=1700000000] <>
+          ~s[;expires=1700000030;nonce="one";tag="release";keyid="local"]
+
+      assert {:error, %{reason: :malformed}} = SignatureBase.parse(invalid)
+      assert {:ok, signature} = Crypto.sign("ed25519", invalid, {:ed25519, seed})
+      assert_error(Custody.sign(assigned, invalid, opts), :invalid_data)
+      assert_error(Custody.verify(assigned, invalid, signature, opts), :invalid_data)
+      assert_error(Custody.sign(gated, invalid, opts), :gate_malformed_base)
+    end
+
+    refute_received :admitted
   end
 
   test "port refusals, invalid replies, mismatches and time bounds are closed", ctx do

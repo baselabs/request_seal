@@ -21,8 +21,9 @@ defmodule RequestSeal.Custody do
   Purpose-bound keys require a matching `:issued_for` and the corresponding
   `:operation` (`:http` or `:jws`) on signing and verification.
   Raw signing and verification are available for unbound keys. Purpose-bound
-  operations require `c:signing_assignment/2`. Custodians supporting them must
-  also compare the context with retained state before using the key.
+  operations require `c:binding/2` or `c:signing_assignment/2`. The facade
+  prefers binding when both exist. Custodians must compare the context with
+  retained state before using the key.
 
   Custodians are trusted code: they must return only public keys and nonsecret
   identities, never log secrets, and must propagate the context deadline and
@@ -74,14 +75,15 @@ defmodule RequestSeal.Custody do
   @doc """
   Report the retained algorithm and signing purpose for this reference.
 
-  Implement this callback to support assigned signing and verification. Read
-  the assignment from custody under the supplied deadline. The facade checks
-  it for signing and in-custodian verification, including requests with no
-  purpose. The signing and verification callbacks must
-  enforce the assignment, operation family, and input format when using the
-  key. Assigned verification requires `c:verify/5`. Its unassigned fallback
-  requires `c:binding/2` to return the algorithm, nil purpose, and public key
-  from a single authoritative read.
+  Supply this callback for assignment-aware signing and in-custodian
+  verification when `c:binding/2` is unavailable. If both exist, the facade
+  uses binding. Each key operation must enforce the retained assignment,
+  family, and input format at key use, including operations with nil purpose.
+
+  Providers with either assignment interface must supply `c:verify/5` for
+  assigned verification. Unassigned public-key fallback requires an atomic
+  binding. Providers with neither interface support unassigned operations
+  through the legacy callbacks.
   """
   @callback signing_assignment(term(), Context.t()) ::
               {:ok, {algorithm(), atom() | nil}} | {:error, Error.reason()}
@@ -492,14 +494,21 @@ defmodule RequestSeal.Custody do
     * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
       `:invalid_options`, `:invalid_handle`, `:unsupported_algorithm` (the handle
       names an unknown algorithm), `:unsupported_operation` (the handle lacks
-      `:sign`), `:invalid_data` (`bytes` is not a binary or exceeds `:max_bytes`),
+      `:sign`, the provider lacks assignment support, or the operation does
+      not fit the key's family), `:issued_for_mismatch` (the requested purpose
+      differs from the handle), `:invalid_data` (malformed protocol input,
+      nonbinary bytes, or bytes beyond `:max_bytes`),
       `:deadline_exceeded`, `:key_not_found` (local holder released or stopped, or
       agent key removed), `:invalid_signing_output` (the custodian returned a
       non-binary, empty, or over-16,384-byte signature), and `:custodian_failure`.
       Custodian reasons pass through: both built-in custodians return
-      `:key_mismatch` when the handle's `algorithm` no longer matches the
-      custodian's bound algorithm, and `RequestSeal.Custody.SSHAgent` also returns
+      `:key_mismatch` when the handle's algorithm or purpose differs from
+      the retained binding, and `RequestSeal.Custody.SSHAgent` also returns
       `:custodian_unavailable`, `:custodian_rejected`, and `:custodian_protocol`.
+      Local signing admission can return `:gate_malformed_base`,
+      `:gate_coverage`, `:gate_window`, `:gate_denied`, `:gate_unavailable`,
+      `:gate_mismatch`, `:gate_spent`, `:gate_store_failed`, and
+      `:gate_unrecorded`.
       A custodian reason outside the `RequestSeal.Custody.Error` list becomes
       `:custodian_failure`. Meanings: `RequestSeal.Custody.Error`.
 
@@ -538,10 +547,11 @@ defmodule RequestSeal.Custody do
   Verify exact bytes through secret custody or the custodian's public key.
 
   A custodian that implements the optional `c:verify/5` callback verifies inside
-  its own boundary (HMAC custody uses this path). Otherwise the custodian's
-  public key is resolved and the signature is checked with
-  `RequestSeal.Crypto.verify/5` for unassigned keys. Assigned verification
-  requires both `c:verify/5` and `c:signing_assignment/2`.
+  its own boundary (HMAC custody uses this path). Assigned verification
+  requires `c:verify/5` and one assignment interface. With no verifier, an
+  unassigned key can use `RequestSeal.Crypto.verify/5` with the public key
+  from `c:binding/2`. Legacy providers without either assignment interface
+  use `c:public_key/1` for this fallback.
   `:ok` establishes mathematical validity only.
 
   ## Parameters
@@ -571,15 +581,19 @@ defmodule RequestSeal.Custody do
     * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
       `:invalid_options`, `:invalid_handle`, `:unsupported_algorithm` (the handle
       names an unknown algorithm), `:unsupported_operation` (the handle lacks
-      `:verify`), `:invalid_data` (`bytes` is not a binary or exceeds
-      `:max_bytes`), `:invalid_signature` (`signature` is not a binary, or it does
+      `:verify`, the provider cannot verify within its assignment contract, or
+      the operation does not fit the key's family), `:issued_for_mismatch`
+      (the requested purpose differs from the handle), `:invalid_data`
+      (malformed protocol input, nonbinary bytes, or bytes beyond `:max_bytes`),
+      `:invalid_signature` (`signature` is not a binary, or it does
       not verify), `:limit` (`signature` exceeds 16,384 bytes),
       `:deadline_exceeded`, `:key_not_found` (local holder released or stopped),
       and `:custodian_failure`. Key-binding reasons pass through from the
-      custodian or from `RequestSeal.Crypto.verify/5`: `:key_mismatch` (the key
-      or the handle's `algorithm` does not fit the bound algorithm),
+      custodian or from `RequestSeal.Crypto.verify/5`: `:key_mismatch` (a
+      retained algorithm, purpose, or key type differs from the supplied one),
       `:invalid_key`, and `:no_public_key` (a custodian without `c:verify/5` that
-      has no public key). A custodian reason outside the
+      has no public key). SSH can return `:custodian_unavailable`,
+      `:custodian_rejected`, and `:custodian_protocol`. A custodian reason outside the
       `RequestSeal.Custody.Error` list becomes `:custodian_failure`. Meanings:
       `RequestSeal.Custody.Error`.
 
@@ -754,12 +768,14 @@ defmodule RequestSeal.Custody do
         )
 
         args = args.(max)
+
         context =
           bind_context(
             %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout},
             handle
           )
 
+        protocol = if(op == :binding, do: :binding, else: protocol)
         context = %{context | issued_for: purpose, operation: protocol}
 
         case run(context, fn -> invoke(handle, op, args, context) end) do
@@ -841,19 +857,35 @@ defmodule RequestSeal.Custody do
 
   defp data!(bytes, max), do: ensure(is_binary(bytes) and byte_size(bytes) <= max, :invalid_data)
 
-  defp check_signing_assignment!(handle, %{issued_for: purpose} = context) do
-    if function_exported?(handle.custodian, :signing_assignment, 2) do
-      case handle.custodian.signing_assignment(handle.ref, context) do
-        {:ok, {algorithm, retained}} ->
-          ensure(KeyHandle.purpose?(retained), :custodian_failure)
-          ensure(algorithm == handle.algorithm and retained == purpose, :key_mismatch)
-
-        result ->
-          Support.unwrap(normalize(:signing_assignment, result))
-      end
-    else
-      ensure(purpose == nil, :unsupported_operation)
+  defp assignment_interface(custodian) do
+    cond do
+      function_exported?(custodian, :binding, 2) -> :binding
+      function_exported?(custodian, :signing_assignment, 2) -> :assignment
+      true -> :legacy
     end
+  end
+
+  defp check_signing_assignment!(handle, context) do
+    case assignment_interface(handle.custodian) do
+      :binding -> read_binding!(handle, context)
+      :assignment -> check_assignment!(handle, context)
+      :legacy -> ensure(context.issued_for == nil, :unsupported_operation)
+    end
+  end
+
+  defp check_assignment!(handle, context) do
+    case handle.custodian.signing_assignment(handle.ref, context) do
+      {:ok, {algorithm, retained}} ->
+        check_retained!(handle, algorithm, retained)
+
+      result ->
+        Support.unwrap(normalize(:signing_assignment, result))
+    end
+  end
+
+  defp check_retained!(handle, algorithm, purpose) do
+    ensure(KeyHandle.purpose?(purpose), :custodian_failure)
+    ensure(algorithm == handle.algorithm and purpose == handle.issued_for, :key_mismatch)
   end
 
   defp invoke(handle, :verify, [bytes, signature], context) do
@@ -886,38 +918,16 @@ defmodule RequestSeal.Custody do
       )
 
   defp invoke(handle, :binding, [], context) do
-    case handle.custodian.binding(handle.ref, context) do
-      {:ok, %{algorithm: algorithm, issued_for: issued_for, public_key: public} = binding}
-      when map_size(binding) == 3 ->
-        ensure(KeyHandle.purpose?(issued_for), :custodian_failure)
-        ensure(algorithm == handle.algorithm and issued_for == handle.issued_for, :key_mismatch)
+    public = read_binding!(handle, context)
+    thumbprint = if public != nil, do: Support.unwrap(PublicKey.thumbprint(public))
 
-        thumbprint =
-          case public do
-            nil ->
-              nil
-
-            %PublicKey{} ->
-              case PublicKey.thumbprint(public) do
-                {:ok, value} -> value
-                _ -> fail(:custodian_failure)
-              end
-
-            _ ->
-              fail(:custodian_failure)
-          end
-
-        {:ok,
-         %{
-           algorithm: algorithm,
-           operation_family: KeyHandle.family(algorithm),
-           issued_for: issued_for,
-           thumbprint: thumbprint
-         }}
-
-      result ->
-        normalize(:binding, result)
-    end
+    {:ok,
+     %{
+       algorithm: handle.algorithm,
+       operation_family: KeyHandle.family(handle.algorithm),
+       issued_for: handle.issued_for,
+       thumbprint: thumbprint
+     }}
   end
 
   defp invoke(handle, :release, [], context),
@@ -925,22 +935,23 @@ defmodule RequestSeal.Custody do
 
   defp invoke(handle, op, [], _), do: normalize(op, apply(handle.custodian, op, [handle.ref]))
 
+  defp read_binding!(handle, context) do
+    case handle.custodian.binding(handle.ref, context) do
+      {:ok, %{algorithm: algorithm, issued_for: issued_for, public_key: public} = binding}
+      when map_size(binding) == 3 ->
+        check_retained!(handle, algorithm, issued_for)
+        if public != nil, do: Support.unwrap(normalize(:public_key, {:ok, public}))
+
+      result ->
+        Support.unwrap(normalize(:binding, result))
+    end
+  end
+
   defp verification_key!(handle, context) do
-    if function_exported?(handle.custodian, :signing_assignment, 2) do
-      ensure(function_exported?(handle.custodian, :binding, 2), :unsupported_operation)
-
-      case handle.custodian.binding(handle.ref, context) do
-        {:ok, %{algorithm: algorithm, issued_for: purpose, public_key: public} = binding}
-        when map_size(binding) == 3 ->
-          ensure(algorithm == handle.algorithm and purpose == nil, :key_mismatch)
-          ensure(public != nil, :no_public_key)
-          Support.unwrap(normalize(:public_key, {:ok, public}))
-
-        result ->
-          Support.unwrap(normalize(:binding, result))
-      end
-    else
-      Support.unwrap(handle.custodian.public_key(handle.ref))
+    case assignment_interface(handle.custodian) do
+      :binding -> read_binding!(handle, context) || fail(:no_public_key)
+      :assignment -> fail(:unsupported_operation)
+      :legacy -> Support.unwrap(handle.custodian.public_key(handle.ref))
     end
   end
 

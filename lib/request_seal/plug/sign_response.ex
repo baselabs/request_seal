@@ -29,11 +29,12 @@ if Code.ensure_loaded?(Plug.Conn) do
 
     ## Options
 
-      * `:sign` - the signing map. It contains exactly `:label` (signature
+      * `:sign` - the signing map. It requires `:label` (signature
         label), `:components` (serialized component Inner List without metadata
         parameters), `:algorithm` (exact supported HTTP signature algorithm),
         `:parameters`, `:digest`, and `:field_schemas` (explicit field schema
-        map). `:parameters` contains exactly `:created` and `:alg` (Booleans),
+        map). Optional `:issued_for` comes from trusted configuration and matches
+        the signer's purpose. `:parameters` contains exactly `:created` and `:alg` (Booleans),
         `:expires_in` (positive seconds or nil, requiring created when present),
         `:nonce` (`:random` or nil), and `:keyid` and `:tag` (bounded strings or
         nil). The adapter generates selected metadata for each signing

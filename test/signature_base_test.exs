@@ -24,12 +24,13 @@ defmodule RequestSeal.SignatureBaseTest do
     end
   end
 
-  test "parse accepts empty bases and parameterized identifiers without deriving their values" do
+  test "parse accepts empty bases and canonical values for parameterized identifiers" do
     for params <- [~s[()], ~s[("@query-param";name="a" "example-dict";sf)]] do
       prefix =
         if params == "()",
           do: "",
-          else: ~s["@query-param";name="a": untrusted] <> "\n" <> ~s["example-dict";sf: ] <> "\n"
+          else:
+            ~s["@query-param";name="a": untrusted] <> "\n" <> ~s["example-dict";sf: a=1] <> "\n"
 
       assert {:ok, parsed} = SignatureBase.parse(prefix <> ~s["@signature-params": ] <> params)
       assert parsed.signature_params == params
@@ -83,7 +84,10 @@ defmodule RequestSeal.SignatureBaseTest do
 
     suffix = "\n" <> ~s["@signature-params": ("x")]
     prefix = ~s["x": ]
-    base = prefix <> :binary.copy("x", 1_048_576 - byte_size(prefix <> suffix)) <> suffix
+    value_bytes = 1_048_576 - byte_size(prefix <> suffix)
+    first = List.duplicate(:binary.copy("x", 65_536), 15)
+    last = :binary.copy("x", value_bytes - 15 * 65_538)
+    base = prefix <> Enum.join(first ++ [last], ", ") <> suffix
     assert byte_size(base) == 1_048_576
     assert {:ok, _} = SignatureBase.parse(base)
   end
@@ -111,6 +115,19 @@ defmodule RequestSeal.SignatureBaseTest do
 
     assert {:ok, ^parts} =
              SignatureBase.components(message, params, opts ++ [max_bytes: byte_size(base)])
+  end
+
+  test "canonical parsing rejects inconsistent projections of the same field" do
+    examples = [
+      {~s["x": a], ~s["x";bs: :Yg==:], ~s[("x" "x";bs)]},
+      {~s["x";sf: a=1], ~s["x";key="a": 2], ~s[("x";sf "x";key="a")]},
+      {~s["x";key="a": 1], ~s["x";sf;key="a": 2], ~s[("x";key="a" "x";sf;key="a")]}
+    ]
+
+    for {first, second, params} <- examples do
+      base = Enum.join([first, second, ~s["@signature-params": #{params}]], "\n")
+      assert {:error, %{reason: :malformed}} = SignatureBase.parse(base)
+    end
   end
 
   test "all complete Sections 2, 4.3 and Appendix B bases match independently published bytes" do

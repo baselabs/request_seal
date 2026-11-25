@@ -25,6 +25,64 @@ defmodule RequestSeal.CustodyPurposeTest do
     def identity(ref), do: Custody.identity(ref.())
   end
 
+  for {name, binding?, assignment?, verify?} <- [
+        {"BindingOnly", true, false, false},
+        {"BindingWithVerifier", true, false, true},
+        {"AssignmentOnly", false, true, false},
+        {"AssignmentWithVerifier", false, true, true},
+        {"Both", true, true, false},
+        {"BothWithVerifier", true, true, true},
+        {"Legacy", false, false, false},
+        {"LegacyWithVerifier", false, false, true}
+      ] do
+    defmodule Module.concat(__MODULE__, name) do
+      @moduledoc false
+      @behaviour RequestSeal.Custody
+      alias RequestSeal.Custody
+      alias RequestSeal.Custody.Local
+
+      @impl true
+      def sign(ref, algorithm, bytes, context) do
+        {key, observer} = ref.()
+        send(observer, :provider_sign)
+        Local.sign(key.ref, algorithm, bytes, context)
+      end
+
+      @impl true
+      def public_key(ref), do: Custody.public_key(elem(ref.(), 0))
+
+      @impl true
+      def identity(ref), do: Custody.identity(elem(ref.(), 0))
+
+      if binding? do
+        @impl true
+        def binding(ref, context) do
+          {key, observer} = ref.()
+          send(observer, :provider_binding)
+          Local.binding(key.ref, context)
+        end
+      end
+
+      if assignment? do
+        @impl true
+        def signing_assignment(ref, context) do
+          {key, observer} = ref.()
+          send(observer, :provider_assignment)
+          Local.signing_assignment(key.ref, context)
+        end
+      end
+
+      if verify? do
+        @impl true
+        def verify(ref, algorithm, bytes, signature, context) do
+          {key, observer} = ref.()
+          send(observer, :provider_verify)
+          Local.verify(key.ref, algorithm, bytes, signature, context)
+        end
+      end
+    end
+  end
+
   setup do
     {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
     {:ok, handle} = Local.new("ed25519", {:ed25519, seed}, issued_for: :build)
@@ -180,6 +238,52 @@ defmodule RequestSeal.CustodyPurposeTest do
     end
   end
 
+  test "Accept-Signature chooses the purpose locally, independent of the offered tag", ctx do
+    alias RequestSeal.AcceptSignature
+
+    {:ok, requests} =
+      AcceptSignature.parse(~s[sig=("@method" "@path");tag="audit"], target: :request)
+
+    for purpose <- [:build, :audit, nil] do
+      chooser = fn _ ->
+        {:ok, %{algorithm: "ed25519", created: nil, expires: nil, issued_for: purpose}}
+      end
+
+      result = AcceptSignature.fulfill(ctx.message, requests, chooser, [ctx.handle], [])
+
+      if purpose == :build do
+        assert {:ok, signed} = result
+        assert {:ok, _} = RequestSeal.verify(signed, policy(ctx.handle, :build), label: "sig")
+      else
+        assert {:error, %{reason: :negotiation_unfulfillable, detail: :issued_for_mismatch}} =
+                 result
+      end
+    end
+  end
+
+  test "Web Bot Auth passes the signing spec's trusted purpose to custody", ctx do
+    {:ok, public} = Custody.public_key(ctx.handle)
+
+    spec = %{
+      label: "sig",
+      agent: %{location: "https://crawler.example", type: :directory},
+      key: public,
+      algorithm: "ed25519",
+      created: 1_700_000_000,
+      expires: 1_700_000_060,
+      nonce: "once",
+      issued_for: :build
+    }
+
+    assert {:ok, signed} = RequestSeal.WebBotAuth.sign(ctx.message, spec, ctx.handle)
+    assert Enum.any?(signed.fields, &(String.downcase(&1.name) == "signature"))
+
+    for purpose <- [:audit, nil] do
+      assert {:error, %{reason: :issued_for_mismatch}} =
+               RequestSeal.WebBotAuth.sign(ctx.message, %{spec | issued_for: purpose}, ctx.handle)
+    end
+  end
+
   test "a pre-upgrade HTTP policy keeps unassigned semantics", ctx do
     spec = %{label: "sig", algorithm: "ed25519", signature_input: ~s[("@method" "@path")]}
     {:ok, handle} = Local.new("ed25519", {:ed25519, ctx.seed})
@@ -279,6 +383,101 @@ defmodule RequestSeal.CustodyPurposeTest do
     assert {:error, %{reason: :invalid_signature}} = Custody.verify(reference, bytes, signature)
     assert_received :reference_read
     refute_received :reference_read
+  end
+
+  test "the optional callback matrix fails closed and prefers atomic binding", ctx do
+    observer = self()
+    {:ok, unassigned} = Local.new("ed25519", {:ed25519, ctx.seed})
+    bytes = base(ctx.message)
+    spec = %{label: "sig", algorithm: "ed25519", signature_input: ~s[("@method" "@path")]}
+
+    for {provider, interface, verifies?} <- [
+          {"BindingOnly", :binding, false},
+          {"BindingWithVerifier", :binding, true},
+          {"AssignmentOnly", :assignment, false},
+          {"AssignmentWithVerifier", :assignment, true},
+          {"Both", :binding, false},
+          {"BothWithVerifier", :binding, true},
+          {"Legacy", :legacy, false},
+          {"LegacyWithVerifier", :legacy, true}
+        ],
+        key <- [unassigned, ctx.handle] do
+      purpose = key.issued_for
+      opts = [issued_for: purpose, operation: :http]
+      {:ok, signature} = Custody.sign(key, bytes, opts)
+      tagged = Map.put(spec, :issued_for, purpose)
+      {:ok, signed} = RequestSeal.sign(ctx.message, tagged, key)
+
+      handle = %KeyHandle{
+        custodian: Module.concat(__MODULE__, provider),
+        algorithm: "ed25519",
+        capabilities: [:sign, :verify],
+        issued_for: purpose,
+        ref: fn -> {key, observer} end
+      }
+
+      if purpose == nil or interface != :legacy do
+        assert {:ok, ^signature} = Custody.sign(handle, bytes, opts)
+        assert_received :provider_sign
+        assert_assignment_read(interface)
+      else
+        assert {:error, %{reason: :unsupported_operation}} = Custody.sign(handle, bytes, opts)
+        refute_received :provider_sign
+      end
+
+      cond do
+        verifies? and (purpose == nil or interface != :legacy) ->
+          assert :ok = Custody.verify(handle, bytes, signature, opts)
+          assert_received :provider_verify
+          assert_assignment_read(interface)
+
+        purpose == nil and interface in [:binding, :legacy] ->
+          assert :ok = Custody.verify(handle, bytes, signature, opts)
+          assert_assignment_read(interface)
+
+        true ->
+          assert {:error, %{reason: :unsupported_operation}} =
+                   Custody.verify(handle, bytes, signature, opts)
+      end
+
+      if purpose != nil and interface != :legacy do
+        cleared = %{handle | issued_for: nil}
+        assert {:error, %{reason: :key_mismatch}} = Custody.sign(cleared, bytes, operation: :http)
+        assert_assignment_read(interface)
+        refute_received :provider_sign
+
+        reason =
+          if verifies? or interface == :binding, do: :key_mismatch, else: :unsupported_operation
+
+        assert {:error, %{reason: ^reason}} =
+                 Custody.verify(cleared, bytes, signature, operation: :http)
+
+        if reason == :key_mismatch, do: assert_assignment_read(interface)
+        refute_received :provider_verify
+      end
+
+      assert {:ok, public} = Custody.public_key(handle)
+      assert {:error, %{reason: :invalid_options}} = RequestSeal.sign(ctx.message, tagged, public)
+      assignment = %{issued_for: purpose}
+
+      assert {:ok, _} =
+               RequestSeal.verify(signed, policy(public, purpose, assignment), label: "sig")
+
+      assert {:error, %{reason: :key_issued_for_mismatch}} =
+               RequestSeal.verify(signed, policy(public, :other, assignment), label: "sig")
+    end
+  end
+
+  defp assert_assignment_read(:binding) do
+    assert_received :provider_binding
+    refute_received :provider_assignment
+  end
+
+  defp assert_assignment_read(:assignment), do: assert_received(:provider_assignment)
+
+  defp assert_assignment_read(:legacy) do
+    refute_received :provider_assignment
+    refute_received :provider_binding
   end
 
   test "JWS enforces purpose in both signing forms", ctx do

@@ -18,6 +18,22 @@ class ErrorReasonDocumentationTest(unittest.TestCase):
         self.assertEqual(set(reasons.KINDS), set(emitted))
         self.assertTrue(all(emitted.values()))
 
+    def test_custody_sign_and_verify_document_assignment_and_input_errors(self):
+        custody = (ROOT / 'lib/request_seal/custody.ex').read_text()
+        shared = {'issued_for_mismatch', 'key_mismatch', 'unsupported_operation', 'invalid_data'}
+        admissions = {'gate_malformed_base', 'gate_coverage', 'gate_window', 'gate_denied',
+                      'gate_unavailable', 'gate_mismatch', 'gate_spent', 'gate_store_failed',
+                      'gate_unrecorded'}
+        for headline, required in [
+            ('Sign exact bounded bytes', shared | admissions),
+            ('Verify exact bytes', shared | {'no_public_key'}),
+        ]:
+            with self.subTest(headline=headline):
+                function_doc = custody.split(headline, 1)[1].split('"""', 1)[0]
+                returns = function_doc.split('## Returns', 1)[1].split('## Examples', 1)[0]
+                for reason in required:
+                    self.assertIn(f'`:{reason}`', returns)
+
     def test_literals_helper_arguments_and_throws_are_emissions_but_docs_are_not(self):
         source = '''
         defmodule Example do

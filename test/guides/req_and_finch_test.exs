@@ -2,6 +2,43 @@ defmodule RequestSeal.GuideReqAndFinchTest do
   use ExUnit.Case, async: false
   alias RequestSeal.DocsExamples, as: E
 
+  test "Finch and Req carry the trusted signing purpose through normalization" do
+    {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", issued_for: :build)
+
+    spec = %{
+      label: "sig",
+      algorithm: "ed25519",
+      components: ~s[("@method" "@path")],
+      expires_in: 60,
+      issued_for: :build
+    }
+
+    url = "https://example.test/builds"
+    finch = Finch.build(:get, url)
+    assert {:ok, signed} = RequestSeal.Finch.sign(finch, spec, handle)
+    assert Enum.any?(signed.headers, fn {name, _} -> String.downcase(name) == "signature" end)
+
+    assert {:error, %{reason: :invalid_options, source: %{reason: :issued_for_mismatch}}} =
+             RequestSeal.Finch.sign(finch, %{spec | issued_for: :audit}, handle)
+
+    assert {:ok, req} =
+             RequestSeal.Req.attach(Req.new(url: url), sign: spec, signer: handle, verify: :none)
+
+    assert %Req.Request{} = signed = RequestSeal.Req.sign_attempt(req)
+    assert Req.Request.get_header(signed, "signature") != []
+
+    assert {:ok, req} =
+             RequestSeal.Req.attach(Req.new(url: url),
+               sign: %{spec | issued_for: :audit},
+               signer: handle,
+               verify: :none
+             )
+
+    assert {%Req.Request{halted: true},
+            %{reason: :invalid_options, source: %{reason: :issued_for_mismatch}}} =
+             RequestSeal.Req.sign_attempt(req)
+  end
+
   test "documented examples execute against real cryptography and integrations" do
     binding = []
 

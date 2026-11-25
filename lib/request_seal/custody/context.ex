@@ -8,6 +8,7 @@ defmodule RequestSeal.Custody.Context do
 
   The library stamps the requested purpose and operation independently of
   the handle's metadata. Built-in custodians compare both with retained state.
+  A standalone binding inspection sets `:operation` to `:binding`.
   Local custody records the key creator in `:key_owner` for gated signing.
   """
   defstruct [
@@ -26,7 +27,7 @@ defmodule RequestSeal.Custody.Context do
           key_owner: pid() | nil,
           issued_for: atom() | nil,
           handle_purpose: atom() | nil,
-          operation: :raw | :http | :jws,
+          operation: :raw | :http | :jws | :binding,
           operation_family: RequestSeal.KeyHandle.family() | nil
         }
   @doc """

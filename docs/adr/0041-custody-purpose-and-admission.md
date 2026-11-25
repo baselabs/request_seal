@@ -14,13 +14,14 @@ describes limiting a key's purpose.
 
 Retain each key's exact algorithm and trusted purpose in custody. The handle
 exposes the operation family and purpose for selection. Built-in custodians
-verify the binding before key use. Assigned use requires the custodian to
-report the retained algorithm and purpose through `signing_assignment/2`
-under the same deadline. Legacy callbacks cannot establish an assignment.
-When a custodian provides the callback, the facade also checks requests with
-an omitted purpose. Public-key verification fallback requires an unassigned
-reference. Assignment-aware fallback reads the assignment and public key
-together through `binding/2`.
+verify the binding before key use. The facade reads the retained algorithm
+and purpose through `binding/2` when available, or `signing_assignment/2`
+otherwise, including for requests with omitted purpose. Either interface
+supports signing and verification within the custodian. Assigned verification
+requires `verify/5`. Without `verify/5`, an assignment-aware custodian can
+verify only an unassigned reference through the public key and assignment
+returned together by `binding/2`. Providers with neither assignment interface
+retain legacy behavior for unassigned operations.
 SSH custody retains its assignment and socket path in a sensitive process
 and controls socket operations from there. A binding read reports held public
 facts and an RFC 7638 thumbprint when public material exists. SSH binding reads
@@ -37,11 +38,15 @@ selected JWS algorithms in HTTP. Gated keys require a valid HTTP base for
 both operations even with no purpose. For HTTP public keys, the policy purpose
 must equal the resolver's trusted assignment. Purposes stay outside the wire
 format.
+Accept-Signature takes the purpose from the trusted chooser, and Web Bot Auth
+takes it from the caller's signing specification.
 
 Local HTTP signing may require approval inside the sensitive key process.
-A gate validates the typed HTTP Inner List and derived values before extracting
-any parameter value. Direct assigned HTTP operations share that validation. It compares canonical covered components, tag, algorithm, optional key ID,
-and the approved digest, nonce, and time window. It consumes the decision
+A gate validates the typed HTTP Inner List, derived values, component
+applicability and field serialization before extracting any parameter value.
+Direct assigned HTTP operations and the base builder share the component and
+wire rules. The gate compares canonical covered components, tag, algorithm,
+optional key ID, and the approved digest, nonce, and time window. It consumes the decision
 under the operation deadline before signing. The claim worker monitors the
 holder that calls it, the original signing caller, and the creator of the key.
 Their lifetimes also bound admission and recording. Key use and result

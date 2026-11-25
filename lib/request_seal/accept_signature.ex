@@ -168,6 +168,8 @@ defmodule RequestSeal.AcceptSignature do
   Fulfill requests in order through caller-owned key selection and signing.
 
   For each request the chooser returns the algorithm and times to use.
+  It can also return the trusted signing purpose as `:issued_for`. This
+  choice is local to the caller and is never taken from a wire parameter.
   A requested `alg` must equal the chosen algorithm; keyid, nonce, tag, and
   alg are copied verbatim. Requested `created` and `expires` take the
   chooser's values, which must then be integers; times that were not
@@ -183,7 +185,8 @@ defmodule RequestSeal.AcceptSignature do
     * `chooser` - arity-one function receiving each request and returning
       `{:ok, %{algorithm: algorithm, created: integer_or_nil, expires: integer_or_nil}}`
       (an HTTP registry algorithm; times from -999,999,999,999,999 through
-      999,999,999,999,999) or `:error`.
+      999,999,999,999,999) or `:error`. An optional `:issued_for` atom or nil
+      is passed to custody. Omission selects unassigned signing.
     * `handles` - nonempty list of `RequestSeal.KeyHandle` values with distinct
       HTTP algorithms. The chosen algorithm selects its matching handle.
       An unavailable algorithm returns `:negotiation_unfulfillable`.
@@ -271,7 +274,12 @@ defmodule RequestSeal.AcceptSignature do
 
           case RequestSeal.sign(
                  current,
-                 %{label: request.label, signature_input: input, algorithm: choice.algorithm},
+                 %{
+                   label: request.label,
+                   signature_input: input,
+                   algorithm: choice.algorithm,
+                   issued_for: Map.get(choice, :issued_for)
+                 },
                  signer,
                  opts
                ) do
@@ -365,7 +373,9 @@ defmodule RequestSeal.AcceptSignature do
   end
 
   defp choice?({:ok, %{algorithm: alg, created: created, expires: expires} = choice}) do
-    map_size(choice) == 3 and alg in Crypto.algorithms() and time?(created) and time?(expires)
+    map_size(Map.delete(choice, :issued_for)) == 3 and
+      KeyHandle.purpose?(Map.get(choice, :issued_for)) and
+      alg in Crypto.algorithms() and time?(created) and time?(expires)
   end
 
   defp choice?(_), do: false

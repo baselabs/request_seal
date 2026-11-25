@@ -335,6 +335,9 @@ An assigned key requires the same purpose in the signing specification.
 JWS takes `:issued_for` as an option on both signing forms. HTTP and compact
 JWS verification policies name `:require_issued_for` to use a bound handle.
 An omitted or nil purpose only selects unassigned custody.
+For Accept-Signature, set the purpose in the trusted chooser's result.
+For Web Bot Auth, set it in the local signing spec. Purpose is independent
+of any tag or other parameter supplied by the peer.
 
 In direct custody calls, pass `:operation` as `:http` with a canonical RFC 9421
 base or `:jws` with a compact JWS signing input. The built-in custodian checks
@@ -342,13 +345,14 @@ the operation against the retained family and checks the input format before
 using an assigned key. The high-level HTTP and JWS APIs set this operation
 for you. Raw bytes remain supported by unassigned, ungated keys.
 
-Custom custodians implement `signing_assignment/2` to report the retained
-algorithm and purpose under the same deadline. The custody facade compares
-that result before dispatching, including when the caller omits a purpose.
-The signing and verification callbacks also enforce the assignment, operation
-family, and input format at key use. Assigned verification requires `verify/5`.
-Unassigned fallback for assignment-aware custodians uses one `binding/2`
-call that supplies the retained algorithm, nil purpose, and public key.
+Custom custodians report the retained algorithm and purpose through
+`binding/2` or `signing_assignment/2` under the same deadline. The facade
+prefers `binding/2` and checks requests with omitted purpose too. The signing
+and verification callbacks also enforce the assignment, operation family,
+and input format at key use. Assigned verification requires `verify/5`.
+Without that callback, an assignment-aware provider must supply an unassigned
+binding and the public key together through `binding/2`. A provider with
+neither assignment interface retains legacy behavior for unassigned operations.
 
 ```elixir
 alias RequestSeal.{Custody, Message, SignatureBase}

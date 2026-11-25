@@ -372,19 +372,23 @@ defmodule RequestSeal.Custody.SSHAgent do
 
   defp operate(:binding, {algorithm, socket_path, public, issued_for}, context) do
     Support.held_binding!(algorithm, issued_for, context)
+    if context.operation == :binding, do: confirm_membership!(socket_path, public, context)
+    {:ok, %{algorithm: algorithm, issued_for: issued_for, public_key: public}}
+  end
+
+  defp operate(_, _, _), do: {:error, :unsupported_operation}
+
+  defp confirm_membership!(socket_path, public, context) do
     blob = Wire.key_blob(public)
     {:ok, socket} = connect(socket_path, context)
 
     try do
       identities = exchange(socket, <<11>>, context) |> Wire.identities() |> unwrap()
       ensure(blob in identities, :key_not_found)
-      {:ok, %{algorithm: algorithm, issued_for: issued_for, public_key: public}}
     after
       :gen_tcp.close(socket)
     end
   end
-
-  defp operate(_, _, _), do: {:error, :unsupported_operation}
 
   defp check_signing!(requested, algorithm, issued_for, bytes, context) do
     ensure(requested == algorithm, :key_mismatch)

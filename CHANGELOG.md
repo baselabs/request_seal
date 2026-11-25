@@ -11,7 +11,13 @@
   can require single-use admission for a valid typed base. Assignment-aware
   public verification uses one custody read. Signing admission follows the key
   creator's lifetime. Validate derived HTTP values before assigned key use or
-  admission and pin commitment bytes in the corpus.
+  admission and pin commitment bytes in the corpus. Apply the builder's
+  component applicability and canonical field rules in `SignatureBase.parse/1`,
+  which admission and assigned key use call. Preserve ordinary interior tabs
+  and validate Byte Sequence wrapping.
+  Prefer a custodian's atomic binding when available and restrict legacy
+  behavior to unassigned operations on custodians without assignment callbacks.
+  Accept-Signature and Web Bot Auth accept a trusted caller-side purpose.
 
 - Keep SSH socket operations within custody. SSH handles expire on creator
   exit or release, including handles transferred to another process. Recreate
@@ -22,12 +28,14 @@
   mapping. Reject conflicting captured or current headers and indeterminate
   nested request parameters. Check every captured query name for selectors
   that the merged query map can discard. Inspect raw JSON and form selectors
-  before merging and refuse other nonempty body formats.
+  before merging and refuse other nonempty body formats. Carry live requests
+  over the previous Plug state shape during upgrade.
 
 - Add paired replay stores for migrations that require both stores to admit
   each claim. Direct claims and sweeps validate the context and bound both
   adapters and telemetry by the shared deadline. A store-backed signing
   admission also cancels the claim worker when the signing caller exits.
+  ETS checks local lifetime owners before inserting queued claims.
   The corpus covers both stores' state after fresh and duplicate claims.
 
 - Document RequestSeal's steward, license, and name policy, and require matching

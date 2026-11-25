@@ -2,6 +2,49 @@ defmodule RequestSeal.GuidePhoenixAndPlugTest do
   use ExUnit.Case, async: false
   alias RequestSeal.DocsExamples, as: E
 
+  test "Plug response signing requires the caller's matching purpose" do
+    alias RequestSeal.Plug.{Capture, SignResponse}
+
+    {:ok, handle} = RequestSeal.Custody.Local.generate("ed25519", issued_for: :build)
+
+    spec = %{
+      label: "res",
+      algorithm: "ed25519",
+      components: ~s[("@status" "@method";req)],
+      parameters: %{created: true, expires_in: 60, nonce: nil, alg: true, keyid: nil, tag: nil},
+      digest: nil,
+      field_schemas: %{},
+      issued_for: :build
+    }
+
+    capture = Capture.init(origin: :connection, max_body_bytes: 1_024, read_timeout: 5_000)
+
+    for purpose <- [:build, :audit] do
+      opts =
+        SignResponse.init(
+          sign: %{spec | issued_for: purpose},
+          signer: handle,
+          signing_timeout: 5_000,
+          clock: fn -> 1_700_000_000 end,
+          on_failure: {:respond, 503}
+        )
+
+      conn =
+        Plug.Test.conn(:get, "https://example.test/builds")
+        |> Capture.call(capture)
+        |> SignResponse.call(opts)
+        |> Plug.Conn.send_resp(200, "body")
+
+      if purpose == :build do
+        assert conn.status == 200
+        assert Plug.Conn.get_resp_header(conn, "signature") != []
+      else
+        assert conn.status == 503
+        assert conn.private.request_seal.error.source.reason == :issued_for_mismatch
+      end
+    end
+  end
+
   test "documented examples execute against real cryptography and integrations" do
     conn =
       RequestSeal.SignedPathTestSupport.verified(

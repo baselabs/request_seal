@@ -218,12 +218,11 @@ defmodule RequestSeal.Custody.Gate do
     live!(context)
 
     parts =
-      case SignatureBase.parse_protocol(bytes) do
+      case SignatureBase.parse(bytes) do
         {:ok, parts} -> parts
         _ -> fail(:gate_malformed_base)
       end
 
-    ensure(SignatureFields.valid_inner?(parts.inner_list), :gate_malformed_base)
     params = SignatureFields.parameters(parts.inner_list)
     covered = Enum.map(parts.components, &elem(&1, 0))
     %{"created" => created, "expires" => expires, "nonce" => nonce} =

@@ -3,6 +3,41 @@ if Code.ensure_loaded?(AshHooks.Provider) do
     use ExUnit.Case, async: false
     alias RequestSeal.{HooksTestSupport, SignatureBase}
 
+    test "the HTTP adapter carries the caller's purpose to signing and the receiver" do
+      alias RequestSeal.Custody
+      alias RequestSeal.Custody.Local
+
+      {:ok, handle} = Local.generate("ed25519", issued_for: :build)
+      {:ok, key} = Custody.public_key(handle)
+
+      resolver = fn
+        %{keyid: "receiver-key"} ->
+          {:ok, %{algorithm: "ed25519", key: key, issued_for: :build}}
+
+        _ ->
+          :error
+      end
+
+      policy =
+        %{HooksTestSupport.policy(key) | require_issued_for: :build, key_resolver: resolver}
+      url = HooksTestSupport.start_receiver(policy, self())
+      headers = %{"content-type" => "application/json", "webhook-id" => "event-purpose"}
+
+      for purpose <- [:build, :audit] do
+        spec = Map.put(HooksTestSupport.spec(), :issued_for, purpose)
+        opts = [request_seal: [spec: spec, signer: handle], validate_destination: false]
+        result = RequestSeal.AshHooks.Http.request(:post, url, headers, "{}", opts)
+
+        if purpose == :build do
+          assert {:ok, %{status: 204}} = result
+          assert_receive {:hooks_received, {:ok, _}, :ok, "{}", _fields}, 5_000
+        else
+          assert {:error, {:terminal, :request_seal_signing_failed}} = result
+          refute_received {:hooks_received, _, _, _, _}
+        end
+      end
+    end
+
     test "bounded transport authority is used for target URI coverage" do
       {handle, key} = HooksTestSupport.key()
       on_exit(fn -> RequestSeal.Custody.Local.release(handle) end)
