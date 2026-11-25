@@ -21,6 +21,7 @@ defmodule RequestSeal.TelemetryTest do
              [:request_seal, :verify, :stop],
              [:request_seal, :web_bot_auth, :verify, :stop],
              [:request_seal, :replay, :claim],
+             [:request_seal, :replay, :pair],
              [:request_seal, :custody, :sign, :stop],
              [:request_seal, :custody, :wrap],
              [:request_seal, :custody, :unwrap],

@@ -2,7 +2,7 @@ defmodule RequestSeal.ReplayPostgresTest do
   use ExUnit.Case, async: false
   @moduletag :postgres
   alias RequestSeal.Replay
-  alias RequestSeal.Replay.{Claim, Postgres}
+  alias RequestSeal.Replay.{Claim, ETS, Pair, Postgres}
   alias RequestSeal.Custody.Context
 
   setup do
@@ -48,6 +48,20 @@ defmodule RequestSeal.ReplayPostgresTest do
       options: options,
       store: Postgres.store(a, table: table)
     }
+  end
+
+  test "migration to PostgreSQL preserves retiring ETS claims", ctx do
+    {:ok, pid} = ETS.start_link(max_entries: 10)
+    retiring = ETS.store(pid)
+    {:ok, pair} = Pair.store(ctx.store, retiring)
+    early = claim("migration", "early", 100)
+    fresh = claim("migration", "fresh", 100)
+
+    assert :claimed = Replay.claim(retiring, early, timeout: 5_000)
+    assert :already_claimed = Replay.claim(pair, early, timeout: 5_000)
+    assert :already_claimed = Replay.claim(ctx.store, early, timeout: 5_000)
+    assert :claimed = Replay.claim(pair, fresh, timeout: 5_000)
+    assert :already_claimed = Replay.claim(retiring, fresh, timeout: 5_000)
   end
 
   test "64 tasks across independent pools and a peer node produce one winner", ctx do

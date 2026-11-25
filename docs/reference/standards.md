@@ -5,7 +5,7 @@ relevant source when changing its surface. No linked example alone proves peer a
 
 | Contract | Scope |
 |---|---|
-| [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) | HTTP message signatures, algorithms, derived fields, responses, trailers, challenges, vectors. |
+| [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) | HTTP message signatures, algorithms, derived fields, responses, trailers, challenges, vectors, and replay defense. |
 | [HTTP signature registry](https://www.iana.org/assignments/http-message-signature) | Exact registered algorithm names and parameters. |
 | [RFC 8941](https://www.rfc-editor.org/rfc/rfc8941.html), [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651.html) | Structured Fields; apply the field's selected schema and referenced types. |
 | [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) | Content and representation digests and preference fields. |

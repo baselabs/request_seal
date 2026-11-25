@@ -12,7 +12,7 @@ Use it to:
 - Sign outgoing API requests.
 - Identify and verify AI agents and crawlers with Web Bot Auth.
 - Turn a verified caller into an Ash actor and tenant.
-- Protect against replayed requests.
+- Protect against replayed requests and migrate between replay stores.
 
 ## What RequestSeal does not do
 

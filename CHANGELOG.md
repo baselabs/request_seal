@@ -2,6 +2,8 @@
 
 ## Unreleased 2.0.0
 
+- Add paired replay stores for migrations that require both stores to admit each claim.
+
 - Document RequestSeal's steward, license, and name policy, and require matching
   Developer Certificate of Origin sign-offs in qualification.
 

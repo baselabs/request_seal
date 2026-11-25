@@ -3,7 +3,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     use ExUnit.Case, async: false
     @moduletag :postgres
     alias RequestSeal.{OwnedDatabase, OwnedRepo, Replay}
-    alias RequestSeal.Replay.{AshOnetime, Claim, Error}
+    alias RequestSeal.Replay.{AshOnetime, Claim, Error, ETS, Pair}
     alias RequestSeal.Custody.Context
 
     setup_all do
@@ -41,6 +41,26 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 1_000}
       assert {:error, :externally_managed} = AshOnetime.sweep(store.ref, c.retain_until, context)
       assert {:error, %Error{reason: :invalid_store}} = AshOnetime.store(OwnedRepo, partition: "")
+    end
+
+    test "paired migration supports independent managed partitions and mixed sweeps",
+         %{prefix: prefix} do
+      destination = AshOnetime.store(OwnedRepo, partition: "destination", prefix: prefix)
+      retiring = AshOnetime.store(OwnedRepo, partition: "retiring", prefix: prefix)
+      {:ok, pair} = Pair.store(destination, retiring)
+      c = claim()
+
+      assert :claimed = Replay.claim(pair, c, timeout: 5_000)
+      assert :already_claimed = Replay.claim(destination, c, timeout: 5_000)
+      assert :already_claimed = Replay.claim(retiring, c, timeout: 5_000)
+      context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 5_000}
+      assert {:error, :externally_managed} = Pair.sweep(pair.ref, c.retain_until, context)
+
+      {:ok, pid} = ETS.start_link(max_entries: 10)
+      local = ETS.store(pid)
+      {:ok, mixed} = Pair.store(destination, local)
+      assert :claimed = Replay.claim(local, c, timeout: 5_000)
+      assert {:ok, 1} = Pair.sweep(mixed.ref, c.retain_until, context)
     end
 
     test "invalid claim bytes and deterministic arguments are failures", %{prefix: prefix} do

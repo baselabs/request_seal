@@ -4,7 +4,8 @@ defmodule RequestSeal.Replay.Store do
 
   `adapter` is a module implementing the `RequestSeal.Replay` callbacks and `ref`
   is that adapter's reference. Build stores with `RequestSeal.Replay.ETS.store/1`,
-  `RequestSeal.Replay.Postgres.store/2` or `RequestSeal.Replay.AshOnetime.store/2`.
+  `RequestSeal.Replay.Postgres.store/2` or `RequestSeal.Replay.AshOnetime.store/2`. Use `RequestSeal.Replay.Pair.store/2`
+  during a migration.
   """
   @derive {Inspect, only: [:adapter]}
   defstruct [:adapter, :ref]

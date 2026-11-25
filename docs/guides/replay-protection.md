@@ -145,6 +145,34 @@ The Postgrex-only adapter remains available. For PostgreSQL, add `:postgrex` (`>
 
 For Web Bot Auth, give `RequestSeal.WebBotAuth.Policy` the same replay map. Its commitment receives the same facts map, with the signing agent as `agent` in place of `tag`; commit to `identifier`, `keyid`, and `agent[:identifier]`, as the [Web Bot Auth guide](web-bot-auth.md) shows in a runnable example. Required replay accepts exactly one selected Web Bot Auth signature per message and rejects more with `:unexpected_signature`; its claim follows that verified signature, and the facts never include the uncovered label. Generic single-label verification requires bounded freshness and a nonempty nonce.
 
+## Move replay claims to a new store
+
+Use `RequestSeal.Replay.Pair.store/2` to move between independently configured
+ETS, PostgreSQL or AshOnetime stores while retained claims are still in use.
+Put the destination first and use the returned handle as the policy's `store`.
+
+    alias RequestSeal.Replay.{ETS, Pair}
+    {:ok, destination} = ETS.start_link(max_entries: 100)
+    {:ok, retiring} = ETS.start_link(max_entries: 100)
+    {:ok, store} = Pair.store(ETS.store(destination), ETS.store(retiring))
+
+Keep the namespace, commitment function and freshness rules consistent during the
+move. Start the retention clock when the last retiring-only verifier has finished
+its last claim. Wait through the longest retention of any claim it could have
+written, including skew and the exclusive endpoint, before switching any
+verifier to destination only. When a policy admits arbitrarily distant expiry,
+use the greatest possible retention endpoint or first establish a finite bound
+and wait for previous claims to expire. Finish draining paired verifiers before
+stopping the retiring store. A node-local store contributes its existing local
+history, so keep it alive across the switch to paired operation.
+
+A claim succeeds after two new writes. A retirement-side refusal leaves the
+destination entry spent. Budget the policy timeout for two sequential operations
+and continue sweeping both stores under their existing retention rules.
+`RequestSeal.Replay.Pair.sweep/3` handles stores whose cleanup is external.
+The receipt names the pair during migration. The `[:request_seal, :replay, :pair]`
+event identifies the attempted position without logging claim data.
+
 ## Errors
 
 `:missing_replay_identifier` means the selected signature has no usable nonce. `:replayed` means a prior claim exists. `:commitment_failed` means your function failed or returned an invalid result. `:store_unavailable`, `:store_timeout`, and `:store_failed` reject authentication, including full stores. A single deadline covers commitment and atomic storage; caller cancellation stops work but cannot undo a committed claim. A timeout may already have committed, so no replay error permits automatic retry. `:retention_exceeded` means the derived retention end is above 253,402,300,799 and rejects before commitment. `RequestSeal.Policy.new/1` returns `:invalid_policy` when required replay lacks bounded freshness (`require_expires: true` or a `max_age`). The [errors guide](errors.md) reproduces `:replayed` and `:missing_replay_identifier`.
