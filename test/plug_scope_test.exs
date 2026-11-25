@@ -103,6 +103,7 @@ defmodule RequestSeal.PlugScopeTest do
     target = "/teams/alpha/items"
     accepted = verified(target, @covered, body: ~s({"items":[{"count":1}]}))
     assert {:ok, %{tenant: "alpha"}} = SealPlug.scope(Scope.call(accepted, options()))
+    assert refused(%{accepted | body_params: %URI{}}, :body_uninspected)
 
     nested = ~s({"items":[{"tenant_id":"other"}]})
     assert refused(verified(target, @covered, body: nested), :scope_in_body)

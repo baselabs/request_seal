@@ -242,7 +242,7 @@ if Code.ensure_loaded?(Plug.Conn) do
 
       cond do
         bytes != "" and
-            (is_struct(params, Plug.Conn.Unfetched) or not is_map(params) or
+            (is_struct(params) or not is_map(params) or
                not Delivery.replayed?(conn.adapter) or
                not Delivery.replay_matches?(conn.adapter, bytes)) ->
           reject(:body_uninspected)
@@ -255,7 +255,8 @@ if Code.ensure_loaded?(Plug.Conn) do
       end
     end
 
-    defp selector?(params, _) when is_struct(params), do: false
+    defp selector?(%Plug.Conn.Unfetched{}, _), do: false
+    defp selector?(%Plug.Upload{}, _), do: false
 
     defp selector?(params, names) when is_map(params) do
       Enum.any?(params, fn {key, value} ->

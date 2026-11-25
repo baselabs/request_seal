@@ -19,7 +19,7 @@ defines percent encoding and unreserved characters.
 
 Reject competing headers and recursively inspect query and parsed body maps
 and lists. A nonempty body requires a configured parser that fully consumes
-the captured bytes before verification. The principal lookup runs within a
+the captured bytes before Scope runs. The principal lookup runs within a
 finite deadline and must return exactly the selected tenant.
 
 Pass the resulting tenant to the existing Ash scope construction. The resource's

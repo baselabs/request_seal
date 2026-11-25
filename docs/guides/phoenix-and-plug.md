@@ -33,8 +33,8 @@ also refuses the `x-tenant` and `x-tenant-id` headers. Add application aliases
 with `:refuse_names` and `:refuse_headers`.
 
 Place the configured body parser between Capture and Verify. A nonempty body
-must be fully read through Capture's retained adapter and parsed into a map
-before Scope runs. A pass-through parser leaves the body indeterminate and
+must be fully read through Capture's retained adapter and parsed into a plain
+map before Scope runs. A pass-through parser leaves the body indeterminate and
 Scope refuses it. Multipart uploads are opaque leaves. The trusted mapping
 uses a 1,000 ms deadline by default, selectable with `:lookup_timeout`.
 
