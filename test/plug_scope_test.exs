@@ -169,6 +169,15 @@ defmodule RequestSeal.PlugScopeTest do
     assert refused(conn, :body_uninspected)
   end
 
+  test "binds a verified request with the preceding private state shape" do
+    conn = verified("/teams/alpha", @covered)
+    state = Map.delete(conn.private.request_seal, :scope)
+    conn = Plug.Conn.put_private(conn, :request_seal, state)
+
+    assert :error = RequestSeal.Plug.scope(conn)
+    assert {:ok, %{tenant: "alpha"}} = RequestSeal.Plug.scope(Scope.call(conn, options()))
+  end
+
   test "the principal lookup is cancelled at its configured deadline" do
     parent = self()
 

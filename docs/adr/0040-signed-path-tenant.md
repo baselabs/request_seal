@@ -46,3 +46,5 @@ different authenticated path.
 
 Apply the plug after Verify and any relevant body parsers. The binding is
 specific to one connection and fails closed when repeated or deverified.
+Connections in flight from the preceding pipeline retain their capture and
+verification fields. Reading their state initializes the absent scope to nil.
