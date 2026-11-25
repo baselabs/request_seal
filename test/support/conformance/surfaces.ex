@@ -453,7 +453,7 @@ defmodule RequestSeal.Conformance.Surfaces do
 
             "freshness" when is_map(v) ->
               %{
-                clock: fn -> C.int(now) end,
+                clock: fn -> freshness_clock(now) end,
                 skew: C.int(v["skew"]),
                 max_age: if(v["max_age"], do: C.int(v["max_age"])),
                 require_expires: v["require_expires"]
@@ -478,6 +478,9 @@ defmodule RequestSeal.Conformance.Surfaces do
     attrs = if replay, do: Map.put(attrs, :replay, replay), else: attrs
     Policy.new(attrs)
   end
+
+  defp freshness_clock([lower, upper]), do: {C.int(lower), C.int(upper)}
+  defp freshness_clock(now), do: C.int(now)
 
   def verify(root, c) do
     case c["policy"]["replay"] do

@@ -2,6 +2,7 @@
 
 ## Unreleased 2.0.0
 
+- Check HTTP signature freshness across caller-supplied trusted clock intervals.
 - Validate parsed signature-base identifiers like live signature inputs and preserve internal field tabs.
 
 - Require matching purpose and operation family for assigned signing keys.

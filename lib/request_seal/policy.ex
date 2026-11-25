@@ -85,13 +85,13 @@ defmodule RequestSeal.Policy do
         (`"hmac-sha256"`, `{:jws, "HS256"}`) requires a custody handle. Any other key in the
         result, or any other return, rejects with `:key_resolver_failed`.
       * `:freshness` - `:not_evaluated` or a map containing exactly `:clock`
-        (arity zero, integer Unix seconds), `:max_age` (1 to
+        (arity zero, Unix second or ordered `{lower, upper}` interval), `:max_age` (1 to
         253,402,300,799, or nil), `:skew` (0 to 86,400), and
         `:require_expires` (Boolean). Max-age requires created; expiration is
-        exclusive, max-age inclusive. All checks must pass for some integer
-        clock within `[now - skew, now + skew]`. At verification, clocks must
-        return integers from 0 through 253,402,300,799. RFC integer bounds
-        apply to signature timestamps.
+        exclusive, max-age inclusive. Every endpoint must pass with the
+        configured skew. The result uses the upper endpoint as `now`.
+        Clock endpoints are integers from 0 through 253,402,300,799. RFC
+        integer bounds apply to signature timestamps.
       * `:content` - `:not_required` or a map of exactly `:kind` (`:content`
         or `:representation`), nonempty unique `:algorithms` (`"sha-256"`,
         `"sha-512"`), and `:section` (`:headers` or `:trailers`). Verification

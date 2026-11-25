@@ -50,6 +50,7 @@ SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/w
         "0031-performance-release-gates", "0032-json-serializations-and-jwt-line",
         "0033-jwe-guard-and-heir-notices", "0044-qualify-hex-release-archives",
         "0034-canonical-signature-base",
+        "0035-trusted-clock-intervals",
         "0039-paired-replay-store",
         "0040-signed-path-tenant",
         "0041-custody-purpose-and-admission",

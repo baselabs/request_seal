@@ -58,6 +58,9 @@ See [the upgrade guide](../guides/upgrading-to-2.0.md) for public call changes.
 
 ## Single manifests
 
+For HTTP verification, `now` may be a tagged integer or a two-element array
+of tagged integers in lower-to-upper order. Success reports the upper endpoint.
+
 Format `request-seal-conformance-case/1` requires `id`, `surface`, `class`,
 `evidence_class`, `source`, `inputs` and `expected`. Source identity contains
 `document`, `section` and `url`. Evidence is `published_vector` or

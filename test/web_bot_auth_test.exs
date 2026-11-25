@@ -1124,6 +1124,47 @@ defmodule RequestSeal.WebBotAuthTest do
     end
   end
 
+  test "trusted time intervals are checked before trust and sampled once per signature" do
+    owner = self()
+    message = request("directory")
+
+    for {interval, reason} <- [
+          {{@now, @now + 3599}, :ok},
+          {{@now - 1, @now}, :created_in_future},
+          {{@now, @now + 3600}, :expired},
+          {{@now + 1, @now}, :invalid_clock}
+        ] do
+      p =
+        policy(
+          freshness: %{
+            clock: fn ->
+              send(owner, :clock_sample)
+              interval
+            end,
+            skew: 0,
+            max_age: nil
+          },
+          agents: fn agent ->
+            send(owner, :trust_invoked)
+            {:ok, snapshot(agent)}
+          end
+        )
+
+      if reason == :ok do
+        assert {:ok, envelope} = WebBotAuth.verify(message, p)
+        assert [verification] = Map.values(envelope.signatures)
+        assert verification.freshness.now == elem(interval, 1)
+        assert_received :trust_invoked
+      else
+        assert_error(WebBotAuth.verify(message, p), reason, :freshness)
+        refute_received :trust_invoked
+      end
+
+      assert_received :clock_sample
+      refute_received :clock_sample
+    end
+  end
+
   test "maximum age is inclusive with skew before trust" do
     m = request("directory")
     owner = self()

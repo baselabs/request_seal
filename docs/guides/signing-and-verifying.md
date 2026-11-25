@@ -231,3 +231,13 @@ pass the result of `RequestSeal.SignatureBase.build(message, ~s[("@method")])`
 to `RequestSeal.SignatureBase.parse/1` after unwrapping `{:ok, base}`. The
 parser requires byte-exact reconstruction and preserves internal horizontal
 tabs in field values. It performs no signature or provenance check.
+
+## Use a trusted clock interval
+
+If the trusted clock bounds the current Unix second, use a freshness clock
+such as `fn -> {1_760_000_000, 1_760_000_002} end` in the policy example
+above. Substitute the clock's live bounds each time it is called. Creation
+must pass at the lower bound. Expiration and maximum age must pass at the
+upper bound. Endpoints are inclusive within the supported clock range and
+use the policy's skew. `verification.freshness.now` is the upper bound.
+The same interval input works with Web Bot Auth.

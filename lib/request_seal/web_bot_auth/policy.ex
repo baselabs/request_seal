@@ -83,7 +83,7 @@ defmodule RequestSeal.WebBotAuth.Policy do
       caller-started `:cache`. A KeySet must be fresh and associated with the
       same URL and type. Sources must allow no redirects.
     * `:cache` - a `RequestSeal.Discovery.Cache` PID, or nil.
-    * `:freshness` - map with `:clock` (arity zero, integer Unix seconds),
+    * `:freshness` - map with `:clock` (arity zero, Unix second or ordered `{lower, upper}` interval),
       `:skew` (integer 0 to 86,400 seconds), and `:max_age` (nil or integer 1 to
       253,402,300,799 seconds). An optional `:require_expires` key is accepted,
       but expiration is always required.

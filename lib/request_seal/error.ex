@@ -83,7 +83,7 @@ defmodule RequestSeal.Error do
     parameter), `:inapplicable_component` (wrong target context),
     `:negotiation_unfulfillable` (unavailable component, incompatible chooser,
     unfulfillable parameter, callback fault, or signing failure).
-  * `:freshness`: `:invalid_clock` (fault or noninteger/out-of-range clock),
+  * `:freshness`: `:invalid_clock` (fault or invalid clock second or interval),
     `:missing_created` (max-age requires created), `:missing_expires` (required
     expiration absent), `:created_in_future`, `:expired`, `:too_old` (time checks).
   * `:binding`: `:invalid_verification` (not a successful Verification with valid

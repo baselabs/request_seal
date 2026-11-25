@@ -7,6 +7,7 @@ defmodule RequestSeal.Authentication do
     Digest,
     Error,
     FieldOccurrence,
+    Freshness,
     KeyHandle,
     Message,
     Policy,
@@ -463,23 +464,12 @@ defmodule RequestSeal.Authentication do
   defp freshness(_, :not_evaluated), do: :not_evaluated
 
   defp freshness(params, policy) do
-    now = callback(policy.clock, :invalid_clock, :freshness)
-
-    ensure(
-      is_integer(now) and now >= 0 and now <= 253_402_300_799,
-      :invalid_clock,
-      :freshness
-    )
-
-    created = params["created"]
-    expires = params["expires"]
-    ensure(policy.max_age == nil or created != nil, :missing_created, :freshness)
-    ensure(not policy.require_expires or expires != nil, :missing_expires, :freshness)
-    ensure(created == nil or created <= now + policy.skew, :created_in_future, :freshness)
-    earliest = max(now - policy.skew, created || now - policy.skew)
-    ensure(expires == nil or expires > earliest, :expired, :freshness)
-    ensure(policy.max_age == nil or earliest <= created + policy.max_age, :too_old, :freshness)
-    %{now: now, created: created, expires: expires, max_age: policy.max_age, skew: policy.skew}
+    with {:ok, interval} <- Freshness.read(policy.clock),
+         {:ok, facts} <- Freshness.check(params, policy, interval) do
+      facts
+    else
+      {:error, reason} -> fail(reason, :freshness)
+    end
   end
 
   defp replay(:not_required, _, _, _, _), do: :not_required

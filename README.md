@@ -517,6 +517,7 @@ maps the changed calls, custom custody callbacks, and version and corpus pins.
 | Capability | Module | Standard |
 | --- | --- | --- |
 | HTTP request/response signatures | `RequestSeal` | [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) |
+| Trusted clock intervals for HTTP freshness | `RequestSeal.Policy`, `RequestSeal.WebBotAuth.Policy` | [RFC 9421 Section 3.2.1](https://www.rfc-editor.org/rfc/rfc9421.html#section-3.2.1) |
 | Canonical signature-base parsing and ordered components | `RequestSeal.SignatureBase` | [RFC 9421 Section 2.5](https://www.rfc-editor.org/rfc/rfc9421.html#section-2.5) |
 | Signature negotiation with `Accept-Signature` | `RequestSeal.AcceptSignature` | [RFC 9421 Section 5](https://www.rfc-editor.org/rfc/rfc9421.html#section-5) |
 | Structured HTTP fields | `RequestSeal.StructuredFields` | [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651.html), with explicit RFC 8941 schemas where required |

@@ -248,18 +248,18 @@ defmodule RequestSeal.WebBotAuth do
             :freshness
           )
 
-          now = clock(policy.freshness.clock)
-          ensure(params["created"] <= now + policy.freshness.skew, :created_in_future, :freshness)
-          ensure(now < params["expires"] + policy.freshness.skew, :expired, :freshness)
+          freshness = Map.put(policy.freshness, :require_expires, true)
 
-          ensure(
-            policy.freshness.max_age == nil or
-              now - policy.freshness.skew <= params["created"] + policy.freshness.max_age,
-            :too_old,
-            :freshness
-          )
+          interval =
+            with {:ok, interval} <- RequestSeal.Freshness.read(freshness.clock),
+                 {:ok, _facts} <- RequestSeal.Freshness.check(params, freshness, interval) do
+              interval
+            else
+              {:error, reason} -> fail(reason, :freshness)
+            end
 
-          {algorithm, key, principal} = resolve(agent, label, params, policy, deadline)
+          {algorithm, key, principal} =
+            resolve(agent, label, params, policy, deadline, elem(interval, 1))
 
           components =
             required(
@@ -273,7 +273,7 @@ defmodule RequestSeal.WebBotAuth do
                 algorithms: policy.algorithms,
                 components: components,
                 key_resolver: fn _ -> {:ok, %{algorithm: algorithm, key: key}} end,
-                freshness: Map.put(policy.freshness, :require_expires, true),
+                freshness: %{freshness | clock: fn -> interval end},
                 content: policy.content,
                 replay: :not_required,
                 max_signatures: policy.max_signatures,
@@ -376,8 +376,8 @@ defmodule RequestSeal.WebBotAuth do
       not Regex.match?(~r/%(?![a-fA-F0-9]{2})/, location)
   end
 
-  defp resolve(agent, label, params, policy, deadline) do
-    association = protect(fn -> associated(agent, params, policy, deadline) end)
+  defp resolve(agent, label, params, policy, deadline, now) do
+    association = protect(fn -> associated(agent, params, policy, deadline, now) end)
 
     case association do
       {:ok, result} ->
@@ -398,12 +398,12 @@ defmodule RequestSeal.WebBotAuth do
     end
   end
 
-  defp associated(nil, _, _, _), do: fail(:agent_unresolved, :key, :missing_member)
+  defp associated(nil, _, _, _, _), do: fail(:agent_unresolved, :key, :missing_member)
 
-  defp associated(%{type: :unsupported}, _, _, _),
+  defp associated(%{type: :unsupported}, _, _, _, _),
     do: fail(:agent_unresolved, :key, :unsupported_type)
 
-  defp associated(agent, params, policy, deadline) do
+  defp associated(agent, params, policy, deadline, now) do
     uri = URI.parse(agent.location)
 
     if agent.type == :directory do
@@ -450,7 +450,6 @@ defmodule RequestSeal.WebBotAuth do
 
     ensure(source.max_redirects == 0, :agent_unresolved, :key, :source_mismatch)
     ensure(params["keyid"] not in source.revoked, :agent_unresolved, :key, :revoked_key)
-    now = clock(policy.freshness.clock)
 
     {resolution, revision} =
       case configured do
@@ -561,18 +560,6 @@ defmodule RequestSeal.WebBotAuth do
     left = deadline - System.monotonic_time(:millisecond)
     ensure(left > 0, :agent_unresolved, :key, :timeout)
     min(left, 300_000)
-  end
-
-  defp clock(fun) do
-    value =
-      try do
-        fun.()
-      catch
-        _, _ -> nil
-      end
-
-    ensure(is_integer(value) and value in 0..253_402_300_799, :invalid_clock, :freshness)
-    value
   end
 
   # RFC 6454 Sections 4 and 6.2 serialize the origin tuple's host, retaining
