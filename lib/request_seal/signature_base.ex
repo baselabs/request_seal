@@ -530,9 +530,15 @@ defmodule RequestSeal.SignatureBase do
 
   defp target_parts(target, uri, method) when target == "*" or method == "CONNECT" do
     cond do
-      uri == nil -> {:ok, "/", "?"}
-      absolute_tail(uri) != "" -> :error
-      method != "CONNECT" -> {:ok, "/", "?"}
+      uri == nil ->
+        {:ok, "/", "?"}
+
+      absolute_tail(uri) != "" ->
+        :error
+
+      method != "CONNECT" ->
+        {:ok, "/", "?"}
+
       true ->
         {_, authority} = origin(%{target_form: :absolute, raw_target: uri})
         if Validation.authority?(authority, true), do: {:ok, "/", "?"}, else: :error
@@ -579,7 +585,8 @@ defmodule RequestSeal.SignatureBase do
       case Map.get(parsed, name) do
         [raw] -> encode_query(decode_query(raw)) == value
         _ -> false
-      end)
+      end
+    end)
   end
 
   defp raw_query_size(encoded, delimiters) do

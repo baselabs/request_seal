@@ -55,7 +55,8 @@ defmodule RequestSeal.AssignedHTTPBaseTest do
     response_fields =
       for field <- field_components, suffix <- ["", ";tr", ";req", ";tr;req"], do: field <> suffix
 
-    response_ids = [~s["@status"]] ++ Enum.map(request_components, &(&1 <> ";req")) ++ response_fields
+    response_ids =
+      [~s["@status"]] ++ Enum.map(request_components, &(&1 <> ";req")) ++ response_fields
 
     {_, seed} = :crypto.generate_key(:eddsa, :ed25519)
     {:ok, handle} = Local.new("ed25519", {:ed25519, seed}, issued_for: :release)
