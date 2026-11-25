@@ -421,6 +421,7 @@ PY
         workflow = load(source)
         self.assertEqual({"workflow_dispatch": ""}, workflow["on"])
         self.assertNotIn("qualified", source)
+        self.assertNotIn("cache", source.lower())
         actor = 'contains(fromJSON(\'["corepay","palermo-git"]\'), github.actor) && contains(fromJSON(\'["corepay","palermo-git"]\'), github.triggering_actor)'
         for name, job in workflow["jobs"].items():
             self.assertIn(actor, job["if"])
@@ -441,12 +442,6 @@ PY
             self.assertNotIn("HEX_API_KEY", step["run"])
             self.assertEqual("steps.registry.outputs.upload != 'none'", step["if"])
             self.assertEqual("${{ steps.registry.outputs.upload }}", step["env"]["UPLOAD"])
-            caches = [s for s in steps if s.get("uses", "").startswith("actions/cache")]
-            self.assertEqual(3, len(caches))
-            for cache in caches:
-                self.assertTrue(cache["uses"].startswith("actions/cache/restore@"))
-                self.assertNotIn("env", cache)
-                self.assertLess(steps.index(cache), steps.index(step))
             for command in ("--check-registry", "--verify --notes-file", "--directory", "mix docs", "--plan-upload"):
                 self.assertIn(command, str(steps[:steps.index(step)]))
             planner = next(s for s in steps if s.get("id") == "registry")

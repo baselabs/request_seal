@@ -109,8 +109,9 @@
   requests execute no project code. Enforce installed runtime identity, measured
   timeouts, locked tooling and both dependency advisory feeds. Add development-only
   mix_audit and isolate fresh packed-archive consumers from committed locks.
-  Restore dependency and build caches by toolchain lane, Mix environment and lockfile,
-  plus the latest lane's Dialyzer PLT. The default-branch warmer alone saves
+  Restore dependency and build caches by toolchain lane, Mix environment,
+  runner OS and architecture, and lockfile, plus the latest lane's Dialyzer PLT.
+  The default-branch warmer alone saves
   caches. Declare npm for the locked peer tool and disable automatic
   package-manager caching in qualification.
 - Replace tag-triggered publication with default-branch dispatch. Build and inspect

@@ -257,8 +257,6 @@ class QualificationTest(unittest.TestCase):
                          jobs(ci)["verify"]["timeout-minutes"])
         self.assertIn("run 44299761657: cold 4m54s", text("cache-warmer.yml"))
         self.assertIn("run 44295770186: cold 22m51s", text("publish.yml"))
-        for source in (ci, text("cache-warmer.yml"), text("publish.yml")):
-            self.assertIn("warm value: measure on first green run", source)
 
     def test_only_packed_archive_consumers_resolve_fresh_and_all_projects_audit_both_feeds(self):
         fresh = set()
@@ -381,6 +379,7 @@ class QualificationTest(unittest.TestCase):
         self.assertEqual("false", rounds["strategy"]["fail-fast"])
         self.assertEqual("release-gate-round", verdict["needs"])
         self.assertIn("release-gate-verdict", pub["publish"]["needs"])
+        self.assertNotIn("--build-directory", str(rounds["steps"]))
         for job in (rounds, verdict):
             self.assertEqual("ubuntu-24.04", job["runs-on"])
             self.assertNotIn("environment", job)
@@ -428,7 +427,7 @@ class QualificationTest(unittest.TestCase):
                     if action == "actions/setup-node":
                         self.assertEqual("false", step["with"]["package-manager-cache"])
 
-    def test_compiling_jobs_restore_the_exact_caches_the_warmer_saves(self):
+    def test_qualification_restores_the_exact_caches_the_warmer_saves(self):
         def restores(job):
             return [step for step in job["steps"] if step_identity(step) == "actions/cache/restore"]
 
@@ -437,11 +436,10 @@ class QualificationTest(unittest.TestCase):
             lock = expr("hashFiles('mix.lock')")
             config = expr("hashFiles('mix.exs', 'config/**/*.exs')")
             return (f"mix-{lane}-{expr(pins + '.elixir')}-{expr(pins + '.otp')}-{environment}-"
-                    f"{expr('runner.os')}-{lock}-{config}")
+                    f"{expr('runner.os')}-{expr('runner.arch')}-{lock}-{config}")
 
         warmer = jobs(text("cache-warmer.yml"))
         ci = jobs(text("ci.yml"))
-        pub = jobs(text("publish.yml"))
         mix_lookups = restores(warmer["mix"])
         mix, plt, restore_for_plt = mix_lookups
         benchmark, = restores(warmer["benchmark"])
@@ -483,28 +481,20 @@ class QualificationTest(unittest.TestCase):
         for env, restore in zip(("test", "dev", "prod"), (verify_test, verify_dev, verify_prod)):
             self.assertEqual(template("${{ matrix.lane }}", "matrix", env), restore["with"]["key"])
             self.assertEqual(f"deps\n_build/{env}\n", restore["with"]["path"])
-            for job, pins in ((ci["mutations"], "needs.toolchain.outputs"),
-                              (pub["teardown"], "steps.pins.outputs"),
-                              (pub["publish"], "steps.pins.outputs")):
-                if env != "test" and job != pub["publish"]:
-                    continue
-                matches = [step for step in restores(job) if step["with"]["path"] == restore["with"]["path"]]
-                binding, = matches
-                self.assertEqual(template("latest", pins, env), binding["with"]["key"])
-                self.assertNotIn("if", binding)
+        mutation, = restores(ci["mutations"])
+        self.assertEqual(verify_test["with"]["path"], mutation["with"]["path"])
+        self.assertEqual(template("latest", "needs.toolchain.outputs", "test"), mutation["with"]["key"])
+        self.assertNotIn("if", mutation)
         self.assertEqual("dialyzer-plt-" + verify_dev["with"]["key"], verify_plt["with"]["key"])
         self.assertEqual(verify_plt["with"], {key: plt["with"][key] for key in ("key", "path")})
-        for job, pins in ((ci["release-gate-self-check"], "needs.toolchain.outputs"),
-                          (pub["release-gate-round"], "steps.pins.outputs")):
-            lookup, = restores(job)
-            self.assertEqual(benchmark["with"]["path"], lookup["with"]["path"])
-            self.assertEqual(benchmark["with"]["key"].replace("needs.toolchain.outputs", pins),
-                             lookup["with"]["key"])
-            self.assertIn(template("latest", pins, "prod"), lookup["with"]["key"])
-            steps = job["steps"]
-            run = next(step for step in steps if "scripts/jwe_release_gates.py round" in step.get("run", ""))
-            self.assertLess(steps.index(lookup), steps.index(run))
-            self.assertIn('--build-directory "$RUNNER_TEMP/release-gate-build"', run["run"])
+        self_check = ci["release-gate-self-check"]
+        restored_benchmark, = restores(self_check)
+        self.assertEqual({key: benchmark["with"][key] for key in ("key", "path")}, restored_benchmark["with"])
+        self.assertIn(template("latest", "needs.toolchain.outputs", "prod"), restored_benchmark["with"]["key"])
+        steps = self_check["steps"]
+        run = next(step for step in steps if "scripts/jwe_release_gates.py round" in step.get("run", ""))
+        self.assertLess(steps.index(restored_benchmark), steps.index(run))
+        self.assertIn('--build-directory "$RUNNER_TEMP/release-gate-build"', run["run"])
 
 
 if __name__ == "__main__":

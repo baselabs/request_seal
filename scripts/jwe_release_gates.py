@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run one paired JWE benchmark round or collect a publication verdict."""
 import argparse
-from contextlib import nullcontext
 import json
 import math
 import os
@@ -115,14 +114,13 @@ def run_round(args, mode, candidate_version):
                          if line.startswith("model name"))
         output["host"] = {"logical_cpus": cpus, "cpu_model": cpu_model,
                           "image_version": os.environ["ImageVersion"]}
-        build_directory = (nullcontext(args.build_directory) if args.build_directory is not None
-                           else processes.temporary_directory(prefix="requestseal-release-gate-"))
-        with build_directory as build, processes.temporary_directory(prefix="requestseal-release-samples-") as scratch:
+        with processes.temporary_directory(prefix="requestseal-release-gate-") as scratch:
+            build = args.build_directory or Path(scratch)
             environments = {}
             for side in dict.fromkeys(sides(mode)):
                 environments[side] = {"MIX_ENV": "prod",
-                                      "MIX_BUILD_PATH": str(Path(build) / side / "_build" / "prod"),
-                                      "MIX_DEPS_PATH": str(Path(build) / side / "deps")}
+                                      "MIX_BUILD_PATH": str(build / side / "_build" / "prod"),
+                                      "MIX_DEPS_PATH": str(build / side / "deps")}
                 for command in (["mix", "deps.get", "--check-locked"], ["mix", "hex.audit"],
                                 ["mix", "deps.audit"], ["mix", "compile", "--warnings-as-errors"]):
                     processes.run(command, cwd=PROJECTS / side, extra_env=environments[side], timeout=180)

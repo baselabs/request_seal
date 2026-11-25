@@ -71,7 +71,6 @@ jobs:
     runs-on: ubuntu-24.04
     # floor: run 44281082286 cold 14m02s (slower than 44295770186's 11m52s).
     # mid/latest: run 44295770186 cold 11m02s/25m27s; latest's PLT restore missed.
-    # warm value: measure on first green run
     timeout-minutes: ${{ matrix.lane == 'latest' && 51 || matrix.lane == 'floor' && 29 || 23 }}
     strategy:
       fail-fast: false
@@ -113,7 +112,7 @@ jobs:
           path: |
             deps
             _build/test
-          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-test-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
       - name: Restore Mix dev dependencies and build
         if: matrix.lane != 'mid'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -121,7 +120,7 @@ jobs:
           path: |
             deps
             _build/dev
-          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-dev-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-dev-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
       - name: Restore Mix prod dependencies and build
         if: matrix.lane == 'latest'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -129,7 +128,7 @@ jobs:
           path: |
             deps
             _build/prod
-          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-prod-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-prod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
       - name: Restore Dialyzer PLT
         if: matrix.lane == 'latest'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -137,7 +136,7 @@ jobs:
           path: |
             _build/dev/dialyxir_*.plt
             _build/dev/dialyxir_*.plt.hash
-          key: dialyzer-plt-mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-dev-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+          key: dialyzer-plt-mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-dev-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get --check-locked
@@ -220,7 +219,7 @@ jobs:
   mutations:
     needs: toolchain
     runs-on: ubuntu-24.04
-    timeout-minutes: 16 # run 44281082286: cold 7m43s; warm value: measure on first green run
+    timeout-minutes: 16 # run 44281082286: cold 7m43s
     env:
       MIX_ENV: test
     steps:
@@ -250,7 +249,7 @@ jobs:
           path: |
             deps
             _build/test
-          key: mix-latest-${{ needs.toolchain.outputs.elixir }}-${{ needs.toolchain.outputs.otp }}-test-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+          key: mix-latest-${{ needs.toolchain.outputs.elixir }}-${{ needs.toolchain.outputs.otp }}-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get --check-locked
@@ -259,7 +258,7 @@ jobs:
   release-gate-self-check:
     needs: toolchain
     runs-on: ubuntu-24.04
-    timeout-minutes: 5 # run 45224811554: cold 40s; warm value: measure on first green run
+    timeout-minutes: 5 # run 45224811554: 40s
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -289,7 +288,7 @@ jobs:
             ${{ runner.temp }}/release-gate-build/baseline/_build/prod
             ${{ runner.temp }}/release-gate-build/candidate/deps
             ${{ runner.temp }}/release-gate-build/candidate/_build/prod
-          key: release-gate-mix-latest-${{ needs.toolchain.outputs.elixir }}-${{ needs.toolchain.outputs.otp }}-prod-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}-${{ hashFiles('bench/release_gates/*/mix.lock', 'bench/release_gates/*/mix.exs') }}
+          key: release-gate-mix-latest-${{ needs.toolchain.outputs.elixir }}-${{ needs.toolchain.outputs.otp }}-prod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}-${{ hashFiles('bench/release_gates/*/mix.lock', 'bench/release_gates/*/mix.exs') }}
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - name: Run both versions and validate the retained evidence
@@ -311,7 +310,7 @@ jobs:
     if: always()
     needs: [process-ownership-macos, toolchain, verify, mutations, release-gate-self-check]
     runs-on: ubuntu-24.04
-    timeout-minutes: 5 # run 44281082286: cold 5s (<2.5m); warm value: measure on first green run
+    timeout-minutes: 5 # run 44281082286: cold 5s (<2.5m)
     permissions:
       actions: read
       contents: read

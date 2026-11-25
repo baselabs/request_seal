@@ -74,7 +74,25 @@ on shared infrastructure vary with hardware and active load.
 
 ## Consequences
 
-Code landing requires the harness self-check. Publication requires the full
-measurement verdict and the near-cap teardown gate for the dispatched commit.
-Host conditions can leave a release unmeasured. Each dispatch uses its fixed
-round inventory and runs it once.
+Qualification runs correctness tests, reversing mutations and the reduced
+performance self-check on each candidate. The near-cap teardown gate measures
+performance against the library's bounds. It consumed 23 of the 24 wall-clock
+minutes in qualification run 45512607434, so publication runs it on the exact
+dispatched release commit.
+A teardown regression on `main` blocks every release until a fix lands. The
+failed `teardown` job names the near-cap measurement and retains its report
+as `jwe-teardown`.
+
+Before stamping a release version, an approved release maintainer can run
+the measurement in hosted CI while `main` is a development snapshot. In
+GitHub Actions, open **Publish**, select **Run workflow**, and dispatch
+`main` after confirming its `@version` in `mix.exs` is a development
+snapshot. Keep that version in place through dispatch. Open the run's
+`teardown` job and download `jwe-teardown`. That job runs
+`python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"`.
+The workflow has no separate teardown-only dispatch. Its release identity
+check refuses development snapshots before upload, and the release
+dispatch repeats the gate on the release commit.
+
+Host conditions can leave a release unmeasured. Each dispatch uses its
+fixed round inventory and runs it once.

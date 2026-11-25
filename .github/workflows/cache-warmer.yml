@@ -16,7 +16,7 @@ defaults:
 jobs:
   toolchain:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5 # cold value unmeasured; warm value: measure on first green run
+    timeout-minutes: 5 # no green run yet
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       python: ${{ steps.pins.outputs.python }}
@@ -46,8 +46,9 @@ jobs:
   mix:
     needs: toolchain
     runs-on: ubuntu-24.04
-    # Previous PLT-only job: run 44299761657: cold 4m54s.
-    timeout-minutes: 29 # expanded cold value unmeasured; warm value: measure on first green run
+    # Previous PLT-only job
+    # run 44299761657: cold 4m54s; lookup-only restore missed
+    timeout-minutes: 29 # no green run yet
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.toolchain.outputs.matrix) }}
@@ -76,7 +77,7 @@ jobs:
           path: |
             deps
             _build/${{ matrix.mix_env }}
-          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.mix_env }}-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.mix_env }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
       - name: Look up the Dialyzer PLT cache
         id: plt-cache
         if: matrix.lane == 'latest' && matrix.mix_env == 'dev'
@@ -86,7 +87,7 @@ jobs:
           path: |
             _build/dev/dialyxir_*.plt
             _build/dev/dialyxir_*.plt.hash
-          key: dialyzer-plt-mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-dev-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+          key: dialyzer-plt-mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-dev-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         if: steps.mix-cache.outputs.cache-hit != 'true' || (matrix.lane == 'latest' && matrix.mix_env == 'dev' && steps.plt-cache.outputs.cache-hit != 'true')
         with:
@@ -106,7 +107,7 @@ jobs:
           path: |
             deps
             _build/${{ matrix.mix_env }}
-          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.mix_env }}-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
+          key: mix-${{ matrix.lane }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.mix_env }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}
       - name: Fetch locked dependencies
         if: steps.mix-cache.outputs.cache-hit != 'true' || (matrix.lane == 'latest' && matrix.mix_env == 'dev' && steps.plt-cache.outputs.cache-hit != 'true')
         run: |
@@ -138,7 +139,7 @@ jobs:
   benchmark:
     needs: toolchain
     runs-on: ubuntu-24.04
-    timeout-minutes: 5 # cold value unmeasured; warm value: measure on first green run
+    timeout-minutes: 5 # no green run yet
     env:
       MIX_ENV: prod
     steps:
@@ -166,7 +167,7 @@ jobs:
             ${{ runner.temp }}/release-gate-build/baseline/_build/prod
             ${{ runner.temp }}/release-gate-build/candidate/deps
             ${{ runner.temp }}/release-gate-build/candidate/_build/prod
-          key: release-gate-mix-latest-${{ needs.toolchain.outputs.elixir }}-${{ needs.toolchain.outputs.otp }}-prod-${{ runner.os }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}-${{ hashFiles('bench/release_gates/*/mix.lock', 'bench/release_gates/*/mix.exs') }}
+          key: release-gate-mix-latest-${{ needs.toolchain.outputs.elixir }}-${{ needs.toolchain.outputs.otp }}-prod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mix.lock') }}-${{ hashFiles('mix.exs', 'config/**/*.exs') }}-${{ hashFiles('bench/release_gates/*/mix.lock', 'bench/release_gates/*/mix.exs') }}
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         if: steps.benchmark-cache.outputs.cache-hit != 'true'
         with:

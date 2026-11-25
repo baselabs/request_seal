@@ -49,9 +49,7 @@ registry credentials and the later tag. Workflow changes require review before l
    archive's checksum, metadata, explicit inventory and every source byte, write
    `release.json` (`package`, `version` and the dispatched `commit`) into the docs,
    and build and inspect the docs archive. An anonymous Hex API read then decides
-   exactly which archives to upload. Unkeyed builds can restore exact locked
-   dependency caches from the default-branch warmer. The upload runs outside
-   those project directories.
+   exactly which archives to upload. No cache is read or written.
 6. The same unkeyed steps generate and verify CycloneDX 1.6 against the production
    dependency closure, including optional integrations. `scripts/sbom.py` verifies
    the platform-specific digest of upstream's prebuilt tool before execution.
