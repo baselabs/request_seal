@@ -97,6 +97,7 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `crypto.verify` | Algorithm, public source key, data and signature bytes | `valid` |
 | `hpke.derive_key_pair/v1` | Tagged `kem_id` (16, 17, 32), `ikm` byte tag | `sk` and `pk` byte tags from the internal RFC 9180 stage; not a public key-export operation |
 | `custody.purpose/v1` | RFC 9421 B.2.6 key-file and base references, assigned and required purposes, presented handle purpose and family, and requested operation | Signature byte tag |
+| `custody.admission_commitment/v1` | HTTP method and URL, ordered serialized identifiers, complete Signature-Input Inner List, decision clock and expiry as tagged integers, and approved digest as a byte tag | Commitment byte tag or a custody rule ID |
 | `custody.derive/v1` | `parent_ikm`, `domain` byte tags; `target` with algorithm object and explicit curve or null; symmetric `probe` message or CEK | `public_key` JWK pairs for asymmetric targets, `tag` or `wrapped` byte tags for HMAC or AES-KW |
 | `key_management.aes_kw/v1` | `alg` (A128KW/A256KW), `kek` byte tag, `operation` (wrap/unwrap), and `key_data` or `wrapped` byte tag | `wrapped` or `key_data` byte tag |
 | `key_management.ecdh_kdf/v1` | `z`, `apu`, `apv` byte tags; `algorithm_id` string; `keydatalen` tagged bits (128/256) | `output` byte tag |
@@ -110,6 +111,7 @@ replies. No network discovery or PostgreSQL service is required by the corpus.
 | `discovery.body` | Injected body, source kind/location, limits and evaluation clock | Public key thumbprints |
 | `plug.signed_path/v1` | Origin-form target bytes, Signature-Input component list, route template and capture name, trusted principal tenant bytes, ordered header pairs and optional JSON body with a parser enabled by default | Tenant byte tag |
 | `replay.claim` | Namespace/key bytes, created/expires/max-age/skew, clock | Retention end and optional lowercase hexadecimal row |
+| `replay.pair/v1` | Namespace and key byte tags, exclusive retention as a tagged integer, booleans for destination and retiring pre-seeding and repeated store reference | Claim outcome and booleans for claim presence in each store, or a replay rule ID |
 | `profile.name` | Package/kind pair and bounded metadata | `valid` |
 
 The consumer also accepts `digest.content` and `nested.decrypt`; the current corpus contains no cases for them.

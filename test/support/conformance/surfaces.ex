@@ -35,6 +35,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     "hpke.derive_key_pair/v1" => :hpke_derive_key_pair,
     "custody.derive/v1" => :custody_derive,
     "custody.purpose/v1" => :custody_purpose,
+    "custody.admission_commitment/v1" => :admission_commitment,
     "key_management.aes_kw/v1" => :aes_kw,
     "key_management.ecdh_kdf/v1" => :ecdh_kdf,
     "key_management.agree/v1" => :agree,
@@ -48,6 +49,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     "web_bot_auth.verify" => :web_bot_auth,
     "discovery.body" => :discovery_body,
     "replay.claim" => :replay_claim,
+    "replay.pair/v1" => :replay_pair,
     "plug.signed_path/v1" => :signed_path,
     "profile.name" => :profile_name
   }
@@ -118,6 +120,86 @@ defmodule RequestSeal.Conformance.Surfaces do
     case conn.private.request_seal.scope do
       {:ok, %{tenant: tenant}} -> {:ok, %{"tenant" => C.b64(tenant)}}
       {:error, _} = error -> error
+    end
+  end
+
+  def admission_commitment(_root, %{"inputs" => inputs}) do
+    alias RequestSeal.Custody.{Context, Gate}
+    alias RequestSeal.Replay.ETS
+
+    now = C.int(inputs["now"])
+    identifiers = inputs["identifiers"]
+    components = "(" <> Enum.join(identifiers, " ") <> ")"
+
+    admission = %Gate.Admission{
+      decision: "corpus",
+      commitment: C.bytes(inputs["approved"]),
+      not_after: C.int(inputs["not_after"])
+    }
+
+    {:ok, store} = ETS.start_link(max_entries: 16)
+
+    try do
+      config = %{
+        algorithm: "ed25519",
+        port: fn _, _ -> {:allow, admission} end,
+        once: {:store, ETS.store(store), "corpus"},
+        required_components: identifiers,
+        max_lifetime: 30,
+        clock: fn -> now end,
+        skew: 0,
+        tag: "corpus"
+      }
+
+      context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + 5_000}
+      {:ok, message} = Message.request(inputs["method"], inputs["url"], [], nil)
+      {:ok, base} = RequestSeal.SignatureBase.build(message, inputs["signature_input"])
+
+      with {:ok, commitment} <- Gate.commitment(message, components),
+           {:ok, _} <- Gate.check(base, config, context) do
+        {:ok, %{"commitment" => C.b64(commitment)}}
+      end
+    after
+      GenServer.stop(store)
+    end
+  end
+
+  def replay_pair(_root, %{"inputs" => inputs}) do
+    alias RequestSeal.Replay
+    alias RequestSeal.Replay.{Claim, ETS, Pair}
+
+    until = C.int(inputs["retain_until"])
+    claim = %Claim{
+      namespace: C.bytes(inputs["namespace"]),
+      key: C.bytes(inputs["key"]),
+      retain_until: until
+    }
+
+    {:ok, destination} = ETS.start_link(max_entries: 16)
+    {:ok, retiring} = ETS.start_link(max_entries: 16)
+    left = ETS.store(destination)
+    right = if inputs["same_store"], do: left, else: ETS.store(retiring)
+
+    try do
+      with {:ok, pair} <- Pair.store(left, right) do
+        if inputs["destination_seeded"], do: :claimed = Replay.claim(left, claim, timeout: 5_000)
+        if inputs["retiring_seeded"], do: :claimed = Replay.claim(right, claim, timeout: 5_000)
+
+        with outcome when outcome in [:claimed, :already_claimed] <-
+               Replay.claim(pair, claim, timeout: 5_000),
+             {:ok, left_count} <- ETS.sweep(destination, until),
+             {:ok, right_count} <- ETS.sweep(retiring, until) do
+          {:ok,
+           %{
+             "outcome" => Atom.to_string(outcome),
+             "destination" => left_count == 1,
+             "retiring" => right_count == 1
+           }}
+        end
+      end
+    after
+      GenServer.stop(destination)
+      GenServer.stop(retiring)
     end
   end
 

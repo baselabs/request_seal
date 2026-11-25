@@ -38,3 +38,6 @@ resolve an indeterminate remote commit.
 A failed attempt can spend its nonce at the destination. Operators own both
 stores, their retention, and the rollout window. A pair preserves the replay
 boundary the retiring store already provides.
+
+The corpus exercises a fresh claim, both duplicate positions and resulting
+store states, and repeated store reference refusal.
