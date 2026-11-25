@@ -120,6 +120,10 @@ defmodule RequestSeal.Custody.Local do
     * `:capabilities` - for JWE and derivation parents, a nonempty unique subset of the family's
       capabilities. AES-KW defaults to `[:wrap, :unwrap]`; other JWE families
       default to `[:unwrap]` and refuse `:wrap`.
+    * `:deny` or `:expected_thumbprint` - check the derived public key before
+      constructing a handle. An active deny set rejects `:key_denied` for a
+      match. An expected thumbprint rejects `:key_mismatch` on disagreement.
+      If an enabled check has no public key, it rejects `:key_fingerprint_unknown`.
     * `:equivalence` - a nonsecret binary of 1–256 bytes, accepted only for HMAC
       algorithms; it becomes the handle's `:symmetric` `RequestSeal.KeyIdentity`.
       When absent, an HMAC handle's identity is `:unknown`. No default.
@@ -131,7 +135,8 @@ defmodule RequestSeal.Custody.Local do
       `[:unwrap]` for other JWE algorithms, or `[:derive]` for an HKDF parent.
     * `{:error, %RequestSeal.Custody.Error{}}` - reasons this function can return:
       `:unsupported_algorithm`, `:invalid_options` (unknown, duplicate or
-      invalid options), `:invalid_key` (malformed, out-of-range, or inconsistent
+      invalid options), `:key_denied`, `:key_fingerprint_unknown`, and
+      `:invalid_key` (malformed, out-of-range, or inconsistent
       material), and `:key_mismatch` (material of a type or curve that does not
       fit `algorithm`). Holder startup can also return `:custodian_failure` or
       `:deadline_exceeded`. Other reasons: see `RequestSeal.Custody.Error`.
@@ -331,7 +336,8 @@ defmodule RequestSeal.Custody.Local do
       or inconsistent input, or a JWK `key_ops` value outside the allowed set),
       `:key_mismatch` (JWK `alg` or `use` that does not fit, `key_ops` without the
       required operation, a PSS-only key for a non-PSS algorithm, or material that
-      does not fit `algorithm`), and `:invalid_options`. Holder startup can also
+      does not fit `algorithm`), `:invalid_options`, `:key_denied`, and
+      `:key_fingerprint_unknown`. Holder startup can also
       return `:custodian_failure` or `:deadline_exceeded`. Other reasons: see
       `RequestSeal.Custody.Error`.
 
@@ -390,7 +396,7 @@ defmodule RequestSeal.Custody.Local do
         do: [:equivalence, :capabilities],
         else: [:equivalence, :issued_for, :admission]
 
-    Support.options(opts, allowed)
+    Support.options(opts, allowed ++ [:deny, :expected_thumbprint])
     binding_options(algorithm, opts)
 
     if Keyword.has_key?(opts, :capabilities) do
@@ -424,6 +430,7 @@ defmodule RequestSeal.Custody.Local do
 
     validate_operation(algorithm, material, public)
     public = if is_struct(expected, PublicKey), do: PublicKey.validate!(expected), else: public
+    Support.check_public_key(public, opts)
 
     identity =
       case public do

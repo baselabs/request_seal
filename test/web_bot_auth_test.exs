@@ -1124,6 +1124,14 @@ defmodule RequestSeal.WebBotAuthTest do
     end
   end
 
+  test "deny set applies to an otherwise trusted directory key" do
+    message = request("directory")
+    assert {:ok, envelope} = WebBotAuth.verify(message, policy())
+    assert [result] = Map.values(envelope.signatures)
+    {:ok, deny} = RequestSeal.DenySet.new([result.signature.keyid])
+    assert_error(WebBotAuth.verify(message, policy(deny: deny)), :key_denied, :key)
+  end
+
   test "trusted time intervals are checked before trust and sampled once per signature" do
     owner = self()
     message = request("directory")

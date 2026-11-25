@@ -224,6 +224,9 @@ defmodule RequestSeal.JOSE.JWS do
         only `key: :embedded` is accepted; public keys and handles are refused.
       * `:require_issued_for` - an optional purpose atom. Omission and nil
         select unassigned keys.
+      * `:deny` - optional `RequestSeal.DenySet` or nil. A matching key rejects
+        as `:key_denied`. With an active set, verification uses validated public
+        material and rejects with `:key_fingerprint_unknown` when unavailable.
 
   Admission checks header refusals and algorithm selection, then the member
   set and expected values before resolution. Under :refuse, jwk is unsupported.
@@ -316,6 +319,16 @@ defmodule RequestSeal.JOSE.JWS do
     if purpose != nil do
       ensure(match?(%KeyHandle{issued_for: ^purpose}, key), :issued_for_mismatch, :key)
     end
+
+    if match?(%RequestSeal.KeyHandle{}, key) do
+      ensure(key.algorithm == {:jws, alg}, :algorithm_mismatch, :key)
+    end
+
+    ensure(
+      is_struct(key, RequestSeal.PublicKey) or is_struct(key, RequestSeal.KeyHandle),
+      :key_resolver_failed,
+      :key
+    )
 
     result =
       case key do

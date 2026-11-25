@@ -81,11 +81,12 @@ defmodule RequestSeal.JOSE.Support do
 
     ensure(is_map(p), :invalid_policy)
 
-    actual = if kind == :jws, do: Map.delete(p, :require_issued_for), else: p
+    actual = if kind == :jws, do: Map.drop(p, [:require_issued_for, :deny]), else: p
     ensure(Enum.sort(Map.keys(actual)) == Enum.sort(keys), :invalid_policy)
 
     if kind == :jws do
       ensure(KeyHandle.purpose?(Map.get(p, :require_issued_for)), :invalid_policy)
+      ensure(RequestSeal.DenySet.valid?(Map.get(p, :deny)), :invalid_policy)
     end
 
     ensure(

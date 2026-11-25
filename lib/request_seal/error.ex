@@ -62,6 +62,8 @@ defmodule RequestSeal.Error do
     assigned key does not use an HTTP algorithm during HTTP verification),
     `:unknown_key` (resolver returned `:error`), `:key_resolver_failed`
     (callback fault or malformed algorithm/key result).
+    `:key_denied` (selected public key matched the deny set) and
+    `:key_fingerprint_unknown` (an active deny set requires a public key).
   * `:crypto`: `:invalid_signature` (cryptography rejects), `:signature_base_failed`
     (base construction rejects), `:verifier_failed` (custody verification failure
     or invalid key), `:signer_failed` (signature serialization failure).
@@ -133,6 +135,8 @@ defmodule RequestSeal.Error do
           | :invalid_signature_input
           | :invalid_verification
           | :key_resolver_failed
+          | :key_denied
+          | :key_fingerprint_unknown
           | :label_in_use
           | :label_mismatch
           | :lifetime_exceeded

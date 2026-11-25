@@ -2,6 +2,7 @@
 
 ## Unreleased 2.0.0
 
+- Screen public signatures against caller-owned deny sets and check expected public thumbprints on custody import.
 - Check HTTP signature freshness across caller-supplied trusted clock intervals.
 - Validate parsed signature-base identifiers like live signature inputs and preserve internal field tabs.
 

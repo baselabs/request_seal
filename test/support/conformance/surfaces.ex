@@ -32,6 +32,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     "digest.content" => :digest,
     "crypto.verify" => :crypto_verify,
     "key.import" => :key_import,
+    "custody.seed_check/v1" => :seed_check,
     "hpke.derive_key_pair/v1" => :hpke_derive_key_pair,
     "custody.derive/v1" => :custody_derive,
     "custody.purpose/v1" => :custody_purpose,
@@ -451,6 +452,10 @@ defmodule RequestSeal.Conformance.Surfaces do
             "key_resolver" ->
               resolver(root, v)
 
+            "deny" ->
+              {:ok, set} = RequestSeal.DenySet.new(v)
+              set
+
             "freshness" when is_map(v) ->
               %{
                 clock: fn -> freshness_clock(now) end,
@@ -722,6 +727,26 @@ defmodule RequestSeal.Conformance.Surfaces do
     with {:ok, key} <- key,
          :ok <- Crypto.verify(i["algorithm"], C.bytes(i["data"]), C.bytes(i["signature"]), key),
          do: {:ok, %{"valid" => true}}
+  end
+
+  def seed_check(root, c) do
+    i = c["inputs"]
+    jwk = C.load(root, i["jwk"])
+    {:ok, deny} = RequestSeal.DenySet.new(i["deny"])
+
+    with {:ok, handle} <-
+           RequestSeal.Custody.Local.import("ed25519", jwk, :jwk,
+             deny: deny,
+             expected_thumbprint: i["expected_thumbprint"]
+           ) do
+      try do
+        with {:ok, key} <- RequestSeal.Custody.public_key(handle),
+             {:ok, thumbprint} <- PublicKey.thumbprint(key),
+             do: {:ok, %{"thumbprint" => thumbprint}}
+      after
+        RequestSeal.Custody.release(handle)
+      end
+    end
   end
 
   def key_import(root, c) do

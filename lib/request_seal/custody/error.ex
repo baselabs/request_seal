@@ -18,6 +18,7 @@ defmodule RequestSeal.Custody.Error do
     port answer, or different component commitment or nonce.
   * `:gate_spent`, `:gate_store_failed`, `:gate_unrecorded`: a consumed decision,
     uncertain or failed storage, or failure to record before signature release.
+  * `:key_denied`, `:key_fingerprint_unknown`: denied or unavailable public identity.
   * `:invalid_data`, `:invalid_signature`, `:limit`: invalid or excessive bytes.
   * `:invalid_signing_output`: signing returned malformed or excessive output bytes.
   * `:decryption_failed`: key unwrapping failed; no private diagnostics.
@@ -32,7 +33,7 @@ defmodule RequestSeal.Custody.Error do
   """
   defstruct [:reason, :retryable]
   @reasons ~w(invalid_handle invalid_options unsupported_algorithm unsupported_operation
-              invalid_key key_mismatch invalid_data invalid_signature unsupported_format invalid_signing_output
+              invalid_key key_mismatch key_denied key_fingerprint_unknown invalid_data invalid_signature unsupported_format invalid_signing_output
               no_public_key key_not_found unavailable deadline_exceeded custodian_unavailable
               custodian_rejected custodian_protocol custodian_failure decryption_failed limit
               issued_for_mismatch gate_malformed_base gate_coverage gate_window gate_denied

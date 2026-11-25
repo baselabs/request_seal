@@ -36,6 +36,7 @@ defmodule RequestSeal.Policy do
     :freshness,
     :content,
     :replay,
+    deny: nil,
     field_schemas: %{},
     extra_components: :allow,
     max_signatures: 16,
@@ -56,13 +57,14 @@ defmodule RequestSeal.Policy do
           freshness: :not_evaluated | map(),
           content: :not_required | map(),
           replay: :not_required | map(),
+          deny: RequestSeal.DenySet.t() | nil,
           field_schemas: map(),
           extra_components: :allow | :reject,
           max_signatures: 1..64,
           require_issued_for: atom() | nil
         }
   @required [:algorithms, :components, :key_resolver, :freshness, :content, :replay]
-  @optional [:field_schemas, :extra_components, :max_signatures, :require_issued_for]
+  @optional [:deny, :field_schemas, :extra_components, :max_signatures, :require_issued_for]
   @doc """
   Construct a fully explicit policy or return a bounded invalid-policy error.
 
@@ -84,6 +86,9 @@ defmodule RequestSeal.Policy do
         binding the returned algorithm and granting `:verify`. HMAC
         (`"hmac-sha256"`, `{:jws, "HS256"}`) requires a custody handle. Any other key in the
         result, or any other return, rejects with `:key_resolver_failed`.
+      * `:deny` - a `RequestSeal.DenySet` or nil (default). An active set
+        checks the public key used by verification. A handle must grant
+        verification and export a public key; verification uses that key.
       * `:freshness` - `:not_evaluated` or a map containing exactly `:clock`
         (arity zero, Unix second or ordered `{lower, upper}` interval), `:max_age` (1 to
         253,402,300,799, or nil), `:skew` (0 to 86,400), and
@@ -179,7 +184,7 @@ defmodule RequestSeal.Policy do
       is_binary(p.components) and valid_components?(p.components) and
       is_function(p.key_resolver, 1) and freshness?(p.freshness) and content?(p.content) and
       RequestSeal.Replay.policy?(p.replay, p.freshness) and schemas?(p.field_schemas) and
-      p.extra_components in [:allow, :reject] and is_integer(p.max_signatures) and
+      RequestSeal.DenySet.valid?(p.deny) and p.extra_components in [:allow, :reject] and is_integer(p.max_signatures) and
       p.max_signatures in 1..64 and KeyHandle.purpose?(p.require_issued_for)
   end
 

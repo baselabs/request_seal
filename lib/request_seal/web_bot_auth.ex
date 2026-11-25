@@ -39,6 +39,10 @@ defmodule RequestSeal.WebBotAuth do
   @profile %{name: :web_bot_auth, revision: @revision}
   # RFC 9421 Appendix B.1 public test keys, identified by RFC 7638/8037 thumbprints.
   @test_keys ~w(BHj8s0GPnMEQtkaULIM-PLgEhLBbuGUQ1vMxmBWZzEo oD0HwocPBSfpNy5W3bpJeyFGY_IQ_YpqxSjQ3Yd-CLA ydQXMtvbsOsZyFir-Y7A8t7fKEM1gbKPvyFkdpu4fvI poqkLGiymh_W0uP6PZFw-dvez3QJT5SolqXBCW38r0U)
+
+  @doc false
+  def published_test_key_thumbprints, do: @test_keys
+
   @doc """
   Verify all selected request signatures, then commit replay once.
 
@@ -276,6 +280,7 @@ defmodule RequestSeal.WebBotAuth do
                 freshness: %{freshness | clock: fn -> interval end},
                 content: policy.content,
                 replay: :not_required,
+                deny: policy.deny,
                 max_signatures: policy.max_signatures,
                 field_schemas: schemas(policy.field_schemas)
               })

@@ -32,6 +32,7 @@ defmodule RequestSeal.WebBotAuth.Policy do
     :freshness,
     :content,
     :replay,
+    deny: nil,
     components: "()",
     max_lifetime: 86_400,
     unresolved: :reject,
@@ -51,6 +52,7 @@ defmodule RequestSeal.WebBotAuth.Policy do
           freshness: map(),
           content: term(),
           replay: term(),
+          deny: RequestSeal.DenySet.t() | nil,
           components: binary(),
           max_lifetime: pos_integer(),
           unresolved: term(),
@@ -105,6 +107,7 @@ defmodule RequestSeal.WebBotAuth.Policy do
       locations. It waives the draft's `Signature-Agent` presence rule only when
       the field is absent.
     * `:test_keys` - `:reject` (default) or `:allow`.
+    * `:deny` - a caller-provided `RequestSeal.DenySet` or nil (default).
     * `:untagged` - `:ignore` (default; listed in `ignored`) or `:reject`.
     * `:max_signatures` - integer 1 to 64. Default 16.
     * `:field_schemas` - Structured Fields schemas, as in `RequestSeal.Policy`.
@@ -168,6 +171,7 @@ defmodule RequestSeal.WebBotAuth.Policy do
            freshness: Map.put(p.freshness, :require_expires, true),
            content: p.content,
            replay: p.replay,
+           deny: p.deny,
            max_signatures: p.max_signatures,
            field_schemas: p.field_schemas
          }) do

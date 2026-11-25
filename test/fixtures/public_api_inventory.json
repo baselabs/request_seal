@@ -132,6 +132,12 @@
     "function deliver/3",
     "type t/0"
   ],
+  "RequestSeal.DenySet": [
+    "function check/2",
+    "function new/1",
+    "function published_test_keys/0",
+    "type t/0"
+  ],
   "RequestSeal.Digest": [
     "function check/3",
     "function check_stream/3",

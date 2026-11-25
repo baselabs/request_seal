@@ -16,6 +16,37 @@ defmodule RequestSeal.CustodyLocalOwnerTest do
     %{dir: dir}
   end
 
+  test "seed descriptors expose bounded admission failures without issuing handles", c do
+    path = seed_file(c.dir, "checked", @seed)
+    source = {:file, path, :raw}
+    {:ok, handle} = Local.new("ed25519", {:ed25519, @seed})
+    {:ok, key} = Custody.public_key(handle)
+    {:ok, thumbprint} = RequestSeal.PublicKey.thumbprint(key)
+    assert :ok = Local.release(handle)
+    {:ok, deny} = RequestSeal.DenySet.new([thumbprint])
+    wrong = Base.url_encode64(<<0::256>>, padding: false)
+
+    owner =
+      start_supervised!(
+        {Owner,
+         keys: [
+           allowed: {"ed25519", source, expected_thumbprint: thumbprint},
+           denied: {"ed25519", source, deny: deny},
+           mismatch: {"ed25519", source, expected_thumbprint: wrong}
+         ]}
+      )
+
+    assert Owner.status(owner) == %{
+             allowed: :ready,
+             denied: {:error, :key_denied},
+             mismatch: {:error, :thumbprint_mismatch}
+           }
+
+    assert {:ok, _} = Owner.fetch(owner, :allowed)
+    assert {:error, :unconfigured} = Owner.fetch(owner, :denied)
+    assert {:error, :unconfigured} = Owner.fetch(owner, :mismatch)
+  end
+
   test "a fetched handle outlives its fetching process", c do
     path = seed_file(c.dir, "key", @seed)
     owner = start_supervised!({Owner, keys: [signing: {"ed25519", {:file, path, :raw}}]})

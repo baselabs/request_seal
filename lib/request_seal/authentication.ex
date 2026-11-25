@@ -4,6 +4,7 @@ defmodule RequestSeal.Authentication do
     Body,
     Crypto,
     Custody,
+    DenySet,
     Digest,
     Error,
     FieldOccurrence,
@@ -75,6 +76,13 @@ defmodule RequestSeal.Authentication do
         {algorithm, key} = resolve(policy, label, params)
         match_algorithm(params, algorithm, :policy)
         ensure(algorithm in policy.algorithms, :algorithm_not_permitted, :policy)
+        key =
+          case DenySet.verification_key(policy.deny, key) do
+            {:ok, key} -> key
+            {:error, :key_denied} -> fail(:key_denied, :key)
+            {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown, :key)
+          end
+
         {:ok, {algorithm, key, params, freshness}}
       end)
 

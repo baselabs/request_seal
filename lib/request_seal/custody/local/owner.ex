@@ -36,7 +36,9 @@ defmodule RequestSeal.Custody.Local.Owner do
   @type encoding :: :base64url | :base64 | :hex | :raw
   @type source :: {:env | :file | :file_from_env, binary(), encoding()}
   @type key_status ::
-          :ready | :unconfigured | {:error, :invalid_seed | :insecure_file | :unreadable}
+          :ready
+          | :unconfigured
+          | {:error, :invalid_seed | :insecure_file | :unreadable | :key_denied | :thumbprint_mismatch}
   @type options :: [name: atom(), keys: [{atom(), {binary(), source()}}]]
   @max_source_bytes 4_096
 
@@ -111,6 +113,10 @@ defmodule RequestSeal.Custody.Local.Owner do
       Decoded seeds must be exactly 32 bytes. Source inputs are limited to 4,096
       bytes, including whitespace. An entry that is not of this shape does not
       stop startup; its status is `{:error, :invalid_seed}`.
+
+      An entry may also be `{"ed25519", source, opts}` with the Local
+      `:deny` and `:expected_thumbprint` options. A denied or mismatched
+      seed yields `{:error, :key_denied}` or `{:error, :thumbprint_mismatch}`.
 
   ## Returns
 
@@ -367,12 +373,26 @@ defmodule RequestSeal.Custody.Local.Owner do
               encoding in [:base64url, :base64, :hex, :raw],
        do: spec
 
+  defp descriptor({"ed25519", source, opts} = spec) when is_list(opts) do
+    with true <- descriptor({"ed25519", source}) != :invalid_seed,
+         true <- Keyword.keyword?(opts),
+         keys = Keyword.keys(opts),
+         true <- Enum.uniq(keys) == keys and Enum.all?(keys, &(&1 in [:deny, :expected_thumbprint])),
+         true <- RequestSeal.DenySet.valid_admission_options?(opts) do
+      spec
+    else
+      _ -> :invalid_seed
+    end
+  end
+
   defp descriptor(_), do: :invalid_seed
 
-  defp load_key({"ed25519", {kind, location, encoding}}) do
+  defp load_key({"ed25519", source}), do: load_key({"ed25519", source, []})
+
+  defp load_key({"ed25519", {kind, location, encoding}, opts}) do
     with {:ok, input} <- read_source(kind, location),
          {:ok, seed} <- decode(input, encoding),
-         {:ok, handle} <- Local.new("ed25519", {:ed25519, seed}) do
+         {:ok, handle} <- Local.new("ed25519", {:ed25519, seed}, opts) do
       {:ok, handle}
     else
       :unconfigured ->
@@ -380,6 +400,12 @@ defmodule RequestSeal.Custody.Local.Owner do
 
       {:error, reason} when reason in [:invalid_seed, :insecure_file, :unreadable] ->
         {:error, reason}
+
+      {:error, %{reason: :key_denied}} ->
+        {:error, :key_denied}
+
+      {:error, %{reason: :key_mismatch}} ->
+        {:error, :thumbprint_mismatch}
 
       _ ->
         {:error, :invalid_seed}

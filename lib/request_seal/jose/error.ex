@@ -18,7 +18,8 @@ defmodule RequestSeal.JOSE.Error do
   @reasons ~w(invalid_options invalid_policy limit invalid_serialization invalid_base64
     invalid_header duplicate_member unsupported_header unsupported_serialization
     compression_unsupported detached_payload algorithm_not_permitted algorithm_mismatch
-    unsupported_critical_header unknown_key key_resolver_failed invalid_signature signer_failed
+    unsupported_critical_header unknown_key key_resolver_failed key_denied key_fingerprint_unknown
+    invalid_signature signer_failed
     issued_for_mismatch invalid_iv invalid_tag decryption_failed entropy_failure deadline_exceeded nesting_depth
     content_type_mismatch unexpected_member protected_mismatch internal_failure)a
   defstruct [:reason, :layer, :correlation, retryable: false]

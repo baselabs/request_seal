@@ -21,6 +21,26 @@ defmodule RequestSeal.Custody.Support do
   def unwrap({:error, %{reason: reason}}), do: fail(reason)
   def unwrap({:error, reason}) when is_atom(reason), do: fail(reason)
 
+  def check_public_key(public, opts) do
+    ensure(RequestSeal.DenySet.valid_admission_options?(opts), :invalid_options)
+
+    case RequestSeal.DenySet.check(opts[:deny], public) do
+      :ok -> :ok
+      {:error, :key_denied} -> fail(:key_denied)
+      {:error, :key_fingerprint_unknown} -> fail(:key_fingerprint_unknown)
+    end
+
+    if expected = opts[:expected_thumbprint] do
+      case RequestSeal.PublicKey.thumbprint(public) do
+        {:ok, ^expected} -> :ok
+        {:ok, _} -> fail(:key_mismatch)
+        _ -> fail(:key_fingerprint_unknown)
+      end
+    end
+
+    :ok
+  end
+
   # OTP 27/28 decode PrivateKeyInfo; OTP 29 aliases it to OneAsymmetricKey.
   # Normalize both supported decoder contracts without admitting v2 containers.
   @spec pkcs8_components(tuple()) :: {term(), term(), term()}

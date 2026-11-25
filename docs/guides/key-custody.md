@@ -417,3 +417,18 @@ Gate work follows the key creator's lifetime as well as the signing caller's.
 Either can cancel pending work. With a transferred handle, keep its creator
 alive until the operation returns. The store may already have received a
 request when cancellation occurs, and committed spends remain spent.
+
+## Check a seed against a public thumbprint
+
+Use `RequestSeal.Custody.Local.new("ed25519", {:ed25519, seed}, expected_thumbprint: thumbprint)`
+when installing a seed for a configured public key. Compute `thumbprint` using
+`RequestSeal.PublicKey.thumbprint/1` on that trusted key. A source descriptor
+can use the same option as `{"ed25519", source, expected_thumbprint: thumbprint}`.
+A mismatched seed fails before issuing a handle.
+
+To exclude a retired key, create a set with
+`{:ok, deny} = RequestSeal.DenySet.new([retired_thumbprint])` and pass
+`deny: deny` at custody import or in an HTTP, Web Bot Auth, or JWS
+verification policy. The set compares the selected public key's RFC 7638
+SHA-256 thumbprint, independent of its advertised key ID. An active set
+requires a public key.

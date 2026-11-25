@@ -73,6 +73,8 @@ defmodule RequestSeal.Custody.SSHAgent do
     * `:timeout` - deadline in milliseconds for the possession check, integer
       1–300,000. Default `5_000`.
     * `:issued_for` - application purpose atom or nil. Default nil.
+    * `:deny`, `:expected_thumbprint` - screen the public key before connecting,
+      returning `:key_denied` for a match or `:key_mismatch` on disagreement.
 
   ## Returns
 
@@ -112,7 +114,7 @@ defmodule RequestSeal.Custody.SSHAgent do
           {:ok, KeyHandle.t()} | {:error, RequestSeal.Custody.Error.t()}
   def new(algorithm, socket_path, public, opts \\ []) do
     Support.safe(fn ->
-      timeout = Support.timeout(opts, [:timeout, :issued_for])
+      timeout = Support.timeout(opts, [:timeout, :issued_for, :deny, :expected_thumbprint])
       issued_for = Keyword.get(opts, :issued_for)
       ensure(KeyHandle.purpose?(issued_for), :invalid_options)
       {jose, _} = resolved = Algorithm.resolve(algorithm)
@@ -125,6 +127,7 @@ defmodule RequestSeal.Custody.SSHAgent do
       )
 
       PublicKey.bind!(public, resolved)
+      Support.check_public_key(public, opts)
       context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
       Custody.run(context, fn -> sign_at(socket_path, public, algorithm, "", false, context) end)
       |> unwrap()
