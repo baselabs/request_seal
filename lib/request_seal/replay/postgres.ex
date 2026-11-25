@@ -31,9 +31,14 @@ if Code.ensure_loaded?(Postgrex) do
     alias RequestSeal.Custody.Context
     alias RequestSeal.Replay.{Claim, Error, Store}
 
-    defguardp connection_ref?(conn) when is_pid(conn) or (is_atom(conn) and conn != nil)
+    defguardp connection_ref?(conn)
+              when is_pid(conn) or (is_atom(conn) and conn != nil) or
+                     (is_tuple(conn) and tuple_size(conn) == 2 and is_atom(elem(conn, 0)) and
+                        (elem(conn, 0) == :global or is_atom(elem(conn, 1)))) or
+                     (is_tuple(conn) and tuple_size(conn) == 3 and elem(conn, 0) == :via and
+                        is_atom(elem(conn, 1)))
 
-    @typep connection_ref :: pid() | atom()
+    @typep connection_ref :: GenServer.server()
 
     @doc """
     Reference an existing caller connection or pool and an explicit replay table.

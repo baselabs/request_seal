@@ -287,6 +287,19 @@ defmodule RequestSeal.ReplayPostgresTest do
     assert {:ok, 1} = Postgres.sweep(independent.ref, 100, context())
   end
 
+  test "a registered pool name supports independent claims and sweeps", ctx do
+    start_supervised!({Registry, keys: :unique, name: __MODULE__.Pools})
+    name = {:via, Registry, {__MODULE__.Pools, :replay}}
+    {:ok, _pool} = Postgrex.start_link(Keyword.put(ctx.options, :name, name))
+    store = Postgres.store(name, table: ctx.table)
+    nonce = claim("registered", "nonce", 100)
+
+    assert :claimed = Replay.claim(store, nonce, timeout: 2000)
+    assert :already_claimed = Replay.claim(ctx.store, nonce, timeout: 2000)
+    assert {:ok, 1} = Postgres.sweep(store.ref, 100, context())
+    assert {:error, :failure} = Postgres.claim(ctx.store.ref, nonce, context())
+  end
+
   test "a sweep sees a nonce committed while it waits for the cutoff lock", ctx do
     assert {:ok, 0} = Postgres.sweep(ctx.store.ref, 99, context())
     {:ok, sweep_pool} = Postgrex.start_link(Keyword.put(ctx.options, :pool_size, 1))
