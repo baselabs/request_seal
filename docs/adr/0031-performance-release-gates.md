@@ -82,7 +82,7 @@ dispatched release commit.
 A teardown regression on `main` blocks every release until a fix lands. The
 failed `teardown` job names the near-cap measurement and retains its report
 as `jwe-teardown`.
-[ADR 0034](0034-qualify-hex-release-archives.md) places upload and read-back in
+[ADR 0044](0044-qualify-hex-release-archives.md) places upload and read-back in
 separate jobs. Both measurements remain prerequisites to upload.
 
 Before stamping a release version, an approved release maintainer can run

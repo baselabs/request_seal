@@ -1,4 +1,4 @@
-# 0034 — Qualify the exact Hex release archives
+# 0044 — Qualify the exact Hex release archives
 
 Status: Accepted
 

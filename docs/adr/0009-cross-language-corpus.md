@@ -36,7 +36,7 @@ Qualification builds the deterministic `corpus.tar.gz` and `corpus.sha256` and a
 the corpus with the package, docs and SBOM. Publication read-back verifies the exact
 commit's evidence and gives the release maintainers one `release-assets` artifact.
 They tag and attach the assets to the GitHub release. Tag pushes start no workflow.
-See [ADR 0034](0034-qualify-hex-release-archives.md).
+See [ADR 0044](0044-qualify-hex-release-archives.md).
 Neither runtime package ships the corpus; the TypeScript repository vendors its selected release.
 The Elixir runner's pin changes atomically with the local index and protects inventory integrity.
 The independent TypeScript pin protects cross-language identity by tag, commit, and index digest.
