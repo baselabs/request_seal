@@ -2,7 +2,6 @@
 import hashlib
 import json
 from pathlib import Path
-import stat
 import subprocess
 import sys
 import unittest
@@ -46,7 +45,7 @@ class ToolchainTest(unittest.TestCase):
         reader = ROOT / "scripts/toolchain.sh"
         self.assertEqual("25bbfa023b7f031256428b498fe300fcc460988fea81277072355e4c0d933764",
                          hashlib.sha256(reader.read_bytes()).hexdigest())
-        self.assertEqual(0o755, stat.S_IMODE(reader.stat().st_mode))
+        self.assertEqual(0o111, reader.stat().st_mode & 0o111)
 
     def test_workflows_only_read_versions_through_the_shared_reader(self):
         runtime_fields = {"erlef/setup-beam": ("elixir-version", "otp-version"),

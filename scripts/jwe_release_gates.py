@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import platform
 from statistics import median
 import subprocess
 import sys
@@ -59,7 +60,7 @@ def observe(window, cpus):
 def summarize(sample_sets, host, mode, candidate_version):
     cpus = host["logical_cpus"]
     if type(cpus) is not int or cpus < 1 or not all(
-            nonempty(host[key]) for key in ("cpu_model", "image_version")):
+            nonempty(host[key]) for key in ("cpu_model", "os_image")):
         raise ValueError("incomplete host identity")
     order = sides(mode)
     if len(sample_sets) != len(order):
@@ -103,6 +104,13 @@ def summarize(sample_sets, host, mode, candidate_version):
             "admitted": not rejected, "rejected_windows": rejected, "workloads": workloads}
 
 
+def os_image():
+    """Name the runner's operating system image and kernel on any Linux host."""
+    fields = dict(line.split("=", 1) for line in Path("/etc/os-release").read_text().splitlines()
+                  if "=" in line)
+    return f"{fields['PRETTY_NAME'].strip(chr(34))}, kernel {platform.release()}"
+
+
 def run_round(args, mode, candidate_version):
     output = {"round": args.id, "commit": args.commit, "mode": mode, "sample_sets": []}
     try:
@@ -112,8 +120,7 @@ def run_round(args, mode, candidate_version):
         cpu_model = next(line.split(":", 1)[1].strip()
                          for line in Path("/proc/cpuinfo").read_text().splitlines()
                          if line.startswith("model name"))
-        output["host"] = {"logical_cpus": cpus, "cpu_model": cpu_model,
-                          "image_version": os.environ["ImageVersion"]}
+        output["host"] = {"logical_cpus": cpus, "cpu_model": cpu_model, "os_image": os_image()}
         with processes.temporary_directory(prefix="requestseal-release-gate-") as scratch:
             build = args.build_directory or Path(scratch)
             environments = {}
