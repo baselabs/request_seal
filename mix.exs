@@ -72,7 +72,6 @@ defmodule RequestSeal.MixProject do
         # the PLT so their calls resolve instead of reporting unknowns.
         plt_add_apps: [:req, :finch, :mint, :plug, :postgrex, :telemetry]
       ],
-      aliases: ["hex.publish": [&release_runtime_check!/1, "hex.publish"]],
       package: [
         licenses: ["Apache-2.0", "BSD-3-Clause"],
         files: ["lib/**/*.ex", "mix.exs" | @public_documents],
@@ -83,6 +82,7 @@ defmodule RequestSeal.MixProject do
       ],
       docs: [
         main: "readme",
+        formatters: ["html"],
         source_ref: source_ref(),
         # Historical entries retain references to removed APIs.
         skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
@@ -139,43 +139,13 @@ defmodule RequestSeal.MixProject do
   end
 
   defp source_ref do
-    if development_snapshot?(), do: "main", else: "v#{@version}"
+    if development_snapshot?(), do: "main", else: "baselabs_request_seal-v#{@version}"
   end
 
   defp development_snapshot? do
     case Version.parse!(@version).pre do
       [first | _] when is_binary(first) -> String.starts_with?(first, "dev")
       _ -> false
-    end
-  end
-
-  defp release_runtime_check!(_args) do
-    if development_snapshot?() do
-      Mix.raise(
-        "Publishing RequestSeal requires a release version; development versions cannot publish."
-      )
-    end
-
-    python =
-      System.find_executable("python3") ||
-        Mix.raise(
-          "Publishing RequestSeal requires python3 to validate the dated CHANGELOG section."
-        )
-
-    case System.cmd(python, ["scripts/release.py", "--release-notes", "--for-version", @version],
-           stderr_to_stdout: true
-         ) do
-      {_notes, 0} ->
-        :ok
-
-      {error, _status} ->
-        Mix.raise("Publishing RequestSeal requires valid release notes: #{error}")
-    end
-
-    unless Version.match?(System.version(), ">= 1.20.0") do
-      Mix.raise(
-        "Publishing RequestSeal requires Elixir 1.20 or newer so optional integrations remain in Hex metadata."
-      )
     end
   end
 

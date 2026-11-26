@@ -2,18 +2,10 @@
 
 ## Unreleased 2.0.0
 
-- Verify that the inspected Hex archive ships a changelog stamped for its version before planning publication.
-
 - Gate publication on near-cap JWE teardown and hosted paired JWE page and
   single-open measurements against RequestSeal 1.0.0.
 
 - Align documented dependency requirements with the package declarations and reject drift in installation examples.
-
-- Detect Hex releases staged for approval before uploading, compare their package
-  checksum with the inspected archive, and stop with the approval URL and expiry.
-  Attach docs to a freshly staged release only when their response names the same
-  package checksum. Redispatch after approval keeps the served package and uploads
-  only missing docs.
 
 - Require Finch `>= 0.25.0 and < 0.26.0`. Classify its HTTP/1 transport
   failures with `phase: :connect` as `:refused`, proving no request byte was
@@ -114,22 +106,12 @@
   The default-branch warmer alone saves
   caches. Declare npm for the locked peer tool and disable automatic
   package-manager caching in qualification.
-- Replace tag-triggered publication with default-branch dispatch. Build and inspect
-  package and documentation archives without a key; upload only those archives
-  outside the project. Resume held publication from a later dispatch by
-  comparing Hex's outer package checksum with the inspected archive and uploading
-  only missing files. Refuse retired or differing versions, tags and absent
-  registry names. Every docs archive carries `release.json` naming the package,
-  version and commit that built it; readback compares the package byte for byte
-  and accepts served docs only when that commit is the dispatched commit or its
-  default-branch ancestor. Docs builds are not byte-stable, so docs bytes are
-  never compared, and the GitHub release carries the docs Hex serves. When kept
-  docs name an earlier commit, publication refuses before any upload unless the
-  package, corpus and SBOM carry that commit's attestations.
-  Build and attest the corpus, SBOM and release notes in the same run; after
-  reading publication back, the maintainers tag the published commit and attach
-  those files to the GitHub release for `v<version>`. Tag pushes execute no
-  workflow.
+- Build and attest the exact Hex package, HTML docs, corpus and SBOM in
+  qualification. Publish those archives from an approved default-branch dispatch
+  for the qualified commit. Read-back compares both served archives byte for
+  byte and verifies the release evidence. The original qualification supports
+  approval retries. New GitHub releases use `baselabs_request_seal-v<version>`
+  tags and notes from the packaged changelog. Tag pushes start no workflow.
 
 - Compact settled JWE coordinator positions, batch at most four authenticated
   failure controls, and skip terminal cleanup passes. Filter joined resolver
@@ -243,8 +225,7 @@
   Optional integrations and their dependencies carry scope `optional`; required
   dependency paths carry scope `required`.
   Verify them using the commands in the [release verification guide](https://github.com/baselabs/request_seal/blob/main/docs/guides/verifying-releases.md).
-- Pre-release tags create GitHub pre-releases. Release notes are the CHANGELOG section
-  verbatim, and documentation links are versioned.
+- Pre-release tags create GitHub pre-releases. Release documentation links are versioned.
 - SBOM generation verifies upstream binaries on Linux and macOS, on x86-64 and ARM64.
 - The check and SBOM scripts bound each command's run time and remove their child
   processes and scratch files on termination.

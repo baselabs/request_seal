@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 
 VERDICT = "qualified"
 # Every proof job in .github/workflows/ci.yml; verify runs once per toolchain lane.
-JOBS = ("process-ownership-macos", "toolchain", "mutations", "release-gate-self-check")
+JOBS = ("process-ownership-macos", "toolchain", "mutations", "release-gate-self-check", "hex-package")
 LANE_JOB = "verify"
 MIX_ENVIRONMENTS = {"floor": ("test", "dev"), "mid": ("test",), "latest": ("test", "dev", "prod")}
 

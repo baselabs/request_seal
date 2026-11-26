@@ -85,7 +85,7 @@ class ProcessIntegrationTest(unittest.TestCase):
             self.assertEqual(1, len(calls), script)
 
     def test_every_command_entry_point_installs_handlers_explicitly(self):
-        for script in ("check.py", "release.py", "publication.py", "check_docs.py", "sbom.py",
+        for script in ("check.py", "release.py", "check_docs.py", "sbom.py",
                        "check_jose_libraries.py", "check_optional_clients.py", "processes.py"):
             with self.subTest(script=script):
                 self.assertEqual([], signal_installation_errors((ROOT / "scripts" / script).read_text()))

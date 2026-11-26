@@ -54,7 +54,14 @@ class ToolchainTest(unittest.TestCase):
         for name, source in workflow_sources().items():
             self.assertIn('scripts/toolchain.sh >> "$GITHUB_OUTPUT"', source)
             self.assertNotIn("version-file:", source)
-            self.assertNotIn(".tool-versions", source)
+            if name == "publish.yml":
+                upload = load_workflow(source)["jobs"]["upload"]["steps"]
+                reader = next(step["run"] for step in upload if step.get("id") == "pins")
+                self.assertIn('git show HEAD:.tool-versions > "$RUNNER_TEMP/publication/.tool-versions"', reader)
+                self.assertIn('"$RUNNER_TEMP/publication/scripts/toolchain.sh" "$RUNNER_TEMP/publication/.tool-versions"', reader)
+                self.assertEqual(reader.count(".tool-versions"), source.count(".tool-versions"))
+            else:
+                self.assertNotIn(".tool-versions", source)
             self.assertNotRegex(source, r"(?:sh|bash) +scripts/toolchain\.sh")
             for body in load_workflow(source)["jobs"].values():
                 for step in body["steps"]:

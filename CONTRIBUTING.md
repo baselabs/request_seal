@@ -34,14 +34,13 @@ build, tests, ExDoc and notebooks run in GitHub-hosted qualification.
 [Testing and evidence](docs/guides/testing.md) describes that gate.
 Conformance claims require independent evidence beyond a local self-round-trip.
 
-Maintainers publish through a separate approved dispatch. The near-cap JWE teardown
-measurement and paired performance verdict must pass for the dispatched commit.
-Repeating the dispatch can finish an untagged release with identical package
-bytes by uploading only missing files. Retired versions and differing bytes
-refuse. The package is read back byte for byte,
-and the served docs by the commit their `release.json` names.
-Consumer assets are available from the GitHub release for `v<version>`; the
-[verification guide](docs/guides/verifying-releases.md) shows how to check them.
+Maintainers publish the qualified commit through a separate approved dispatch.
+The near-cap JWE teardown measurement and paired performance verdict gate upload
+for that commit. A retry uses the original qualified archives and uploads only
+missing files. Read-back compares the served package and docs bytes and validates
+the commit in `release.json`. The GitHub release for `baselabs_request_seal-v<version>`
+carries the consumer assets covered by the
+[verification guide](docs/guides/verifying-releases.md).
 
 The public document list in mix.exs is shared by ExDoc and the Hex package. New public
 guides and notebooks require deliberate inclusion. A notebook that needs credentials

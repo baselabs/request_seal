@@ -137,10 +137,14 @@ def ci_action_errors(workflow, required_actions=None):
 
 def check_ci_actions():
     workflows = ROOT / ".github/workflows"
-    errors = ci_action_errors((workflows / "ci.yml").read_text())
+    errors = ci_action_errors((workflows / "ci.yml").read_text(), {
+        "actions/checkout", "erlef/setup-beam", "actions/setup-python", "actions/setup-node",
+        "actions/attest", "baselabs/.github/.github/actions/hex-publish",
+    })
     errors += ci_action_errors((workflows / "publish.yml").read_text(), {
         "actions/checkout", "erlef/setup-beam", "actions/setup-python",
-        "actions/upload-artifact", "actions/attest",
+        "actions/upload-artifact", "actions/download-artifact",
+        "baselabs/.github/.github/actions/hex-publish",
     })
     for workflow in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
         errors += [f"{workflow.name}: {error}" for error in ci_action_errors(workflow.read_text(), set())]
@@ -175,55 +179,6 @@ def check_corpus_release():
     if errors:
         raise ValueError("\n".join(errors))
     print("PASS: corpus/index.json elixir_release matches the package version")
-
-
-RELEASE_RUNTIME_CHECK = r'''
-check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd()
-development? =
-  case Version.parse!(Mix.Project.config()[:version]).pre do
-    [first | _] when is_binary(first) -> String.starts_with?(first, "dev")
-    _ -> false
-  end
-if development? do
-  try do
-    check.([])
-  rescue
-    error in Mix.Error ->
-      unless String.contains?(Exception.message(error), "development versions cannot publish"),
-        do: reraise(error, __STACKTRACE__)
-      IO.puts("PASS: development version refuses to publish")
-  else
-    _ -> Mix.raise("development version must refuse to publish")
-  end
-else
-  check.([])
-end
-'''
-
-
-def check_package_metadata(path):
-    """Consult the built Hex artifact, not the development dependency list."""
-    run(["elixir", "-e", r"""
-{:ok, metadata} = :file.consult(System.argv() |> hd() |> String.to_charlist())
-{"requirements", requirements} = List.keyfind(metadata, "requirements", 0)
-for name <- ["ash_onetime", "ash_hooks"] do
-  matches = Enum.filter(requirements, &(List.keyfind(&1, "name", 0) == {"name", name}))
-  unless length(matches) == 1 and List.keyfind(hd(matches), "optional", 0) == {"optional", true} do
-    raise "Hex metadata must contain exactly one optional requirement for #{name}"
-  end
-end
-IO.puts("PASS: built Hex metadata lists ash_onetime and ash_hooks as optional requirements")
-""", str(path)])
-
-
-def check_package():
-    run(["mix", "run", "--no-start", "-e", RELEASE_RUNTIME_CHECK])
-    (ROOT / "_build").mkdir(exist_ok=True)
-    with temporary_directory(prefix="package-check-", dir=ROOT / "_build") as temporary:
-        artifact = Path(temporary) / "unpacked"
-        run(["mix", "hex.build", "--unpack", "--output", str(artifact)])
-        check_package_metadata(artifact / "hex_metadata.config")
-    print("PASS: release runtime guard and optional package requirements; unpacked artifact deleted")
 
 
 def check_sbom():
@@ -351,7 +306,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--notebooks-only", action="store_true",
                         help="Run only notebooks; cannot combine with focused check flags")
-    for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only"):
+    for flag in ("--ci-actions-only", "--corpus-release-only", "--sbom-only"):
         parser.add_argument(flag, dest="focused_checks", action=SelectCheck, nargs=0,
                             help="Run only this check; can combine with other focused checks, but not with --notebooks-only")
     args = parser.parse_args()
@@ -361,7 +316,6 @@ if __name__ == "__main__":
         focused = [
             ("--ci-actions-only", check_ci_actions),
             ("--corpus-release-only", check_corpus_release),
-            ("--package-only", check_package),
             ("--sbom-only", check_sbom),
         ]
         if args.focused_checks:
@@ -383,8 +337,6 @@ if __name__ == "__main__":
             check_documentation()
             run(["mix", "hex.audit"])
             run(["mix", "deps.audit"])
-            check_package()
-            check_sbom()
         notebooks()
     except subprocess.TimeoutExpired as error:
         raise SystemExit(f"Command deadline exceeded after {error.timeout}s: {error.cmd}")

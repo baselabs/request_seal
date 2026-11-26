@@ -97,56 +97,6 @@ class ReleaseIdentityTest(unittest.TestCase):
         (self.root / "corpus/index.json").write_text(json.dumps({"elixir_release": "v" + version}))
         (self.root / "CHANGELOG.md").write_text(f"# Changelog\n\n## {version} - 2026-11-17\n\n- Release behavior.\n")
 
-    def verify(self, event="workflow_dispatch", ref="refs/heads/main"):
-        return release.verify_identity(self.root, event, ref)
-
-    def test_dispatch_refuses_an_existing_annotated_tag_even_at_head(self):
-        self.assertEqual("2.3.4", self.verify())
-        self.git("tag", "-a", "v2.3.4", "-m", "Release fixture")
-        with self.assertRaisesRegex(ValueError, "already tagged"):
-            self.verify()
-
-    def test_dispatch_refuses_an_existing_lightweight_tag_even_at_head(self):
-        self.git("tag", "v2.3.4")
-        with self.assertRaisesRegex(ValueError, "already tagged"):
-            self.verify()
-
-    def test_verify_cli_emits_version_and_semantic_prerelease_outputs(self):
-        scripts = self.root / "scripts"
-        scripts.mkdir()
-        shutil.copyfile(ROOT / "scripts/release.py", scripts / "release.py")
-        shutil.copyfile(ROOT / "scripts/processes.py", scripts / "processes.py")
-        for version, prerelease in (("2.0.0", "false"), ("2.0.0-rc.1", "true"), ("0.6.0", "false")):
-            with self.subTest(version=version):
-                self.identity(version)
-                output = self.root / "github-output"
-                output.write_text("")
-                result = run(
-                    [sys.executable, "-B", str(scripts / "release.py"), "--verify"],
-                    env=dict(os.environ, GITHUB_EVENT_NAME="workflow_dispatch",
-                             GITHUB_REF="refs/heads/main", DEFAULT_BRANCH="main", GITHUB_OUTPUT=str(output)),
-                    capture_output=True, text=True, check=False, timeout=30,
-                )
-                self.assertEqual(0, result.returncode, result.stderr)
-                self.assertEqual(f"version={version}\nprerelease={prerelease}\n", output.read_text())
-
-    def test_tag_at_another_commit_also_refuses_dispatch(self):
-        self.git("tag", "v2.3.4")
-        self.git("commit", "--quiet", "--allow-empty", "-m", "Another commit")
-        with self.assertRaisesRegex(ValueError, "already tagged"):
-            self.verify()
-
-    def test_only_dispatch_of_the_explicit_default_branch_is_allowed(self):
-        for event in ("push", "pull_request", "schedule", "workflow_call"):
-            with self.subTest(event=event), self.assertRaisesRegex(ValueError, "workflow_dispatch"):
-                self.verify(event, "refs/heads/main")
-        for ref in ("refs/tags/v2.3.4", "refs/heads/topic", "refs/heads/main/other", ""):
-            with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, "default branch"):
-                self.verify(ref=ref)
-        self.assertEqual("2.3.4", release.verify_identity(self.root, "workflow_dispatch", "refs/heads/trunk", "trunk"))
-        with self.assertRaisesRegex(ValueError, "default branch"):
-            release.verify_identity(self.root, "workflow_dispatch", "refs/heads/main", "")
-
     def test_shared_version_cases(self):
         cases = json.loads((ROOT / "test/fixtures/release_versions.json").read_text())
         for case in cases:
@@ -158,9 +108,7 @@ class ReleaseIdentityTest(unittest.TestCase):
                 self.identity(version)
                 if case["development"]:
                     with self.assertRaisesRegex(ValueError, "development snapshots"):
-                        self.verify()
-                else:
-                    self.assertEqual(version, self.verify())
+                        release.release_notes((self.root / "CHANGELOG.md").read_text(), version)
                 sources = {path: (self.root / path).read_text() for path in ("mix.exs", "corpus/index.json", "CHANGELOG.md")}
                 self.assertEqual([], gate.corpus_release_errors(sources))
 
@@ -177,9 +125,6 @@ class ReleaseIdentityTest(unittest.TestCase):
         ):
             with self.subTest(source=changed), self.assertRaises(ValueError):
                 release.release_notes(changed, "2.3.4")
-        (self.root / "CHANGELOG.md").write_text(source.replace("## 2.3.4 -", "## Unreleased 2.3.4 -"))
-        with self.assertRaisesRegex(ValueError, "dated section|ambiguous release heading"):
-            self.verify()  # Dry run must reject before any tag exists.
 
     def test_bumped_version_rejects_stale_documented_installs(self):
         source = '{:request_seal, "~> 2.0"}'
@@ -202,14 +147,6 @@ class ReleaseIdentityTest(unittest.TestCase):
             source = f"## 2.3.4 - 2026-11-17\n\n{body}\n## 2.3.3 - 2026-11-16\n\n- Older.\n"
             self.assertEqual(body, release.release_notes(source, "2.3.4"))
             self.assertEqual(body, release.release_notes(source.replace("\n", "\r\n"), "2.3.4"))
-
-    def test_stale_corpus_and_unexpected_event_are_refused(self):
-        (self.root / "corpus/index.json").write_text('{"elixir_release":"v2.3.3"}')
-        with self.assertRaisesRegex(ValueError, "elixir_release"):
-            self.verify()
-        self.identity("2.3.4")
-        with self.assertRaisesRegex(ValueError, "workflow_dispatch"):
-            self.verify("pull_request")
 
     def test_release_notes_are_verbatim_with_literal_absolute_destinations(self):
         body = ('### Changed\n\n'
@@ -301,7 +238,7 @@ class ReleaseIdentityTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported raw HTML"):
             release.release_notes("<div>\n\n## 2.3.4 - 2026-11-17\n\n- Ambiguous HTML section.\n", "2.3.4")
 
-    def test_all_release_entry_points_share_the_same_gate(self):
+    def test_qualification_and_publication_validate_the_same_notes(self):
         (self.root / "scripts").mkdir()
         shutil.copyfile(ROOT / "scripts/release.py", self.root / "scripts/release.py")
         shutil.copyfile(ROOT / "scripts/processes.py", self.root / "scripts/processes.py")
@@ -314,25 +251,20 @@ class ReleaseIdentityTest(unittest.TestCase):
             with self.subTest(target=target):
                 if target == valid:
                     self.assertEqual(body, release.release_notes(source, "2.3.4"))
-                    self.assertEqual("2.3.4", self.verify())
                     self.assertEqual([], gate.corpus_release_errors(sources))
                 else:
                     with self.assertRaises(ValueError) as raised:
                         release.release_notes(source, "2.3.4")
                     message = str(raised.exception)
                     self.assertEqual([message], gate.corpus_release_errors(sources))
-                    with self.assertRaisesRegex(ValueError, re.escape(message)):
-                        self.verify()
-                for arguments in (("--release-notes", "--for-version", "2.3.4"),
-                                  ("--verify", "--notes-file", str(self.root / "notes.md"))):
-                    result = run([sys.executable, "-B", str(self.root / "scripts/release.py"), *arguments],
-                                            env=dict(os.environ, GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/main", DEFAULT_BRANCH="main"),
-                                            capture_output=True, text=True, check=False, timeout=30)
-                    self.assertEqual(target == valid, result.returncode == 0, result.stderr)
-                    if target != valid:
-                        self.assertEqual(message + "\n", result.stderr)
+                result = run([sys.executable, "-B", str(self.root / "scripts/release.py"),
+                              "--release-notes", "--for-version", "2.3.4"],
+                             capture_output=True, text=True, check=False, timeout=30)
+                self.assertEqual(target == valid, result.returncode == 0, result.stderr)
                 if target == valid:
-                    self.assertEqual(body, (self.root / "notes.md").read_text())
+                    self.assertEqual(body, result.stdout)
+                else:
+                    self.assertEqual(message + "\n", result.stderr)
 
     def test_real_historical_notes_and_finalized_release_are_verbatim(self):
         source = (ROOT / "CHANGELOG.md").read_text()
@@ -404,7 +336,7 @@ class ReleaseIdentityTest(unittest.TestCase):
                 release.verify_published_destinations(f"[Source]({target}{fragment})", "2.3.4", "workflow_dispatch", self.root)
 
     def test_compare_requires_an_existing_ancestor_tag_in_dispatch(self):
-        body = "https://github.com/baselabs/request_seal/compare/v2.3.3...v2.3.4"
+        body = "https://github.com/baselabs/request_seal/compare/v2.3.3...baselabs_request_seal-v2.3.4"
         with self.assertRaisesRegex(ValueError, "base tag is missing"):
             release.verify_published_destinations(body, "2.3.4", "workflow_dispatch", self.root)
         self.git("tag", "v2.3.3")
@@ -544,7 +476,7 @@ class DestinationRegressionTest(unittest.TestCase):
     def test_hyphenated_paths_are_first_party_and_require_canonical_spelling(self):
         for target, canonical in (
             ("https://github.com/baselabs/request-seal/blob/v2.3.4/mix.exs",
-             "https://github.com/baselabs/request_seal/blob/v2.3.4/<path>"),
+             "https://github.com/baselabs/request_seal/blob/baselabs_request_seal-v2.3.4/<path>"),
             ("https://hexdocs.pm/request-seal/2.3.4/readme.html",
              "https://request-seal.hexdocs.pm/2.3.4/<page>"),
             ("https://hex.pm/packages/request-seal/2.3.4", "https://hex.pm/packages/request_seal/2.3.4"),
@@ -665,7 +597,7 @@ class DestinationRegressionTest(unittest.TestCase):
 class ReleaseWorkflowTest(unittest.TestCase):
     def test_each_focused_check_has_its_own_help_option(self):
         result = run([sys.executable, "-B", str(ROOT / "scripts/check.py"), "--help"], capture_output=True, text=True, check=True, timeout=30)
-        for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only", "--notebooks-only"):
+        for flag in ("--ci-actions-only", "--corpus-release-only", "--sbom-only", "--notebooks-only"):
             self.assertRegex(result.stdout, r"(?m)^  " + flag + r"\s+")
             option = re.search(r"(?m)^  " + flag + r"\s+([\s\S]*?)(?=\n  --|\Z)", result.stdout)[1]
             help_text = " ".join(option.split())
@@ -677,23 +609,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_changelog_states_verbatim_release_notes_and_versioned_documentation(self):
         current = (ROOT / "CHANGELOG.md").read_text().split("## Unreleased 2.0.0", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("Release notes are the CHANGELOG section\n  verbatim, and documentation links are versioned.", current)
+        self.assertIn("notes from the packaged changelog", current)
         self.assertNotIn("CommonMark", current)
-
-    def test_destination_readback_follows_upload_and_hex_byte_comparison(self):
-        workflow = (ROOT / ".github/workflows/publish.yml").read_text()
-        command = 'python3 scripts/release.py --check-destinations --for-version "$VERSION"'
-        readback = 'python3 scripts/publication.py --verify-registry --version "$VERSION"'
-        self.assertLess(workflow.index("run: mix run --no-mix-exs"), workflow.index(readback))
-        self.assertLess(workflow.index(readback), workflow.index(command))
-        self.assertIn(command + " --destination-event workflow_dispatch", workflow)
-        self.assertNotIn("--destination-event push", workflow)
-        self.assertIn("python3 scripts/release.py --verify --notes-file release-notes.md", workflow)
-        self.assertIn("fetch-depth: 0", (ROOT / ".github/workflows/ci.yml").read_text())
-        runbook = (ROOT / "docs/operations/releases.md").read_text()
-        for contract in ("verbatim", "same line", "inside fences", "no CommonMark conformance claim",
-                         "Each real HTTP GET must return 200", "own release notes", "Code spans and code blocks"):
-            self.assertIn(contract, runbook)
 
     def test_postpublication_check_uses_real_http_and_rejects_a_missing_page(self):
         output = io.StringIO()
@@ -704,16 +621,16 @@ class ReleaseWorkflowTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "HTTP 404"):
             release.verify_published_destinations(
                 "[Missing](https://request-seal.hexdocs.pm/1.0.0/no-such-release-page.html)",
-                "1.0.0")
+                "1.0.0", deadline_seconds=15)
 
     def test_only_canonical_first_party_forms_pass_the_offline_gate(self):
         for target in ("https://request-seal.hexdocs.pm/2.3.4/RequestSeal.html",
-                       "https://github.com/baselabs/request_seal/blob/v2.3.4/README.md",
-                       "https://raw.githubusercontent.com/baselabs/request_seal/v2.3.4/README.md"):
+                       "https://github.com/baselabs/request_seal/blob/baselabs_request_seal-v2.3.4/README.md",
+                       "https://raw.githubusercontent.com/baselabs/request_seal/baselabs_request_seal-v2.3.4/README.md"):
             self.assertTrue(release.validate_destination(target, "2.3.4"))
         for target, canonical in (
             ("https://hexdocs.pm/request_seal/2.3.4/compatibility.html", "https://request-seal.hexdocs.pm/2.3.4/<page>"),
-            ("https://github.com/baselabs/request_seal/raw/v2.3.4/README.md", "https://github.com/baselabs/request_seal/blob/v2.3.4/<path>"),
+            ("https://github.com/baselabs/request_seal/raw/v2.3.4/README.md", "https://github.com/baselabs/request_seal/blob/baselabs_request_seal-v2.3.4/<path>"),
         ):
             with self.subTest(target=target), self.assertRaisesRegex(ValueError, re.escape(canonical)):
                 release.validate_destination(target, "2.3.4")
@@ -962,36 +879,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
             self.assertIn(system + " " + machine, str(error.exception))
 
     def test_notebook_and_focused_modes_are_mutually_exclusive(self):
-        for flag in ("--ci-actions-only", "--corpus-release-only", "--package-only", "--sbom-only"):
+        for flag in ("--ci-actions-only", "--corpus-release-only", "--sbom-only"):
             for flags in (("--notebooks-only", flag), (flag, "--notebooks-only")):
                 result = run([sys.executable, "-B", str(ROOT / "scripts/check.py"), *flags], capture_output=True, text=True, check=False, timeout=30)
                 self.assertEqual(2, result.returncode)
                 self.assertIn("not allowed with argument", result.stderr)
-
-    def test_release_actions_use_immutable_commits(self):
-        workflow = (ROOT / ".github/workflows/publish.yml").read_text()
-        required = {"actions/checkout", "erlef/setup-beam", "actions/setup-python",
-                    "actions/upload-artifact", "actions/attest"}
-        self.assertEqual([], gate.ci_action_errors(workflow, required))
-        for action in required:
-            import re
-            changed = re.sub(re.escape(action) + r"@[0-9a-f]{40}", action + "@v4", workflow)
-            with self.subTest(action=action):
-                self.assertTrue(gate.ci_action_errors(changed, required))
-
-    def test_attestations_and_artifacts_precede_the_keyed_upload_without_creating_tags(self):
-        workflow = (ROOT / ".github/workflows/publish.yml").read_text()
-        self.assertNotIn("gh release", workflow)
-        self.assertNotIn("git tag", workflow)
-        self.assertNotIn("git push", workflow)
-        self.assertNotIn("contents: write", workflow)
-        for permission in ("id-token", "attestations"):
-            self.assertIn(permission + ": write", workflow)
-        self.assertIn("sbom-path: sbom.cdx.json", workflow)
-        self.assertLess(workflow.index("scripts/publication.py --version"), workflow.index("uses: actions/attest@"))
-        self.assertLess(workflow.rindex("uses: actions/attest@"), workflow.index("run: mix run --no-mix-exs"))
-        for artifact in ("corpus.tar.gz", "corpus.sha256", "sbom.cdx.json", "release-notes.md"):
-            self.assertIn("            " + artifact, workflow)
 
     def test_sbom_serial_binds_package_identity_and_bytes_and_sorts_graph(self):
         bom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,

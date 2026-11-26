@@ -12,74 +12,54 @@ Prepare and qualify a version commit before advancing the protected default
 branch. Release maintainers obtain owner approval and handle publication,
 registry credentials and the later tag. Workflow changes require review before landing.
 
-1. Set `@version` in `mix.exs`. Development snapshots (first pre-release identifier
-   starts with `dev`) use `main` source links and cannot publish. Other releases
-   use `v<version>` source links. Stable installs use `~> X.Y.Z` before 1.0 and
-   `~> MAJOR.MINOR` thereafter; pre-releases use `~> MAJOR.MINOR.PATCH-<pre-release>`.
-   Match `corpus/index.json`'s `elixir_release` to `v<version>` and update
-   `test/support/conformance_pin.ex` when its index digest changes.
-2. Stamp `## Unreleased <version>` as `## <version> - YYYY-MM-DD`. Its dated,
-   nonempty section becomes `release-notes.md` verbatim. Finalize documentation
-   links to `https://request-seal.hexdocs.pm/<version>/<page>` and source/asset
-   links to the `v<version>` GitHub blob or raw form below. The shared release
-   gate and publishing guard reject invalid notes. Confirm explicit public
-   document inventory, supported profiles, package/source disclosure and complete
-   history, including deleted content and commit messages, before accepting a cut.
-3. Submit the candidate through the protected landing process. The candidate
-   qualifies in one GitHub-hosted run on a `kci/` ref. Every runtime lane,
-   the mutation sweep and the reduced performance harness self-check must pass.
-   The final check is `qualified`; the default-branch ruleset requires it without
-   bypass. Only the landing process watches the run.
-4. Give release maintainers the repository, full commit, version, publication
-   contents and green qualification run. They declare the `publish` environment
-   and its registry key through the secret declaration and obtain owner approval.
-   Publication is only a no-input dispatch of `.github/workflows/publish.yml` on the default
-   branch. Every job requires both initiating actors to be approved owners and
-   refuses any other ref as its first step. It trusts the default-branch ruleset
-   without re-checking `qualified`. A package name absent from Hex is refused;
-   first publication is the owner's decision.
-   The publication job waits for the paired performance verdict and the near-cap
-   teardown measurement to pass on the exact dispatched commit.
-   See [performance gates](#performance-gates).
-5. The unkeyed publication steps install the exact latest `.tool-versions` pair,
-   refuse differing installed releases, fetch `--check-locked`, audit both feeds,
-   verify the corpus pin and build deterministic corpus assets. They validate
-   version, cut notes and absence of the version tag. They build ExDoc and the
-   Hex archive, run disclosure and link checks, compare the
-   archive's checksum, metadata, explicit inventory and every source byte, write
-   `release.json` (`package`, `version` and the dispatched `commit`) into the docs,
-   and build and inspect the docs archive. An anonymous Hex API read then decides
-   exactly which archives to upload. No cache is read or written.
-6. The same unkeyed steps generate and verify CycloneDX 1.6 against the production
-   dependency closure, including optional integrations. `scripts/sbom.py` verifies
-   the platform-specific digest of upstream's prebuilt tool before execution.
-   SBOM paths are refused, timestamps removed, ordering normalized and a UUIDv5
-   serial binds package identity and bytes. Build provenance covers package,
-   docs, corpus and SBOM; a second attestation binds the SBOM to the package.
-   After readback, the job hands the package, the docs archive Hex serves, the
-   corpus, the SBOM, the corpus checksum and `release-notes.md` to release
-   maintainers as one workflow artifact named `release-assets`.
-7. Only the upload step receives the registry key in its environment. It runs
-   `scripts/publish_hex.exs` with `mix run --no-mix-exs --no-start` from a scratch
-   directory with no `mix.exs`; it loads no project and uploads only the missing
-   inspected archives selected by the preceding unkeyed step. Package upload
-   explicitly disables replacement. The key never appears on a command line or
-   in another step. If nothing is missing, the keyed step is skipped. Unkeyed
-   readback requires a nonretired release with docs, compares the served package
-   byte for byte, downloads and inspects the served docs and requires their
-   `release.json` to name this package and version and the dispatched commit or
-   its ancestor on the default branch. That commit is the published commit. It
-   also checks the first-party destinations in its own release notes.
-8. Release maintainers read publication back and create `v<version>` on the
-   published commit the served docs name. They compare the package archive in `release-assets` with the
-   registry's bytes and create the GitHub release for `v<version>` from that
-   artifact. No workflow creates a tag or a release, and a tag push starts no
-   workflow. Consumers download from the GitHub release, never the workflow
-   artifact, which expires; the
-   [consumer verification guide](../guides/verifying-releases.md) covers
-   download, attestation and Hex-byte checks. After release, advance
-   `@version` to the next development version and update documented installs,
-   corpus release identity and its digest pin.
+1. Set `@version` in `mix.exs`. Development snapshots (first pre-release identifier starts
+   with `dev`) use `main` source links. Published versions use
+   `baselabs_request_seal-v<version>` links. Stable installs use `~> X.Y.Z` before 1.0 and
+   `~> MAJOR.MINOR` thereafter. Pre-releases use `~> MAJOR.MINOR.PATCH-<pre-release>`.
+   Keep `corpus/index.json`'s `elixir_release` at `v<version>` and update
+   `test/support/conformance_pin.ex` when the index digest changes.
+2. Stamp `## Unreleased <version>` as `## <version> - YYYY-MM-DD`. The release
+   maintainers take the notes from that section of the packaged changelog. Finalize
+   versioned HexDocs, source and asset links using the forms below. Confirm the public
+   inventory and disclosure checks, including the history and commit messages.
+3. Qualify the version commit in one GitHub-hosted run on `kci/<full-sha>`. The
+   default-branch ruleset requires the exact `qualified` check without bypass.
+   The pinned shared Hex action builds and inspects the package and HTML docs on the
+   exact runtime and locked dependencies. It checks the committed archive inventory
+   and requirements in `.github/hex-packages.json` and compiles a consumer of the
+   unpacked package. Update the declaration with changes to the shipped files or
+   requirements. The qualification run keeps the exact archives and manifest for seven
+   days. It also verifies documentation, audits both feeds, and attests the archives,
+   deterministic corpus and production dependency SBOM. A separate attestation binds
+   the CycloneDX SBOM to the package.
+4. Give release maintainers the repository, full commit, version, publication contents
+   and green run ID. They obtain owner approval and dispatch `publish.yml` from the
+   default branch with the full `release_commit`. They can select the exact
+   `qualification_run`. Each job checks the dispatch ref and both approved actors. The
+   performance verdict and near-cap teardown must pass on the selected release commit
+   before upload. Publication uses no runner cache.
+5. Upload in environment `publish` reads the original qualified archives, checks the
+   exact successful qualification, existing tags, stamped changelog, public registry
+   state and counterpart version. Public and organization Hex releases of the same
+   OTP application use different versions. A public release takes the next minor
+   available on both lines. Public Hex reads are anonymous. Only the shared upload
+   action receives the organization API-read key for the counterpart check. It
+   exchanges and revokes a package-scoped upload token if an archive needs uploading.
+   A missing public package name is an owner decision. Project code runs outside
+   this job.
+6. The read-back job has no environment and reads public Hex anonymously. It reuses
+   upload's qualification run and manifest digest, requires byte equality for both
+   served archives and checks the docs' root `release.json` against `release_commit`.
+   It verifies the signed provenance of both archives, the corpus and the SBOM, and
+   checks the release destinations. It produces `release-assets` with package, served
+   docs, `SHA256SUMS`, corpus, corpus checksum and SBOM. Release maintainers compare
+   the package against the registry and create `baselabs_request_seal-v<version>` on
+   the published commit and its GitHub release. Existing `v<version>` tags remain valid.
+   No workflow creates a tag or release and tag pushes start no workflow.
+
+See the [consumer verification guide](../guides/verifying-releases.md) for GitHub
+release download and verification. After release, advance `@version`, documented
+installs, the corpus release identity and its digest pin.
 
 ### Performance gates
 
@@ -101,29 +81,15 @@ failed measurement to obtain a passing result.
 
 ### Finish a held publication
 
-Hex may hold either upload for approval. Approve the held upload, then dispatch
-the default branch again before the version is tagged. Each dispatch rebuilds
-and inspects the archives without a key, then anonymously reads the public
-package inventory and release's `checksum`, `retirement` and `has_docs` fields:
-
-- An absent package name refuses; only the owner makes a first publication.
-- An absent version uploads the inspected package and docs without replacement.
-- An existing nonretired version must have the same outer SHA-256 as the inspected
-  `.tar`. This is Hex's release API `checksum`, distinct from the archive's inner
-  `CHECKSUM` member. Differing or malformed state refuses.
-- Identical package bytes skip package upload. Missing docs upload alone;
-  existing docs skip all uploads. A retired version always refuses.
-- Every release asset must be the published commit's. When the served docs'
-  `release.json` names an earlier commit than the dispatched one, planning proves,
-  before any upload, that the package, `corpus.tar.gz` and `sbom.cdx.json` pass the
-  consumer guide's attestation checks with that commit as source digest. That holds only when the earlier commit's run attested the same bytes;
-  otherwise the dispatch refuses and the fix is a new version. `corpus.sha256`
-  follows the corpus, and the release notes follow the packaged changelog.
-- Readback must return the inspected package byte for byte and served docs whose
-  `release.json` names the dispatched commit or its default-branch ancestor. Docs
-  builds are not byte-stable, so docs bytes are never compared. Held or unavailable
-  files keep the run unsuccessful; approve the held files and dispatch again.
-  Existing files are never replaced to make readback pass. A tagged version refuses.
+Hex can hold the package and docs for approval. Approve the held release, then dispatch
+the default branch with the same `release_commit` and original `qualification_run`
+before the version is tagged. Reusing the original run preserves both archives byte
+for byte even when independent docs builds embed timestamps. The shared action
+preserves matching served archives, refuses retired or differing versions and posts
+only missing archives. Read-back succeeds after Hex serves both qualified archives
+and the docs name the selected release commit. If the original artifact expires, a
+new qualification can resume only when both of its archives match any existing
+registry bytes.
 
 The checksum definition follows Hex's
 [release API rendering](https://github.com/hexpm/hexpm/blob/main/lib/hexpm_web/views/api/release_view.ex)
@@ -155,9 +121,9 @@ resolution explicitly after upload and Hex byte comparison.
 Release sections start in column one with `## <version> - YYYY-MM-DD` or
 `## Unreleased <version>`, preceded by a blank line. Versions are semantic versions
 and dates must exist. Exactly one dated, nonempty section must match the package
-version. Subheadings alone are empty. Section extraction normalizes CRLF to LF,
-removes surrounding blank lines, and adds one terminal newline; all other section
-bytes are published unchanged.
+version. Subheadings alone are empty. The authoring check normalizes CRLF to LF
+and ignores surrounding blank lines. The release notes come from the packaged
+changelog.
 
 Fences start in column one with at least three backticks or tildes. A closing fence
 uses the same character, at least as many times, with no info string, also in
@@ -203,11 +169,11 @@ and every query string fail there. Canonical forms are:
 - `https://request-seal.hexdocs.pm/<version>/<page>` (including the index
   `https://request-seal.hexdocs.pm/<version>/`; omitting its final slash redirects
   and is rejected);
-- `https://github.com/baselabs/request_seal/blob/v<version>/<path>`;
-- `https://raw.githubusercontent.com/baselabs/request_seal/v<version>/<path>`;
+- `https://github.com/baselabs/request_seal/blob/baselabs_request_seal-v<version>/<path>`;
+- `https://raw.githubusercontent.com/baselabs/request_seal/baselabs_request_seal-v<version>/<path>`;
 - `https://github.com/baselabs/request_seal/issues/<number>` and
   `https://github.com/baselabs/request_seal/pull/<number>`, checked live in both modes;
-- `https://github.com/baselabs/request_seal/compare/v<base>...v<version>`:
+- `https://github.com/baselabs/request_seal/compare/<base-tag>...baselabs_request_seal-v<version>`:
   dispatch verifies that the base tag exists and is an ancestor of HEAD, and
   push checks the URL live;
 - `https://hex.pm/packages/request_seal/<version>`: prepublication checks validate
@@ -215,7 +181,8 @@ and every query string fail there. Canonical forms are:
   dispatch and push check it live, after Hex publication. Historical versions are
   always checked live.
 
-Public advisory permalinks are also checked live. External standards retain their
+Historical source links may use their existing `v<version>` tags. Public advisory
+permalinks are also checked live. External standards retain their
 authored URLs. A HexDocs fragment must name an actual HTML `id` in real ExDoc output
 or the published documentation tarball (the destination check reads the real HTTP
 page). GitHub source fragments allow only `#L<n>` and `#L<n>-L<m>`, within the checked
@@ -376,7 +343,7 @@ automatic rollback semantics. Changing an installed application's dependency is 
 
 ## Conformance release assets
 
-Download the GitHub release for `v<version>` and follow the
+Download the GitHub release for `baselabs_request_seal-v<version>` and follow the
 [consumer verification guide](../guides/verifying-releases.md). Maintainers create that
 release from the publication's `release-assets` artifact after tagging; no
 workflow attaches assets. The TypeScript repository pins tag, commit

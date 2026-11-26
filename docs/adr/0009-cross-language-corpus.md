@@ -32,16 +32,11 @@ Named batch formats cover HTTP WG Structured Fields, Wycheproof, and RFC 9421 ba
 Numbers are tagged decimal strings; bytes use unpadded base64url objects.
 Verification facts use fixed members, canonical objects, and ordered component/parameter arrays.
 The [format reference](../reference/corpus-format.md) defines schemas and refusal rules.
-Dispatch-only publication builds digest-verified deterministic `corpus.tar.gz` and
-`corpus.sha256` assets. After reading publication back, the maintainers tag the
-published commit and attach them to its GitHub release; tag pushes execute no workflow.
-Publication can resume from a later dispatch after held uploads are approved.
-The anonymous Hex release checksum must match the inspected package's outer SHA-256;
-only missing archives upload, and retired or differing versions refuse. Readback
-compares the package byte for byte and identifies the served docs by the commit their
-`release.json` names, before tagging that commit and creating the GitHub release. All
-consumer assets, with the served docs archive, leave the job as one `release-assets`
-artifact for that release.
+Qualification builds the deterministic `corpus.tar.gz` and `corpus.sha256` and attests
+the corpus with the package, docs and SBOM. Publication read-back verifies the exact
+commit's evidence and gives the release maintainers one `release-assets` artifact.
+They tag and attach the assets to the GitHub release. Tag pushes start no workflow.
+See [ADR 0034](0034-qualify-hex-release-archives.md).
 Neither runtime package ships the corpus; the TypeScript repository vendors its selected release.
 The Elixir runner's pin changes atomically with the local index and protects inventory integrity.
 The independent TypeScript pin protects cross-language identity by tag, commit, and index digest.

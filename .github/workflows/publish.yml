@@ -1,11 +1,22 @@
 name: Publish
 on:
   workflow_dispatch:
+    inputs:
+      release_commit:
+        description: Full qualified release commit SHA on the default branch
+        type: string
+        required: true
+      qualification_run:
+        description: Original qualification run ID when resuming a held release
+        type: string
+        required: false
 defaults:
   run:
     shell: bash
 permissions:
   contents: read
+env:
+  HEX_PUBLISH_MIRROR_SHA: HEX_PUBLISH_MIRROR_SHA
 concurrency:
   group: publish
   cancel-in-progress: false
@@ -17,14 +28,25 @@ jobs:
     env:
       MIX_ENV: test
     steps:
-      - name: Refuse any ref except the default branch
+      - name: Refuse a non-default dispatch or invalid release SHA
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.release_commit }}
+          fetch-depth: 0
+      - name: Require the release commit on the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "refs/remotes/origin/$DEFAULT_BRANCH"
       - id: pins
         run: scripts/toolchain.sh >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -65,13 +87,25 @@ jobs:
       matrix:
         round: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     steps:
-      - name: Refuse any ref except the default branch
+      - name: Refuse a non-default dispatch or invalid release SHA
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.release_commit }}
+          fetch-depth: 0
+      - name: Require the release commit on the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "refs/remotes/origin/$DEFAULT_BRANCH"
       - id: pins
         run: scripts/toolchain.sh >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -96,8 +130,9 @@ jobs:
       - name: Measure the same-VM baseline and candidate
         env:
           ROUND: ${{ matrix.round }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: |
-          python3 scripts/jwe_release_gates.py round --id "$ROUND" --commit "$GITHUB_SHA" \
+          python3 scripts/jwe_release_gates.py round --id "$ROUND" --commit "$RELEASE_COMMIT" \
             --output "$RUNNER_TEMP/release-gate/round.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -115,13 +150,25 @@ jobs:
       actions: read
       contents: read
     steps:
-      - name: Refuse any ref except the default branch
+      - name: Refuse a non-default dispatch or invalid release SHA
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.release_commit }}
+          fetch-depth: 0
+      - name: Require the release commit on the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "refs/remotes/origin/$DEFAULT_BRANCH"
       - id: pins
         run: scripts/toolchain.sh >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -141,8 +188,10 @@ jobs:
             --dir "$RUNNER_TEMP/release-gate-rounds"
       - name: Decide publication performance
         if: ${{ !cancelled() && (steps.rounds.outcome == 'success' || steps.rounds.outcome == 'failure') }}
+        env:
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: |
-          python3 scripts/jwe_release_gates.py collect --commit "$GITHUB_SHA" \
+          python3 scripts/jwe_release_gates.py collect --commit "$RELEASE_COMMIT" \
             --rounds "$RUNNER_TEMP/release-gate-rounds" \
             --output "$RUNNER_TEMP/release-gate-verdict.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -152,26 +201,121 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: ${{ runner.temp }}/release-gate-verdict.json
-  publish:
+      - name: Require a dated RequestSeal release
+        run: python3 scripts/release.py --release-notes > /dev/null
+
+  upload:
     if: contains(fromJSON('["corepay","palermo-git"]'), github.actor) && contains(fromJSON('["corepay","palermo-git"]'), github.triggering_actor)
     needs: [release-gate-verdict, teardown]
     environment: publish
     runs-on: ubuntu-24.04
-    timeout-minutes: 90 # no green run yet
+    timeout-minutes: 10 # no green run yet
     permissions:
       contents: read
+      actions: read
       id-token: write
-      attestations: write
-      artifact-metadata: write
+    outputs:
+      version: ${{ steps.hex.outputs.version }}
+      qualification-run: ${{ steps.hex.outputs.qualification-run }}
+      qualification-sha256: ${{ steps.hex.outputs.qualification-sha256 }}
     steps:
-      - name: Refuse any ref except the default branch
+      - name: Refuse a non-default dispatch or invalid release SHA
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.release_commit }}
           fetch-depth: 0
+      - name: Require the release commit on the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "refs/remotes/origin/$DEFAULT_BRANCH"
+      - id: pins
+        name: Read the release runtime with the workflow's shared reader
+        run: |
+          mkdir -p "$RUNNER_TEMP/publication/scripts"
+          git show "$GITHUB_WORKFLOW_SHA:scripts/toolchain.sh" > "$RUNNER_TEMP/publication/scripts/toolchain.sh"
+          chmod 755 "$RUNNER_TEMP/publication/scripts/toolchain.sh"
+          git show HEAD:.tool-versions > "$RUNNER_TEMP/publication/.tool-versions"
+          "$RUNNER_TEMP/publication/scripts/toolchain.sh" "$RUNNER_TEMP/publication/.tool-versions" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ steps.pins.outputs.python }}
+      - name: Refuse a differing installed Python
+        env:
+          EXPECTED_PYTHON: ${{ steps.pins.outputs.python }}
+        working-directory: ${{ runner.temp }}/publication
+        run: scripts/toolchain.sh --installed "python=$EXPECTED_PYTHON"
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ steps.pins.outputs.elixir }}
+          otp-version: ${{ steps.pins.outputs.otp }}
+          version-type: strict
+          install-hex: false
+          install-rebar: false
+      - name: Refuse a differing installed runtime
+        env:
+          ELIXIR: ${{ steps.pins.outputs.elixir }}
+          OTP: ${{ steps.pins.outputs.otp }}
+        working-directory: ${{ runner.temp }}/publication
+        run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
+      - name: Install the shared action's Hex version
+        working-directory: ${{ runner.temp }}
+        run: |
+          hex_version="$(curl --fail --silent --show-error --retry 3 --max-time 30 \
+            "https://raw.githubusercontent.com/baselabs/.github/$HEX_PUBLISH_MIRROR_SHA/.github/actions/hex-publish/hex-version")"
+          [[ "$hex_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mix local.hex "$hex_version" --force
+      - id: hex
+        uses: baselabs/.github/.github/actions/hex-publish@HEX_PUBLISH_MIRROR_SHA
+        with:
+          operation: upload
+          package: request_seal
+          package-directory: .
+          release-commit: ${{ inputs.release_commit }}
+          qualification-run: ${{ inputs.qualification_run }}
+          organization-read-key: ${{ secrets.HEX_ORG_KEY_PUBLISH_API_READ }}
+      - name: Remove the copied toolchain reader
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/publication"
+
+  read-back:
+    if: contains(fromJSON('["corepay","palermo-git"]'), github.actor) && contains(fromJSON('["corepay","palermo-git"]'), github.triggering_actor)
+    needs: upload
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20 # no green run yet
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    steps:
+      - name: Refuse a non-default dispatch or invalid release SHA
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.release_commit }}
+          fetch-depth: 0
+      - name: Require the release commit on the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "refs/remotes/origin/$DEFAULT_BRANCH"
       - id: pins
         run: scripts/toolchain.sh >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -186,152 +330,71 @@ jobs:
           elixir-version: ${{ steps.pins.outputs.elixir }}
           otp-version: ${{ steps.pins.outputs.otp }}
           version-type: strict
+          install-hex: false
+          install-rebar: false
       - name: Refuse a differing installed runtime
         env:
           ELIXIR: ${{ steps.pins.outputs.elixir }}
           OTP: ${{ steps.pins.outputs.otp }}
         run: scripts/toolchain.sh --installed "elixir=$ELIXIR" "erlang=$OTP"
-      - name: Verify untagged release identity
-        id: identity
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: python3 scripts/release.py --verify --notes-file release-notes.md
-      - name: Refuse a Hex name that has never been published
-        env:
-          VERSION: ${{ steps.identity.outputs.version }}
-        run: python3 scripts/publication.py --check-registry --version "$VERSION"
-      - name: Verify dependencies and corpus pin
-        env:
-          MIX_ENV: test
+      - name: Install the shared action's Hex version
+        working-directory: ${{ runner.temp }}
         run: |
-          mix local.hex --force
-          mix local.rebar --force
-          mix deps.get --check-locked
-          mix hex.audit
-          mix deps.audit
-          mix test test/corpus_test.exs --warnings-as-errors
-      - name: Verify corpus and create deterministic assets
-        run: |
-          metadata=$(find corpus -name .DS_Store -print)
-          if [ -n "$metadata" ]; then
-            echo "Refusing to package corpus containing .DS_Store" >&2
-            exit 1
-          fi
-          python3 scripts/verify_corpus.py
-          umask 022
-          tar -C corpus --format=gnu --sort=name --mtime='2000-01-01 00:00Z' --owner=0 --group=0 --numeric-owner --mode='u=rwX,go=rX' --exclude=.DS_Store -cf - index.json sources cases | gzip -n > corpus.tar.gz
-          sha256sum corpus.tar.gz > corpus.sha256
-      - name: Build and inspect the package and documentation without a key
+          hex_version="$(curl --fail --silent --show-error --retry 3 --max-time 30 \
+            "https://raw.githubusercontent.com/baselabs/.github/$HEX_PUBLISH_MIRROR_SHA/.github/actions/hex-publish/hex-version")"
+          [[ "$hex_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mix local.hex "$hex_version" --force
+      - id: hex
+        uses: baselabs/.github/.github/actions/hex-publish@HEX_PUBLISH_MIRROR_SHA
+        with:
+          operation: read-back
+          package: request_seal
+          package-directory: .
+          release-commit: ${{ inputs.release_commit }}
+          qualification-run: ${{ needs.upload.outputs.qualification-run }}
+          qualification-sha256: ${{ needs.upload.outputs.qualification-sha256 }}
+          release-assets-directory: ${{ runner.temp }}/release-assets
+      - name: Download release evidence from the same qualification
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: request-seal-release-evidence
+          path: ${{ runner.temp }}/qualified-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.upload.outputs.qualification-run }}
+      - name: Verify the corpus and SBOM belong to the published commit
+        working-directory: ${{ runner.temp }}/release-assets
         env:
-          VERSION: ${{ steps.identity.outputs.version }}
-          MIX_ENV: dev
-        run: |
-          mkdir "$RUNNER_TEMP/requestseal-archives" "$RUNNER_TEMP/requestseal-upload"
-          mix deps.get --check-locked
-          mix run --no-start -e 'check = Mix.Project.config()[:aliases][:"hex.publish"] |> hd(); check.([])'
-          mix hex.build --output "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar"
-          mix docs --warnings-as-errors --formatter html --output "$RUNNER_TEMP/requestseal-docs"
-          python3 scripts/check_docs.py --docs-output "$RUNNER_TEMP/requestseal-docs"
-          python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from check import normalize_exdoc_inventory, check_doc_links; output = Path(sys.argv[1]); normalize_exdoc_inventory(output); check_doc_links(output)' "$RUNNER_TEMP/requestseal-docs"
-          python3 scripts/publication.py --version "$VERSION" --commit "$GITHUB_SHA" --directory "$RUNNER_TEMP/requestseal-archives" --docs "$RUNNER_TEMP/requestseal-docs"
-          cp scripts/publish_hex.exs "$RUNNER_TEMP/requestseal-upload/publish_hex.exs"
-          cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" .
-          cp "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz" .
-      - name: Refuse a package whose changelog is not stamped for its version
-        env:
-          VERSION: ${{ steps.identity.outputs.version }}
-        shell: bash
-        run: |
-          python3 -I - "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" "$VERSION" <<'PY'
-          import io, re, sys, tarfile
-          archive, version = sys.argv[1], sys.argv[2]
-          def refuse(message):
-              raise SystemExit(f'{archive}: {message}; publication refused')
-          with tarfile.open(archive, 'r:*') as outer:
-              if 'contents.tar.gz' in outer.getnames():
-                  package = tarfile.open(fileobj=io.BytesIO(outer.extractfile('contents.tar.gz').read()), mode='r:gz')
-                  root = ''
-              else:
-                  package, root = outer, 'package/'
-              found = [member for member in package.getmembers() if member.isfile()
-                       and re.fullmatch(re.escape(root) + r'(?i:changelog(?:\.md|\.markdown|\.txt)?)', member.name)]
-              if len(found) != 1:
-                  refuse('the package must ship exactly one root CHANGELOG')
-              try:
-                  lines = package.extractfile(found[0]).read().decode('utf-8').splitlines()
-              except UnicodeDecodeError:
-                  refuse('the packaged CHANGELOG is not UTF-8')
-          headings, fence = {}, False
-          for index, line in enumerate(lines):
-              if re.match(r' {0,3}(```|~~~)', line):
-                  fence = not fence
-              elif not fence and (match := re.match(r' {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$', line)):
-                  headings[index] = (len(match.group(1)), match.group(2) or '')
-          token = re.compile(r'(?<![0-9A-Za-z.+-])v?' + re.escape(version) + r'(?![0-9A-Za-z.+-])')
-          stamped = [index for index, (_, title) in headings.items() if token.search(title)]
-          if not stamped:
-              refuse(f'the packaged CHANGELOG has no section for {version}')
-          at, level = stamped[0], headings[stamped[0]][0]
-          def written(start):
-              end = next((index for index, (depth, _) in headings.items() if index > start and depth <= level), len(lines))
-              return any(line.strip() for index, line in enumerate(lines[start + 1:end], start + 1) if index not in headings)
-          if not written(at):
-              refuse(f'the packaged CHANGELOG section for {version} is empty')
-          for start, (depth, title) in headings.items():
-              if start < at and depth == level and written(start):
-                  refuse(f'the packaged CHANGELOG has entries above {version}, under "{title}"')
-          print(f'{archive}: the packaged CHANGELOG is stamped for {version}')
-          PY
-      - name: Generate and verify package dependency SBOM
-        env:
-          VERSION: ${{ steps.identity.outputs.version }}
-          MIX_ENV: prod
-        run: python3 scripts/sbom.py --tarball "request_seal-$VERSION.tar" --output sbom.cdx.json
-      - name: Plan only missing uploads, and prove kept docs' commit owns every release asset
-        id: registry
-        env:
-          VERSION: ${{ steps.identity.outputs.version }}
+          VERSION: ${{ needs.upload.outputs.version }}
+          PUBLISHED_COMMIT: ${{ steps.hex.outputs.commit }}
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/publication.py --plan-upload --version "$VERSION" --commit "$GITHUB_SHA" --assets "$GITHUB_WORKSPACE" --directory "$RUNNER_TEMP/requestseal-archives" --github-output "$GITHUB_OUTPUT"
-      - name: Attest build provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: |
-            request_seal-${{ steps.identity.outputs.version }}.tar
-            request_seal-${{ steps.identity.outputs.version }}-docs.tar.gz
-            corpus.tar.gz
-            sbom.cdx.json
-      - name: Attest the package SBOM
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: request_seal-${{ steps.identity.outputs.version }}.tar
-          sbom-path: sbom.cdx.json
-      - name: Upload only the missing inspected archives
-        if: steps.registry.outputs.upload != 'none'
-        working-directory: ${{ runner.temp }}/requestseal-upload
-        env:
-          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-          UPLOAD: ${{ steps.registry.outputs.upload }}
-          VERSION: ${{ steps.identity.outputs.version }}
-        run: mix run --no-mix-exs --no-start publish_hex.exs "$UPLOAD" "$VERSION" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION.tar" "$RUNNER_TEMP/requestseal-archives/request_seal-$VERSION-docs.tar.gz"
-      - name: Read back the package bytes and the served docs' commit, and verify pre-tag release destinations
-        env:
-          VERSION: ${{ steps.identity.outputs.version }}
         run: |
-          python3 scripts/publication.py --verify-registry --version "$VERSION" --commit "$GITHUB_SHA" --directory "$RUNNER_TEMP/requestseal-archives" --release-docs "request_seal-$VERSION-docs.tar.gz"
-          python3 scripts/release.py --check-destinations --for-version "$VERSION" --destination-event workflow_dispatch
+          cp "$RUNNER_TEMP/qualified-evidence/"{corpus.tar.gz,corpus.sha256,sbom.cdx.json} .
+          sha256sum --strict --check SHA256SUMS
+          sha256sum --strict --check corpus.sha256
+          identity=(--repo "$GITHUB_REPOSITORY"
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml"
+            --source-ref "refs/heads/kci/$PUBLISHED_COMMIT" --source-digest "$PUBLISHED_COMMIT"
+            --deny-self-hosted-runners)
+          for asset in "request_seal-$VERSION.tar" "request_seal-$VERSION-docs.tar.gz" corpus.tar.gz sbom.cdx.json; do
+            gh attestation verify "$asset" "${identity[@]}" --predicate-type https://slsa.dev/provenance/v1
+          done
+          gh attestation verify "request_seal-$VERSION.tar" "${identity[@]}" --predicate-type https://cyclonedx.org/bom
+      - name: Verify the published release destinations
+        env:
+          VERSION: ${{ needs.upload.outputs.version }}
+        run: python3 scripts/release.py --check-destinations --for-version "$VERSION" --destination-event workflow_dispatch
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets
           if-no-files-found: error
           retention-days: 7
           path: |
-            request_seal-${{ steps.identity.outputs.version }}.tar
-            request_seal-${{ steps.identity.outputs.version }}-docs.tar.gz
-            corpus.tar.gz
-            corpus.sha256
-            sbom.cdx.json
-            release-notes.md
-      - name: Remove publication scratch
+            ${{ runner.temp }}/release-assets/request_seal-${{ needs.upload.outputs.version }}.tar
+            ${{ runner.temp }}/release-assets/request_seal-${{ needs.upload.outputs.version }}-docs.tar.gz
+            ${{ runner.temp }}/release-assets/SHA256SUMS
+            ${{ runner.temp }}/release-assets/corpus.tar.gz
+            ${{ runner.temp }}/release-assets/corpus.sha256
+            ${{ runner.temp }}/release-assets/sbom.cdx.json
+      - name: Remove release assets scratch
         if: always()
-        run: rm -rf "$RUNNER_TEMP/requestseal-archives" "$RUNNER_TEMP/requestseal-upload" "$RUNNER_TEMP/requestseal-docs"
+        run: rm -rf -- "$RUNNER_TEMP/release-assets" "$RUNNER_TEMP/qualified-evidence"

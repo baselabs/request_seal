@@ -9,7 +9,6 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from html import unescape
 import json
-import os
 from pathlib import Path
 import posixpath
 import re
@@ -58,8 +57,19 @@ def development_snapshot(version):
     return bool(pre and pre.split(".", 1)[0].startswith("dev"))
 
 
+def package_tag(version):
+    return "baselabs_request_seal-v" + version
+
+
 def source_ref(version):
-    return "main" if development_snapshot(version) else "v" + version
+    return "main" if development_snapshot(version) else package_tag(version)
+
+
+def tag_version(ref):
+    version = ref.removeprefix("baselabs_request_seal-").removeprefix("v")
+    if ref not in ("v" + version, package_tag(version)) or not SEMVER.fullmatch(version):
+        raise ValueError("expected a version tag for RequestSeal")
+    return version
 
 
 # A conservative lexical contract, not a general Markdown parser.
@@ -600,8 +610,9 @@ def canonical_forms(version=None):
     version = version or "<version>"
     hosts = {"hexdocs": "request-seal.hexdocs.pm", "github": "github.com",
              "github_raw": "raw.githubusercontent.com", "hex": "hex.pm"}
-    paths = {"hexdocs": f"/{version}/<page>", "github": f"/baselabs/request_seal/blob/v{version}/<path>",
-             "github_raw": f"/baselabs/request_seal/v{version}/<path>", "hex": f"/packages/request_seal/{version}"}
+    tag = package_tag(version)
+    paths = {"hexdocs": f"/{version}/<page>", "github": f"/baselabs/request_seal/blob/{tag}/<path>",
+             "github_raw": f"/baselabs/request_seal/{tag}/<path>", "hex": f"/packages/request_seal/{version}"}
     return {kind: f"https://{host}{paths[kind]}" for kind, host in hosts.items()}
 
 
@@ -652,11 +663,13 @@ def classify_destination(target, version=None, released=False):
         suffix = url.path.removeprefix("/baselabs/request_seal")
         if kind == "github" and re.fullmatch(r"/(?:issues|pull)/[1-9][0-9]*", suffix):
             result.update(kind="github_live")
-        elif kind == "github" and re.fullmatch(r"/compare/v[^/]+[.]{3}v[^/]+", suffix):
-            before, after = suffix.removeprefix("/compare/v").split("...v")
-            parse_version(before)
-            parse_version(after)
-            result.update(kind="github_compare", ref="v" + before, version=after)
+        elif kind == "github" and suffix.startswith("/compare/"):
+            parts = suffix.removeprefix("/compare/").split("...")
+            if len(parts) != 2:
+                raise ValueError("compare destination requires two RequestSeal version tags")
+            before, after = parts
+            tag_version(before)
+            result.update(kind="github_compare", ref=before, target_ref=after, version=tag_version(after))
         elif kind == "github" and re.fullmatch(r"/security/advisories/GHSA-[a-z0-9-]+", suffix):
             result.update(kind="github_live")
         elif kind == "github" and not released and suffix in ("", "/security"):
@@ -664,9 +677,14 @@ def classify_destination(target, version=None, released=False):
         else:
             prefix = "/blob/" if kind == "github" else "/"
             parts = suffix.removeprefix(prefix).split("/", 1) if suffix.startswith(prefix) else []
-            if len(parts) != 2 or not all(parts) or not (parts[0] == "main" or parts[0].startswith("v") and SEMVER.fullmatch(parts[0][1:])):
-                raise ValueError("canonical source form: " + canonical + "; raw assets use " + canonical_forms(version)["github_raw"])
-            result.update(ref=parts[0], path=parts[1], version=parts[0][1:] if parts[0] != "main" else None)
+            try:
+                ref, path = parts
+                versioned = None if ref == "main" else tag_version(ref)
+            except ValueError:
+                raise ValueError("canonical source form: " + canonical + "; raw assets use " + canonical_forms(version)["github_raw"]) from None
+            if not path:
+                raise ValueError("canonical source form: " + canonical)
+            result.update(ref=ref, path=path, version=versioned)
             if url.fragment and (kind != "github" or not re.fullmatch(r"L[1-9][0-9]*(?:-L[1-9][0-9]*)?", url.fragment)):
                 raise ValueError("GitHub source fragment requires #L<n> or #L<n>-L<m>; canonical form: " + canonical)
             if url.fragment and result["path"].lower().endswith(RENDERED_MARKUP):
@@ -810,7 +828,8 @@ def release_destinations(body, version, first_line=1, all_reference_labels=None)
 
 def release_notes(source, version):
     """Extract and validate one dated section in the documented CHANGELOG format."""
-    parse_version(version)
+    if development_snapshot(version):
+        raise ValueError("release verification refuses development snapshots")
     source = source.replace("\r\n", "\n")
     if "\r" in source:
         raise ValueError("CHANGELOG.md: unsupported bare carriage return")
@@ -1134,24 +1153,6 @@ def verify_published_destinations(body, version, event="push", root=ROOT, deadli
         raise ValueError("\n".join(failures))
 
 
-def verify_identity(root, event, ref, default_branch="main"):
-    version = package_version((root / "mix.exs").read_text())
-    if development_snapshot(version):
-        raise ValueError("release verification refuses development snapshots")
-    release_notes((root / "CHANGELOG.md").read_text(), version)
-    tag = "v" + version
-    index = json.loads((root / "corpus/index.json").read_text())
-    if index.get("elixir_release") != tag:
-        raise ValueError("corpus elixir_release must equal " + tag)
-    if event != "workflow_dispatch":
-        raise ValueError("publication requires workflow_dispatch")
-    if not default_branch or ref != "refs/heads/" + default_branch:
-        raise ValueError("publication requires the default branch")
-    if ref_exists(root, "refs/tags/" + tag):
-        raise ValueError("version is already tagged: " + tag)
-    return version
-
-
 def normalize_sbom(path, tarball):
     """Bind a deterministic CycloneDX serial to package identity and exact bytes."""
     try:
@@ -1181,12 +1182,10 @@ if __name__ == "__main__":
     choice = parser.add_mutually_exclusive_group(required=True)
     choice.add_argument("--version", action="store_true")
     choice.add_argument("--install-requirement", action="store_true")
-    choice.add_argument("--verify", action="store_true")
     choice.add_argument("--normalize-sbom", type=Path)
     choice.add_argument("--release-notes", action="store_true")
     choice.add_argument("--check-destinations", action="store_true")
     parser.add_argument("--tarball", type=Path)
-    parser.add_argument("--notes-file", type=Path)
     parser.add_argument("--for-version")
     parser.add_argument("--destination-event", choices=("push", "workflow_dispatch"), default="push",
                         help="push: HTTP for every destination; workflow_dispatch: HEAD tree for source, HTTP for docs")
@@ -1204,16 +1203,6 @@ if __name__ == "__main__":
                 verify_published_destinations(notes, version, args.destination_event)
             else:
                 print(notes, end="")
-        elif args.verify:
-            version = verify_identity(ROOT, os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"],
-                                      os.environ["DEFAULT_BRANCH"])
-            if args.notes_file:
-                args.notes_file.write_text(release_notes((ROOT / "CHANGELOG.md").read_text(), version))
-            print("PASS: release identity " + version)
-            if os.environ.get("GITHUB_OUTPUT"):
-                with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-                    output.write("version=" + version + "\n")
-                    output.write("prerelease=" + str(bool(parse_version(version)[4])).lower() + "\n")
         else:
             version = args.for_version or package_version((ROOT / "mix.exs").read_text())
             parse_version(version)

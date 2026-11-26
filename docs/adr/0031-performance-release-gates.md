@@ -82,13 +82,14 @@ dispatched release commit.
 A teardown regression on `main` blocks every release until a fix lands. The
 failed `teardown` job names the near-cap measurement and retains its report
 as `jwe-teardown`.
+[ADR 0034](0034-qualify-hex-release-archives.md) places upload and read-back in
+separate jobs. Both measurements remain prerequisites to upload.
 
 Before stamping a release version, an approved release maintainer can run
 the measurement in hosted CI while `main` is a development snapshot. In
 GitHub Actions, open **Publish**, select **Run workflow**, and dispatch
-`main` after confirming its `@version` in `mix.exs` is a development
-snapshot. Keep that version in place through dispatch. Open the run's
-`teardown` job and download `jwe-teardown`. That job runs
+`main` with the full commit SHA of its development snapshot as
+`release_commit`. Open the run’s `teardown` job and download `jwe-teardown`. That job runs
 `python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"`.
 The workflow has no separate teardown-only dispatch. Its release identity
 check refuses development snapshots before upload, and the release

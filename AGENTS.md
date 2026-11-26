@@ -60,27 +60,21 @@ the default-branch ruleset requires the exact `qualified` check with no bypass.
 Never use classic branch protection alongside that ruleset.
 
 Sessions never release, publish, tag, dispatch workflows or hold registry keys.
-After a qualified version commit lands, send the release maintainers the repository, full commit,
-version, publication contents and green qualification run. The release maintainers declare the
-`publish` environment and secrets through its declaration, obtains owner approval,
-dispatches `publish.yml`, reads publication back and tags the published commit.
-No tag push starts a workflow. A first registry publication belongs to the owner.
-A registry key appears only in the upload step's environment; never put any
-secret on a command line or list process arguments. Project code, archive builds
-and inspections run without the key. The upload loads no project and only uploads
-the missing inspected archives selected by an earlier anonymous Hex API check.
-A repeated dispatch may finish an untagged release only when the served package's
-outer SHA-256 equals the inspected archive; retired or differing versions refuse.
-Docs builds are not byte-stable, so docs bytes are never compared: every docs
-archive carries `release.json` naming package, version and the dispatched commit.
-Existing docs are never uploaded again; unkeyed readback compares package bytes and
-requires the served docs' `release.json` to name the dispatched commit or its
-default-branch ancestor, the published commit the release maintainers tag. When that is an ancestor,
-planning refuses before any upload unless the package, corpus and SBOM pass the
-guide's attestation checks for it. Consumer verification
-files, with the served docs archive, leave publication as one `release-assets`
-artifact; the release maintainers create the GitHub release for `v<version>` from it after readback
-and tagging.
-This library has no deploy chart or `argocd/deploy/` path.
-Sessions do not publish or deploy. Mirror pushes
-require the owner's explicit authorization.
+After a qualified version commit lands, send release maintainers the repository, full commit,
+version, publication contents and green qualification run. They declare the `publish` environment,
+obtain owner approval and dispatch `publish.yml` with `release_commit`. The owner decides first
+registry publication.
+
+CI produces the package and docs under the pinned shared Hex action, using the exact files and
+requirements in `.github/hex-packages.json`. CI attests both archives, the corpus and the SBOM.
+Publication stays cache-free. Performance and teardown run unkeyed on the specified commit
+before upload. Only the upload job uses the `publish` environment and only its shared-action
+step takes the organization API-read key for the counterpart version check. Public Hex reads
+are anonymous. The shared action exchanges and revokes a package-scoped upload token when
+needed. No project code runs in that job and no key appears in process arguments.
+
+Read-back uses the same qualification run and manifest digest, requires both served archives to
+match the qualified bytes and verifies the product evidence against the published commit.
+Release maintainers tag that commit as `baselabs_request_seal-v<version>` and create its GitHub
+release from `release-assets`. Existing `v<version>` tags stay valid. No tag starts a workflow.
+This library has no deployment workflow. Mirror pushes require owner approval.

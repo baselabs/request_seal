@@ -10,12 +10,14 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import qualify  # noqa: E402
+from check import ci_action_errors  # noqa: E402
+from check_docs import source_configuration  # noqa: E402
 from workflow_yaml import load as load_workflow  # noqa: E402
 from jwe_release_gates import ROUNDS  # noqa: E402
 
 WORKFLOWS = ROOT / ".github/workflows"
 PROOFS = {"process-ownership-macos", "toolchain", "verify", "mutations",
-          "release-gate-self-check"}
+          "release-gate-self-check", "hex-package"}
 VERIFY_MATRIX = json.dumps({"include": [{"lane": lane} for lane in ("floor", "mid", "latest")]})
 
 
@@ -71,6 +73,7 @@ def proof_condition_errors(source, ci_source):
         ("verify", "python3 scripts/check.py"): ["matrix.lane == 'latest'"],
         ("verify", "Remove disposable PostgreSQL"): ["always()"],
         ("release-gate-self-check", "actions/upload-artifact"): ["always()"],
+        ("hex-package", "Remove qualification scratch"): ["always()"],
     }
     if conditions != expected:
         errors.append("proof conditions must bind exactly to the declared job and step")
@@ -184,7 +187,7 @@ class QualificationTest(unittest.TestCase):
     def test_inventory_is_every_proof_and_one_verify_leg_per_lane(self):
         self.assertEqual(
             {"process-ownership-macos", "toolchain", "mutations",
-             "release-gate-self-check", "verify (floor)", "verify (mid)", "verify (latest)"},
+             "release-gate-self-check", "hex-package", "verify (floor)", "verify (mid)", "verify (latest)"},
             qualify.expected_jobs(VERIFY_MATRIX),
         )
 
@@ -331,10 +334,10 @@ class QualificationTest(unittest.TestCase):
         proofs = jobs(text("ci.yml"))
         pub = jobs(text("publish.yml"))
         self.assertNotIn("teardown", proofs)
-        self.assertEqual({"release-gate-verdict", "teardown"}, set(pub["publish"]["needs"]))
+        self.assertEqual({"release-gate-verdict", "teardown"}, set(pub["upload"]["needs"]))
         self.assertNotIn("environment", pub["teardown"])
-        self.assertEqual(pub["publish"]["if"], pub["teardown"]["if"])
-        self.assertEqual("${{ github.sha }}", pub["teardown"]["steps"][1]["with"]["ref"])
+        self.assertEqual(pub["upload"]["if"], pub["teardown"]["if"])
+        self.assertEqual("${{ inputs.release_commit }}", pub["teardown"]["steps"][1]["with"]["ref"])
         self.assertEqual("toolchain", proofs["mutations"]["needs"])
         for job, command in (
             (proofs["mutations"], "python3 scripts/mutations.py"),
@@ -378,15 +381,124 @@ class QualificationTest(unittest.TestCase):
         self.assertEqual([str(i) for i in range(1, ROUNDS + 1)], rounds["strategy"]["matrix"]["round"])
         self.assertEqual("false", rounds["strategy"]["fail-fast"])
         self.assertEqual("release-gate-round", verdict["needs"])
-        self.assertIn("release-gate-verdict", pub["publish"]["needs"])
+        self.assertIn("release-gate-verdict", pub["upload"]["needs"])
         self.assertNotIn("--build-directory", str(rounds["steps"]))
         for job in (rounds, verdict):
             self.assertEqual("ubuntu-24.04", job["runs-on"])
             self.assertNotIn("environment", job)
             self.assertIn("github.actor", job["if"])
             self.assertIn("github.triggering_actor", job["if"])
-            self.assertEqual('test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"', job["steps"][0]["run"])
+            self.assertIn('test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"', job["steps"][0]["run"])
             self.assertNotIn("--self-check", str(job["steps"]))
+
+    def test_shared_hex_calls_use_one_full_mirror_pin(self):
+        action = "baselabs/.github/.github/actions/hex-publish"
+        for name, operations in (("ci.yml", {"qualify"}), ("publish.yml", {"upload", "read-back"})):
+            source = text(name)
+            workflow = load_workflow(source)
+            env = workflow["jobs"]["hex-package"]["env"] if name == "ci.yml" else workflow["env"]
+            pin = env["HEX_PUBLISH_MIRROR_SHA"]
+            self.assertRegex(pin, r"^[0-9a-f]{40}$")
+            self.assertEqual([], ci_action_errors(source, {action}))
+            calls = [step for job in workflow["jobs"].values() for step in job["steps"]
+                     if step.get("uses", "").startswith(action + "@")]
+            self.assertEqual(operations, {step["with"]["operation"] for step in calls})
+            self.assertEqual(len(operations), len(calls))
+            self.assertTrue(all(step["uses"] == action + "@" + pin for step in calls))
+        self.assertEqual(jobs(text("ci.yml"))["hex-package"]["env"]["HEX_PUBLISH_MIRROR_SHA"],
+                         load_workflow(text("publish.yml"))["env"]["HEX_PUBLISH_MIRROR_SHA"])
+
+    def test_hex_declaration_matches_the_public_package(self):
+        declaration = json.loads((ROOT / ".github/hex-packages.json").read_text())
+        self.assertEqual({"request_seal"}, set(declaration))
+        package = declaration["request_seal"]
+        self.assertEqual(".", package["directory"])
+        self.assertEqual("request_seal", package["app"])
+        self.assertEqual(sorted(source_configuration(ROOT)["files"]), package["files"])
+        requirements = {}
+        source = (ROOT / "mix.exs").read_text()
+        for name, requirement, options in re.findall(r'\{:(\w+), "([^"]+)"([^}]*)\}', source):
+            if "only:" not in options:
+                requirements[name] = {"app": name, "requirement": requirement,
+                                      "optional": "optional: true" in options, "repository": "hexpm"}
+        self.assertEqual(requirements, package["requirements"])
+
+    def test_publication_uses_the_qualified_commit_and_limits_the_registry_identity(self):
+        source = text("publish.yml")
+        workflow = load_workflow(source)
+        self.assertEqual({"contents": "read"}, workflow["permissions"])
+        self.assertEqual({"upload"}, {name for name, job in workflow["jobs"].items() if "environment" in job})
+        actors = 'contains(fromJSON(\'["corepay","palermo-git"]\'), github.actor) && contains(fromJSON(\'["corepay","palermo-git"]\'), github.triggering_actor)'
+        for name, job in workflow["jobs"].items():
+            with self.subTest(job=name):
+                first, checkout, ancestry, *_ = job["steps"]
+                self.assertIn(actors, job["if"])
+                self.assertIn('test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"', first["run"])
+                self.assertIn('[[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]', first["run"])
+                self.assertEqual("${{ inputs.release_commit }}", first["env"]["RELEASE_COMMIT"])
+                self.assertEqual({"ref": "${{ inputs.release_commit }}", "fetch-depth": "0",
+                                  "persist-credentials": "false"}, checkout["with"])
+                self.assertIn('git merge-base --is-ancestor "$RELEASE_COMMIT"', ancestry["run"])
+        upload = workflow["jobs"]["upload"]
+        self.assertEqual("publish", upload["environment"])
+        self.assertEqual({"contents": "read", "actions": "read", "id-token": "write"}, upload["permissions"])
+        self.assertEqual({"version": "${{ steps.hex.outputs.version }}",
+                          "qualification-run": "${{ steps.hex.outputs.qualification-run }}",
+                          "qualification-sha256": "${{ steps.hex.outputs.qualification-sha256 }}"}, upload["outputs"])
+        shared = next(step for step in upload["steps"] if step.get("id") == "hex")
+        self.assertEqual({"operation": "upload", "package": "request_seal", "package-directory": ".",
+                          "release-commit": "${{ inputs.release_commit }}",
+                          "qualification-run": "${{ inputs.qualification_run }}",
+                          "organization-read-key": "${{ secrets.HEX_ORG_KEY_PUBLISH_API_READ }}"}, shared["with"])
+        self.assertEqual(1, source.count("secrets."))
+        commands = "\n".join(step.get("run", "") for step in upload["steps"])
+        self.assertIn('git show "$GITHUB_WORKFLOW_SHA:scripts/toolchain.sh"', commands)
+        self.assertIn("git show HEAD:.tool-versions", commands)
+        self.assertEqual(['mix local.hex "$hex_version" --force'],
+                         [line.strip() for line in commands.splitlines() if line.strip().startswith("mix ")])
+        for absent in ("actions/cache", "contents: write", "gh release", "git tag", "git push", "github.sha"):
+            self.assertNotIn(absent, source)
+
+    def test_release_evidence_is_attested_in_qualification_and_verified_before_handoff(self):
+        ci = jobs(text("ci.yml"))
+        package = ci["hex-package"]
+        self.assertIn("hex-package", ci["qualified"]["needs"])
+        self.assertNotIn("environment", package)
+        steps = package["steps"]
+        shared = next(step for step in steps if step.get("with", {}).get("operation") == "qualify")
+        self.assertEqual({"operation": "qualify", "package": "request_seal", "package-directory": "."}, shared["with"])
+        attestations = [step["with"] for step in steps if step.get("uses", "").startswith("actions/attest@")]
+        self.assertEqual(2, len(attestations))
+        for filename in ("package.tar", "docs.tar.gz", "corpus.tar.gz", "sbom.cdx.json"):
+            self.assertIn(filename, attestations[0]["subject-path"])
+        self.assertTrue(attestations[1]["sbom-path"].endswith("/sbom.cdx.json"))
+        self.assertTrue(attestations[1]["subject-path"].endswith("/package.tar"))
+
+        readback = jobs(text("publish.yml"))["read-back"]
+        self.assertEqual("upload", readback["needs"])
+        self.assertEqual({"contents": "read", "actions": "read", "attestations": "read"}, readback["permissions"])
+        steps = readback["steps"]
+        shared = next(step for step in steps if step.get("id") == "hex")
+        self.assertEqual({"operation": "read-back", "package": "request_seal", "package-directory": ".",
+                          "release-commit": "${{ inputs.release_commit }}", "release-assets-directory": "${{ runner.temp }}/release-assets",
+                          "qualification-run": "${{ needs.upload.outputs.qualification-run }}",
+                          "qualification-sha256": "${{ needs.upload.outputs.qualification-sha256 }}"}, shared["with"])
+        evidence = next(step for step in steps if step.get("uses", "").startswith("actions/download-artifact@"))
+        self.assertEqual("request-seal-release-evidence", evidence["with"]["name"])
+        self.assertEqual("${{ needs.upload.outputs.qualification-run }}", evidence["with"]["run-id"])
+        verification = next(step for step in steps if "gh attestation verify" in step.get("run", ""))
+        self.assertEqual("${{ steps.hex.outputs.commit }}", verification["env"]["PUBLISHED_COMMIT"])
+        for required in ('.github/workflows/ci.yml', '--source-ref "refs/heads/kci/$PUBLISHED_COMMIT"',
+                         '--source-digest "$PUBLISHED_COMMIT"', '--deny-self-hosted-runners',
+                         'https://cyclonedx.org/bom', 'https://slsa.dev/provenance/v1'):
+            self.assertIn(required, verification["run"])
+        destinations = next(step for step in steps if "--check-destinations" in step.get("run", ""))
+        bundle = next(step for step in steps if step.get("with", {}).get("name") == "release-assets")
+        for previous, following in zip((shared, evidence, verification, destinations),
+                                       (evidence, verification, destinations, bundle)):
+            self.assertLess(steps.index(previous), steps.index(following))
+        for filename in (".tar", "-docs.tar.gz", "SHA256SUMS", "corpus.tar.gz", "corpus.sha256", "sbom.cdx.json"):
+            self.assertIn(filename, bundle["with"]["path"])
 
     def test_every_upload_sets_retention_for_its_reader(self):
         # CI rule: 1 day for an artifact a later job of the same run

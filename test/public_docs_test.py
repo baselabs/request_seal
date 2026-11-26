@@ -79,8 +79,8 @@ class PublicDocsTest(unittest.TestCase):
                         "--predicate-type https://slsa.dev/provenance/v1",
                         "--predicate-type https://cyclonedx.org/bom",
                         'mix hex.package fetch request_seal "$VERSION"', 'cmp "$assets_dir/request_seal-$VERSION.tar"',
-                        'gh release download "v$VERSION" --repo baselabs/request_seal',
-                        'gh api "repos/baselabs/request_seal/commits/v$VERSION" --jq .sha'):
+                        'gh release download "$TAG" --repo baselabs/request_seal',
+                        'gh api "repos/baselabs/request_seal/commits/$TAG" --jq .sha'):
             self.assertIn(command, source)
         for consumer_doc in (guide, "README.md", "docs/reference/corpus-format.md", "CHANGELOG.md"):
             text = (ROOT / consumer_doc).read_text()
@@ -92,8 +92,8 @@ class PublicDocsTest(unittest.TestCase):
         self.assertEqual(2, len(commands))
         for command in commands:
             with self.subTest(command=command):
-                self.assertIn("--signer-workflow baselabs/request_seal/.github/workflows/publish.yml", command)
-                self.assertIn('--source-ref refs/heads/main --source-digest "$SOURCE_COMMIT"', command)
+                self.assertIn("--signer-workflow baselabs/request_seal/.github/workflows/ci.yml", command)
+                self.assertIn('--source-ref "refs/heads/kci/$SOURCE_COMMIT" --source-digest "$SOURCE_COMMIT"', command)
                 self.assertIn("--deny-self-hosted-runners", command)
         self.assertNotIn("HEX_API_KEY", source)
         self.assertNotIn("gh attestation verify", (ROOT / runbook).read_text())
@@ -114,7 +114,7 @@ class PublicDocsTest(unittest.TestCase):
                        f"https://request-seal.hexdocs.pm/{version}/livebook-web-bot-auth.html",
                        "https://request-seal.hexdocs.pm",
                        "https://request-seal.hexdocs.pm/",
-                       f"https://github.com/baselabs/request_seal/blob/v{version}/README.md",
+                       f"https://github.com/baselabs/request_seal/blob/baselabs_request_seal-v{version}/README.md",
                        "https://request-seal.hexdocs.pm/1.0.0/compatibility.html",
                        "https://raw.githubusercontent.com/baselabs/request_seal/v1.0.0/README.md",
                        "https://request-seal.hexdocs.pm/1.0.0/web-bot-auth.html",
@@ -145,35 +145,6 @@ class PublicDocsTest(unittest.TestCase):
             found = docs.content_errors(ROOT, "README.md", link, self.paths, version, configuration["documents"], references)
             self.assertEqual(1, len(found), found)
             self.assertIn("HexDocs page is missing", found[0])
-
-    def test_real_hex_publishing_guard_accepts_absolute_and_rejects_relative_destinations(self):
-        expression = r'''source = File.read!("mix.exs")
-{:defmodule, _, [_, [do: {:__block__, _, body}]]} = Code.string_to_quoted!(source)
-body = Enum.reject(body, &match?({:use, _, [{:__aliases__, _, [:Mix, :Project]}]}, &1))
-changed = Macro.prewalk({:__block__, [], body}, fn
-  {:@, meta, [{:version, inner, [_]}]} -> {:@, meta, [{:version, inner, ["1.0.0"]}]}
-  node -> node
-end)
-Module.create(PublishingDestinationTest, changed, Macro.Env.location(__ENV__))
-[guard, "hex.publish"] = PublishingDestinationTest.project()[:aliases][:"hex.publish"]
-File.cd!(hd(System.argv()), fn -> guard.([]) end)
-'''
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "scripts").mkdir()
-            (root / "scripts/release.py").write_bytes((ROOT / "scripts/release.py").read_bytes())
-            (root / "scripts/processes.py").write_bytes((ROOT / "scripts/processes.py").read_bytes())
-            for target, accepted in (("https://request-seal.hexdocs.pm/1.0.0/compatibility.html", True),
-                                     ("docs/reference/compatibility.md", False)):
-                (root / "CHANGELOG.md").write_text(f"## 1.0.0 - 2026-11-11\n\n- [Policy]({target})\n")
-                result = processes.run(["mix", "run", "--no-start", "--no-compile", "--no-deps-check", "-e", expression, "--", directory],
-                                        cwd=ROOT, capture_output=True, text=True, check=False, timeout=120)
-                if accepted and "requires Elixir 1.20 or newer" in result.stderr:
-                    continue  # The actual guard reached the existing toolchain check.
-                self.assertEqual(accepted, result.returncode == 0, result.stderr)
-                if not accepted:
-                    self.assertIn("Publishing RequestSeal requires valid release notes", result.stderr)
-                    self.assertIn("CHANGELOG.md:3: destination 'docs/reference/compatibility.md'", result.stderr)
 
     def test_absolute_current_hexdocs_links_retain_generated_page_and_fragment_checks(self):
         version = docs.public_configuration(ROOT)["version"]

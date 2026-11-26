@@ -1,6 +1,6 @@
 # Verifying releases
 
-Starting with 2.0, the GitHub release for each `v<version>` tag carries:
+Starting with 2.0, the GitHub release for each `baselabs_request_seal-v<version>` tag carries:
 
 - `request_seal-<version>.tar`: the Hex package, compared byte for byte with Hex
   before the GitHub release is created.
@@ -11,29 +11,23 @@ Starting with 2.0, the GitHub release for each `v<version>` tag carries:
 - `corpus.sha256`: the SHA-256 checksum of that archive.
 - `sbom.cdx.json`: a CycloneDX 1.6 software bill of materials for the package's
   locked production dependency closure, including optional integrations.
-- `release-notes.md`: the dated CHANGELOG section for that version.
+- `SHA256SUMS`: the SHA-256 checksums of the package and served docs.
+
+The GitHub release notes come from the version section of the packaged changelog.
 
 The package tarball, docs archive, corpus archive, and SBOM have GitHub build-provenance
 attestations. The package tarball also has a CycloneDX SBOM attestation binding
-it to the dependency inventory. The dispatch-only `Publish` workflow builds and
-attests these files on the default branch after the dispatched commit passes
-the near-cap JWE teardown and paired performance gates, then publishes the
-package to Hex. After reading the publication back, the maintainers tag the
-published commit and create
-the GitHub release from the files that run handed over. No workflow runs on a tag.
-A held publication can resume from a later dispatch: identical package bytes
-skip package upload, and only missing docs upload. Retired versions and differing
-package bytes refuse. The served package must match the inspected archive byte for
-byte, and the served docs' `release.json` must name the dispatched commit or its
-ancestor on the default branch, before maintainers create the tag and GitHub release.
-Documentation builds are not byte-stable, so a docs archive built by an earlier
-dispatch is kept rather than compared or replaced; its attestation is in that run.
-In that case publication refuses unless the package, corpus and SBOM it releases pass
-the attestation checks below for the tagged commit, so every asset verifies against it.
+it to the dependency inventory. The qualification run produces and attests these files
+on the release commit. The dispatch-only `Publish` workflow runs the near-cap JWE
+teardown and paired performance gates on that commit before uploading the original
+qualified archives. Read-back compares both served archives byte for byte and checks
+that the docs' `release.json` names the release commit. The maintainers tag that
+commit and create the GitHub release. An approval retry reuses the original qualification
+so both archives keep their original bytes. No workflow runs on a tag.
 
 The 1.0.0 release predates this pipeline: it carries the corpus archive and
-checksum, but no package tarball, SBOM, or attestations. A missing attestation
-provides no provenance verification; it is not a successful verification.
+checksum under the historical `v1.0.0` tag. It predates package, SBOM and
+attestation assets.
 
 ## Download and check the corpus
 
@@ -47,9 +41,13 @@ release tag names; the attestation checks below require it.
 : "${VERSION:?Set VERSION to the published version to verify}"
 assets_dir=$(mktemp -d)
 trap 'rm -rf "$assets_dir"' EXIT
-SOURCE_COMMIT=$(gh api "repos/baselabs/request_seal/commits/v$VERSION" --jq .sha)
-gh release view "v$VERSION" --repo baselabs/request_seal --json assets --jq '.assets[].name'
-gh release download "v$VERSION" --repo baselabs/request_seal --dir "$assets_dir"
+TAG="baselabs_request_seal-v$VERSION"
+if [ "$VERSION" = 1.0.0 ]; then
+  TAG="v$VERSION"
+fi
+SOURCE_COMMIT=$(gh api "repos/baselabs/request_seal/commits/$TAG" --jq .sha)
+gh release view "$TAG" --repo baselabs/request_seal --json assets --jq '.assets[].name'
+gh release download "$TAG" --repo baselabs/request_seal --dir "$assets_dir"
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "$assets_dir" && sha256sum --check corpus.sha256)
 else
@@ -57,7 +55,8 @@ else
 fi
 ```
 
-The checksum detects changed corpus bytes; provenance verification below also
+For releases with package and docs assets, also check `SHA256SUMS` from the asset directory.
+The corpus checksum detects changed bytes; provenance verification below also
 checks their attested origin. The archive contains `index.json`, public sources,
 and cases described in the [corpus format](../reference/corpus-format.md).
 
@@ -69,16 +68,16 @@ on the package tarball. Keep the predicate URLs exactly as shown:
 ```sh
 for file in "request_seal-$VERSION.tar" "request_seal-$VERSION-docs.tar.gz" corpus.tar.gz sbom.cdx.json; do
   gh attestation verify "$assets_dir/$file" --repo baselabs/request_seal --predicate-type https://slsa.dev/provenance/v1 \
-    --signer-workflow baselabs/request_seal/.github/workflows/publish.yml \
-    --source-ref refs/heads/main --source-digest "$SOURCE_COMMIT" --deny-self-hosted-runners
+    --signer-workflow baselabs/request_seal/.github/workflows/ci.yml \
+    --source-ref "refs/heads/kci/$SOURCE_COMMIT" --source-digest "$SOURCE_COMMIT" --deny-self-hosted-runners
 done
 gh attestation verify "$assets_dir/request_seal-$VERSION.tar" --repo baselabs/request_seal --predicate-type https://cyclonedx.org/bom \
-  --signer-workflow baselabs/request_seal/.github/workflows/publish.yml \
-  --source-ref refs/heads/main --source-digest "$SOURCE_COMMIT" --deny-self-hosted-runners
+  --signer-workflow baselabs/request_seal/.github/workflows/ci.yml \
+  --source-ref "refs/heads/kci/$SOURCE_COMMIT" --source-digest "$SOURCE_COMMIT" --deny-self-hosted-runners
 ```
 
 Each command must succeed. These flags require the signer workflow
-`baselabs/request_seal/.github/workflows/publish.yml`, the default branch
+`baselabs/request_seal/.github/workflows/ci.yml`, the exact qualification branch
 as the source ref, the full published commit as source digest, and a GitHub-hosted runner. See GitHub's [attestation verification documentation](https://cli.github.com/manual/gh_attestation_verify)
 for the verifier's trust policy and output. These checks establish artifact
 origin and the attested dependency inventory; callers still choose which
@@ -113,7 +112,7 @@ cmp "$assets_dir/request_seal-$VERSION-docs.tar.gz" "$assets_dir/hex/request_sea
 tar -xzOf "$assets_dir/hex/request_seal-$VERSION-docs.tar.gz" release.json
 ```
 
-The printed commit is the commit tagged `v<version>`.
+The printed commit is the commit tagged `baselabs_request_seal-v<version>`.
 
 ## Interpret SBOM scope
 

@@ -2,7 +2,7 @@
   {
     "version": "2.0.0",
     "development": false,
-    "source_ref": "v2.0.0",
+    "source_ref": "baselabs_request_seal-v2.0.0",
     "install_requirement": "~> 2.0"
   },
   {
@@ -26,25 +26,25 @@
   {
     "version": "2.0.0-rc.1",
     "development": false,
-    "source_ref": "v2.0.0-rc.1",
+    "source_ref": "baselabs_request_seal-v2.0.0-rc.1",
     "install_requirement": "~> 2.0.0-rc.1"
   },
   {
     "version": "2.0.0-beta.2",
     "development": false,
-    "source_ref": "v2.0.0-beta.2",
+    "source_ref": "baselabs_request_seal-v2.0.0-beta.2",
     "install_requirement": "~> 2.0.0-beta.2"
   },
   {
     "version": "2.0.0-0.dev",
     "development": false,
-    "source_ref": "v2.0.0-0.dev",
+    "source_ref": "baselabs_request_seal-v2.0.0-0.dev",
     "install_requirement": "~> 2.0.0-0.dev"
   },
   {
     "version": "0.6.0",
     "development": false,
-    "source_ref": "v0.6.0",
+    "source_ref": "baselabs_request_seal-v0.6.0",
     "install_requirement": "~> 0.6.0"
   },
   {
@@ -56,7 +56,7 @@
   {
     "version": "0.6.0-rc.1",
     "development": false,
-    "source_ref": "v0.6.0-rc.1",
+    "source_ref": "baselabs_request_seal-v0.6.0-rc.1",
     "install_requirement": "~> 0.6.0-rc.1"
   }
 ]

@@ -110,7 +110,11 @@ class WorkflowYamlTest(unittest.TestCase):
         sources = {name: load((ROOT / ".github/workflows" / name).read_text()) for name in
                    ("ci.yml", "cache-warmer.yml", "publish.yml")}
         self.assertEqual(["kci/**"], sources["ci.yml"]["on"]["push"]["branches"])
-        self.assertEqual({"workflow_dispatch": ""}, sources["publish.yml"]["on"])
+        self.assertEqual({"workflow_dispatch"}, set(sources["publish.yml"]["on"]))
+        inputs = sources["publish.yml"]["on"]["workflow_dispatch"]["inputs"]
+        self.assertEqual({"release_commit", "qualification_run"}, set(inputs))
+        self.assertEqual("true", inputs["release_commit"]["required"])
+        self.assertEqual("false", inputs["qualification_run"]["required"])
         verify = sources["ci.yml"]["jobs"]["verify"]
         self.assertEqual("verify (${{ matrix.lane }})", verify["name"])
         self.assertNotIn("services", verify)

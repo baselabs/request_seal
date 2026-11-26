@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Prove core isolation and exact published dependency floors in fresh consumers."""
 from contextlib import contextmanager
-import io
 import os
-import tarfile
 import json
 import shutil
 from pathlib import Path
@@ -96,28 +94,13 @@ def dependency_metadata(runtime_path):
 
 @contextmanager
 def packed_source(runtime_path):
-    """Both fresh consumers install the inspected packed archive, with no seed lock."""
-    from check_docs import public_configuration
-    from publication import inspect_package, members
-    from release import package_version
+    """Both fresh consumers install the unpacked Hex build, with no seed lock."""
     with temporary_directory(prefix="requestseal-consumer-package-") as name:
-        directory = Path(name)
-        tarball = directory / "package.tar"
+        source = Path(name) / "source"
         env = dict(os.environ, PATH=runtime_path, MIX_ENV="dev")
         run(["mix", "deps.get", "--check-locked"], cwd=ROOT, env=env, check=True, timeout=300)
-        run(["mix", "hex.build", "--output", tarball], cwd=ROOT, env=env, check=True, timeout=300)
-        version = package_version((ROOT / "mix.exs").read_text())
-        inspect_package(tarball, version, public_configuration(ROOT)["files"])
-        source = directory / "source"
-        source.mkdir()
-        with tarfile.open(tarball) as outer:
-            contents = outer.extractfile("contents.tar.gz").read()
-        with tarfile.open(fileobj=io.BytesIO(contents), mode="r:gz") as archive:
-            for relative, member in members(archive).items():
-                target = source / relative
-                if member.isfile():
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(archive.extractfile(member).read())
+        run(["mix", "hex.build", "--unpack", "--output", source], cwd=ROOT, env=env, check=True, timeout=300)
+        (source / "hex_metadata.config").unlink()
         yield source
 
 

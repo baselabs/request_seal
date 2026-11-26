@@ -17,7 +17,7 @@ import json
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release import (MARKDOWN_SUFFIXES, classify_destination, compare_errors, extract_destinations, first_party,
                      git_source_errors, install_requirement, page_ids,
-                     parse_version, ref_exists, source_fragment_errors, verify_http_destinations)
+                     package_tag, parse_version, ref_exists, source_fragment_errors, verify_http_destinations)
 from processes import install_signal_handlers, run, temporary_directory
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +48,7 @@ SOURCE_DOCUMENTS = {"AGENTS.md", "docs/operations/releases.md", "test/fixtures/w
         "0027-key-handles-replace-closures", "0028-strict-json-object-decoding",
         "0029-ash-onetime-2-custody-and-install-bound-replay", "0030-bounded-non-sending-capture",
         "0031-performance-release-gates", "0032-json-serializations-and-jwt-line",
-        "0033-jwe-guard-and-heir-notices",
+        "0033-jwe-guard-and-heir-notices", "0034-qualify-hex-release-archives",
     )
 }
 GIT_INSTALL = re.compile(
@@ -355,7 +355,8 @@ def first_party_link_errors(root, relative, url, version, published, references)
             return []
         if kind in ("github_live", "hex_package"):
             if (kind == "hex_package" and version is not None and link.get("version") == version
-                    and not ref_exists(root, "refs/tags/v" + version)):
+                    and not any(ref_exists(root, "refs/tags/" + tag)
+                                for tag in (package_tag(version), "v" + version))):
                 # The current release's package page does not exist until Hex
                 # publication. Historical/tagged releases still require HTTP.
                 return []
@@ -371,12 +372,12 @@ def first_party_link_errors(root, relative, url, version, published, references)
             errors = compare_errors(root, link["ref"])
             if errors:
                 return errors
-            if link["version"] != version and not ref_exists(root, "refs/tags/v" + link["version"]):
-                return ["compare destination tag is missing: v" + link["version"]]
+            if link["version"] != version and not ref_exists(root, "refs/tags/" + link["target_ref"]):
+                return ["compare destination tag is missing: " + link["target_ref"]]
             return []
         name = link["ref"]
         ref = None if name == "main" else "refs/tags/" + name
-        if name == "v" + str(version) and not ref_exists(root, ref):
+        if ref and link["version"] == version and not ref_exists(root, ref):
             ref = None
         key = ref or "WORKTREE"
         if key not in references:
