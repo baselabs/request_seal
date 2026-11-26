@@ -85,15 +85,10 @@ as `jwe-teardown`.
 [ADR 0044](0044-qualify-hex-release-archives.md) places upload and read-back in
 separate jobs. Both measurements remain prerequisites to upload.
 
-Before stamping a release version, an approved release maintainer can run
-the measurement in hosted CI while `main` is a development snapshot. In
-GitHub Actions, open **Publish**, select **Run workflow**, and dispatch
-`main` with the full commit SHA of its development snapshot as
-`release_commit`. Open the run’s `teardown` job and download `jwe-teardown`. That job runs
-`python3 scripts/jwe_teardown_gate.py --output "$RUNNER_TEMP/jwe-teardown.json"`.
-The workflow has no separate teardown-only dispatch. Its release identity
-check refuses development snapshots before upload, and the release
-dispatch repeats the gate on the release commit.
+The teardown measurement runs only within a release dispatch. The first job
+requires a successful qualification check on the selected commit and a dated,
+untagged release version. After that gate, the `teardown` job measures the exact
+release commit and retains its report for the maintainers.
 
 Host conditions can leave a release unmeasured. Each dispatch uses its
 fixed round inventory and runs it once.

@@ -1122,6 +1122,26 @@ def git_source_errors(root, ref, path, fragment=""):
     return []
 
 
+def check_candidate(root):
+    """Require a dated package version with no scoped or matching legacy tag."""
+    mix = (root / "mix.exs").read_bytes()
+    version = package_version(mix.decode("utf-8"))
+    release_notes((root / "CHANGELOG.md").read_text(), version)
+
+    scoped = package_tag(version)
+    if ref_exists(root, "refs/tags/" + scoped):
+        raise ValueError("package version is already tagged: " + scoped)
+
+    legacy = "v" + version
+    ref = "refs/tags/" + legacy
+    if ref_exists(root, ref) and not git_source_errors(root, ref, "mix.exs"):
+        tagged = run(["git", "show", f"{ref}:mix.exs"], cwd=root,
+                     capture_output=True, check=True, timeout=30).stdout
+        if tagged == mix:
+            raise ValueError("package version is already tagged: " + legacy)
+    return version
+
+
 def verify_published_destinations(body, version, event="push", root=ROOT, deadline_seconds=DESTINATION_DEADLINE):
     """Dispatch checks future source URLs in HEAD; push checks every URL over HTTP."""
     if event not in ("push", "workflow_dispatch"):
@@ -1184,6 +1204,8 @@ if __name__ == "__main__":
     choice.add_argument("--install-requirement", action="store_true")
     choice.add_argument("--normalize-sbom", type=Path)
     choice.add_argument("--release-notes", action="store_true")
+    choice.add_argument("--check-candidate", action="store_true",
+                        help="Require the checkout's dated version and absence of its package tag")
     choice.add_argument("--check-destinations", action="store_true")
     parser.add_argument("--tarball", type=Path)
     parser.add_argument("--for-version")
@@ -1195,6 +1217,8 @@ if __name__ == "__main__":
             if not args.tarball:
                 parser.error("--normalize-sbom requires --tarball")
             normalize_sbom(args.normalize_sbom, args.tarball)
+        elif args.check_candidate:
+            print("PASS: untagged release candidate " + check_candidate(ROOT))
         elif args.release_notes or args.check_destinations:
             version = args.for_version or package_version((ROOT / "mix.exs").read_text())
             parse_version(version)

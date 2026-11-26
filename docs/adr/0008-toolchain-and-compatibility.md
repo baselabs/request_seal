@@ -69,7 +69,7 @@ Owned integrations exercise real PostgreSQL migrations and Bandit delivery.
 Published dependencies declare tested floors independently of the development lock.
 Stable ranges use `>= FLOOR and < NEXT_MAJOR.0.0`; existing 0.x ranges and
 ash_onetime's `~> 1.9 and >= 1.9.2` retain their shapes.
-Fresh consumers install the inspected packed archive without a seed lock and
+Fresh consumers install from the unpacked Hex build without a seed lock and
 resolve every published dependency available on the toolchain at
 its exact floor, assert the lock, compile with warnings as errors, and run its
 covering tests. The latest lane also tests the ash_onetime and ash_hooks floors.

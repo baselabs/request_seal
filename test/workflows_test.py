@@ -334,7 +334,7 @@ class QualificationTest(unittest.TestCase):
         proofs = jobs(text("ci.yml"))
         pub = jobs(text("publish.yml"))
         self.assertNotIn("teardown", proofs)
-        self.assertEqual({"release-gate-verdict", "teardown"}, set(pub["upload"]["needs"]))
+        self.assertEqual({"release-preflight", "release-gate-verdict", "teardown"}, set(pub["upload"]["needs"]))
         self.assertNotIn("environment", pub["teardown"])
         self.assertEqual(pub["upload"]["if"], pub["teardown"]["if"])
         self.assertEqual("${{ inputs.release_commit }}", pub["teardown"]["steps"][1]["with"]["ref"])
@@ -380,7 +380,7 @@ class QualificationTest(unittest.TestCase):
         rounds, verdict = pub["release-gate-round"], pub["release-gate-verdict"]
         self.assertEqual([str(i) for i in range(1, ROUNDS + 1)], rounds["strategy"]["matrix"]["round"])
         self.assertEqual("false", rounds["strategy"]["fail-fast"])
-        self.assertEqual("release-gate-round", verdict["needs"])
+        self.assertEqual(["release-preflight", "release-gate-round"], verdict["needs"])
         self.assertIn("release-gate-verdict", pub["upload"]["needs"])
         self.assertNotIn("--build-directory", str(rounds["steps"]))
         for job in (rounds, verdict):
@@ -422,6 +422,30 @@ class QualificationTest(unittest.TestCase):
                 requirements[name] = {"app": name, "requirement": requirement,
                                       "optional": "optional: true" in options, "repository": "hexpm"}
         self.assertEqual(requirements, package["requirements"])
+
+    def test_publication_preflight_requires_a_qualified_untagged_release(self):
+        publication = jobs(text("publish.yml"))
+        self.assertEqual("release-preflight", next(iter(publication)))
+        preflight = publication["release-preflight"]
+        self.assertNotIn("needs", preflight)
+        self.assertNotIn("environment", preflight)
+        self.assertEqual({"contents": "read", "checks": "read"}, preflight["permissions"])
+        self.assertEqual(publication["upload"]["if"], preflight["if"])
+        for job in ("teardown", "release-gate-round"):
+            self.assertEqual("release-preflight", publication[job]["needs"])
+            self.assertEqual(preflight["if"], publication[job]["if"])
+        self.assertIn("needs.release-preflight.result == 'success'", publication["release-gate-verdict"]["if"])
+        qualification, candidate = preflight["steps"][-2:]
+        self.assertNotIn("if", qualification)
+        self.assertEqual({"GH_TOKEN": "${{ github.token }}",
+                          "RELEASE_COMMIT": "${{ inputs.release_commit }}"}, qualification["env"])
+        for part in ("commits/$RELEASE_COMMIT/check-runs?check_name=qualified&status=completed",
+                     'jq -e --arg sha "$RELEASE_COMMIT"', '.name == "qualified"', '.head_sha == $sha',
+                     '.status == "completed"', '.conclusion == "success"', '.app.slug == "github-actions"',
+                     'exit 1'):
+            self.assertIn(part, qualification["run"])
+        self.assertNotIn("if", candidate)
+        self.assertEqual("python3 scripts/release.py --check-candidate", candidate["run"])
 
     def test_publication_uses_the_qualified_commit_and_limits_the_registry_identity(self):
         source = text("publish.yml")

@@ -35,9 +35,10 @@ registry credentials and the later tag. Workflow changes require review before l
 4. Give release maintainers the repository, full commit, version, publication contents
    and green run ID. They obtain owner approval and dispatch `publish.yml` from the
    default branch with the full `release_commit`. They can select the exact
-   `qualification_run`. Each job checks the dispatch ref and both approved actors. The
-   performance verdict and near-cap teardown must pass on the selected release commit
-   before upload. Publication uses no runner cache.
+   `qualification_run`. Each job checks the dispatch ref and both approved actors.
+   The first job requires a successful `qualified` check on the selected commit and
+   a dated, untagged release version. The performance verdict and near-cap teardown
+   then run on that commit and must pass before upload. Publication uses no runner cache.
 5. Upload in environment `publish` reads the original qualified archives, checks the
    exact successful qualification, existing tags, stamped changelog, public registry
    state and counterpart version. Public and organization Hex releases of the same
@@ -63,6 +64,7 @@ installs, the corpus release identity and its digest pin.
 
 ### Performance gates
 
+The performance jobs run only within a release dispatch that passes the first job.
 The publication workflow runs 24 paired rounds on fresh GitHub-hosted
 `ubuntu-24.04` VMs. Download the round artifacts and the verdict from the
 dispatch run to inspect the per-round medians, ratios and host conditions.
@@ -323,8 +325,10 @@ punctuation, unbalanced closing parentheses and trailing entity references.
 
 Root, `tools/notebooks` and `scripts/jose_libraries` have separate lockfiles and
 advisory surfaces. Hosted qualification fetches each with `--check-locked` and
-runs both `mix hex.audit` and `mix deps.audit`. Fresh consumers install the
-inspected packed archive without a seed lock. Only a separate default-branch
+runs both `mix hex.audit` and `mix deps.audit`. Fresh consumers install from the
+unpacked Hex build and resolve dependencies without a seed lock. Shared Hex
+qualification checks the archive file set against the package declaration.
+Only a separate default-branch
 scheduled or dispatched drift report may otherwise resolve fresh; it has no
 secret, environment, cache or qualification verdict. An advisory without a fixed
 release needs a reasoned `hex: [ignore_advisories: [...]]` project entry.

@@ -97,6 +97,35 @@ class ReleaseIdentityTest(unittest.TestCase):
         (self.root / "corpus/index.json").write_text(json.dumps({"elixir_release": "v" + version}))
         (self.root / "CHANGELOG.md").write_text(f"# Changelog\n\n## {version} - 2026-11-17\n\n- Release behavior.\n")
 
+    def test_candidate_requires_a_dated_release_version(self):
+        self.assertEqual("2.3.4", release.check_candidate(self.root))
+        (self.root / "CHANGELOG.md").write_text("## Unreleased 2.3.4\n\n- Pending.\n")
+        with self.assertRaisesRegex(ValueError, "dated section"):
+            release.check_candidate(self.root)
+        self.identity("2.3.4-dev")
+        with self.assertRaisesRegex(ValueError, "development snapshots"):
+            release.check_candidate(self.root)
+
+    def test_candidate_refuses_an_existing_package_tag(self):
+        scoped = "baselabs_request_seal-v2.3.4"
+        self.git("tag", scoped)
+        with self.assertRaisesRegex(ValueError, re.escape(scoped)):
+            release.check_candidate(self.root)
+        self.git("tag", "-d", scoped)
+
+        legacy = "v2.3.4"
+        self.git("tag", "-a", legacy, "-m", "Legacy release")
+        with self.assertRaisesRegex(ValueError, re.escape(legacy)):
+            release.check_candidate(self.root)
+
+    def test_candidate_ignores_a_bare_tag_for_different_mix_source(self):
+        self.identity("2.3.3")
+        self.git("add", "mix.exs")
+        self.git("commit", "--quiet", "-m", "Version for an unrelated tag")
+        self.git("tag", "v2.3.4")
+        self.identity("2.3.4")
+        self.assertEqual("2.3.4", release.check_candidate(self.root))
+
     def test_shared_version_cases(self):
         cases = json.loads((ROOT / "test/fixtures/release_versions.json").read_text())
         for case in cases:

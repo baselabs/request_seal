@@ -17,8 +17,10 @@ between project code and the registry write identity.
    package, HTML docs, corpus and SBOM under the qualified commit.
 2. Require a full qualified `release_commit` for default-branch dispatch. Publication
    is cache-free. This amends [ADR 0031](0031-performance-release-gates.md)'s publishing
-   job description. The paired performance verdict and teardown measurement still
-   gate the upload on that release commit and run without the publish environment.
+   job description. An unkeyed first job requires a successful `qualified` check
+   on that exact commit and a dated, untagged release version. The paired performance
+   verdict and teardown run only within a release dispatch after this gate.
+   Both are unkeyed prerequisites to upload.
 3. Upload is the only job in environment `publish`. The action reads public release
    metadata anonymously and checks the organization for conflicting versions using
    the API-read key scoped to the upload step. Public and organization releases for
