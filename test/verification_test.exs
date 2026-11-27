@@ -165,23 +165,14 @@ defmodule RequestSeal.VerificationTest do
     end
 
     dir = Path.join(@root, "verification")
+    sums = File.read!(Path.join(dir, "SHA256SUMS"))
+    pins = sums |> String.split("\n", trim: true) |> Enum.map(&String.split(&1, "  ", parts: 2))
+    listed = pins |> Enum.map(&List.last/1) |> Enum.sort()
+    assert listed == dir |> File.ls!() |> List.delete("SHA256SUMS") |> Enum.sort()
 
-    pins =
-      File.read!(Path.join(dir, "SHA256SUMS"))
-      |> String.split("\n", trim: true)
-      |> Enum.map(fn line ->
-        [hash, name] = String.split(line, "  ", parts: 2)
-        {name, hash}
-      end)
-
-    assert Enum.map(pins, &elem(&1, 0)) |> Enum.sort() ==
-             File.ls!(dir) |> List.delete("SHA256SUMS") |> Enum.sort()
-
-    for {name, hash} <- pins do
-      assert hash ==
-               Base.encode16(:crypto.hash(:sha256, File.read!(Path.join(dir, name))),
-                 case: :lower
-               )
+    for [hash, name] <- pins do
+      digest = :crypto.hash(:sha256, File.read!(Path.join(dir, name)))
+      assert Base.encode16(digest, case: :lower) == hash
     end
   end
 
