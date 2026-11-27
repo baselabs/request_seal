@@ -65,7 +65,6 @@
     "function cleanup/2",
     "function derive/4",
     "function identity/1",
-    "function mac/3",
     "function mac/4",
     "function public_key/1",
     "function release/1",
@@ -209,7 +208,6 @@
   "RequestSeal.Fingerprint": [
     "function digest/2",
     "function prefixed/1",
-    "function read_prefixed/1",
     "function read_prefixed/2"
 
   ],
@@ -460,7 +458,6 @@
   "RequestSeal.VerificationRecord": [
     "function decode/1",
     "function encode/1",
-    "function from_verification/1",
     "function from_verification/2",
     "function reverify/1",
     "type t/0"
