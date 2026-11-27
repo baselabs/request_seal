@@ -967,12 +967,9 @@ defmodule RequestSeal.CustodyLocalTest do
 
   test "bound algorithms and worker monitor messages do not escape completed local operations" do
     {:ok, handle} = Local.new("ed25519", material("ed25519"))
-    assert_error(Custody.sign(%{handle | algorithm: {:jws, "EdDSA"}}, "sample"), :key_mismatch)
-
-    assert_error(
-      Custody.verify(%{handle | algorithm: {:jws, "EdDSA"}}, "sample", <<0>>),
-      :key_mismatch
-    )
+    forged = %{handle | algorithm: {:jws, "EdDSA"}, operation_family: :jws}
+    assert_error(Custody.sign(forged, "sample"), :key_mismatch)
+    assert_error(Custody.verify(forged, "sample", <<0>>), :key_mismatch)
 
     for _ <- 1..100, do: assert({:ok, _} = Custody.sign(handle, "sample"))
     Process.sleep(20)

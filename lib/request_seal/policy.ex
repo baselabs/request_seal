@@ -86,11 +86,12 @@ defmodule RequestSeal.Policy do
         nil), and returns `{:ok, %{algorithm: algorithm, key: key}}` or
         `:error`. `key` is a `RequestSeal.PublicKey` or a `RequestSeal.KeyHandle`
         binding the returned algorithm and granting `:verify`. HMAC
-        (`"hmac-sha256"`, `{:jws, "HS256"}`) requires a custody handle. Any other key in the
-        result, or any other return, rejects with `:key_resolver_failed`.
-        With library-built credential or principal replay the resolver also
-        returns `:replay_scope` with `{:credential, purpose, credential_id}` or
-        `{:principal, principal_id}` respectively. These are trusted resolver facts.
+        (`"hmac-sha256"`, `{:jws, "HS256"}`) requires a custody handle. The
+        result may carry `:issued_for` with the trusted purpose. With library-built
+        credential or principal replay it also returns `:replay_scope` with
+        `{:credential, purpose, credential_id}` or `{:principal, principal_id}`
+        respectively. Any other key in the result, or any other return, rejects
+        with `:key_resolver_failed`.
       * `:deny` - a `RequestSeal.DenySet` or nil (default). An active set
         checks the public key used by verification. A handle must authorize
         verification and export the public key used to verify the same bytes.

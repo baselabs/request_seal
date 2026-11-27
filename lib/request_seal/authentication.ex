@@ -482,9 +482,11 @@ defmodule RequestSeal.Authentication do
         accepts_scope =
           match?(%{scope: kind} when kind in [:credential, :principal], policy.replay)
 
+        allowed = [:algorithm, :key, :issued_for]
+        allowed = if accepts_scope, do: [:replay_scope | allowed], else: allowed
+
         ensure(
-          map_size(result) == 2 or
-            (accepts_scope and map_size(result) == 3 and Map.has_key?(result, :replay_scope)),
+          map_size(result) <= length(allowed) and Enum.all?(Map.keys(result), &(&1 in allowed)),
           :key_resolver_failed,
           :key
         )

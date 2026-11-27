@@ -70,9 +70,8 @@ defmodule RequestSeal.ReplayTest do
   end
 
   test "queued ETS claims check the request process and both lifetime owners", ctx do
-    claim = claim("scope", "queued", 100)
-
-    for cancelled <- [:caller, :owner, :key_owner] do
+    for {cancelled, retain_until} <- Enum.with_index([:caller, :owner, :key_owner], 100) do
+      claim = claim("scope", "queued", retain_until)
       owner = spawn(fn -> Process.sleep(:infinity) end)
       creator = spawn(fn -> Process.sleep(:infinity) end)
 
@@ -98,11 +97,12 @@ defmodule RequestSeal.ReplayTest do
       end
 
       if cancelled != :caller, do: assert({:error, :unavailable} == Task.await(task))
-      assert {:ok, 0} = ETS.sweep(ctx.pid, 100)
+      assert {:ok, 0} = ETS.sweep(ctx.pid, retain_until)
       stop_lifetime(owner)
       stop_lifetime(creator)
     end
 
+    claim = claim("scope", "queued", 103)
     owner = spawn(fn -> Process.sleep(:infinity) end)
     on_exit(fn -> Process.exit(owner, :kill) end)
     assert :claimed = ETS.claim(ctx.pid, claim, %{context() | owner: owner})

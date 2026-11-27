@@ -514,11 +514,13 @@ defmodule RequestSeal.OperationIdentityTest do
       Policy.new(%{
         algorithms: ["ed25519"],
         components: @components,
+        require_issued_for: :orders,
         key_resolver: fn _ ->
           {:ok,
            %{
              algorithm: "ed25519",
              key: key,
+             issued_for: :orders,
              replay_scope: {:credential, :orders, "credential-1"}
            }}
         end,

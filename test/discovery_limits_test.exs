@@ -518,7 +518,10 @@ defmodule RequestSeal.DiscoveryLimitsTest do
       end)
 
     assert {:ok, set} = Discovery.fetch(source(p), clock: fn -> now end)
-    assert set.expires_at == now + 30
+    assert set.expires_at == now + 600
+    [kid] = Map.keys(set.keys)
+    assert {:ok, _} = KeySet.lookup_at(set, kid, ["ed25519"], now + 29)
+    assert :error = KeySet.lookup_at(set, kid, ["ed25519"], now + 30)
   end
 
   test "5xx statuses are retryable but 4xx statuses are not" do

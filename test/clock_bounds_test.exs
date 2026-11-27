@@ -98,7 +98,10 @@ defmodule RequestSeal.ClockBoundsTest do
       assert {:error, %{reason: :invalid_options}} =
                RequestSeal.Discovery.parse_body(body, source, now)
 
-      assert {:error, %{reason: :invalid_options}} = Cache.start_link(clock: fn -> now end)
+      pid = start_supervised!({Cache, clock: fn -> now end}, id: make_ref())
+
+      assert {:error, %{reason: :invalid_options}} =
+               Cache.resolve(pid, source, String.duplicate("A", 43))
 
       assert {:error, %{reason: :invalid_options}} =
                RequestSeal.Discovery.fetch(source, clock: fn -> now end)

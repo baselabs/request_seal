@@ -92,7 +92,8 @@ defmodule RequestSeal.ReplayPairTest do
     assert :claimed = claim(ctx.pair, ctx.claim)
     assert {:ok, 0} = Pair.sweep(ctx.pair.ref, 1_999, context(1_000))
     assert {:ok, 2} = Pair.sweep(ctx.pair.ref, 2_000, context(1_000))
-    assert :claimed = claim(ctx.pair, ctx.claim)
+    assert {:error, %Error{reason: :store_failed}} = claim(ctx.pair, ctx.claim)
+    assert :claimed = claim(ctx.pair, %{ctx.claim | retain_until: 2_001})
 
     GenServer.stop(ctx.destination.ref)
     assert {:error, :unavailable} = Pair.sweep(ctx.pair.ref, 2_000, context(1_000))
@@ -152,8 +153,11 @@ defmodule RequestSeal.ReplayPairTest do
     assert :already_claimed = claim(ctx.retiring, ctx.claim)
 
     assert {:error, :timeout} = Pair.sweep(pair.ref, 2_000, context(100))
-    assert :claimed = claim(ctx.destination, ctx.claim)
-    assert :claimed = claim(ctx.retiring, ctx.claim)
+
+    for store <- [ctx.destination, ctx.retiring] do
+      assert {:error, %Error{reason: :store_failed}} = claim(store, ctx.claim)
+      assert :claimed = claim(store, %{ctx.claim | retain_until: 2_001})
+    end
   end
 
   test "direct claims and sweeps cancel a blocked adapter inside the deadline", ctx do
@@ -169,7 +173,8 @@ defmodule RequestSeal.ReplayPairTest do
     assert_bounded_timeout(fn -> Pair.sweep(pair.ref, 2_000, context(150)) end)
     assert_received {:blocked, sweep_worker}
     refute Process.alive?(sweep_worker)
-    assert :claimed = claim(ctx.destination, ctx.claim)
+    assert {:error, %Error{reason: :store_failed}} = claim(ctx.destination, ctx.claim)
+    assert :claimed = claim(ctx.destination, %{ctx.claim | retain_until: 2_001})
     assert :already_claimed = claim(ctx.retiring, ctx.claim)
   end
 
@@ -201,8 +206,11 @@ defmodule RequestSeal.ReplayPairTest do
     assert_bounded_timeout(fn -> Pair.sweep(ctx.pair.ref, 2_000, context(150)) end)
     assert_received {:telemetry_blocked, :sweep, sweep_worker}
     refute Process.alive?(sweep_worker)
-    assert :claimed = claim(ctx.destination, ctx.claim)
-    assert :claimed = claim(ctx.retiring, ctx.claim)
+
+    for store <- [ctx.destination, ctx.retiring] do
+      assert {:error, %Error{reason: :store_failed}} = claim(store, ctx.claim)
+      assert :claimed = claim(store, %{ctx.claim | retain_until: 2_001})
+    end
   end
 
   defp assert_bounded_timeout(operation) do

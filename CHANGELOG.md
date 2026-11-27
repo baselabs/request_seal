@@ -2,6 +2,11 @@
 
 ## Unreleased 2.0.0
 
+- Accept the expanded custody context in replay stores and combine purpose-bound
+  resolver results with credential or principal replay scopes.
+- Read built-in custody references once for signing and ordinary verification,
+  checking the retained assignment in the same operation that uses the key.
+
 - Require `binding/2` to return a public key for screened verification and
   record capture on assignment-aware custody handles.
 

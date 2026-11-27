@@ -305,7 +305,7 @@ defmodule RequestSeal.DiscoveryFetchTest do
     persisted = Map.delete(entry, :not_before)
     reconstructed = struct(RequestSeal.Discovery.Resolution, Map.from_struct(persisted))
     assert reconstructed.not_before == nil
-    assert entry.not_before == now
+    assert {:ok, %{not_before: ^now}} = KeySet.lookup_at(set, kid, ["ed25519"], now)
 
     for old <- [persisted, reconstructed] do
       legacy = put_in(set.keys[kid], old)

@@ -77,8 +77,8 @@ defmodule RequestSeal.VerificationTest do
     {:ok, second_base} = SignatureBase.build(m, inputs["sig-b26"], field_schemas: p.field_schemas)
     refute first_base == second_base
     assert map_size(cache) == 2
-    assert cache[{"sig-b21", p.field_schemas}] == {:ok, first_base}
-    assert cache[{"sig-b26", p.field_schemas}] == {:ok, second_base}
+    assert {:ok, {^first_base, _}} = cache[{"sig-b21", p.field_schemas}]
+    assert {:ok, {^second_base, _}} = cache[{"sig-b26", p.field_schemas}]
   end
 
   test "duplicate labels fail closed in verify across and within field occurrences" do

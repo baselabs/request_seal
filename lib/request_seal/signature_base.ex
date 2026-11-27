@@ -744,8 +744,10 @@ defmodule RequestSeal.SignatureBase do
   end
 
   defp canonical_byte_sequence?(<<?:, rest::binary>>) when byte_size(rest) > 0 do
+    size = byte_size(rest) - 1
+
     case rest do
-      <<encoded::binary-size(byte_size(rest) - 1), ?:>> ->
+      <<encoded::binary-size(^size), ?:>> ->
         with {:ok, decoded} <- Base.decode64(encoded),
              true <- Validation.field_value?(decoded) and canonical_occurrence?(decoded) do
           byte_sequence(decoded) == ":" <> rest

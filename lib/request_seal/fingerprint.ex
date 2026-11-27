@@ -43,7 +43,7 @@ defmodule RequestSeal.Fingerprint do
 
   def read_prefixed(<<size::32, rest::binary>>, max)
       when is_integer(max) and size <= max and byte_size(rest) >= size do
-    <<field::binary-size(size), tail::binary>> = rest
+    <<field::binary-size(^size), tail::binary>> = rest
     {:ok, field, tail}
   end
 

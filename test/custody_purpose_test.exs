@@ -568,7 +568,7 @@ defmodule RequestSeal.CustodyPurposeTest do
 
     reference = %{
       ctx.handle
-      | custodian: AssignmentWithVerifier,
+      | custodian: __MODULE__.AssignmentWithVerifier,
         ref: fn -> {ctx.handle, observer} end
     }
 
@@ -597,7 +597,7 @@ defmodule RequestSeal.CustodyPurposeTest do
 
     reference = %{
       signer
-      | custodian: Legacy,
+      | custodian: __MODULE__.Legacy,
         ref: fn ->
           send(observer, :public_key_read)
           {signer, observer}

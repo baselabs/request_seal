@@ -31,6 +31,8 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
     @behaviour RequestSeal.Replay
     alias RequestSeal.Custody.Context
     alias RequestSeal.Replay.{Claim, Error, Store}
+
+    @context_size map_size(%Context{})
     @type ref :: {module(), binary(), binary() | nil}
 
     @doc """
@@ -199,7 +201,7 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
           %Claim{} = claim,
           %Context{owner: owner, deadline: deadline} = context
         )
-        when map_size(context) == 3 and is_pid(owner) and is_integer(deadline) do
+        when map_size(context) in [3, @context_size] and is_pid(owner) and is_integer(deadline) do
       case attempt(ref, claim, context) do
         # A client timeout surfaces as a rolled-back transaction or a closed
         # connection with no timeout marker; the expired deadline that bounded

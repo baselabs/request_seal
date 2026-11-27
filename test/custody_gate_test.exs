@@ -142,11 +142,11 @@ defmodule RequestSeal.CustodyGateTest do
 
     refute_received :port_called
     refute_received :record_called
-    assert {:ok, 0} = ETS.sweep(ctx.store, @now + 31)
 
     assert {:ok, _} = sign(handle, ctx.base)
     assert_received :port_called
     assert_received :record_called
+    assert {:ok, 1} = ETS.sweep(ctx.store, @now + 31)
   end
 
   test "an unassigned gated key refuses raw use and verifies only valid HTTP bases", ctx do

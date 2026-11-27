@@ -24,8 +24,9 @@ defmodule RequestSeal.Replay.ETS do
   alias RequestSeal.Custody.Context
   alias RequestSeal.Replay.{Claim, Store}
 
+  @context_size map_size(%Context{})
   defguardp valid_context?(context)
-            when is_struct(context, Context) and map_size(context) == 3 and
+            when is_struct(context, Context) and map_size(context) in [3, @context_size] and
                    is_pid(context.owner) and is_integer(context.deadline)
 
   @doc """

@@ -78,6 +78,7 @@ defmodule RequestSeal.Custody.Support do
   end
 
   def max_bytes(opts) do
+    options(opts, [:timeout, :max_bytes])
     value = Keyword.get(opts, :max_bytes, 1_048_576)
 
     ensure(

@@ -446,6 +446,16 @@ defmodule RequestSeal.Conformance.Surfaces do
         key = public(root, name)
 
         key =
+          case {descriptor["pss_only"], key.material} do
+            {true, {:rsa, n, e}} ->
+              {:ok, pss_key} = PublicKey.import({:rsa_pss, n, e}, :raw)
+              pss_key
+
+            {nil, _} ->
+              key
+          end
+
+        key =
           case descriptor["restrictions"] do
             nil ->
               key

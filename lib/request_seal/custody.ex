@@ -791,7 +791,7 @@ defmodule RequestSeal.Custody do
     Support.safe(
       fn ->
         timeout = Support.timeout(opts, allowed)
-        max = Support.max_bytes(opts)
+        max = Support.max_bytes(Keyword.take(opts, [:max_bytes]))
         handle!(handle)
         purpose = Keyword.get(opts, :issued_for)
         ensure(KeyHandle.purpose?(purpose), :invalid_options)
@@ -926,6 +926,11 @@ defmodule RequestSeal.Custody do
       true -> :legacy
     end
   end
+
+  # These holders check the retained assignment in the same call that uses the key.
+  defp check_signing_assignment!(%KeyHandle{custodian: custodian}, _)
+       when custodian in [RequestSeal.Custody.Local, RequestSeal.Custody.SSHAgent],
+       do: :ok
 
   defp check_signing_assignment!(handle, context) do
     case assignment_interface(handle.custodian) do

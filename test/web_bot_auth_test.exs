@@ -1315,7 +1315,7 @@ defmodule RequestSeal.WebBotAuthTest do
 
     assert {:ok, record} = VerificationRecord.from_verification(result)
     assert {:ok, encoded} = VerificationRecord.encode(record)
-    assert %{"record" => %{"directory" => nil}} = :json.decode(encoded)
+    assert %{"record" => %{"directory" => :null}} = :json.decode(encoded)
     assert :ok = VerificationRecord.reverify(encoded)
 
     resolution = %Resolution{
@@ -1796,6 +1796,7 @@ defmodule RequestSeal.WebBotAuthTest do
            source_type: a.type,
            location: source.location,
            fetched_at: @now,
+           not_before: 0,
            expires_at: @now + 7200,
            proof: :unsigned
          }}
