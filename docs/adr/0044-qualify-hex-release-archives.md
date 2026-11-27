@@ -14,7 +14,10 @@ between project code and the registry write identity.
 1. Use the pinned [shared Hex action](https://github.com/baselabs/.github) for
    qualification, upload and read-back. Declare the root package, exact archive file
    inventory and requirements in `.github/hex-packages.json`. Produce and attest the
-   package, HTML docs, corpus and SBOM under the qualified commit.
+   package, HTML docs, corpus and SBOM under the qualified commit. The qualifying
+   job only builds and uploads the archives. A separate job that depends on it
+   downloads them and runs the docs, corpus, SBOM and attestation checks, so it reads
+   archives the artifact service has already finalized.
 2. Require a full qualified `release_commit` for default-branch dispatch. Publication
    is cache-free. This amends [ADR 0031](0031-performance-release-gates.md)'s publishing
    job description. An unkeyed first job requires a successful `qualified` check

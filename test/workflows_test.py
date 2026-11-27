@@ -17,7 +17,7 @@ from jwe_release_gates import ROUNDS  # noqa: E402
 
 WORKFLOWS = ROOT / ".github/workflows"
 PROOFS = {"process-ownership-macos", "toolchain", "verify", "mutations",
-          "release-gate-self-check", "hex-package"}
+          "release-gate-self-check", "hex-package", "hex-evidence"}
 VERIFY_MATRIX = json.dumps({"include": [{"lane": lane} for lane in ("floor", "mid", "latest")]})
 
 
@@ -73,7 +73,7 @@ def proof_condition_errors(source, ci_source):
         ("verify", "python3 scripts/check.py"): ["matrix.lane == 'latest'"],
         ("verify", "Remove disposable PostgreSQL"): ["always()"],
         ("release-gate-self-check", "actions/upload-artifact"): ["always()"],
-        ("hex-package", "Remove qualification scratch"): ["always()"],
+        ("hex-evidence", "Remove qualification scratch"): ["always()"],
     }
     if conditions != expected:
         errors.append("proof conditions must bind exactly to the declared job and step")
@@ -187,7 +187,7 @@ class QualificationTest(unittest.TestCase):
     def test_inventory_is_every_proof_and_one_verify_leg_per_lane(self):
         self.assertEqual(
             {"process-ownership-macos", "toolchain", "mutations",
-             "release-gate-self-check", "hex-package", "verify (floor)", "verify (mid)", "verify (latest)"},
+             "release-gate-self-check", "hex-package", "hex-evidence", "verify (floor)", "verify (mid)", "verify (latest)"},
             qualify.expected_jobs(VERIFY_MATRIX),
         )
 
@@ -405,8 +405,10 @@ class QualificationTest(unittest.TestCase):
             self.assertEqual(operations, {step["with"]["operation"] for step in calls})
             self.assertEqual(len(operations), len(calls))
             self.assertTrue(all(step["uses"] == action + "@" + pin for step in calls))
-        self.assertEqual(jobs(text("ci.yml"))["hex-package"]["env"]["HEX_PUBLISH_MIRROR_SHA"],
+        ci = jobs(text("ci.yml"))
+        self.assertEqual(ci["hex-package"]["env"]["HEX_PUBLISH_MIRROR_SHA"],
                          load_workflow(text("publish.yml"))["env"]["HEX_PUBLISH_MIRROR_SHA"])
+        self.assertEqual(ci["hex-package"]["env"], ci["hex-evidence"]["env"])
 
     def test_hex_declaration_matches_the_public_package(self):
         declaration = json.loads((ROOT / ".github/hex-packages.json").read_text())
@@ -486,11 +488,20 @@ class QualificationTest(unittest.TestCase):
     def test_release_evidence_is_attested_in_qualification_and_verified_before_handoff(self):
         ci = jobs(text("ci.yml"))
         package = ci["hex-package"]
+        evidence_job = ci["hex-evidence"]
         self.assertIn("hex-package", ci["qualified"]["needs"])
+        self.assertIn("hex-evidence", ci["qualified"]["needs"])
         self.assertNotIn("environment", package)
-        steps = package["steps"]
-        shared = next(step for step in steps if step.get("with", {}).get("operation") == "qualify")
+        self.assertNotIn("environment", evidence_job)
+        self.assertEqual({"contents": "read"}, package["permissions"])
+        shared = next(step for step in package["steps"] if step.get("with", {}).get("operation") == "qualify")
         self.assertEqual({"operation": "qualify", "package": "request_seal", "package-directory": "."}, shared["with"])
+        # The qualified artifact is read only by a later job, after its producer has finalized it.
+        self.assertFalse([step for step in package["steps"] if step.get("uses", "").startswith("actions/download-artifact@")])
+        self.assertEqual(["toolchain", "hex-package"], evidence_job["needs"])
+        steps = evidence_job["steps"]
+        download = next(step for step in steps if step.get("uses", "").startswith("actions/download-artifact@"))
+        self.assertEqual({"name": "hex-hexpm-request_seal", "path": "${{ runner.temp }}/qualified-hex"}, download["with"])
         attestations = [step["with"] for step in steps if step.get("uses", "").startswith("actions/attest@")]
         self.assertEqual(2, len(attestations))
         for filename in ("package.tar", "docs.tar.gz", "corpus.tar.gz", "sbom.cdx.json"):
