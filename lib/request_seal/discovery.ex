@@ -153,6 +153,7 @@ defmodule RequestSeal.Discovery do
       timeout = Keyword.get(opts, :timeout, source.timeout)
       ensure(is_integer(timeout) and timeout in 1..300_000, :invalid_options)
       clock = Keyword.get(opts, :clock, fn -> System.system_time(:second) end)
+
       Support.run(min(timeout, source.timeout), fn deadline ->
         fetch_source(source, clock, deadline, nil, nil)
       end)
@@ -350,6 +351,7 @@ defmodule RequestSeal.Discovery do
 
             inherited =
               Enum.reject(stored_fields, &MapSet.member?(updated_names, String.downcase(&1.name)))
+
             merged = inherited ++ updates
 
             {:ok,
@@ -507,6 +509,7 @@ defmodule RequestSeal.Discovery do
     {_, now} = interval
     origin = Source.origin(URI.parse(location))
     keys = keys(document, source, origin, location, interval)
+
     Enum.each(keys, fn {id, entries} ->
       ensure(KeySet.select(entries, source, id, interval) != {:ambiguous, true}, :invalid_key_set)
     end)
@@ -517,6 +520,7 @@ defmodule RequestSeal.Discovery do
         else: {:not_applicable, []}
 
     proof_signers = proof_facts |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
+
     expires =
       Enum.reduce(proof_facts, expires, fn {_, _, _, deadline}, acc -> min(acc, deadline) end)
 
@@ -949,6 +953,7 @@ defmodule RequestSeal.Discovery do
             is_binary(age) and byte_size(age) in 1..10 and Regex.match?(~r/\A[0-9]+\z/, age),
             :invalid_response
           )
+
           String.to_integer(age)
       end
 

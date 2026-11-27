@@ -188,6 +188,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
     for mode <- [:complete, :conditional, :inherited] do
       owner = self()
       responses = :atomics.new(1, [])
+
       headers = [
         {"Content-Type", "application/http-message-signatures-directory+json"},
         {"Cache-Control", "max-age=10"},
@@ -266,6 +267,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
     owner = self()
     type = {"Content-Type", "application/http-message-signatures-directory+json"}
     tag = {"ETag", ~s("v1")}
+
     date = fn seconds ->
       Calendar.strftime(DateTime.from_unix!(seconds), "%a, %d %b %Y %H:%M:%S GMT")
     end
@@ -387,11 +389,13 @@ defmodule RequestSeal.DiscoveryCacheTest do
       })
 
     {:ok, cache} = Cache.start_link(clock: fn -> 100 end)
+
     assert {:ok, %{keys: %{^redirected_id => _}, validator_uri: uri}} =
              Cache.refresh(cache, source)
 
     assert String.ends_with?(uri, "/redirected")
     :atomics.put(changed, 1, 1)
+
     assert {:ok, %{keys: %{^direct_id => _}, validator_uri: configured}} =
              Cache.refresh(cache, source)
 
@@ -403,6 +407,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
     owner = self()
     count = :atomics.new(1, [])
     tag = {"ETag", ~s("")}
+
     fields = [
       {"Content-Type", "application/jwk-set+json"},
       {"Cache-Control", "max-age=60"}
@@ -440,6 +445,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
 
   test "quoted Cache-Control commas and escapes cannot extend absolute expiry on 200 or 304" do
     tag = {"ETag", ~s("v1")}
+
     date = fn seconds ->
       Calendar.strftime(DateTime.from_unix!(seconds), "%a, %d %b %Y %H:%M:%S GMT")
     end
@@ -544,6 +550,7 @@ defmodule RequestSeal.DiscoveryCacheTest do
       :atomics.put(time, 1, 110)
       assert {:ok, later} = Cache.refresh(cache, source)
       assert_receive :proof_200
+
       assert :error =
                Discovery.KeySet.lookup_at(later, leaf_id, ["rsa-pss-sha512"], 109)
     end

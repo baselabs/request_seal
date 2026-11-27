@@ -62,6 +62,7 @@ defmodule RequestSeal.CustodySSHAgentTest do
     assert {:ok, ^key} = Custody.public_key(handle)
     assert {:ok, %{issued_for: :build, thumbprint: thumbprint}} = Custody.binding(handle)
     assert {:ok, ^thumbprint} = PublicKey.thumbprint(key)
+
     assert {:ok, signature} =
              Custody.sign(handle, @vector["base"], issued_for: :build, operation: :http)
 
@@ -83,6 +84,7 @@ defmodule RequestSeal.CustodySSHAgentTest do
     assert :ok = Task.await(creator)
     assert_receive {:DOWN, ^monitor, :process, ^holder, _}, 1_000
     assert_error(Custody.public_key(handle), :key_not_found)
+
     assert_error(
       Custody.sign(handle, @vector["base"], issued_for: :build, operation: :http),
       :key_not_found
@@ -124,18 +126,26 @@ defmodule RequestSeal.CustodySSHAgentTest do
     for {handle, reason} <- [{edited, :key_mismatch}, {forged, :invalid_handle}] do
       assert_error(Custody.binding(handle), reason)
       assert_error(Custody.sign(handle, bytes, issued_for: :audit, operation: :http), reason)
-      assert_error(Custody.verify(handle, bytes, signature, issued_for: :audit, operation: :http), reason)
+
+      assert_error(
+        Custody.verify(handle, bytes, signature, issued_for: :audit, operation: :http),
+        reason
+      )
     end
 
     edited_algorithm = %{bound | algorithm: {:jws, "EdDSA"}, operation_family: :jws}
     assert_error(Custody.binding(edited_algorithm), :key_mismatch)
+
     assert_error(
       Custody.sign(edited_algorithm, bytes, issued_for: :build, operation: :jws),
       :key_mismatch
     )
 
     assert {_, 0} =
-             RequestSeal.SystemCommand.run("ssh-add", ["-D"], env: ctx.env, stderr_to_stdout: true)
+             RequestSeal.SystemCommand.run("ssh-add", ["-D"],
+               env: ctx.env,
+               stderr_to_stdout: true
+             )
 
     assert_error(Custody.binding(bound), :key_not_found)
 

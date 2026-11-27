@@ -84,6 +84,7 @@ defmodule RequestSeal.DenySetTest do
     assert {:ok, _} = JWS.verify(compact, jws_policy)
 
     jws_handle = %{jws_signing | capabilities: [:verify]}
+
     jws_policy = %{
       jws_policy
       | key_resolver: fn _ -> {:ok, %{algorithm: "EdDSA", key: jws_handle}} end
@@ -112,6 +113,7 @@ defmodule RequestSeal.DenySetTest do
 
     for entries <- [%{@thumbprint => true}, %{raw => false}, MapSet.new([{raw, true}]), %URI{}] do
       forged = %DenySet{entries: entries}
+
       assert {:error, %{reason: :invalid_policy}} =
                RequestSeal.Policy.new(Map.put(attrs, :deny, forged))
 
@@ -135,6 +137,7 @@ defmodule RequestSeal.DenySetTest do
 
     assert {:error, %{reason: :invalid_key}} = Local.new("rsa-v1_5-sha256", broken)
     assert {:error, %{reason: :key_denied}} = Local.new("rsa-v1_5-sha256", broken, deny: deny)
+
     assert {:error, %{reason: :key_mismatch}} =
              Local.new("rsa-v1_5-sha256", broken, expected_thumbprint: @other)
   end
@@ -171,6 +174,7 @@ defmodule RequestSeal.DenySetTest do
     {:ok, thumbprint} = PublicKey.thumbprint(key)
     {:ok, deny} = DenySet.new([thumbprint])
     assert {:ok, _} = JWS.verify(v["compact"], p)
+
     assert {:error, %{layer: :key, reason: :key_denied}} =
              JWS.verify(v["compact"], Map.put(p, :deny, deny))
   end

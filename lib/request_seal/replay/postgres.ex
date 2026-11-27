@@ -381,7 +381,9 @@ if Code.ensure_loaded?(Postgrex) do
                 end
 
               case outcome do
-                {:error, _} = error -> Postgrex.rollback(tx, error)
+                {:error, _} = error ->
+                  Postgrex.rollback(tx, error)
+
                 result ->
                   if Context.remaining(context) == 0,
                     do: Postgrex.rollback(tx, {:error, :timeout}),

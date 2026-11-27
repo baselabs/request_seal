@@ -337,6 +337,7 @@ defmodule RequestSeal.JOSE.JWS do
       case key do
         %RequestSeal.PublicKey{} = key ->
           ensure(not match?({:x25519, _}, key.material), :algorithm_mismatch, :key)
+
           with :ok <- RequestSeal.DenySet.check(deny, key),
                do: RequestSeal.Crypto.verify({:jws, alg}, base, signature, key)
 

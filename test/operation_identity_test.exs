@@ -221,6 +221,7 @@ defmodule RequestSeal.OperationIdentityTest do
   test "undeclared adapter returns cannot set the caller error or telemetry reason" do
     event = [:request_seal, :idempotency, :reserve]
     handler = {__MODULE__, make_ref()}
+
     forward = fn event, _, data, owner ->
       if self() == owner, do: send(owner, {event, data})
     end
@@ -283,8 +284,12 @@ defmodule RequestSeal.OperationIdentityTest do
         key = Record.key(record)
 
         case Map.fetch(rows, key) do
-          {:ok, {:stored, _} = result} -> {result, rows}
-          {:ok, {:pending, _}} -> {:in_progress, rows}
+          {:ok, {:stored, _} = result} ->
+            {result, rows}
+
+          {:ok, {:pending, _}} ->
+            {:in_progress, rows}
+
           :error ->
             token = :crypto.strong_rand_bytes(16)
             {{:reserved, token}, Map.put(rows, key, {:pending, token})}
@@ -392,6 +397,7 @@ defmodule RequestSeal.OperationIdentityTest do
     assert {:ok, ^entry} = Journal.load(journal, "orders", "create-1")
 
     response = %{status: 200, headers: [], body: "accepted"}
+
     assert :stored =
              Idempotency.store(store, reservation, response, timeout: 1000, allow_headers: [])
   end

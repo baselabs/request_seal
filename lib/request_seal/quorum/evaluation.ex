@@ -21,6 +21,7 @@ defmodule RequestSeal.Quorum.Evaluation do
     protect(fn ->
       {deadline, requests} = options(opts)
       checkpoint(deadline)
+
       {assignments, count, negotiation, key} =
         unwrap(evaluate(message, quorum, requests, deadline))
 
@@ -438,6 +439,7 @@ defmodule RequestSeal.Quorum.Evaluation do
       candidates
       |> Enum.reject(&(&1.key == :unknown))
       |> Map.new(&{&1.label, &1.verification.signature.parameters})
+
     inputs = Map.new(entries)
 
     Enum.each(requests, fn request ->

@@ -225,6 +225,7 @@ defmodule RequestSeal.Custody.Gate do
 
     params = SignatureFields.parameters(parts.inner_list)
     covered = Enum.map(parts.components, &elem(&1, 0))
+
     %{"created" => created, "expires" => expires, "nonce" => nonce} =
       require_coverage(params, covered, config, algorithm)
 
@@ -233,7 +234,7 @@ defmodule RequestSeal.Custody.Gate do
     ensure(
       created in 0..@max_clock and expires in 0..@max_clock and
         abs(now - created) <= config.skew and expires > now and
-        expires - created in 1..config.max_lifetime,
+        (expires - created) in 1..config.max_lifetime,
       :gate_window
     )
 
@@ -345,6 +346,7 @@ defmodule RequestSeal.Custody.Gate do
   @doc false
   def live!(context) do
     ensure(Context.remaining(context) > 0, :deadline_exceeded)
+
     ensure(
       Process.alive?(context.owner) and
         (context.key_owner == nil or Process.alive?(context.key_owner)),

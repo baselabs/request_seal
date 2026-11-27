@@ -238,7 +238,7 @@ defmodule RequestSeal.Replay.ETS do
           {:ok, non_neg_integer()} | {:error, :failure | :timeout | :unavailable}
   def sweep(pid, now, context)
       when valid_context?(context) and is_integer(now) and now in 0..253_402_300_799,
-    do: call(pid, {:sweep, now, context}, context)
+      do: call(pid, {:sweep, now, context}, context)
 
   def sweep(_, _, _), do: {:error, :failure}
 
@@ -246,7 +246,11 @@ defmodule RequestSeal.Replay.ETS do
   def handle_call(_, _from, state) when not is_map_key(state, :swept_through),
     do: {:reply, {:error, :failure}, state}
 
-  def handle_call({:claim, %Claim{} = claim, %Context{owner: owner} = context}, {caller, _}, state)
+  def handle_call(
+        {:claim, %Claim{} = claim, %Context{owner: owner} = context},
+        {caller, _},
+        state
+      )
       when valid_context?(context) do
     result =
       cond do

@@ -63,6 +63,7 @@ defmodule RequestSeal.VerificationRecord do
   """
   @spec from_verification(term(), keyword()) :: {:ok, t()} | {:error, :not_accepted}
   def from_verification(result, opts \\ [])
+
   def from_verification({:ok, %Verification{} = result}, opts),
     do: from_verification(result, opts)
 
@@ -186,7 +187,8 @@ defmodule RequestSeal.VerificationRecord do
            "signature" => signature_wire,
            "thumbprint" => thumbprint,
            "version" => 1
-         } when map_size(data) == 10 <- data,
+         }
+         when map_size(data) == 10 <- data,
          true <- profile?(profile) and directory?(directory),
          {:ok, key} <- import_key(public),
          {:ok, ^thumbprint} <- PublicKey.thumbprint(key),
@@ -324,7 +326,7 @@ defmodule RequestSeal.VerificationRecord do
 
   defp ascii?(value, max)
        when is_binary(value) and byte_size(value) >= 1 and byte_size(value) <= max,
-    do: Enum.all?(:binary.bin_to_list(value), &(&1 in 32..126))
+       do: Enum.all?(:binary.bin_to_list(value), &(&1 in 32..126))
 
   defp ascii?(_, _), do: false
 

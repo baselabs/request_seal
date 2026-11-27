@@ -153,6 +153,7 @@ defmodule RequestSeal.SignatureBaseTest do
     message = request(%{fields: fields([{"Example-Header", "left\tright"}])})
     params = ~s[("example-header")]
     assert {:ok, base} = SignatureBase.build(message, params)
+
     assert {:ok, %{components: [{~s["example-header"], "left\tright"}]}} =
              SignatureBase.parse(base)
   end
@@ -188,6 +189,7 @@ defmodule RequestSeal.SignatureBaseTest do
   test "inspection requires a canonical sequence for byte-wrapped field occurrences" do
     message = request(%{fields: fields([{"Example-Header", "one"}, {"Example-Header", "two"}])})
     assert {:ok, base} = SignatureBase.build(message, ~s[("example-header";bs)])
+
     assert {:ok, %{components: [{~s["example-header";bs], ":b25l:, :dHdv:"}]}} =
              SignatureBase.parse(base)
 

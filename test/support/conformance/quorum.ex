@@ -164,6 +164,7 @@ defmodule RequestSeal.Conformance.Quorum do
 
   defp schemas(nil), do: %{}
   defp schemas("list"), do: %{"flags" => SignatureFields.schema(:list, [:token, :boolean])}
+
   defp schemas("dictionary"),
     do: %{"flags" => SignatureFields.schema(:dictionary, [:token, :boolean])}
 

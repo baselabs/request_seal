@@ -129,6 +129,7 @@ defmodule RequestSeal.Custody.SSHAgent do
       PublicKey.bind!(public, resolved)
       Support.check_public_key(public, opts)
       context = %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
+
       Custody.run(context, fn -> sign_at(socket_path, public, algorithm, "", false, context) end)
       |> unwrap()
 
@@ -367,7 +368,11 @@ defmodule RequestSeal.Custody.SSHAgent do
     sign_at(socket_path, public, algorithm, bytes, true, context)
   end
 
-  defp operate({:verify, requested, bytes, signature}, {algorithm, _, public, issued_for}, context)
+  defp operate(
+         {:verify, requested, bytes, signature},
+         {algorithm, _, public, issued_for},
+         context
+       )
        when is_binary(bytes) and byte_size(bytes) <= @max_bytes_ceiling do
     check_signing!(requested, algorithm, issued_for, bytes, context)
     Crypto.verify(algorithm, bytes, signature, public, max_bytes: @max_bytes_ceiling)

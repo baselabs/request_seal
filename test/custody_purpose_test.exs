@@ -150,6 +150,7 @@ defmodule RequestSeal.CustodyPurposeTest do
     end
 
     forged = %{ctx.handle | algorithm: {:jws, "EdDSA"}, operation_family: :jws}
+
     assert {:error, %{reason: :key_mismatch}} =
              Custody.sign(forged, base, issued_for: :build, operation: :jws)
 
@@ -207,6 +208,7 @@ defmodule RequestSeal.CustodyPurposeTest do
     {:ok, generated} = Local.generate("hmac-sha256", issued_for: :build)
     assert {:ok, %{issued_for: :build, thumbprint: nil}} = Custody.binding(generated)
     assert {:error, %{reason: :no_public_key}} = Custody.public_key(generated)
+
     assert {:error, %{reason: :invalid_options}} =
              Local.generate("hmac-sha256", issued_for: true)
   end
@@ -247,8 +249,11 @@ defmodule RequestSeal.CustodyPurposeTest do
                RequestSeal.verify(signed, policy(ctx.handle, :audit), label: "sig")
 
       {:ok, key} = Custody.public_key(ctx.handle)
+
       assert {:ok, _} =
-               RequestSeal.verify(signed, policy(key, :build, %{issued_for: :build}), label: "sig")
+               RequestSeal.verify(signed, policy(key, :build, %{issued_for: :build}),
+                 label: "sig"
+               )
 
       assert {:error, %{reason: :key_issued_for_mismatch, layer: :key}} =
                RequestSeal.verify(signed, policy(key, :build), label: "sig")
@@ -636,6 +641,7 @@ defmodule RequestSeal.CustodyPurposeTest do
     }
 
     assert {:ok, %{payload: "manifest"}} = JWS.verify(compact, verify_policy)
+
     assert {:error, %{reason: :issued_for_mismatch}} =
              JWS.verify(compact, Map.delete(verify_policy, :require_issued_for))
   end

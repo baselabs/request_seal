@@ -50,7 +50,8 @@ defmodule RequestSeal.Policy do
                            {:ok,
                             %{
                               required(:algorithm) => RequestSeal.Crypto.algorithm(),
-                              required(:key) => RequestSeal.PublicKey.t() | RequestSeal.KeyHandle.t(),
+                              required(:key) =>
+                                RequestSeal.PublicKey.t() | RequestSeal.KeyHandle.t(),
                               optional(:issued_for) => atom() | nil,
                               optional(:replay_scope) => RequestSeal.Replay.Commitment.scope()
                             }}
@@ -195,7 +196,8 @@ defmodule RequestSeal.Policy do
       (RequestSeal.Replay.policy?(p.replay, p.freshness) or
          RequestSeal.Replay.Commitment.policy?(p.replay, p.components, p.freshness)) and
       schemas?(p.field_schemas) and
-      RequestSeal.DenySet.valid?(p.deny) and p.extra_components in [:allow, :reject] and is_integer(p.max_signatures) and
+      RequestSeal.DenySet.valid?(p.deny) and p.extra_components in [:allow, :reject] and
+      is_integer(p.max_signatures) and
       p.max_signatures in 1..64 and
       KeyHandle.purpose?(p.require_issued_for)
   end

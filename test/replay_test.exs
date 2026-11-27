@@ -34,7 +34,6 @@ defmodule RequestSeal.ReplayTest do
     end
   end
 
-
   test "internal quorum scope rejects malformed principal collections" do
     for malformed <- [[:unknown | :tail], [nil], []] do
       assert {:error, :ambiguous_replay_scope} =
@@ -76,6 +75,7 @@ defmodule RequestSeal.ReplayTest do
     for cancelled <- [:caller, :owner, :key_owner] do
       owner = spawn(fn -> Process.sleep(:infinity) end)
       creator = spawn(fn -> Process.sleep(:infinity) end)
+
       on_exit(fn ->
         Process.exit(owner, :kill)
         Process.exit(creator, :kill)

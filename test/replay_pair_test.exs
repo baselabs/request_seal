@@ -58,7 +58,8 @@ defmodule RequestSeal.ReplayPairTest do
     assert :already_claimed = claim(ctx.retiring, ctx.claim)
   end
 
-  test "destination duplicates short circuit and retiring duplicates keep the destination claim", ctx do
+  test "destination duplicates short circuit and retiring duplicates keep the destination claim",
+       ctx do
     assert :claimed = claim(ctx.destination, ctx.claim)
     assert :already_claimed = claim(ctx.pair, ctx.claim)
     assert :claimed = claim(ctx.retiring, ctx.claim)

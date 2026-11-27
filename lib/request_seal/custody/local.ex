@@ -392,6 +392,7 @@ defmodule RequestSeal.Custody.Local do
   defp construct(algorithm, material, opts, type, expected, capabilities) do
     state = prepare_state(algorithm, material, opts, type, expected, capabilities)
     {holder, token} = start_holder(state)
+
     KeyHandle.new(
       __MODULE__,
       algorithm,
@@ -611,10 +612,12 @@ defmodule RequestSeal.Custody.Local do
     Support.safe(
       fn ->
         ensure(match?(%KeyHandle{custodian: __MODULE__}, handle), :invalid_handle)
+
         ensure(
           map_size(handle) == map_size(%KeyHandle{}) and is_function(handle.ref, 0),
           :invalid_handle
         )
+
         release(handle.ref, default_context()) |> Support.unwrap()
       end,
       :invalid_handle
@@ -943,7 +946,11 @@ defmodule RequestSeal.Custody.Local do
 
   defp check_binding(_, _, _), do: :ok
 
-  defp holder_operation({:derive, request}, {bound, {:ikm, ikm}, _, _, capabilities, _, _}, context) do
+  defp holder_operation(
+         {:derive, request},
+         {bound, {:ikm, ikm}, _, _, capabilities, _, _},
+         context
+       ) do
     ensure(bound == {:derive, "hkdf-sha256"} and :derive in capabilities, :unsupported_operation)
     ensure(request.owner == context.owner and Process.alive?(request.owner), :unavailable)
     ensure(is_binary(request.token) and byte_size(request.token) == 32, :invalid_options)
@@ -1014,6 +1021,7 @@ defmodule RequestSeal.Custody.Local do
     else
       admitted = Gate.admit(bytes, admission, context, algorithm)
       Gate.live!(context)
+
       signature =
         unwrap(Crypto.sign(algorithm, bytes, material, max_bytes: Crypto.max_bytes_ceiling()))
 

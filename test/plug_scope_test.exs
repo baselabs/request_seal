@@ -17,10 +17,10 @@ defmodule RequestSeal.PlugScopeTest.Router do
   @moduledoc false
   use Plug.Router
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
-  forward "/teams", to: RequestSeal.PlugScopeTest.Forwarded
+  forward("/teams", to: RequestSeal.PlugScopeTest.Forwarded)
 end
 
 defmodule RequestSeal.PlugScopeTest do
@@ -50,6 +50,7 @@ defmodule RequestSeal.PlugScopeTest do
 
     verify =
       Verify.init(policy: fn -> raise "must not run" end, label: "other", on_reject: :continue)
+
     conn = Verify.call(conn, verify)
     assert :error = SealPlug.scope(conn)
     assert {:error, %{reason: :scope_unbound}} = Scope.ash_scope(conn, binding)
@@ -107,6 +108,7 @@ defmodule RequestSeal.PlugScopeTest do
 
     nested = ~s({"items":[{"tenant_id":"other"}]})
     assert refused(verified(target, @covered, body: nested), :scope_in_body)
+
     assert refused(
              verified(target, @covered, body: nested, parse_body: false),
              :body_uninspected
@@ -118,14 +120,22 @@ defmodule RequestSeal.PlugScopeTest do
     conn = verified(target, @covered, body: ~s({"items":[{"count":1}]}))
 
     for value <- [%Plug.Conn.Unfetched{aspect: :body_params}, %URI{}] do
-      assert refused(%{conn | body_params: %{"items" => [%{"value" => value}]}}, :body_uninspected)
+      assert refused(
+               %{conn | body_params: %{"items" => [%{"value" => value}]}},
+               :body_uninspected
+             )
+
       assert refused(%{conn | query_params: %{"items" => [value]}}, :invalid_query)
     end
 
     upload = %Plug.Upload{filename: "tenant_id", path: "/unused", content_type: "text/plain"}
     conn = %{conn | body_params: %{"items" => [%{"file" => upload}]}}
     assert {:ok, %{tenant: "alpha"}} = SealPlug.scope(Scope.call(conn, options()))
-    assert refused(%{conn | body_params: %{"items" => [%{"tenant_id" => upload}]}}, :scope_in_body)
+
+    assert refused(
+             %{conn | body_params: %{"items" => [%{"tenant_id" => upload}]}},
+             :scope_in_body
+           )
   end
 
   test "body inspection finds selectors discarded by form and JSON parsers" do
@@ -190,7 +200,13 @@ defmodule RequestSeal.PlugScopeTest do
     end
 
     conn = verified("/teams/alpha/items", @covered)
-    assert refused(conn, :tenant_lookup_timeout, options(principal_tenant: lookup, lookup_timeout: 100))
+
+    assert refused(
+             conn,
+             :tenant_lookup_timeout,
+             options(principal_tenant: lookup, lookup_timeout: 100)
+           )
+
     assert_received {:lookup, worker}
     refute Process.alive?(worker)
   end
@@ -198,6 +214,7 @@ defmodule RequestSeal.PlugScopeTest do
   test "a forwarded signed path scopes a real Ash policy on own and foreign records" do
     conn = verified("/teams/alpha/items", @covered) |> forward_through_router()
     binding = %{actor: fn _ -> :error end, unattributed: :anonymous}
+
     assert {:ok, %{tenant: "alpha", actor: nil, principal: :unattributed} = scope} =
              Scope.ash_scope(conn, binding)
 
@@ -262,15 +279,20 @@ defmodule RequestSeal.PlugScopeTest do
     end
 
     assert refused(Scope.call(conn, options()), :already_scoped)
-    halted = Scope.call(conn, options(principal_tenant: fn _ -> :error end, on_reject: {:halt, 403}))
+
+    halted =
+      Scope.call(conn, options(principal_tenant: fn _ -> :error end, on_reject: {:halt, 403}))
+
     assert halted.halted and halted.status == 403 and halted.resp_body == ""
   end
 
   test "validates lowercase UUIDs without case folding" do
     uuid = "a1a4a110-60db-47d3-a0ba-506c1387dc29"
     opts = options(validator: :uuid, principal_tenant: fn _ -> {:ok, uuid} end)
+
     assert {:ok, %{tenant: ^uuid}} =
              SealPlug.scope(Scope.call(verified("/teams/" <> uuid, @covered), opts))
+
     assert refused(verified("/teams/" <> String.upcase(uuid), @covered), :invalid_scope, opts)
   end
 
@@ -289,7 +311,10 @@ defmodule RequestSeal.PlugScopeTest do
   defp refused(conn, reason, options \\ options()) do
     conn = Scope.call(conn, options)
     assert :error = SealPlug.scope(conn)
-    assert {:error, %{reason: ^reason, stage: :scope, source: nil}} = conn.private.request_seal.scope
+
+    assert {:error, %{reason: ^reason, stage: :scope, source: nil}} =
+             conn.private.request_seal.scope
+
     true
   end
 

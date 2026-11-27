@@ -180,6 +180,7 @@ defmodule RequestSeal.GuideSigningAndVerifyingTest do
     assert Keyword.fetch!(binding, :verification).authorization == :not_evaluated
     assert :ok = RequestSeal.Message.validate(Keyword.fetch!(binding, :low_level_signed))
     E.assert_rejected_signature(binding)
+
     binding =
       E.eval(
         ~S'''

@@ -177,6 +177,7 @@ defmodule RequestSeal.Conformance.Surfaces do
     alias RequestSeal.Replay.{Claim, ETS, Pair}
 
     until = C.int(inputs["retain_until"])
+
     claim = %Claim{
       namespace: C.bytes(inputs["namespace"]),
       key: C.bytes(inputs["key"]),
@@ -446,7 +447,9 @@ defmodule RequestSeal.Conformance.Surfaces do
 
         key =
           case descriptor["restrictions"] do
-            nil -> key
+            nil ->
+              key
+
             fields ->
               %{
                 key

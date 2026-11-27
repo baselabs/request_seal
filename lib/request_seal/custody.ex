@@ -167,6 +167,7 @@ defmodule RequestSeal.Custody do
         ensure(is_binary(domain) and byte_size(domain) in 1..255, :invalid_data)
         handle!(parent)
         ensure(:derive in parent.capabilities, :unsupported_operation)
+
         context =
           bind_context(
             %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout},
@@ -401,7 +402,11 @@ defmodule RequestSeal.Custody do
     ensure(:unwrap in handle.capabilities, :unsupported_operation)
 
     context = bind_context(context, handle)
-    normalize(:unwrap, handle.custodian.unwrap(handle.ref, handle.algorithm, items, sink, context))
+
+    normalize(
+      :unwrap,
+      handle.custodian.unwrap(handle.ref, handle.algorithm, items, sink, context)
+    )
   end
 
   defp items!(algorithm, items) do
@@ -844,7 +849,8 @@ defmodule RequestSeal.Custody do
     )
 
     ensure(
-      handle.operation_family == nil or handle.operation_family == KeyHandle.family(handle.algorithm),
+      handle.operation_family == nil or
+        handle.operation_family == KeyHandle.family(handle.algorithm),
       :invalid_handle
     )
 
@@ -1020,12 +1026,20 @@ defmodule RequestSeal.Custody do
 
   defp verification_key!(handle, context, mode) do
     case assignment_interface(handle.custodian) do
-      :binding -> read_binding!(handle, context) || fail(:unsupported_operation)
-      :assignment -> fail(:unsupported_operation)
-      :legacy when mode == :custodian -> Support.unwrap(handle.custodian.public_key(handle.ref))
+      :binding ->
+        read_binding!(handle, context) || fail(:unsupported_operation)
+
+      :assignment ->
+        fail(:unsupported_operation)
+
+      :legacy when mode == :custodian ->
+        Support.unwrap(handle.custodian.public_key(handle.ref))
+
       :legacy ->
         ensure(context.issued_for == nil, :unsupported_operation)
-        result = Support.safe(fn -> normalize(:public_key, handle.custodian.public_key(handle.ref)) end)
+
+        result =
+          Support.safe(fn -> normalize(:public_key, handle.custodian.public_key(handle.ref)) end)
 
         case result do
           {:ok, public} -> public

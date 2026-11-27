@@ -161,6 +161,7 @@ defmodule RequestSeal.CustodyGateTest do
     assert {:ok, invalid_signature} = Crypto.sign("ed25519", malformed, {:ed25519, seed})
     assert {:ok, public} = Custody.public_key(handle)
     assert :ok = Crypto.verify("ed25519", malformed, invalid_signature, public)
+
     assert_error(
       Custody.verify(handle, malformed, invalid_signature, operation: :http),
       :invalid_data

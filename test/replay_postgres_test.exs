@@ -127,6 +127,7 @@ defmodule RequestSeal.ReplayPostgresTest do
       results = Enum.map(tasks ++ [peer_task], &Task.await(&1, 10_000))
       assert Enum.count(results, &(&1 == :claimed)) == 1
       assert Enum.count(results, &(&1 == :already_claimed)) == 64
+
       assert %{rows: [[1]]} =
                Postgrex.query!(
                  ctx.admin,
@@ -145,18 +146,22 @@ defmodule RequestSeal.ReplayPostgresTest do
     assert {:ok, 0} = Postgres.sweep(ctx.store.ref, 99, context())
     assert {:ok, 2} = Postgres.sweep(ctx.store.ref, 100, context())
     assert {:ok, 0} = Postgres.sweep({ctx.b, ctx.table}, 99, context())
+
     assert {:error, :failure} =
              Postgres.claim({ctx.b, ctx.table}, claim("b", "nonce", 99), context())
+
     assert {:error, %{reason: :store_failed}} =
              Replay.claim(ctx.store, claim("a", "nonce", 100), timeout: 2000)
 
     assert :claimed = Replay.claim(ctx.store, claim("a", "nonce", 101), timeout: 2000)
+
     assert %{rows: [[101]]} =
              Postgrex.query!(
                ctx.admin,
                "SELECT retain_until FROM #{ctx.table} WHERE namespace <> ''::bytea",
                []
              )
+
     rendered = inspect(ctx.store)
     refute rendered =~ ctx.table
 
@@ -239,6 +244,7 @@ defmodule RequestSeal.ReplayPostgresTest do
     try do
       store = Postgres.store(ctx.a, table: table)
       old = claim("legacy", "nonce", 100)
+
       Postgrex.query!(ctx.admin, "INSERT INTO #{table} VALUES ($1, $2, $3)", [
         old.namespace,
         old.key,
@@ -639,6 +645,7 @@ defmodule RequestSeal.ReplayPostgresTest do
 
   setup do: %{test_pid: self()}
   defp claim(ns, key, until), do: struct(Claim, namespace: ns, key: key, retain_until: until)
+
   defp context(timeout \\ 2000),
     do: %Context{owner: self(), deadline: System.monotonic_time(:millisecond) + timeout}
 

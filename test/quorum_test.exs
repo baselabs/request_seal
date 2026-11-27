@@ -129,6 +129,7 @@ defmodule RequestSeal.QuorumTest do
           {decoy, both, "decoy"}
         ] do
       signed = sign_outer.(message, fields, label)
+
       assert {:error, %{reason: :binding_unsatisfied}} =
                RequestSeal.verify_quorum(signed, policy, [])
 
@@ -305,7 +306,9 @@ defmodule RequestSeal.QuorumTest do
           algorithm: "hmac-sha256",
           expires_in: 60
         },
-        signer, clock: fn -> @now end)
+        signer,
+        clock: fn -> @now end
+      )
 
     slot = slot(ctx, :main, "primary", true)
 
@@ -676,6 +679,7 @@ defmodule RequestSeal.QuorumTest do
       end)
 
     policy = quorum(ctx, @operation, slots)
+
     assert {:error, %{reason: :quorum_not_met}} =
              RequestSeal.verify_quorum(missing_digest, policy, [])
 

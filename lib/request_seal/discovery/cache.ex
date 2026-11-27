@@ -167,6 +167,7 @@ defmodule RequestSeal.Discovery.Cache do
         ensure(source.key_id == :directory or keyid not in source.revoked, :revoked_key)
         timeout = Keyword.get(opts, :timeout, source.timeout)
         ensure(is_integer(timeout) and timeout in 1..300_000, :invalid_options)
+
         Support.run(min(timeout, source.timeout), fn deadline ->
           clock = Keyword.get_lazy(opts, :clock, fn -> call(cache, :clock, :infinity) end)
           interval = Support.interval(clock, deadline)
@@ -584,7 +585,8 @@ defmodule RequestSeal.Discovery.Cache do
       [_ | _] = signers when is_list(signers) ->
         Enum.any?(signers, &MapSet.member?(tombstones, &1))
 
-      _ -> true
+      _ ->
+        true
     end
   end
 

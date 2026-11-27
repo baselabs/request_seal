@@ -101,12 +101,10 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
                end)
 
       assert %{rows: [[0]]} =
-               OwnedRepo.query!(
-                 """
-                 SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims
-                 WHERE logical_partition = 'transaction-owner'
-                 """
-               )
+               OwnedRepo.query!("""
+               SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims
+               WHERE logical_partition = 'transaction-owner'
+               """)
 
       assert :claimed = Replay.claim(store, c, timeout: 5_000)
       assert :already_claimed = Replay.claim(store, c, timeout: 5_000)
@@ -127,12 +125,10 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
       assert :claimed = Replay.claim(store, c, timeout: 5_000)
 
       assert %{rows: [[issued, admitted, retention]]} =
-               OwnedRepo.query!(
-                 """
-                 SELECT issued_at, admitted_at, retain_until
-                 FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'db-clock'
-                 """
-               )
+               OwnedRepo.query!("""
+               SELECT issued_at, admitted_at, retain_until
+               FROM #{prefix}.ash_onetime_nonce_claims WHERE logical_partition = 'db-clock'
+               """)
 
       assert issued == admitted
       assert DateTime.compare(retention, admitted) == :gt
@@ -150,14 +146,17 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
 
       older =
         Task.async(fn ->
-          OwnedRepo.transaction(fn ->
-            %{rows: [[started]]} = OwnedRepo.query!("SELECT transaction_timestamp()")
-            send(owner, {:older_prune, DateTime.to_unix(started)})
+          OwnedRepo.transaction(
+            fn ->
+              %{rows: [[started]]} = OwnedRepo.query!("SELECT transaction_timestamp()")
+              send(owner, {:older_prune, DateTime.to_unix(started)})
 
-            receive do
-              :prune -> prune(prefix)
-            end
-          end, timeout: 15_000)
+              receive do
+                :prune -> prune(prefix)
+              end
+            end,
+            timeout: 15_000
+          )
         end)
 
       assert_receive {:older_prune, started}, 2000
@@ -196,12 +195,10 @@ if Code.ensure_loaded?(AshOnetime.Transaction) do
         assert {:error, %Error{reason: :store_failed}} = Task.await(claimant)
 
         assert %{rows: [[0]]} =
-                 OwnedRepo.query!(
-                   """
-                   SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims
-                   WHERE logical_partition = 'cleanup-race'
-                   """
-                 )
+                 OwnedRepo.query!("""
+                 SELECT count(*) FROM #{prefix}.ash_onetime_nonce_claims
+                 WHERE logical_partition = 'cleanup-race'
+                 """)
       after
         :telemetry.detach(id)
       end

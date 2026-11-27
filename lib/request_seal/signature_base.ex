@@ -273,6 +273,7 @@ defmodule RequestSeal.SignatureBase do
     not response? or
       Enum.all?(items, fn %Value{value: {:string, name}, parameters: params} ->
         related? = List.keymember?(params, "req", 0)
+
         (name != "@status" or not related?) and
           (not SignatureFields.request_component?(name) or related?)
       end)
@@ -752,7 +753,8 @@ defmodule RequestSeal.SignatureBase do
           _ -> false
         end
 
-      _ -> false
+      _ ->
+        false
     end
   end
 
@@ -782,6 +784,7 @@ defmodule RequestSeal.SignatureBase do
         source = context(message, params)
         {value, cache} = value(source, name, params, options, cache)
         ensure(ascii?(value), :non_ascii)
+
         if String.starts_with?(name, "@") and name != "@query-param" do
           ensure(canonical_value?(name, params, value), :invalid_component_parameters)
         end

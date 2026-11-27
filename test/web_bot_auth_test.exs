@@ -1309,6 +1309,7 @@ defmodule RequestSeal.WebBotAuthTest do
     p = policy(agents: fn _ -> :error end, unresolved: {:held_keys, resolver})
 
     assert {:ok, envelope} = WebBotAuth.verify(request("held-key"), p, capture: true)
+
     assert [%{principal: %{kind: :key, thumbprint: ^thumbprint}} = result] =
              Map.values(envelope.signatures)
 

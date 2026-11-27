@@ -205,7 +205,8 @@ defmodule RequestSeal.Discovery.KeySet do
   @doc false
   def expired?(set, keyid, now) do
     case List.wrap(set.keys[keyid]) do
-      [] -> false
+      [] ->
+        false
 
       entries ->
         Enum.any?(entries, &(&1.fetched_at < &1.expires_at)) and

@@ -347,6 +347,7 @@ defmodule RequestSeal.DiscoveryFetchTest do
                  Discovery.parse_body(body, unsigned, interval)
       else
         assert {:ok, set} = Discovery.fetch(s, clock: fn -> interval end)
+
         assert {:ok, %{proof_signers: [^signer_id]}} =
                  KeySet.lookup_at(set, leaf_id, ["rsa-pss-sha512"], interval)
 

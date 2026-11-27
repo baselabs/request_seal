@@ -158,7 +158,11 @@ if Code.ensure_loaded?(Plug.Conn) do
       end
     end
 
-    defp bind(conn, %{verification: {:ok, %RequestSeal.Verification{} = verification}} = state, opts) do
+    defp bind(
+           conn,
+           %{verification: {:ok, %RequestSeal.Verification{} = verification}} = state,
+           opts
+         ) do
       with :ok <- covered(verification),
            {:ok, path, query} <- target(state),
            {:ok, segments} <- segments(path, conn),
@@ -282,7 +286,8 @@ if Code.ensure_loaded?(Plug.Conn) do
     end
 
     defp inspect_body_bytes(conn, fields, bytes, names) do
-      captured = for field <- fields, String.downcase(field.name) == "content-type", do: field.value
+      captured =
+        for field <- fields, String.downcase(field.name) == "content-type", do: field.value
 
       with [type] <- captured,
            [^type] <- Plug.Conn.get_req_header(conn, "content-type") do

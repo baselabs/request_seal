@@ -67,6 +67,7 @@ defmodule RequestSeal.Authentication do
         params = SignatureFields.parameters(input)
         ensure(SignatureFields.nonce_valid?(params["nonce"]), :limit, :input)
         coverage(input, required(policy.components), policy.extra_components)
+
         freshness =
           case opts do
             %{quorum_now: now} -> freshness(params, policy.freshness, now)
@@ -545,15 +546,26 @@ defmodule RequestSeal.Authentication do
         else: Custody.verify(handle, bytes, signature, opts)
 
     case result do
-      :ok -> nil
-      {:ok, public} -> public
-      {:error, %{reason: :key_denied}} -> fail(:key_denied, :key)
+      :ok ->
+        nil
+
+      {:ok, public} ->
+        public
+
+      {:error, %{reason: :key_denied}} ->
+        fail(:key_denied, :key)
+
       {:error, %{reason: :key_fingerprint_unknown}} when deny == nil ->
         fail(:invalid_options, :input)
 
-      {:error, %{reason: :key_fingerprint_unknown}} -> fail(:key_fingerprint_unknown, :key)
-      {:error, %{reason: :invalid_signature}} -> fail(:invalid_signature, :crypto)
-      _ -> fail(:verifier_failed, :crypto)
+      {:error, %{reason: :key_fingerprint_unknown}} ->
+        fail(:key_fingerprint_unknown, :key)
+
+      {:error, %{reason: :invalid_signature}} ->
+        fail(:invalid_signature, :crypto)
+
+      _ ->
+        fail(:verifier_failed, :crypto)
     end
   end
 
@@ -588,7 +600,14 @@ defmodule RequestSeal.Authentication do
 
   defp replay(:not_required, _, _, _, _, _), do: :not_required
 
-  defp replay(%{scope: kind} = policy, params, _, freshness, profile, {scope, key, public, components}) do
+  defp replay(
+         %{scope: kind} = policy,
+         params,
+         _,
+         freshness,
+         profile,
+         {scope, key, public, components}
+       ) do
     ensure(profile == %{name: :rfc9421}, :invalid_policy, :input)
     ensure(retain_until(freshness) <= policy.retain_until, :retention_exceeded, :replay)
 
@@ -599,9 +618,15 @@ defmodule RequestSeal.Authentication do
             {:ok, identity} -> {:key, identity}
             {:error, _} -> fail(:ambiguous_replay_scope, :replay)
           end
-        {:credential, {:credential, _, _}} -> scope
-        {:principal, {:principal, _}} -> scope
-        _ -> nil
+
+        {:credential, {:credential, _, _}} ->
+          scope
+
+        {:principal, {:principal, _}} ->
+          scope
+
+        _ ->
+          nil
       end
 
     identity = Commitment.select(policy.identifier, params, components)

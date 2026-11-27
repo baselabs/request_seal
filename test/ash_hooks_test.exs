@@ -20,6 +20,7 @@ if Code.ensure_loaded?(AshHooks.Provider) do
 
       policy =
         %{HooksTestSupport.policy(key) | require_issued_for: :build, key_resolver: resolver}
+
       url = HooksTestSupport.start_receiver(policy, self())
       headers = %{"content-type" => "application/json", "webhook-id" => "event-purpose"}
 

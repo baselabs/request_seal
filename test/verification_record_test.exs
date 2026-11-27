@@ -32,7 +32,8 @@ defmodule RequestSeal.VerificationRecordTest do
     assert {:error, %{reason: :invalid_options}} =
              RequestSeal.verify(message, policy, label: i["label"], capture: :yes)
 
-    assert {:ok, captured} = result =
+    assert {:ok, captured} =
+             result =
              RequestSeal.verify(message, policy, label: i["label"], capture: true)
 
     {:ok, record} = VerificationRecord.from_verification(result)
@@ -50,6 +51,7 @@ defmodule RequestSeal.VerificationRecordTest do
              VerificationRecord.from_verification(%{captured | authorization: :allowed})
 
     {:ok, thumbprint} = PublicKey.thumbprint(key)
+
     directory = %Resolution{
       key: key,
       thumbprint: thumbprint,
@@ -179,6 +181,7 @@ defmodule RequestSeal.VerificationRecordTest do
 
   test "symmetric HTTP verification cannot capture retained material" do
     c = manifest("verification_record", "capture-symmetric")
+
     assert {:error, %{layer: :input, reason: :invalid_options}} =
              Surfaces.verification_record(@root, c)
 

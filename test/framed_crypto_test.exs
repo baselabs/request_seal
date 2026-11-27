@@ -53,6 +53,7 @@ defmodule RequestSeal.FramedCryptoTest do
       assert {:ok, <<_::256>>} = Custody.mac(mac, "application v1", [<<0, 255>>])
       assert {:error, %{reason: :unsupported_operation}} = Custody.sign(mac, "bytes")
       assert {:error, %{reason: :unsupported_operation}} = Custody.verify(mac, "bytes", <<>>)
+
       assert {:error, %{reason: :unsupported_operation}} =
                Custody.mac(signing, "application v1", ["bytes"])
 
@@ -86,18 +87,21 @@ defmodule RequestSeal.FramedCryptoTest do
              Custody.mac(handle, "frame v1", ["a"], timeout: 0)
 
     assert :ok = Local.release(handle)
+
     assert {:error, %{reason: :invalid_options}} =
              Local.new("hmac-sha256", {:hmac, :crypto.strong_rand_bytes(32)}, [
                {:capabilities, [:mac]} | :invalid_tail
              ])
 
     assert {:error, %{reason: :invalid_options}} = Local.generate("ed25519", capabilities: [:mac])
+
     assert {:error, %{reason: :invalid_options}} =
              Local.generate("hmac-sha256", capabilities: [:sign, :mac])
   end
 
   test "HS256 JWK import honors MAC-only custody and preserves signing restrictions" do
     key = :binary.copy(<<37>>, 32)
+
     jwk = %{
       "kty" => "oct",
       "alg" => "HS256",
@@ -108,6 +112,7 @@ defmodule RequestSeal.FramedCryptoTest do
 
     for algorithm <- ["hmac-sha256", {:jws, "HS256"}] do
       assert {:ok, raw} = Local.new(algorithm, {:hmac, key}, capabilities: [:mac])
+
       assert {:ok, %{capabilities: [:mac]} = imported} =
                Local.import(algorithm, jwk, :jwk, capabilities: [:mac])
 

@@ -153,10 +153,13 @@ defmodule RequestSeal.Quorum do
     end
   end
 
-  defp required_roles_possible?(
-         %{mode: :all, unit: {:role, [shared_principal: false]} = unit, slots: slots}
-       ) do
+  defp required_roles_possible?(%{
+         mode: :all,
+         unit: {:role, [shared_principal: false]} = unit,
+         slots: slots
+       }) do
     required = Enum.filter(slots, & &1.required)
+
     Evaluation.count_units(required, unit) ==
       Evaluation.count_units(required, {:role, [shared_principal: true]})
   end
