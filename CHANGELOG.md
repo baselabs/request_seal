@@ -2,6 +2,9 @@
 
 ## Unreleased 2.0.0
 
+- Document RequestSeal's steward, license, and name policy, and require matching
+  Developer Certificate of Origin sign-offs in qualification.
+
 - Gate publication on near-cap JWE teardown and hosted paired JWE page and
   single-open measurements against RequestSeal 1.0.0.
 

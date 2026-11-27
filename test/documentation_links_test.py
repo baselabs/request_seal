@@ -117,6 +117,10 @@ end
             output = Path(directory) / "current"
             run(["mix", "docs", "--warnings-as-errors", "--output", output], cwd=ROOT,
                 extra_env={"MIX_ENV": "dev"}, timeout=900)
+            for page in ("readme.html", "ipr.html", "trademarks.html", "RequestSeal.html"):
+                with self.subTest(page=page):
+                    self.assertRegex((output / page).read_text(),
+                                     r"(?s)<footer\b.*?© 2026 BaseLabs Holdings LLC · Apache-2\.0.*?</footer>")
             captured = io.StringIO()
             with redirect_stdout(captured):
                 pages = docs.documentation_pages(ROOT, current, current, output)

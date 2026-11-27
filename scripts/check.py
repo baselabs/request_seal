@@ -51,6 +51,31 @@ def check_dialyzer():
     run(["mix", "dialyzer"])
 
 
+def check_dco(root=ROOT):
+    """Require the author's DCO trailer from the first addition of IPR.md onward."""
+    def git(*arguments):
+        return run(["git", *arguments], cwd=root, capture_output=True, text=True, timeout=30).stdout
+
+    if git("rev-parse", "--is-shallow-repository").strip() != "false":
+        raise ValueError("DCO check requires full Git history")
+    additions = git("log", "--first-parent", "--diff-filter=A", "--format=%H",
+                    "--reverse", "HEAD", "--", "IPR.md").splitlines()
+    if not additions:
+        raise ValueError("DCO check could not find the IPR.md introduction")
+
+    # Include the introduction and every reachable commit outside its parent history.
+    format_string = "%H%n%an <%ae>%n%(trailers:key=Signed-off-by,valueonly,unfold=true)"
+    history = git("log", "-z", f"--format={format_string}", "HEAD", f"{additions[0]}^!")
+    missing = []
+    for record in history.rstrip("\0").split("\0"):
+        commit, author, signoffs = record.split("\n", 2)
+        if author not in signoffs.split("\n"):
+            missing.append(commit)
+    if missing:
+        raise ValueError("DCO check requires a matching Signed-off-by trailer on: " + ", ".join(missing))
+    print("PASS: DCO sign-offs match commit authors")
+
+
 def execute_notebook(script, completion, timeout=300, maximum_output=1_048_576):
     """Execute a real exported notebook with bounded bytes, time, and descendants."""
     if not math.isfinite(timeout) or timeout <= 0 or maximum_output <= 0:
@@ -325,6 +350,7 @@ if __name__ == "__main__":
             raise SystemExit(0)
         check_ci_actions()
         if not args.notebooks_only:
+            check_dco()
             check_corpus_release()
             run(["mix", "format", "--check-formatted"])
             run(["mix", "compile", "--warnings-as-errors"])

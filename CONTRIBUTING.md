@@ -9,7 +9,9 @@ reader and refuses differing installed versions. It restores locked Mix dependen
 compiled dependencies and the latest lane's Dialyzer PLT. Only the default-branch
 cache warmer saves these caches. Notebooks execute against the
 inspected packed source, so a version can qualify before it exists on Hex.
-Contributions are licensed under Apache-2.0, as section 5 of the [license](LICENSE) describes.
+Contributions are licensed under Apache-2.0, as section 5 of the license describes, and
+every commit carries a Developer Certificate of Origin sign-off (`git commit -s`). See
+IPR.md.
 Report vulnerabilities as [SECURITY.md](SECURITY.md) describes, never in a public issue.
 
 Setup commands are in [Develop RequestSeal](docs/guides/getting-started.md).

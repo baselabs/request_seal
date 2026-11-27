@@ -1,4 +1,4 @@
-# RequestSeal
+# RequestSeal™
 
 RequestSeal signs and verifies HTTP requests and responses in Elixir with RFC 9421 HTTP Message Signatures, for teams that receive webhooks, call signed APIs, or identify AI agents and crawlers with Web Bot Auth.
 
@@ -590,4 +590,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor checks.
 
 ## License
 
-[Apache-2.0](LICENSE). RFC code components use BSD-3-Clause under [NOTICE](NOTICE); external vectors retain their attribution there.
+Apache-2.0, maintained by BaseLabs Holdings LLC. See LICENSE and NOTICE, and IPR.md
+for contributions and use of the name.

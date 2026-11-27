@@ -1,7 +1,8 @@
 RequestSeal
-Copyright 2026 BaseLabs
+Copyright 2026 BaseLabs Holdings LLC
 
-The library is licensed under Apache License 2.0 (see LICENSE).
+This product includes software developed by BaseLabs Holdings LLC
+(https://github.com/baselabs).
 
 The signature base, signature and public key in livebooks/rfc-ed25519.livemd
 are extracted from RFC 9421, Appendix B. Signature-base vectors in

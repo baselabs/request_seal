@@ -130,7 +130,7 @@ def package_errors(root, configuration):
     errors = []
     for path in sorted(documents):
         if path in SOURCE_DOCUMENTS or not (
-            path in {"README.md", "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md", "LICENSE", "NOTICE"}
+            path in {"README.md", "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md", "LICENSE", "NOTICE", "IPR.md", "TRADEMARKS.md"}
             or path.startswith(("docs/", "livebooks/"))
         ):
             errors.append(f"{path}: document is outside the package allowlist")

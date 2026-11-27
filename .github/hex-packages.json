@@ -5,10 +5,12 @@
     "files": [
       "CHANGELOG.md",
       "CONTRIBUTING.md",
+      "IPR.md",
       "LICENSE",
       "NOTICE",
       "README.md",
       "SECURITY.md",
+      "TRADEMARKS.md",
       "docs/design/architecture.md",
       "docs/design/threat-model.md",
       "docs/guides/ash-hooks.md",

@@ -11,6 +11,8 @@ defmodule RequestSeal.MixProject do
     "CHANGELOG.md",
     "LICENSE",
     "NOTICE",
+    "IPR.md",
+    "TRADEMARKS.md",
     "docs/design/architecture.md",
     "docs/design/threat-model.md",
     "docs/guides/getting-started.md",
@@ -83,6 +85,7 @@ defmodule RequestSeal.MixProject do
       docs: [
         main: "readme",
         formatters: ["html"],
+        before_closing_footer_tag: %{html: "<p>© 2026 BaseLabs Holdings LLC · Apache-2.0</p>"},
         source_ref: source_ref(),
         # Historical entries retain references to removed APIs.
         skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
@@ -101,6 +104,8 @@ defmodule RequestSeal.MixProject do
           Contributing: [
             "CONTRIBUTING.md",
             "SECURITY.md",
+            "IPR.md",
+            "TRADEMARKS.md",
             "docs/guides/getting-started.md",
             "docs/guides/testing.md"
           ]
