@@ -44,7 +44,8 @@ defmodule RequestSeal.Quorum do
   `:required`. Optional `:label` and `:tag` limit matching signatures.
   A tag selector is a Structured Fields String of 1–256 printable ASCII bytes.
   All slots must use the same trusted freshness clock function. Verification
-  reads it once and applies each slot's freshness rules at that instant.
+  reads it once and applies each slot's freshness rules to the returned
+  Unix second or to both endpoints of the returned interval.
   `:principal` is a trusted binary for principal and role units, and
   `:role` is a trusted atom for role units.
 

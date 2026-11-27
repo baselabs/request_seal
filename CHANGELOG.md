@@ -2,6 +2,9 @@
 
 ## Unreleased 2.0.0
 
+- Require `binding/2` to return a public key for screened verification and
+  record capture on assignment-aware custody handles.
+
 - Enforce monotonic sweep cutoffs across replay adapters. Initialize existing
   Postgrex tables with `RequestSeal.Replay.Postgres.cutoff_ddl/2` and install
   the delegated cleanup guard with `RequestSeal.Replay.AshOnetime.cleanup_guard_ddl/2`.

@@ -36,4 +36,7 @@ Validate fixed-width digest entries in a plain map before admitting a set.
 For a verification handle, custody resolves and screens the handle's public
 key in one operation, checks any custodian verifier's verdict, and verifies
 against that public key before returning it for capture.
+Screening and capture in assignment-aware custody use the non-nil public
+key returned with the assignment by `binding/2`. Legacy custody uses one
+`public_key/1` read for screening and verification.
 Seed screening runs before the private-key possession probe.

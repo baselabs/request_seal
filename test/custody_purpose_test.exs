@@ -1,7 +1,7 @@
 defmodule RequestSeal.CustodyPurposeTest do
   use ExUnit.Case, async: true
 
-  alias RequestSeal.{Custody, KeyHandle, Message, Policy, SignatureBase}
+  alias RequestSeal.{Custody, DenySet, KeyHandle, Message, Policy, PublicKey, SignatureBase}
   alias RequestSeal.Custody.Local
   alias RequestSeal.JOSE.JWS
 
@@ -23,6 +23,39 @@ defmodule RequestSeal.CustodyPurposeTest do
 
     @impl true
     def identity(ref), do: Custody.identity(ref.())
+  end
+
+  defmodule RotatingVerificationCustodian do
+    @behaviour Custody
+
+    @impl true
+    def binding(ref, context) do
+      {key, _, observer} = ref.()
+      send(observer, :binding_read)
+      Local.binding(key.ref, context)
+    end
+
+    @impl true
+    def public_key(ref) do
+      {_, other, observer} = ref.()
+      send(observer, :separate_public_read)
+      {:ok, other}
+    end
+
+    @impl true
+    def verify(ref, algorithm, bytes, signature, context) do
+      {key, _, _} = ref.()
+      Local.verify(key.ref, algorithm, bytes, signature, context)
+    end
+
+    @impl true
+    def sign(_, _, _, _), do: {:error, :unsupported_operation}
+
+    @impl true
+    def identity(ref) do
+      {key, _, _} = ref.()
+      Custody.identity(key)
+    end
   end
 
   for {name, binding?, assignment?, verify?} <- [
@@ -478,6 +511,100 @@ defmodule RequestSeal.CustodyPurposeTest do
   defp assert_assignment_read(:legacy) do
     refute_received :provider_assignment
     refute_received :provider_binding
+  end
+
+  test "screening and capture verify with the public key in the assignment", ctx do
+    {:ok, other} = Local.generate("ed25519", [])
+    {:ok, other_public} = Custody.public_key(other)
+    {:ok, other_thumbprint} = PublicKey.thumbprint(other_public)
+    {:ok, public} = Custody.public_key(ctx.handle)
+    {:ok, thumbprint} = PublicKey.thumbprint(public)
+    {:ok, deny_other} = DenySet.new([other_thumbprint])
+    {:ok, deny_bound} = DenySet.new([thumbprint])
+    observer = self()
+
+    reference = %{
+      ctx.handle
+      | custodian: RotatingVerificationCustodian,
+        ref: fn -> {ctx.handle, other_public, observer} end
+    }
+
+    spec = %{
+      label: "sig",
+      algorithm: "ed25519",
+      signature_input: ~s[("@method" "@path")],
+      issued_for: :build
+    }
+
+    {:ok, signed} = RequestSeal.sign(ctx.message, spec, ctx.handle)
+    policy = policy(reference, :build)
+
+    assert {:ok, _} = RequestSeal.verify(signed, %{policy | deny: deny_other}, label: "sig")
+    assert_received :binding_read
+    refute_received :binding_read
+    refute_received :separate_public_read
+
+    assert {:ok, %{signature: %{record_material: %{key: ^public}}}} =
+             RequestSeal.verify(signed, policy, label: "sig", capture: true)
+
+    assert_received :binding_read
+    refute_received :binding_read
+    refute_received :separate_public_read
+
+    assert {:error, %{reason: :key_denied}} =
+             RequestSeal.verify(signed, %{policy | deny: deny_bound}, label: "sig")
+
+    assert_received :binding_read
+    refute_received :separate_public_read
+  end
+
+  test "assignment-only custody refuses screening and capture but can verify", ctx do
+    observer = self()
+
+    reference = %{
+      ctx.handle
+      | custodian: AssignmentWithVerifier,
+        ref: fn -> {ctx.handle, observer} end
+    }
+
+    bytes = base(ctx.message)
+    opts = [issued_for: :build, operation: :http]
+    {:ok, signature} = Custody.sign(ctx.handle, bytes, opts)
+    {:ok, deny} = DenySet.new([])
+
+    for screening <- [nil, deny] do
+      assert {:error, %{reason: :unsupported_operation}} =
+               Custody.verify_bound(reference, bytes, signature, screening, opts)
+    end
+
+    refute_received :provider_assignment
+    refute_received :provider_verify
+
+    assert :ok = Custody.verify(reference, bytes, signature, opts)
+    assert_received :provider_assignment
+    assert_received :provider_verify
+  end
+
+  test "legacy screening uses one public key read for verification", ctx do
+    {:ok, signer} = Local.new("ed25519", {:ed25519, ctx.seed})
+    {:ok, public} = Custody.public_key(signer)
+    observer = self()
+
+    reference = %{
+      signer
+      | custodian: Legacy,
+        ref: fn ->
+          send(observer, :public_key_read)
+          {signer, observer}
+        end
+    }
+
+    bytes = base(ctx.message)
+    {:ok, signature} = Custody.sign(signer, bytes)
+    {:ok, deny} = DenySet.new([])
+    assert {:ok, ^public} = Custody.verify_bound(reference, bytes, signature, deny, [])
+    assert_received :public_key_read
+    refute_received :public_key_read
   end
 
   test "JWS enforces purpose in both signing forms", ctx do

@@ -16,8 +16,9 @@ and subset changes as ways to bypass a commitment over signature facts.
 
 Require a finite freshness policy and explicit trust resolution in each slot.
 All slots share one trusted clock function. After wire admission and before
-resolving keys, sample it once and apply each slot's freshness rules at that
-instant. Two signatures with disjoint effective validity windows cannot fill
+resolving keys, sample it once and apply each slot's freshness rules to the
+returned second or both endpoints of the returned interval. Two signatures
+with disjoint effective validity windows cannot fill
 one assignment. Verify every selector-eligible label against its complete slot policy. Build
 key identity classes from verified observations and merge known aliases.
 Only affirmative key identity evidence can fill a slot, including for

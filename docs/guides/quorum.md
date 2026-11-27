@@ -91,8 +91,9 @@ including a checked Content-Digest for requests with bodies. Set the same
 schema in every slot for each structured operation field. Adding an optional
 signer cannot change the replay key of an otherwise accepted request.
 Give every slot the same trusted clock function. The verifier reads it once,
-after wire admission, and applies each slot's freshness rules at that instant.
-Any two signatures assigned together must be fresh at that instant under
+after wire admission and applies each slot's freshness rules to the returned
+second or both endpoints of the returned interval. Any two signatures
+assigned together must be fresh for the entire sample under
 their slot policies.
 
 Verification admits up to 128 eligible label-slot pairs. Construction checks

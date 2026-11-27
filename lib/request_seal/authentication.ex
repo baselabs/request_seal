@@ -10,6 +10,7 @@ defmodule RequestSeal.Authentication do
     FieldOccurrence,
     Freshness,
     KeyHandle,
+    KeyIdentity,
     Message,
     Policy,
     PublicKey,
@@ -123,7 +124,9 @@ defmodule RequestSeal.Authentication do
 
         with {:ok, {bytes, components}} <- built,
              {:ok, public} <-
-               protect(fn -> {:ok, verify_bytes(algorithm, bytes, signature_bytes, key, screening)} end) do
+               protect(fn ->
+                 {:ok, verify_bytes(algorithm, bytes, signature_bytes, key, screening)}
+               end) do
           {content, cache} = content_result(message, input, policy.content, opts, cache)
 
           result =
@@ -136,13 +139,32 @@ defmodule RequestSeal.Authentication do
                     algorithm,
                     freshness,
                     Map.get(opts, :profile, %{name: :rfc9421}),
-                    {scope, public || key, components}
+                    {scope, key, public, components}
                   )
 
                 covered =
                   case SignatureFields.identifiers(input.value) do
                     {:ok, wires} -> wires
                     :error -> fail(:invalid_signature_input, :fields)
+                  end
+
+                signature_facts = %{
+                  algorithm: algorithm,
+                  covered: covered,
+                  parameters: params,
+                  keyid: params["keyid"],
+                  crypto: :valid
+                }
+
+                signature_facts =
+                  if Map.get(opts, :capture, false) do
+                    Map.put(signature_facts, :record_material, %{
+                      key: public,
+                      base: bytes,
+                      signature: signature_bytes
+                    })
+                  else
+                    signature_facts
                   end
 
                 verification = %Verification{
@@ -154,7 +176,7 @@ defmodule RequestSeal.Authentication do
                   replay: replay
                 }
 
-                quorum_evidence(verification, public || key, components, opts)
+                quorum_evidence(verification, key, public, components, opts)
               end)
             end
 
@@ -168,8 +190,10 @@ defmodule RequestSeal.Authentication do
     end
   end
 
-  defp quorum_evidence(verification, key, components, %{quorum_replay: {scope, identifier}}) do
-    case Commitment.key_identity(key) do
+  defp quorum_evidence(verification, key, public, components, %{
+         quorum_replay: {scope, identifier}
+       }) do
+    case verified_key_identity(key, public) do
       {:ok, identity} ->
         selected = Commitment.select(identifier, verification.signature.parameters, components)
         {:ok, {verification, identity, Commitment.quorum_key(scope, selected)}}
@@ -179,7 +203,19 @@ defmodule RequestSeal.Authentication do
     end
   end
 
-  defp quorum_evidence(verification, _, _, _), do: {:ok, verification}
+  defp quorum_evidence(verification, _, _, _, _), do: {:ok, verification}
+
+  defp verified_key_identity(%KeyHandle{} = handle, %PublicKey{} = public) do
+    with {:ok, claimed} <- Commitment.key_identity(handle),
+         {:ok, actual} <- Commitment.key_identity(public),
+         true <- KeyIdentity.same?(claimed, actual) do
+      {:ok, actual}
+    else
+      _ -> {:error, :key_fingerprint_unknown}
+    end
+  end
+
+  defp verified_key_identity(key, _), do: Commitment.key_identity(key)
 
   @doc false
   def preflight(input, components, extra, freshness_policy) do
@@ -500,11 +536,11 @@ defmodule RequestSeal.Authentication do
     end
   end
 
-  defp verify_bytes(_, bytes, signature, %KeyHandle{} = handle, {deny, capture?, purpose}) do
+  defp verify_bytes(_, bytes, signature, %KeyHandle{} = handle, {deny, needs_public?, purpose}) do
     opts = [issued_for: purpose, operation: :http]
 
     result =
-      if deny != nil or capture?,
+      if deny != nil or needs_public?,
         do: Custody.verify_bound(handle, bytes, signature, deny, opts),
         else: Custody.verify(handle, bytes, signature, opts)
 
@@ -552,14 +588,14 @@ defmodule RequestSeal.Authentication do
 
   defp replay(:not_required, _, _, _, _, _), do: :not_required
 
-  defp replay(%{scope: kind} = policy, params, _, freshness, profile, {scope, key, components}) do
+  defp replay(%{scope: kind} = policy, params, _, freshness, profile, {scope, key, public, components}) do
     ensure(profile == %{name: :rfc9421}, :invalid_policy, :input)
     ensure(retain_until(freshness) <= policy.retain_until, :retention_exceeded, :replay)
 
     scope =
       case {kind, scope} do
         {:key, _} ->
-          case Commitment.key_identity(key) do
+          case verified_key_identity(key, public) do
             {:ok, identity} -> {:key, identity}
             {:error, _} -> fail(:ambiguous_replay_scope, :replay)
           end

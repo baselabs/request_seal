@@ -86,8 +86,10 @@ defmodule RequestSeal.Custody do
 
   Providers with either assignment interface must supply `c:verify/5` for
   assigned verification. Unassigned public-key fallback requires an atomic
-  binding. Providers with neither interface support unassigned operations
-  through the legacy callbacks.
+  binding. Screening, capture and any other verification that needs the exact
+  public key require a non-nil key from the same binding call as the assignment.
+  Providers with neither interface supply the exact verification key through
+  one call to the legacy public-key callback.
   """
   @callback signing_assignment(term(), Context.t()) ::
               {:ok, {algorithm(), atom() | nil}} | {:error, Error.reason()}
@@ -949,7 +951,7 @@ defmodule RequestSeal.Custody do
         handle.custodian.verify(handle.ref, handle.algorithm, bytes, signature, context)
       else
         ensure(context.issued_for == nil, :unsupported_operation)
-        public = verification_key!(handle, context)
+        public = verification_key!(handle, context, :custodian)
         verify_public(handle.algorithm, bytes, signature, public)
       end
 
@@ -960,7 +962,7 @@ defmodule RequestSeal.Custody do
     callback? = function_exported?(handle.custodian, :verify, 5)
     ensure(callback? or context.issued_for == nil, :unsupported_operation)
     ensure(RequestSeal.DenySet.valid?(deny), :invalid_options)
-    public = verification_key!(handle, context)
+    public = verification_key!(handle, context, :public)
 
     with :ok <- RequestSeal.DenySet.check(deny, public),
          :ok <- approve_verification(handle, bytes, signature, context, callback?),
@@ -970,11 +972,6 @@ defmodule RequestSeal.Custody do
       error -> normalize(:verify, error)
     end
   end
-
-  defp approve_verification(handle, bytes, signature, context, true),
-    do: handle.custodian.verify(handle.ref, handle.algorithm, bytes, signature, context)
-
-  defp approve_verification(_, _, _, _, false), do: :ok
 
   defp invoke(handle, :sign, [bytes], context) do
     check_signing_assignment!(handle, context)
@@ -1021,10 +1018,11 @@ defmodule RequestSeal.Custody do
     end
   end
 
-  defp verification_key!(handle, context) do
+  defp verification_key!(handle, context, mode) do
     case assignment_interface(handle.custodian) do
       :binding -> read_binding!(handle, context) || fail(:unsupported_operation)
       :assignment -> fail(:unsupported_operation)
+      :legacy when mode == :custodian -> Support.unwrap(handle.custodian.public_key(handle.ref))
       :legacy ->
         ensure(context.issued_for == nil, :unsupported_operation)
         result = Support.safe(fn -> normalize(:public_key, handle.custodian.public_key(handle.ref)) end)
@@ -1035,6 +1033,11 @@ defmodule RequestSeal.Custody do
         end
     end
   end
+
+  defp approve_verification(handle, bytes, signature, context, true),
+    do: handle.custodian.verify(handle.ref, handle.algorithm, bytes, signature, context)
+
+  defp approve_verification(_, _, _, _, false), do: :ok
 
   defp verify_public(algorithm, bytes, signature, public) do
     RequestSeal.Crypto.verify(algorithm, bytes, signature, public,
