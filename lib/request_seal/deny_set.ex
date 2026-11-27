@@ -30,9 +30,10 @@ defmodule RequestSeal.DenySet do
   @doc """
   Check a validated public key against the set. Returns `:ok`, or
   `{:error, reason}` for `:key_denied`, `:key_fingerprint_unknown`, or
-  `:invalid_options`. Passing nil disables the check.
+  `:invalid_options`. A nil set disables the check. A nil key, as for a
+  symmetric key, fails an active set with `:key_fingerprint_unknown`.
   """
-  @spec check(t() | nil, PublicKey.t()) ::
+  @spec check(t() | nil, PublicKey.t() | nil) ::
           :ok | {:error, :key_denied | :key_fingerprint_unknown | :invalid_options}
   def check(nil, _key), do: :ok
 

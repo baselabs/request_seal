@@ -251,7 +251,7 @@ defmodule RequestSeal.Quorum.Evaluation do
     upper = unit_bound(quorum.slots, quorum.unit)
     state = %{work: 0, best: nil, bound: false, required: false, deadline: deadline}
     {slots, state} = assignments_by_slot(candidates, quorum, state)
-    state = search(slots, %{}, MapSet.new(), upper, quorum, state)
+    state = search(slots, %{}, %{}, upper, quorum, state)
 
     case state do
       %{best: {{count, _}, selected}} -> {count, selected}
@@ -263,7 +263,6 @@ defmodule RequestSeal.Quorum.Evaluation do
     {:work_budget, nil} -> fail(:limit, :input)
   end
 
-  @spec search(list(), map(), MapSet.t(), non_neg_integer(), map(), map()) :: map()
   defp search([], selected, _used, _upper, quorum, state) when map_size(selected) > 0 do
     state = %{spend(state) | required: true}
     {bound?, state} = bindings?(selected, quorum.bindings, state)
@@ -297,13 +296,13 @@ defmodule RequestSeal.Quorum.Evaluation do
             state = spend(state)
 
             state =
-              if MapSet.member?(used, candidate.class) do
+              if Map.has_key?(used, candidate.class) do
                 state
               else
                 search(
                   rest,
                   Map.put(selected, slot.id, candidate),
-                  MapSet.put(used, candidate.class),
+                  Map.put(used, candidate.class, true),
                   upper,
                   quorum,
                   state
@@ -361,7 +360,7 @@ defmodule RequestSeal.Quorum.Evaluation do
       |> Map.keys()
       |> Enum.sort()
       |> Enum.reduce({%{}, state}, fn role, {matching, state} ->
-        case augment(role, edges, matching, MapSet.new(), state) do
+        case augment(role, edges, matching, %{}, state) do
           {:matched, matching, state} -> {matching, state}
           {:unmatched, _, state} -> {matching, state}
         end
@@ -372,8 +371,6 @@ defmodule RequestSeal.Quorum.Evaluation do
 
   defp count_slots(slots, unit, state), do: {unit_bound(slots, unit), state}
 
-  @spec augment(term(), map(), map(), MapSet.t(), map()) ::
-          {:matched, map(), map()} | {:unmatched, MapSet.t(), map()}
   defp augment(role, edges, matching, seen, state) do
     state = spend(state)
 
@@ -383,14 +380,14 @@ defmodule RequestSeal.Quorum.Evaluation do
       state = spend(state)
 
       cond do
-        MapSet.member?(seen, principal) ->
+        Map.has_key?(seen, principal) ->
           {:cont, {:unmatched, seen, state}}
 
         not Map.has_key?(matching, principal) ->
           {:halt, {:matched, Map.put(matching, principal, role), state}}
 
         true ->
-          seen = MapSet.put(seen, principal)
+          seen = Map.put(seen, principal, true)
 
           case augment(Map.fetch!(matching, principal), edges, matching, seen, state) do
             {:matched, updated, state} ->

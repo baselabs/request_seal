@@ -128,7 +128,6 @@ defmodule RequestSeal.Idempotency do
        }}
     else
       false -> error(:invalid_policy)
-      {:error, %RequestSeal.Message.Error{}} -> error(:invalid_message)
       {:error, %RequestSeal.SignatureBase.Error{}} -> error(:invalid_message)
       {:error, _} = failure -> failure
     end
