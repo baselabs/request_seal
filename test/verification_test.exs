@@ -164,18 +164,25 @@ defmodule RequestSeal.VerificationTest do
       refute rendered =~ "b3k2pp5k7z"
     end
 
-    [hash, name] =
-      File.read!(Path.join(@root, "verification/SHA256SUMS"))
-      |> String.trim()
-      |> String.split("  ")
+    dir = Path.join(@root, "verification")
 
-    assert name == "rfc9421.json"
+    pins =
+      File.read!(Path.join(dir, "SHA256SUMS"))
+      |> String.split("\n", trim: true)
+      |> Enum.map(fn line ->
+        [hash, name] = String.split(line, "  ", parts: 2)
+        {name, hash}
+      end)
 
-    assert hash ==
-             Base.encode16(
-               :crypto.hash(:sha256, File.read!(Path.join(@root, "verification/" <> name))),
-               case: :lower
-             )
+    assert Enum.map(pins, &elem(&1, 0)) |> Enum.sort() ==
+             File.ls!(dir) |> List.delete("SHA256SUMS") |> Enum.sort()
+
+    for {name, hash} <- pins do
+      assert hash ==
+               Base.encode16(:crypto.hash(:sha256, File.read!(Path.join(dir, name))),
+                 case: :lower
+               )
+    end
   end
 
   test "published transformations preserve or invalidate the complete result as specified" do

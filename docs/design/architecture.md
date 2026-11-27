@@ -179,7 +179,7 @@ rules ran.
 `RequestSeal.verify/3` verifies one selected label. Use
 `RequestSeal.verify_quorum/3` with an explicit policy to require independent
 signers and make one replay claim after the verdict. See
-[quorum verification](../guides/quorum.md) and [ADR 0043](../adr/0043-quorum-replay-commitment.md).
+[quorum verification](../guides/quorum.md) and [ADR 0043](https://github.com/baselabs/request_seal/blob/main/docs/adr/0043-quorum-replay-commitment.md).
 
 ## Keys, discovery, and replay
 
@@ -202,8 +202,8 @@ Neither operation exports raw generated or derived material.
 Replay protection is an optional port where applicable. In callback-based
 nonce mode, the caller supplies the commitment function. In built-in nonce
 and operation modes, RequestSeal derives the commitment from trusted scope
-and authenticated values. See [stable operation identity](../adr/0042-stable-operation-identity.md)
-and [quorum replay](../adr/0043-quorum-replay-commitment.md). The replay behaviour
+and authenticated values. See [stable operation identity](https://github.com/baselabs/request_seal/blob/main/docs/adr/0042-stable-operation-identity.md)
+and [quorum replay](https://github.com/baselabs/request_seal/blob/main/docs/adr/0043-quorum-replay-commitment.md). The replay behaviour
 has these callback declaration reference fragments.
 
 ```text

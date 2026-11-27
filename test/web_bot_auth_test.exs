@@ -869,7 +869,7 @@ defmodule RequestSeal.WebBotAuthTest do
           assert a.identifier == location <> "/.well-known/http-message-signatures-directory"
           {:ok, source}
         end,
-        freshness: %{clock: fn -> now end, skew: 0, max_age: nil}
+        freshness: %{clock: fn -> :atomics.get(time, 1) end, skew: 0, max_age: nil}
       )
 
     assert {:ok, result} = WebBotAuth.verify(m, policy)
