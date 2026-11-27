@@ -16,7 +16,7 @@ defaults:
 permissions:
   contents: read
 env:
-  HEX_PUBLISH_MIRROR_SHA: 3bfbb84692a65b4d2c03dc3b7932353026fe6943
+  HEX_PUBLISH_MIRROR_SHA: 654fcd0ef63daf8e3f79dfeb4ca900adffd0d4e2
 concurrency:
   group: publish
   cancel-in-progress: false
@@ -328,7 +328,7 @@ jobs:
           [[ "$hex_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mix local.hex "$hex_version" --force
       - id: hex
-        uses: baselabs/.github/.github/actions/hex-publish@3bfbb84692a65b4d2c03dc3b7932353026fe6943
+        uses: baselabs/.github/.github/actions/hex-publish@654fcd0ef63daf8e3f79dfeb4ca900adffd0d4e2
         with:
           operation: upload
           package: request_seal
@@ -398,7 +398,7 @@ jobs:
           [[ "$hex_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mix local.hex "$hex_version" --force
       - id: hex
-        uses: baselabs/.github/.github/actions/hex-publish@3bfbb84692a65b4d2c03dc3b7932353026fe6943
+        uses: baselabs/.github/.github/actions/hex-publish@654fcd0ef63daf8e3f79dfeb4ca900adffd0d4e2
         with:
           operation: read-back
           package: request_seal
