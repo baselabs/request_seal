@@ -380,11 +380,11 @@
   },
   {
     "file": "lib/request_seal/idempotency.ex",
-    "line": 410,
+    "line": 409,
     "expression": "reason",
     "kind": "idempotency",
     "allows": [],
-    "comment": "lib/request_seal/idempotency.ex:410: Wraps the bounded recovery reason from local call sites."
+    "comment": "lib/request_seal/idempotency.ex:409: Wraps the bounded recovery reason from local call sites."
   },
   {
     "file": "lib/request_seal/jose/jwe.ex",
